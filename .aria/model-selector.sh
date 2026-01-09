@@ -1,7 +1,10 @@
 #!/bin/bash
 # ARIA Model Selector & Token Tracker
-# Intelligently selects model (opus/sonnet/haiku) based on task complexity
-# Tracks token usage and costs
+# Intelligently selects model (opus/sonnet/haiku) based on:
+# 1. Task complexity (heuristic baseline)
+# 2. Learned success rates (adapts over time)
+# 3. Budget constraints
+# 4. Failure escalation
 
 set -e
 
@@ -12,6 +15,7 @@ RALPH_DIR="$ARIA_DIR/ralph"
 PRD_FILE="$RALPH_DIR/prd.json"
 LOGS_DIR="$ARIA_DIR/logs"
 USAGE_FILE="$LOGS_DIR/token_usage.json"
+LEARNING_FILE="$LOGS_DIR/model_learning.json"
 
 # Colors
 RED='\033[0;31m'
@@ -153,6 +157,237 @@ is_over_budget() {
 }
 
 # ============================================
+# LEARNING SYSTEM
+# ============================================
+
+# Initialize learning data
+init_learning() {
+    if [[ ! -f "$LEARNING_FILE" ]]; then
+        cat > "$LEARNING_FILE" << 'EOF'
+{
+    "version": 1,
+    "created_at": "",
+    "updated_at": "",
+    "task_types": {
+        "feature": {"opus": {"success": 0, "fail": 0}, "sonnet": {"success": 0, "fail": 0}, "haiku": {"success": 0, "fail": 0}},
+        "bugfix": {"opus": {"success": 0, "fail": 0}, "sonnet": {"success": 0, "fail": 0}, "haiku": {"success": 0, "fail": 0}},
+        "refactoring": {"opus": {"success": 0, "fail": 0}, "sonnet": {"success": 0, "fail": 0}, "haiku": {"success": 0, "fail": 0}},
+        "testing": {"opus": {"success": 0, "fail": 0}, "sonnet": {"success": 0, "fail": 0}, "haiku": {"success": 0, "fail": 0}},
+        "documentation": {"opus": {"success": 0, "fail": 0}, "sonnet": {"success": 0, "fail": 0}, "haiku": {"success": 0, "fail": 0}},
+        "setup": {"opus": {"success": 0, "fail": 0}, "sonnet": {"success": 0, "fail": 0}, "haiku": {"success": 0, "fail": 0}},
+        "general": {"opus": {"success": 0, "fail": 0}, "sonnet": {"success": 0, "fail": 0}, "haiku": {"success": 0, "fail": 0}}
+    },
+    "complexity_levels": {
+        "low": {"opus": {"success": 0, "fail": 0}, "sonnet": {"success": 0, "fail": 0}, "haiku": {"success": 0, "fail": 0}},
+        "medium": {"opus": {"success": 0, "fail": 0}, "sonnet": {"success": 0, "fail": 0}, "haiku": {"success": 0, "fail": 0}},
+        "high": {"opus": {"success": 0, "fail": 0}, "sonnet": {"success": 0, "fail": 0}, "haiku": {"success": 0, "fail": 0}}
+    },
+    "recent_outcomes": []
+}
+EOF
+        # Update timestamps
+        python3 << EOF
+import json
+from datetime import datetime
+with open('$LEARNING_FILE', 'r') as f:
+    data = json.load(f)
+data['created_at'] = datetime.now().isoformat()
+data['updated_at'] = datetime.now().isoformat()
+with open('$LEARNING_FILE', 'w') as f:
+    json.dump(data, f, indent=2)
+EOF
+    fi
+}
+
+# Record outcome of a model selection (called after iteration completes)
+record_outcome() {
+    local model="$1"
+    local task_type="$2"
+    local complexity="$3"
+    local outcome="$4"  # "success" or "fail"
+    local story_id="${5:-unknown}"
+
+    init_learning
+
+    # Determine complexity level
+    local complexity_level="medium"
+    if [[ $complexity -le 3 ]]; then
+        complexity_level="low"
+    elif [[ $complexity -ge 7 ]]; then
+        complexity_level="high"
+    fi
+
+    python3 << EOF
+import json
+from datetime import datetime
+
+with open('$LEARNING_FILE', 'r') as f:
+    data = json.load(f)
+
+# Update task type stats
+task_type = '$task_type'
+if task_type not in data['task_types']:
+    data['task_types'][task_type] = {
+        "opus": {"success": 0, "fail": 0},
+        "sonnet": {"success": 0, "fail": 0},
+        "haiku": {"success": 0, "fail": 0}
+    }
+
+data['task_types'][task_type]['$model']['$outcome'] += 1
+
+# Update complexity level stats
+data['complexity_levels']['$complexity_level']['$model']['$outcome'] += 1
+
+# Add to recent outcomes (keep last 50)
+data['recent_outcomes'].append({
+    'timestamp': datetime.now().isoformat(),
+    'model': '$model',
+    'task_type': task_type,
+    'complexity': $complexity,
+    'complexity_level': '$complexity_level',
+    'outcome': '$outcome',
+    'story_id': '$story_id'
+})
+data['recent_outcomes'] = data['recent_outcomes'][-50:]
+
+data['updated_at'] = datetime.now().isoformat()
+
+with open('$LEARNING_FILE', 'w') as f:
+    json.dump(data, f, indent=2)
+EOF
+
+    echo "Recorded: $model on $task_type ($complexity_level) = $outcome"
+}
+
+# Get success rate for a model on a task type
+get_success_rate() {
+    local model="$1"
+    local task_type="$2"
+
+    init_learning
+
+    python3 << EOF
+import json
+
+with open('$LEARNING_FILE', 'r') as f:
+    data = json.load(f)
+
+task_type = '$task_type'
+model = '$model'
+
+if task_type in data['task_types'] and model in data['task_types'][task_type]:
+    stats = data['task_types'][task_type][model]
+    total = stats['success'] + stats['fail']
+    if total >= 3:  # Need at least 3 samples
+        rate = stats['success'] / total
+        print(f"{rate:.2f}")
+    else:
+        print("-1")  # Not enough data
+else:
+    print("-1")  # No data
+EOF
+}
+
+# Get best model for task type based on learned data
+get_learned_model() {
+    local task_type="$1"
+    local min_cost="${2:-false}"  # If true, prefer cheaper models when success rates are similar
+
+    init_learning
+
+    python3 << EOF
+import json
+
+with open('$LEARNING_FILE', 'r') as f:
+    data = json.load(f)
+
+task_type = '$task_type'
+min_cost = '$min_cost' == 'true'
+
+# Get success rates for each model
+models = ['haiku', 'sonnet', 'opus']  # Order by cost (cheapest first)
+rates = {}
+has_data = False
+
+for model in models:
+    if task_type in data['task_types'] and model in data['task_types'][task_type]:
+        stats = data['task_types'][task_type][model]
+        total = stats['success'] + stats['fail']
+        if total >= 3:
+            rates[model] = stats['success'] / total
+            has_data = True
+        else:
+            rates[model] = -1
+    else:
+        rates[model] = -1
+
+if not has_data:
+    print("none")  # No learned data, use heuristics
+else:
+    # Find best model
+    # If min_cost, prefer cheaper model if success rate is within 10%
+    best_model = None
+    best_rate = -1
+
+    for model in models:
+        if rates[model] >= 0:
+            if best_model is None:
+                best_model = model
+                best_rate = rates[model]
+            elif min_cost:
+                # Prefer cheaper model if rate is within 10%
+                if rates[model] >= best_rate - 0.1:
+                    best_model = model
+                    best_rate = rates[model]
+            else:
+                # Just pick highest rate
+                if rates[model] > best_rate:
+                    best_model = model
+                    best_rate = rates[model]
+
+    if best_model and best_rate >= 0.5:  # Only recommend if >50% success
+        print(best_model)
+    else:
+        print("none")  # Success rate too low, use heuristics
+EOF
+}
+
+# Get learning stats summary
+get_learning_stats() {
+    init_learning
+
+    python3 << EOF
+import json
+
+with open('$LEARNING_FILE', 'r') as f:
+    data = json.load(f)
+
+print("Task Type Success Rates:")
+print("-" * 60)
+
+for task_type, models in sorted(data['task_types'].items()):
+    rates = []
+    for model in ['haiku', 'sonnet', 'opus']:
+        stats = models[model]
+        total = stats['success'] + stats['fail']
+        if total > 0:
+            rate = stats['success'] / total * 100
+            rates.append(f"{model}: {rate:.0f}% ({total})")
+        else:
+            rates.append(f"{model}: -")
+    print(f"  {task_type:15} {' | '.join(rates)}")
+
+print("")
+print("Recent outcomes:", len(data['recent_outcomes']))
+
+# Show recent success/fail
+recent_success = sum(1 for o in data['recent_outcomes'][-10:] if o['outcome'] == 'success')
+recent_fail = sum(1 for o in data['recent_outcomes'][-10:] if o['outcome'] == 'fail')
+print(f"Last 10: {recent_success} success, {recent_fail} fail")
+EOF
+}
+
+# ============================================
 # TASK COMPLEXITY ANALYSIS
 # ============================================
 
@@ -231,6 +466,7 @@ get_task_type() {
 # ============================================
 
 # Select model based on task
+# Priority: 1. Forced model 2. Learned data 3. Heuristics 4. Failure escalation
 select_model() {
     local task_description="${1:-}"
     local story_id="${2:-}"
@@ -259,48 +495,65 @@ select_model() {
         task_type=$(get_task_type "$story_id")
     fi
 
-    # Selection logic
     local selected_model="sonnet"  # Default
+    local selection_reason="default"
 
-    # 1. Budget-based adjustment
-    if (( $(echo "$budget_pct < 20" | bc -l) )); then
-        # Low budget - prefer haiku
-        selected_model="haiku"
-    elif (( $(echo "$budget_pct < 50" | bc -l) )); then
-        # Medium budget - prefer sonnet
-        selected_model="sonnet"
+    # ==========================================
+    # STEP 1: Check learned data first
+    # ==========================================
+    local prefer_cheap="false"
+    (( $(echo "$budget_pct < 50" | bc -l) )) && prefer_cheap="true"
+
+    local learned_model=$(get_learned_model "$task_type" "$prefer_cheap")
+
+    if [[ "$learned_model" != "none" ]]; then
+        selected_model="$learned_model"
+        selection_reason="learned:$task_type"
+    else
+        # ==========================================
+        # STEP 2: Fall back to heuristics
+        # ==========================================
+        selection_reason="heuristic"
+
+        # 2a. Budget-based baseline
+        if (( $(echo "$budget_pct < 20" | bc -l) )); then
+            selected_model="haiku"
+            selection_reason="heuristic:low_budget"
+        elif (( $(echo "$budget_pct < 50" | bc -l) )); then
+            selected_model="sonnet"
+        fi
+
+        # 2b. Complexity-based adjustment
+        if [[ $complexity -ge 8 ]]; then
+            selected_model="opus"
+            selection_reason="heuristic:high_complexity"
+        elif [[ $complexity -ge 5 ]]; then
+            selected_model="sonnet"
+        elif [[ $complexity -le 3 ]]; then
+            selected_model="haiku"
+            selection_reason="heuristic:low_complexity"
+        fi
+
+        # 2c. Task type adjustment (heuristic rules)
+        case "$task_type" in
+            "documentation")
+                [[ "$selected_model" == "opus" ]] && selected_model="sonnet"
+                ;;
+            "testing")
+                [[ "$selected_model" == "haiku" ]] && selected_model="sonnet"
+                ;;
+            "refactoring"|"feature")
+                [[ $complexity -ge 6 ]] && selected_model="opus"
+                ;;
+            "bugfix")
+                [[ "$selected_model" == "haiku" ]] && selected_model="sonnet"
+                ;;
+        esac
     fi
 
-    # 2. Complexity-based adjustment
-    if [[ $complexity -ge 8 ]]; then
-        selected_model="opus"
-    elif [[ $complexity -ge 5 ]]; then
-        selected_model="sonnet"
-    elif [[ $complexity -le 3 ]]; then
-        selected_model="haiku"
-    fi
-
-    # 3. Task type adjustment
-    case "$task_type" in
-        "documentation")
-            # Docs don't need opus
-            [[ "$selected_model" == "opus" ]] && selected_model="sonnet"
-            ;;
-        "testing")
-            # Tests benefit from good reasoning
-            [[ "$selected_model" == "haiku" ]] && selected_model="sonnet"
-            ;;
-        "refactoring"|"feature")
-            # Complex tasks may need opus
-            [[ $complexity -ge 6 ]] && selected_model="opus"
-            ;;
-        "bugfix")
-            # Bugs need good reasoning
-            [[ "$selected_model" == "haiku" ]] && selected_model="sonnet"
-            ;;
-    esac
-
-    # 4. Failure escalation
+    # ==========================================
+    # STEP 3: Failure escalation (overrides learned)
+    # ==========================================
     if [[ $consecutive_failures -ge 3 ]]; then
         # If failing repeatedly, escalate model
         case "$selected_model" in
@@ -481,6 +734,18 @@ main() {
         "complexity")
             analyze_complexity "$@"
             ;;
+        "outcome")
+            # record_outcome <model> <task_type> <complexity> <outcome> [story_id]
+            record_outcome "$@"
+            ;;
+        "stats"|"learn")
+            get_learning_stats
+            ;;
+        "learn-reset")
+            rm -f "$LEARNING_FILE"
+            init_learning
+            echo -e "${GREEN}Learning data reset${NC}"
+            ;;
         "help"|*)
             echo "ARIA Model Selector & Token Tracker"
             echo ""
@@ -503,6 +768,12 @@ main() {
             echo "  budget [amount]         - Get/set budget"
             echo "  reset                   - Reset usage tracking"
             echo ""
+            echo "Learning:"
+            echo "  outcome <model> <task_type> <complexity> <outcome> [story_id]"
+            echo "                          - Record success/fail outcome"
+            echo "  stats                   - Show learning statistics"
+            echo "  learn-reset             - Reset learning data"
+            echo ""
             echo "Model Selection Logic:"
             echo "  - Complexity 1-3:  haiku (simple tasks)"
             echo "  - Complexity 4-7:  sonnet (moderate tasks)"
@@ -510,6 +781,7 @@ main() {
             echo "  - Budget <20%:    force haiku"
             echo "  - Budget <50%:    avoid opus"
             echo "  - 3+ failures:    escalate model"
+            echo "  - Learned data takes priority over heuristics"
             echo ""
             echo "Environment:"
             echo "  ARIA_MODEL_BUDGET      - Budget in dollars (default: 10.00)"

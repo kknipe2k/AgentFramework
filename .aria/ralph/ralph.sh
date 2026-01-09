@@ -34,6 +34,11 @@ MODEL_SELECTOR="$ARIA_DIR/model-selector.sh"
 # Track consecutive failures per story
 declare -A story_failures
 
+# Track model used for current iteration (for learning)
+current_iteration_model=""
+current_iteration_task_type=""
+current_iteration_complexity=5
+
 # Auto-PR configuration
 AUTO_PR=${ARIA_RALPH_AUTO_PR:-true}
 CHECKPOINT_EACH_ITERATION=${ARIA_RALPH_CHECKPOINT:-true}
@@ -242,6 +247,21 @@ reset_failures() {
     story_failures[$story_id]=0
 }
 
+# Record learning outcome for model selection
+record_learning_outcome() {
+    local story_id="$1"
+    local outcome="$2"  # "success" or "fail"
+
+    if [[ -x "$MODEL_SELECTOR" ]] && [[ -n "$current_iteration_model" ]]; then
+        "$MODEL_SELECTOR" outcome \
+            "$current_iteration_model" \
+            "$current_iteration_task_type" \
+            "$current_iteration_complexity" \
+            "$outcome" \
+            "$story_id" >/dev/null 2>&1 || true
+    fi
+}
+
 # Main loop
 run_loop() {
     local iteration=0
@@ -304,9 +324,26 @@ $(tail -100 "$PROGRESS_FILE" 2>/dev/null || echo "No progress yet")
             local story_title=$(jq -r ".userStories[] | select(.id == \"$next_story\") | .title" "$PRD_FILE" 2>/dev/null || echo "")
             selected_model=$("$MODEL_SELECTOR" select "$story_title" "$next_story" "$FORCE_MODEL" "$failures")
             model_flag=$("$MODEL_SELECTOR" flag "$story_title" "$next_story" "$FORCE_MODEL" "$failures")
-            echo -e "${BLUE}Model: $selected_model${NC} (failures: $failures)"
+
+            # Capture info for learning feedback
+            current_iteration_model="$selected_model"
+            current_iteration_complexity=$("$MODEL_SELECTOR" complexity "$story_title" 2>/dev/null || echo "5")
+            # Determine task type from story title
+            if echo "$story_title" | grep -qiE "test|spec|coverage"; then current_iteration_task_type="testing"
+            elif echo "$story_title" | grep -qiE "doc|readme|comment"; then current_iteration_task_type="documentation"
+            elif echo "$story_title" | grep -qiE "fix|bug|error|issue"; then current_iteration_task_type="bugfix"
+            elif echo "$story_title" | grep -qiE "refactor|clean|simplify"; then current_iteration_task_type="refactoring"
+            elif echo "$story_title" | grep -qiE "feature|add|implement|create"; then current_iteration_task_type="feature"
+            elif echo "$story_title" | grep -qiE "setup|config|init"; then current_iteration_task_type="setup"
+            else current_iteration_task_type="general"
+            fi
+
+            echo -e "${BLUE}Model: $selected_model${NC} (type: $current_iteration_task_type, complexity: $current_iteration_complexity, failures: $failures)"
         elif [[ -n "$FORCE_MODEL" ]]; then
             selected_model="$FORCE_MODEL"
+            current_iteration_model="$FORCE_MODEL"
+            current_iteration_task_type="general"
+            current_iteration_complexity=5
             echo -e "${BLUE}Model: $selected_model (forced)${NC}"
         fi
 
@@ -367,6 +404,9 @@ $(tail -100 "$PROGRESS_FILE" 2>/dev/null || echo "No progress yet")
             echo -e "${RED}🚫 ARIA rail blocked execution: $block_reason${NC}"
             log_iteration $iteration "$next_story" "BLOCKED:$block_reason" $duration
 
+            # Record learning outcome: FAIL due to block
+            record_learning_outcome "$next_story" "fail"
+
             # Increment failure count
             increment_failures "$next_story"
 
@@ -377,6 +417,14 @@ $(tail -100 "$PROGRESS_FILE" 2>/dev/null || echo "No progress yet")
                 reset_failures "$next_story"
             fi
         else
+            # Check if the story is now complete (passed)
+            local story_passed=$(jq -r ".userStories[] | select(.id == \"$next_story\") | .passes" "$PRD_FILE" 2>/dev/null || echo "false")
+            if [[ "$story_passed" == "true" ]]; then
+                # Record learning outcome: SUCCESS - story completed
+                record_learning_outcome "$next_story" "success"
+                echo -e "${GREEN}✅ Story $next_story marked as complete${NC}"
+            fi
+
             # Successful iteration - reset failures
             reset_failures "$next_story"
             log_iteration $iteration "$next_story" "ATTEMPTED" $duration
@@ -385,6 +433,10 @@ $(tail -100 "$PROGRESS_FILE" 2>/dev/null || echo "No progress yet")
         # Safety check before continuing
         if ! safety_check; then
             echo -e "${YELLOW}Safety check failed, will retry next iteration${NC}"
+
+            # Record learning outcome: FAIL due to safety check
+            record_learning_outcome "$next_story" "fail"
+
             increment_failures "$next_story"
 
             if check_failure_threshold "$next_story"; then
