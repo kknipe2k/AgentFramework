@@ -13,8 +13,7 @@ source "$ARIA_DIR/common.sh" || { echo "Failed to load common.sh"; exit 1; }
 # Check dependencies
 aria_check_deps git jq || exit 1
 
-# Configuration
-MAX_ITERATIONS=${1:-25}
+# Configuration (set defaults, command handler may override)
 AGENT=${ARIA_RALPH_AGENT:-"claude"}  # claude, amp, etc.
 SLEEP_BETWEEN=${ARIA_RALPH_SLEEP:-5}
 MAX_CONSECUTIVE_FAILURES=${ARIA_RALPH_MAX_FAILURES:-3}  # Failures before HITL
@@ -37,6 +36,7 @@ GIT_OPS_SCRIPT="$ARIA_DIR/git-ops.sh"
 MODEL_SELECTOR="$ARIA_DIR/model-selector.sh"
 PLANNER_SCRIPT="$ARIA_DIR/planner/planner.sh"
 PLAN_FILE="$ARIA_DIR/state/current-plan.json"
+PAUSE_SCRIPT="$ARIA_DIR/pause.sh"
 
 # Track consecutive failures per story
 declare -A story_failures
@@ -54,15 +54,18 @@ CHECKPOINT_EACH_ITERATION=${ARIA_RALPH_CHECKPOINT:-true}
 AUTO_MODEL_SELECT=${ARIA_RALPH_AUTO_MODEL:-true}
 FORCE_MODEL=${ARIA_RALPH_FORCE_MODEL:-""}  # Set to opus/sonnet/haiku to force
 
-echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
-echo -e "${BLUE}          ARIA-RALPH: Autonomous Execution Loop            ${NC}"
-echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
-echo ""
-echo "Agent:          $AGENT"
-echo "Max iterations: $MAX_ITERATIONS"
-echo "PRD:            $PRD_FILE"
-echo "Progress:       $PROGRESS_FILE"
-echo ""
+# Print header (called from run command)
+print_header() {
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}          ARIA-RALPH: Autonomous Execution Loop            ${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo "Agent:          $AGENT"
+    echo "Max iterations: $MAX_ITERATIONS"
+    echo "PRD:            $PRD_FILE"
+    echo "Progress:       $PROGRESS_FILE"
+    echo ""
+}
 
 # Pre-flight checks
 preflight_check() {
@@ -242,6 +245,37 @@ check_failure_threshold() {
 }
 
 # ============================================
+# PAUSE/RESUME CONTROL
+# ============================================
+
+# Check if paused and wait for resume
+wait_if_paused() {
+    if [[ -x "$PAUSE_SCRIPT" ]]; then
+        "$PAUSE_SCRIPT" wait
+    fi
+}
+
+# Save execution status for visibility
+save_execution_status() {
+    local task="$1"
+    local story="$2"
+    local iteration="$3"
+
+    if [[ -x "$PAUSE_SCRIPT" ]]; then
+        "$PAUSE_SCRIPT" save "$task" "$story" "$iteration"
+    fi
+}
+
+# Check if we're paused (for conditionals)
+is_paused() {
+    if [[ -x "$PAUSE_SCRIPT" ]]; then
+        "$PAUSE_SCRIPT" is_paused
+        return $?
+    fi
+    return 1
+}
+
+# ============================================
 # PLANNER INTEGRATION
 # ============================================
 
@@ -361,6 +395,9 @@ run_loop() {
         echo -e "${BLUE}                    ITERATION $iteration / $MAX_ITERATIONS${NC}"
         echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
 
+        # Check for pause signal at start of iteration
+        wait_if_paused
+
         # Save checkpoint at start of iteration (for rollback safety)
         if [[ "$CHECKPOINT_EACH_ITERATION" == "true" ]] && [[ -x "$GIT_OPS_SCRIPT" ]]; then
             "$GIT_OPS_SCRIPT" checkpoint "iter_${iteration}" >/dev/null 2>&1 || true
@@ -382,6 +419,9 @@ run_loop() {
         fi
         echo "Next story: $next_story"
         echo ""
+
+        # Save execution status for visibility
+        save_execution_status "executing" "$next_story" "$iteration"
 
         # Build the prompt with current context
         local full_prompt=$(cat "$PROMPT_FILE")
@@ -541,6 +581,9 @@ $(tail -100 "$PROGRESS_FILE" 2>/dev/null || echo "No progress yet")
         echo "Sleeping ${SLEEP_BETWEEN}s before next iteration..."
         sleep $SLEEP_BETWEEN
 
+        # Check for pause signal after sleep
+        wait_if_paused
+
     done
 
     local end_time=$(date +%s)
@@ -678,6 +721,14 @@ case "${1:-help}" in
         fi
         ;;
     "run")
+        # Set max iterations (can be passed as second arg)
+        MAX_ITERATIONS=${2:-25}
+        if [[ "$2" == "--force" ]]; then
+            MAX_ITERATIONS=${3:-25}
+        fi
+
+        print_header
+
         # Check for approved plan first
         if [[ -x "$PLANNER_SCRIPT" ]] && [[ -f "$PLAN_FILE" ]]; then
             if ! check_approved_plan; then
@@ -703,18 +754,41 @@ case "${1:-help}" in
             "$PLANNER_SCRIPT" status 2>/dev/null || true
         fi
         ;;
+    "pause")
+        if [[ -x "$PAUSE_SCRIPT" ]]; then
+            "$PAUSE_SCRIPT" pause
+        else
+            echo -e "${RED}Pause script not found${NC}"
+            exit 1
+        fi
+        ;;
+    "resume")
+        if [[ -x "$PAUSE_SCRIPT" ]]; then
+            "$PAUSE_SCRIPT" resume
+        else
+            echo -e "${RED}Pause script not found${NC}"
+            exit 1
+        fi
+        ;;
     "help"|*)
         echo "ARIA-RALPH: Autonomous execution with safety rails"
         echo ""
         echo "Commands:"
         echo "  plan \"requirements\"  - Start planning loop (get approval first)"
         echo "  run [--force]        - Run execution (requires approved plan)"
+        echo "  pause                - Pause execution at next safe point"
+        echo "  resume               - Resume paused execution"
         echo "  init \"description\"   - Initialize new PRD (legacy mode)"
         echo "  status               - Show current status"
         echo ""
         echo "Workflow:"
         echo "  1. ralph plan \"Add user auth\"  - Create plan, get approval"
         echo "  2. ralph run                   - Execute approved plan"
+        echo ""
+        echo "Pause/Resume:"
+        echo "  While running:  ralph pause    - Pause at next safe point"
+        echo "  When paused:    ralph resume   - Continue execution"
+        echo "  Check status:   .aria/pause.sh status"
         echo ""
         echo "Environment:"
         echo "  ARIA_RALPH_AGENT  - Agent to use (claude, amp)"
