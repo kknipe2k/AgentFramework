@@ -2,17 +2,40 @@
 
 > *"The LLM writes the recipe. The rails ensure it's followed."*
 
+## TL;DR - Working Implementation
+
+**Scripts that BLOCK Claude from bad behavior:**
+
+```bash
+# Start a task
+./.claude/hooks/aria init "Add user authentication"
+
+# Claude works... but after 3 edits:
+# BLOCKED: 3 edits without testing. Run tests before continuing.
+
+# After 5 edits:
+# BLOCKED: 5 edits without commit. Commit checkpoint before continuing.
+
+# Trying to commit with failing tests:
+# BLOCKED: Cannot commit with failing tests. Fix tests first.
+
+# When done:
+./.claude/hooks/aria done  # Forces intent verification
+```
+
+**See [ARIA_RAILS.md](./ARIA_RAILS.md) for the actual working implementation.**
+
+---
+
 ## What is ARIA?
 
-ARIA is **not a programming language** - it's a structured orchestration wrapper that makes LLM-driven development **deterministic and verifiable**.
+ARIA is **not a programming language** - it's rails that make LLM-driven development **deterministic and verifiable**.
 
 ```
-USER INTENT → LLM GENERATES PLAN → RAILS EXECUTE → GATES VERIFY → DONE
+INTENT LOCKED → RAILS BLOCK BAD BEHAVIOR → GATES VERIFY → DONE
 ```
 
 ## The Problem
-
-Current LLM coding has issues:
 
 | Problem | What Happens |
 |---------|--------------|
@@ -20,9 +43,28 @@ Current LLM coding has issues:
 | **No verification** | Hope it worked, find bugs later |
 | **No rollback** | Stuck with broken state |
 | **Missed requirements** | "Oh, I forgot to add tests" |
-| **Ambiguous actions** | "Update the file" - which file? how? |
 
 ## The ARIA Solution
+
+### Actual Rails (Working Now)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  RAIL 1: No edits without intent                           │
+│          Can't touch code until intent defined             │
+├─────────────────────────────────────────────────────────────┤
+│  RAIL 2: Max 3 edits without testing                       │
+│          BLOCKED until tests run                           │
+├─────────────────────────────────────────────────────────────┤
+│  RAIL 3: Max 5 edits without commit                        │
+│          BLOCKED until committed (checkpoint)              │
+├─────────────────────────────────────────────────────────────┤
+│  RAIL 4: Tests must pass before commit                     │
+│          Can't commit broken code                          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Future: Structured Plans
 
 ```aria
 @plan "Add user authentication"
@@ -96,8 +138,9 @@ Never stuck with broken state.
 
 | Document | Description |
 |----------|-------------|
+| **[ARIA_RAILS.md](./ARIA_RAILS.md)** | **Working implementation - start here** |
 | [ARIA_ORCHESTRATION.md](./ARIA_ORCHESTRATION.md) | Full architecture and concepts |
-| [ARIA_SYNTAX.md](./ARIA_SYNTAX.md) | Concise syntax reference |
+| [ARIA_SYNTAX.md](./ARIA_SYNTAX.md) | Concise syntax reference (future) |
 | [ARIA_CLAUDE_INTEGRATION.md](./ARIA_CLAUDE_INTEGRATION.md) | Claude Code hooks/skills integration |
 
 ## Syntax Quick Reference

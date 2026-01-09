@@ -1,0 +1,139 @@
+#!/bin/bash
+# ARIA CLI - Manage rails state
+
+ARIA_DIR=".aria"
+
+case "$1" in
+    "init")
+        # Initialize ARIA with intent
+        mkdir -p "$ARIA_DIR"
+        echo "0" > "$ARIA_DIR/edit_count"
+        echo "0" > "$ARIA_DIR/last_test"
+        echo "0" > "$ARIA_DIR/last_commit"
+        rm -f "$ARIA_DIR/tests_failed"
+
+        if [[ -n "$2" ]]; then
+            echo "# Intent: $2" > "$ARIA_DIR/intent.md"
+            echo ""
+            echo "## Must Have:" >> "$ARIA_DIR/intent.md"
+            echo "- " >> "$ARIA_DIR/intent.md"
+            echo ""
+            echo "## Must Not:" >> "$ARIA_DIR/intent.md"
+            echo "- " >> "$ARIA_DIR/intent.md"
+            echo "ARIA initialized with intent: $2"
+        else
+            echo "Usage: aria init \"Your intent here\""
+            echo "Then edit .aria/intent.md to add requirements"
+            exit 1
+        fi
+        ;;
+
+    "status")
+        if [[ ! -d "$ARIA_DIR" ]]; then
+            echo "ARIA not initialized. Run: aria init \"intent\""
+            exit 1
+        fi
+
+        local edits=$(cat "$ARIA_DIR/edit_count" 2>/dev/null || echo 0)
+        local last_test=$(cat "$ARIA_DIR/last_test" 2>/dev/null || echo 0)
+        local last_commit=$(cat "$ARIA_DIR/last_commit" 2>/dev/null || echo 0)
+        local tests_ok="YES"
+        [[ -f "$ARIA_DIR/tests_failed" ]] && tests_ok="NO"
+
+        echo "═══════════════════════════════════"
+        echo "         ARIA STATUS"
+        echo "═══════════════════════════════════"
+        echo "Intent: $(head -1 "$ARIA_DIR/intent.md" 2>/dev/null | sed 's/# Intent: //')"
+        echo ""
+        echo "Edits total:        $edits"
+        echo "Edits since test:   $((edits - last_test))/3"
+        echo "Edits since commit: $((edits - last_commit))/5"
+        echo "Tests passing:      $tests_ok"
+        echo "═══════════════════════════════════"
+
+        # Warnings
+        if [[ $((edits - last_test)) -ge 2 ]]; then
+            echo "⚠️  Run tests soon (1 edit left)"
+        fi
+        if [[ $((edits - last_commit)) -ge 4 ]]; then
+            echo "⚠️  Commit soon (1 edit left)"
+        fi
+        if [[ "$tests_ok" == "NO" ]]; then
+            echo "🚫 Tests failing - fix before commit"
+        fi
+        ;;
+
+    "reset")
+        # Reset counters (after manual test/commit)
+        if [[ "$2" == "test" ]]; then
+            edits=$(cat "$ARIA_DIR/edit_count" 2>/dev/null || echo 0)
+            echo "$edits" > "$ARIA_DIR/last_test"
+            rm -f "$ARIA_DIR/tests_failed"
+            echo "Test counter reset"
+        elif [[ "$2" == "commit" ]]; then
+            edits=$(cat "$ARIA_DIR/edit_count" 2>/dev/null || echo 0)
+            echo "$edits" > "$ARIA_DIR/last_commit"
+            echo "Commit counter reset"
+        elif [[ "$2" == "all" ]]; then
+            echo "0" > "$ARIA_DIR/edit_count"
+            echo "0" > "$ARIA_DIR/last_test"
+            echo "0" > "$ARIA_DIR/last_commit"
+            rm -f "$ARIA_DIR/tests_failed"
+            echo "All counters reset"
+        else
+            echo "Usage: aria reset [test|commit|all]"
+        fi
+        ;;
+
+    "done")
+        # Verify intent before marking complete
+        echo "═══════════════════════════════════"
+        echo "         INTENT VERIFICATION"
+        echo "═══════════════════════════════════"
+        echo ""
+        cat "$ARIA_DIR/intent.md"
+        echo ""
+        echo "═══════════════════════════════════"
+        echo ""
+        read -p "Does the implementation satisfy this intent? [y/N] " answer
+        if [[ "$answer" == "y" || "$answer" == "Y" ]]; then
+            rm -rf "$ARIA_DIR"
+            echo "✅ ARIA complete. State cleared."
+        else
+            echo "❌ Not done. Keep working."
+            exit 1
+        fi
+        ;;
+
+    "fail")
+        # Mark tests as failed
+        touch "$ARIA_DIR/tests_failed"
+        echo "Tests marked as failed"
+        ;;
+
+    "pass")
+        # Mark tests as passed
+        rm -f "$ARIA_DIR/tests_failed"
+        edits=$(cat "$ARIA_DIR/edit_count" 2>/dev/null || echo 0)
+        echo "$edits" > "$ARIA_DIR/last_test"
+        echo "Tests marked as passed"
+        ;;
+
+    *)
+        echo "ARIA - Agentic Rails for Intent Adherence"
+        echo ""
+        echo "Commands:"
+        echo "  aria init \"intent\"  - Start with intent"
+        echo "  aria status         - Show current state"
+        echo "  aria reset [test|commit|all] - Reset counters"
+        echo "  aria pass           - Mark tests passed"
+        echo "  aria fail           - Mark tests failed"
+        echo "  aria done           - Verify intent and complete"
+        echo ""
+        echo "Rails enforced:"
+        echo "  - No edits without intent"
+        echo "  - Max 3 edits without testing"
+        echo "  - Max 5 edits without commit"
+        echo "  - No commit with failing tests"
+        ;;
+esac
