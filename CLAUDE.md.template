@@ -1,0 +1,81 @@
+# CLAUDE.md - Team Learning Document
+# Based on Boris Cherny's (Claude Code creator) setup
+#
+# Add mistakes here so Claude doesn't repeat them.
+# Team contributes. Check into git. Keep updated.
+
+## Project: [Your Project Name]
+
+## Tech Stack
+- [List your stack]
+
+## Patterns We Use
+
+### Code Style
+- [Your patterns]
+
+### Testing
+- [How to run tests]
+- [Test patterns]
+
+### Deployment
+- [How to deploy]
+
+## Mistakes Claude Has Made (Don't Repeat!)
+
+### Example: Database
+- ❌ Don't use raw SQL with string interpolation
+- ✅ Use parameterized queries: `db.query($1, [value])`
+
+### Example: Auth
+- ❌ Don't store JWT secret in code
+- ✅ Use environment variable: `process.env.JWT_SECRET`
+
+### Example: React
+- ❌ Don't create new components for every page variation
+- ✅ Reuse existing components from `src/components/ui/`
+
+### Example: API
+- ❌ Don't forget error handling on async calls
+- ✅ Always wrap in try/catch with proper error response
+
+## Verification Commands
+
+```bash
+# Run all tests
+npm test
+
+# Type check
+npm run typecheck
+
+# Lint
+npm run lint
+
+# Build
+npm run build
+
+# Start dev server
+npm run dev
+
+# E2E tests
+npm run test:e2e
+```
+
+## Before Committing
+
+1. Run tests: `npm test`
+2. Run lint: `npm run lint`
+3. Check types: `npm run typecheck`
+4. Verify in browser: http://localhost:3000
+
+## Subagents Available
+
+- `verify-app` - Tests the app end-to-end
+- `code-simplifier` - Simplifies code after changes
+
+## MCP Tools Available
+
+- [List your MCP servers]
+
+---
+*Update this file whenever Claude makes a mistake we shouldn't repeat.*
