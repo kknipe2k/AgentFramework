@@ -34,6 +34,42 @@ mkdir -p .aria/{ralph,rails,logs,state,agents}
 chmod +x .aria/*.sh .aria/ralph/*.sh
 ```
 
+### 2a. For Existing Projects: Run Discovery First
+
+If you're adding ARIA to an existing/mature project, run discovery to build context:
+
+```bash
+# Full onboarding: scan → answer questions → build context
+./.aria/discover.sh full .
+
+# Or step by step:
+./.aria/discover.sh scan .        # Scan codebase
+./.aria/discover.sh qa            # Answer questions about the project
+./.aria/discover.sh build         # Generate project-context.md
+```
+
+**What discovery does:**
+- Scans tech stack (Node, Python, frameworks, ORMs)
+- Maps directory structure and patterns
+- Assesses test coverage
+- Generates project-specific questions
+- Creates `.aria/project-context.md` for AI to reference
+
+**After discovery, edit project-context.md to add:**
+- "Don't Touch" areas (legacy code, security-critical files)
+- Special instructions (naming conventions, deployment notes)
+- Tribal knowledge that AI should know
+
+### 2b. For Greenfield Projects: Start Planning Directly
+
+New projects can skip discovery and go straight to planning:
+
+```bash
+./.aria/ralph/ralph.sh plan "Build a REST API for user management"
+```
+
+---
+
 ### 3. Create Your First Feature (Planning-First Workflow)
 
 ```bash
@@ -196,6 +232,36 @@ tail -f .aria/ralph/progress.txt
 | `approve` | Mark current plan as approved |
 | `reset` | Clear current plan |
 
+### Discovery Commands (for existing projects)
+
+```bash
+./.aria/discover.sh <command> [args]
+```
+
+| Command | Description |
+|---------|-------------|
+| `scan [dir]` | Scan codebase, generate questions |
+| `qa` | Answer questions about the project |
+| `build` | Build project-context.md from scan + answers |
+| `full [dir]` | Complete onboarding (scan → qa → build) |
+| `status` | Show discovery status |
+
+### Design Notes Commands
+
+```bash
+./.aria/design-notes.sh <command> [args]
+```
+
+| Command | Description |
+|---------|-------------|
+| `checkpoint <title> <content>` | Pause for design review |
+| `concern <title> <content> [severity]` | Flag a concern (low/medium/high) |
+| `assumption <title> <content>` | Log an assumption |
+| `research <topic> <findings>` | Log research findings |
+| `decision <title> <chosen> <alts> <reason>` | Log a decision |
+| `show [lines]` | Show recent notes |
+| `clear` | Start fresh session |
+
 ### Model Selector Commands
 
 ```bash
@@ -294,6 +360,26 @@ tail -f .aria/ralph/progress.txt
          │  - Tracks progress        │
          │  - Escalates when stuck ──┼──► back to Planner
          └───────────────────────────┘
+```
+
+### Onboarding Existing Projects
+
+```bash
+# 1. Run full discovery
+./.aria/discover.sh full /path/to/existing-project
+
+# 2. Answer the questions:
+#    - What is the main purpose?
+#    - What areas should NOT be modified?
+#    - What's the deployment process?
+
+# 3. Review and edit project-context.md
+#    - Add "Don't Touch" areas
+#    - Add special instructions
+#    - Add tribal knowledge
+
+# 4. Now plan features as usual
+./.aria/ralph/ralph.sh plan "Add new dashboard"
 ```
 
 ### Legacy PRD-Based Development
