@@ -58,6 +58,20 @@ At these points, pause and ask for review:
 3. **When you have concerns** - Something feels wrong
 4. **When changing direction** - Re-planning due to blockers
 
+## Project Context
+
+If `.aria/project-context.md` exists, READ IT FIRST. It contains:
+- Tech stack and patterns used in this project
+- Directory structure and conventions
+- Areas that should NOT be modified ("Don't Touch")
+- Special instructions from the project owner
+- Answers to common questions about the codebase
+
+**Always respect:**
+- Don't Touch areas - Never modify these without explicit approval
+- Existing patterns - Follow the project's conventions, don't introduce new ones
+- Special instructions - These override general best practices
+
 ## Plan Output Format
 
 Output plans as JSON:
