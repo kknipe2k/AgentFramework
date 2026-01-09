@@ -274,6 +274,182 @@ When ARIA needs human help:
 
 ---
 
+## IDE & Workflow Integrations
+
+ARIA integrates with your development environment at multiple levels for seamless workflow.
+
+### Claude Code Slash Commands
+
+ARIA includes slash commands for use within Claude Code sessions.
+
+**Available Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `/aria [command]` | Run any ARIA command |
+| `/aria-verify [level]` | Run verification pipeline |
+| `/aria-start [description]` | Initialize new feature |
+| `/aria-status` | Show comprehensive status |
+
+**Usage Examples:**
+
+```
+# In Claude Code session
+/aria ralph run 25
+/aria verify standard
+/aria-start "Add user dashboard"
+/aria-status
+```
+
+**Location:** `.claude/commands/`
+
+The slash commands provide natural integration when you're already in a Claude Code session - no need to switch to terminal.
+
+### VS Code Tasks
+
+ARIA provides VS Code tasks for GUI-based operation.
+
+**Access:** `Cmd/Ctrl+Shift+P` → "Tasks: Run Task" → Select ARIA task
+
+**Available Tasks:**
+
+| Task | Description |
+|------|-------------|
+| ARIA: Verify Quick | Types + lint check |
+| ARIA: Verify Standard | Full test suite |
+| ARIA: Verify Full | Including E2E tests |
+| ARIA: Ralph Run | Start autonomous loop |
+| ARIA: Ralph Status | Show current status |
+| ARIA: Ralph Init | Initialize new feature |
+| ARIA: Model Status | Show budget/usage |
+| ARIA: Learning Stats | Show model learning |
+| ARIA: Save Checkpoint | Create git checkpoint |
+| ARIA: List Checkpoints | Show available checkpoints |
+| ARIA: Rollback to Checkpoint | Restore checkpoint |
+| ARIA: Create PR | Create pull request |
+| ARIA: HITL Status | Show pending requests |
+| ARIA: HITL Respond | Respond to request |
+| ARIA: HITL Approve | Approve pending |
+
+**Keyboard Shortcuts (optional):**
+
+Add to `keybindings.json`:
+```json
+{
+  "key": "cmd+shift+v",
+  "command": "workbench.action.tasks.runTask",
+  "args": "ARIA: Verify Standard"
+},
+{
+  "key": "cmd+shift+r",
+  "command": "workbench.action.tasks.runTask",
+  "args": "ARIA: Ralph Status"
+}
+```
+
+**Location:** `.vscode/tasks.json`
+
+### Git Hooks
+
+ARIA provides git hooks for automatic verification on commit and push.
+
+**Available Hooks:**
+
+| Hook | Trigger | Verification Level |
+|------|---------|-------------------|
+| `pre-commit` | Before commit | Quick (types + lint) |
+| `pre-push` | Before push | Standard (+ tests + build) |
+| `commit-msg` | After message | Message format validation |
+
+**Installation:**
+
+```bash
+# Install all ARIA hooks
+./.aria/hooks/install.sh install
+
+# Check installation status
+./.aria/hooks/install.sh status
+
+# Uninstall hooks
+./.aria/hooks/install.sh uninstall
+```
+
+**Behavior:**
+
+- **pre-commit:** Runs quick verification. Blocks commit if types or lint fail.
+- **pre-push:** Runs standard verification. Blocks push if tests fail.
+- **commit-msg:** Validates message format. Suggests conventional commits and story references.
+
+**Bypassing Hooks:**
+
+```bash
+# Skip pre-commit hook
+git commit --no-verify -m "WIP: work in progress"
+
+# Skip pre-push hook
+git push --no-verify
+```
+
+**Location:** `.aria/hooks/` (templates), `.git/hooks/` (installed)
+
+### Integration Layers
+
+The recommended setup uses all three integrations:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Layer 1: Git Hooks (Automatic Safety)                  │
+│  ├── pre-commit: Quick verify on every commit           │
+│  ├── pre-push: Standard verify before push              │
+│  └── commit-msg: Message format validation              │
+├─────────────────────────────────────────────────────────┤
+│  Layer 2: Claude Code Slash Commands (AI Sessions)      │
+│  ├── /aria: Full command access                         │
+│  ├── /aria-verify: Verification                         │
+│  ├── /aria-start: Initialize features                   │
+│  └── /aria-status: Dashboard                            │
+├─────────────────────────────────────────────────────────┤
+│  Layer 3: VS Code Tasks (GUI Access)                    │
+│  ├── Quick access via Command Palette                   │
+│  ├── Optional keyboard shortcuts                        │
+│  └── Visual feedback in terminal panel                  │
+├─────────────────────────────────────────────────────────┤
+│  Layer 4: Shell Aliases (Terminal Power Users)          │
+│  ├── alias aria='./.aria/aria-engine.sh'               │
+│  └── alias ralph='./.aria/ralph/ralph.sh'              │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Quick Setup Script
+
+Run this to set up all integrations:
+
+```bash
+#!/bin/bash
+# setup-aria-integrations.sh
+
+# Install git hooks
+./.aria/hooks/install.sh install
+
+# Add shell aliases (add to your .bashrc or .zshrc)
+echo "
+# ARIA aliases
+alias aria='./.aria/aria-engine.sh'
+alias ralph='./.aria/ralph/ralph.sh'
+" >> ~/.bashrc
+
+# VS Code tasks are already in .vscode/tasks.json
+# Claude Code commands are already in .claude/commands/
+
+echo "ARIA integrations installed!"
+echo "  - Git hooks: installed"
+echo "  - Shell aliases: added to ~/.bashrc (source it or restart shell)"
+echo "  - VS Code tasks: available in Command Palette"
+echo "  - Claude Code: use /aria commands in sessions"
+```
+
+---
+
 ## Configuration
 
 ### Environment Variables

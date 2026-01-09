@@ -1,0 +1,57 @@
+#!/bin/bash
+# ARIA Commit Message Hook
+# Validates commit message format
+
+COMMIT_MSG_FILE="$1"
+COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# Skip merge commits
+if echo "$COMMIT_MSG" | grep -qE "^Merge "; then
+    exit 0
+fi
+
+# Check minimum length
+if [[ ${#COMMIT_MSG} -lt 10 ]]; then
+    echo -e "${RED}ARIA: Commit message too short (min 10 chars)${NC}"
+    exit 1
+fi
+
+# Check for conventional commit format (optional - soft warning)
+# Format: type(scope): description
+# Types: feat, fix, docs, style, refactor, test, chore
+if ! echo "$COMMIT_MSG" | grep -qE "^(feat|fix|docs|style|refactor|test|chore|build|ci|perf)(\(.+\))?: .+"; then
+    echo -e "${YELLOW}ARIA: Consider using conventional commit format:${NC}"
+    echo "  feat: Add new feature"
+    echo "  fix: Bug fix"
+    echo "  docs: Documentation"
+    echo "  refactor: Code refactoring"
+    echo "  test: Adding tests"
+    echo "  chore: Maintenance"
+    echo ""
+    # Soft warning only - don't block
+fi
+
+# Check for ARIA story reference (if in ralph mode)
+ARIA_DIR="$(git rev-parse --show-toplevel)/.aria"
+PRD_FILE="$ARIA_DIR/ralph/prd.json"
+
+if [[ -f "$PRD_FILE" ]]; then
+    # Extract story IDs from PRD
+    STORY_IDS=$(jq -r '.userStories[].id' "$PRD_FILE" 2>/dev/null | tr '\n' '|' | sed 's/|$//')
+
+    if [[ -n "$STORY_IDS" ]] && ! echo "$COMMIT_MSG" | grep -qE "($STORY_IDS)"; then
+        echo -e "${YELLOW}ARIA: Consider referencing a story ID in commit message${NC}"
+        echo "  Available stories: $(echo "$STORY_IDS" | tr '|' ', ')"
+        echo ""
+        # Soft warning only
+    fi
+fi
+
+echo -e "${GREEN}ARIA: Commit message OK${NC}"
+exit 0

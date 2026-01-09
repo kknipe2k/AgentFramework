@@ -18,6 +18,17 @@ The result is a system that can autonomously develop features while maintaining 
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
+│                         DEVELOPER INTERFACE LAYER                            │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
+│  │ Claude Code │  │  VS Code    │  │ Git Hooks   │  │   Shell     │        │
+│  │  /aria      │  │   Tasks     │  │ pre-commit  │  │  Aliases    │        │
+│  │  /aria-*    │  │   Panel     │  │ pre-push    │  │  aria/ralph │        │
+│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘        │
+└─────────┼────────────────┼────────────────┼────────────────┼────────────────┘
+          └────────────────┴────────────────┴────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
 │                              ARIA ENGINE                                     │
 │                     (Central orchestration layer)                            │
 └───────────────────────────────────┬─────────────────────────────────────────┘
@@ -62,6 +73,7 @@ ARIA addresses every gap in autonomous AI development:
 | Cost | Uncontrolled spend | Budget-aware model selection |
 | Quality | Variable | Consistent via verification |
 | Learning | None | Adapts over time |
+| Workflow | Manual CLI | Claude Code, VS Code, Git hooks |
 
 ---
 
@@ -420,6 +432,100 @@ User: aria ralph run 50
 - Humans are consulted when needed
 - Guidance improves future iterations
 - Not replacing humans, augmenting them
+
+### 6. Developer-Friendly
+- Multiple interface options for different workflows
+- Integrates with existing tools (VS Code, Git)
+- Works within Claude Code sessions naturally
+
+---
+
+## IDE & Workflow Integrations
+
+ARIA provides multiple entry points to fit any development workflow:
+
+### Claude Code Slash Commands
+
+Use ARIA directly within Claude Code sessions:
+
+```
+/aria [command]           # Run any ARIA command
+/aria-verify [level]      # Run verification pipeline
+/aria-start [description] # Initialize new feature
+/aria-status              # Comprehensive dashboard
+```
+
+**Location:** `.claude/commands/`
+
+**Best for:** AI-assisted development sessions where you're already using Claude.
+
+### VS Code Tasks
+
+GUI access via Command Palette (`Cmd/Ctrl+Shift+P` → "Tasks: Run Task"):
+
+| Task | Action |
+|------|--------|
+| ARIA: Verify Quick/Standard/Full | Run verification |
+| ARIA: Ralph Run/Status/Init | Ralph operations |
+| ARIA: Model Status/Learning Stats | Model info |
+| ARIA: Save/List/Rollback Checkpoint | Git operations |
+| ARIA: HITL Status/Respond/Approve | Human intervention |
+
+**Location:** `.vscode/tasks.json`
+
+**Best for:** Developers who prefer GUI over terminal.
+
+### Git Hooks
+
+Automatic verification on git operations:
+
+| Hook | Trigger | Action |
+|------|---------|--------|
+| `pre-commit` | `git commit` | Quick verification (types + lint) |
+| `pre-push` | `git push` | Standard verification (+ tests) |
+| `commit-msg` | After message | Message format validation |
+
+**Installation:**
+```bash
+./.aria/hooks/install.sh install
+```
+
+**Location:** `.aria/hooks/` (templates) → `.git/hooks/` (installed)
+
+**Best for:** Ensuring code quality automatically, team consistency.
+
+### Shell Aliases
+
+Direct terminal access:
+
+```bash
+# Add to ~/.bashrc or ~/.zshrc
+alias aria='./.aria/aria-engine.sh'
+alias ralph='./.aria/ralph/ralph.sh'
+```
+
+**Best for:** Power users who prefer terminal workflows.
+
+### Integration Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    ENTRY POINTS                              │
+├─────────────────────────────────────────────────────────────┤
+│  Git Hooks        → Automatic safety on commit/push         │
+│  Claude Code      → Natural AI session integration          │
+│  VS Code Tasks    → GUI-based operation                     │
+│  Shell Aliases    → Terminal power user access              │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    ARIA ENGINE                               │
+│              (All paths converge here)                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+All integration methods ultimately call the same ARIA scripts, ensuring consistent behavior regardless of how you access the system.
 
 ---
 
