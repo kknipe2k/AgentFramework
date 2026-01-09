@@ -648,45 +648,48 @@ cmd_pr() {
     "$git_ops" pr "$subcmd" "$@"
 }
 
+cmd_model() {
+    local subcmd="${1:-status}"
+    shift || true
+
+    local model_selector="$ARIA_DIR/model-selector.sh"
+    if [[ ! -x "$model_selector" ]]; then
+        echo "Model selector not found"
+        return 1
+    fi
+
+    "$model_selector" "$subcmd" "$@"
+}
+
 cmd_help() {
     echo "ARIA - Agentic Rail-based Intent Architecture"
     echo ""
     echo "Commands:"
     echo "  aria init \"intent\"     - Start with intent"
     echo "  aria status            - Show current state"
-    echo "  aria check [rail]      - Run rail checks (hardcoded)"
+    echo "  aria check [rail]      - Run rail checks"
     echo "  aria rails [cmd]       - Run YAML-defined rails"
-    echo "  aria verify [level]    - Run verification (quick|standard|full)"
+    echo "  aria verify [level]    - Run verification"
     echo "  aria agent [cmd]       - Run agents"
-    echo "  aria hitl [cmd]        - Human-in-the-loop system"
+    echo "  aria hitl [cmd]        - Human-in-the-loop"
     echo "  aria rollback [cmd]    - Rollback to safe state"
     echo "  aria pr [cmd]          - Pull request operations"
+    echo "  aria model [cmd]       - Model selection & cost"
     echo "  aria done              - Complete and archive"
     echo ""
-    echo "  aria pass              - Mark tests as passed"
-    echo "  aria fail              - Mark tests as failed"
-    echo "  aria reset             - Reset all counters"
-    echo "  aria checkpoint [name] - Save current state"
+    echo "  aria pass/fail/reset   - Test tracking"
+    echo "  aria checkpoint [name] - Save state"
     echo ""
-    echo "Rollback commands:"
-    echo "  aria rollback commits <n>     - Undo last N commits"
-    echo "  aria rollback checkpoint <id> - Restore to checkpoint"
-    echo "  aria rollback success         - Rollback to last good state"
+    echo "Model commands:"
+    echo "  aria model status      - Show token usage & budget"
+    echo "  aria model select <task> - Get recommended model"
+    echo "  aria model budget <amt> - Set budget"
+    echo "  aria model reset       - Reset usage tracking"
     echo ""
-    echo "PR commands:"
-    echo "  aria pr create [title] - Create pull request"
-    echo "  aria pr draft [title]  - Create draft PR"
-    echo "  aria pr auto           - Create PR if all stories done"
-    echo ""
-    echo "Rails commands:"
-    echo "  aria rails all         - Run all applicable rails"
-    echo "  aria rails fix         - Run rails with auto-fix"
-    echo "  aria rails list        - List available rails"
-    echo ""
-    echo "HITL commands:"
-    echo "  aria hitl status       - Show pending requests"
-    echo "  aria hitl respond <id> - Respond to a request"
-    echo "  aria hitl approve <id> - Quick approve"
+    echo "Rollback: aria rollback commits/checkpoint/success"
+    echo "PR:       aria pr create/draft/auto"
+    echo "Rails:    aria rails all/fix/list"
+    echo "HITL:     aria hitl status/respond/approve"
 }
 
 # ============================================
@@ -704,6 +707,7 @@ case "${1:-help}" in
     rollback)   shift; cmd_rollback "$@" ;;
     checkpoint) cmd_checkpoint "$2" ;;
     pr)         shift; cmd_pr "$@" ;;
+    model)      shift; cmd_model "$@" ;;
     done)       cmd_done ;;
     pass)       record_test; echo "Tests marked as passed" ;;
     fail)       record_test_failure; echo "Tests marked as failed" ;;

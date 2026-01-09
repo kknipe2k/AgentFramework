@@ -29,6 +29,7 @@ PROMPT_FILE="$SCRIPT_DIR/prompt.md"
 LEARNINGS_FILE="$SCRIPT_DIR/learnings.md"
 HITL_SCRIPT="$ARIA_DIR/hitl.sh"
 GIT_OPS_SCRIPT="$ARIA_DIR/git-ops.sh"
+MODEL_SELECTOR="$ARIA_DIR/model-selector.sh"
 
 # Track consecutive failures per story
 declare -A story_failures
@@ -36,6 +37,10 @@ declare -A story_failures
 # Auto-PR configuration
 AUTO_PR=${ARIA_RALPH_AUTO_PR:-true}
 CHECKPOINT_EACH_ITERATION=${ARIA_RALPH_CHECKPOINT:-true}
+
+# Model selection configuration
+AUTO_MODEL_SELECT=${ARIA_RALPH_AUTO_MODEL:-true}
+FORCE_MODEL=${ARIA_RALPH_FORCE_MODEL:-""}  # Set to opus/sonnet/haiku to force
 
 echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
 echo -e "${BLUE}          ARIA-RALPH: Autonomous Execution Loop            ${NC}"
@@ -290,22 +295,49 @@ $(tail -100 "$PROGRESS_FILE" 2>/dev/null || echo "No progress yet")
 ## Current Story: $next_story
 "
 
+        # Select model for this task
+        local selected_model="sonnet"
+        local model_flag=""
+        local failures=${story_failures[$next_story]:-0}
+
+        if [[ "$AUTO_MODEL_SELECT" == "true" ]] && [[ -x "$MODEL_SELECTOR" ]]; then
+            local story_title=$(jq -r ".userStories[] | select(.id == \"$next_story\") | .title" "$PRD_FILE" 2>/dev/null || echo "")
+            selected_model=$("$MODEL_SELECTOR" select "$story_title" "$next_story" "$FORCE_MODEL" "$failures")
+            model_flag=$("$MODEL_SELECTOR" flag "$story_title" "$next_story" "$FORCE_MODEL" "$failures")
+            echo -e "${BLUE}Model: $selected_model${NC} (failures: $failures)"
+        elif [[ -n "$FORCE_MODEL" ]]; then
+            selected_model="$FORCE_MODEL"
+            echo -e "${BLUE}Model: $selected_model (forced)${NC}"
+        fi
+
         # Run the agent
         echo -e "${YELLOW}Running agent...${NC}"
         local output=""
+        local input_tokens=0
+        local output_tokens=0
 
         case "$AGENT" in
             "claude")
-                output=$(echo "$full_prompt" | claude --dangerously-skip-permissions -p 2>&1 | tee /dev/stderr) || true
+                output=$(echo "$full_prompt" | claude --dangerously-skip-permissions -p $model_flag 2>&1 | tee /dev/stderr) || true
+                # Estimate tokens (rough: 4 chars = 1 token)
+                input_tokens=$(( ${#full_prompt} / 4 ))
+                output_tokens=$(( ${#output} / 4 ))
                 ;;
             "amp")
                 output=$(echo "$full_prompt" | amp --dangerously-allow-all 2>&1 | tee /dev/stderr) || true
+                input_tokens=$(( ${#full_prompt} / 4 ))
+                output_tokens=$(( ${#output} / 4 ))
                 ;;
             *)
                 echo -e "${RED}Unknown agent: $AGENT${NC}"
                 exit 1
                 ;;
         esac
+
+        # Record token usage
+        if [[ -x "$MODEL_SELECTOR" ]]; then
+            "$MODEL_SELECTOR" record "$selected_model" "$input_tokens" "$output_tokens" "$next_story" >/dev/null 2>&1 || true
+        fi
 
         local iter_end=$(date +%s)
         local duration=$((iter_end - iter_start))
