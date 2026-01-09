@@ -14,8 +14,45 @@ aria_check_deps jq || exit 1
 STATE_DIR="$ARIA_DIR/state"
 PLAN_FILE="$STATE_DIR/current-plan.json"
 REQUIREMENTS_FILE="$STATE_DIR/requirements.txt"
+DESIGN_NOTES="$ARIA_DIR/design-notes.sh"
 
 mkdir -p "$STATE_DIR"
+
+# ============================================================================
+# DESIGN NOTES INTEGRATION
+# ============================================================================
+
+# Write to design notes if script exists
+write_note() {
+    local type="$1"
+    shift
+    if [[ -x "$DESIGN_NOTES" ]]; then
+        "$DESIGN_NOTES" "$type" "$@" 2>/dev/null || true
+    fi
+}
+
+# Checkpoint - pause for design review
+design_checkpoint() {
+    local title="$1"
+    local content="$2"
+    if [[ -x "$DESIGN_NOTES" ]]; then
+        "$DESIGN_NOTES" checkpoint "$title" "$content"
+        return $?
+    fi
+    return 0
+}
+
+# Flag a concern
+design_concern() {
+    local title="$1"
+    local content="$2"
+    local severity="${3:-medium}"
+    if [[ -x "$DESIGN_NOTES" ]]; then
+        "$DESIGN_NOTES" concern "$title" "$content" "$severity"
+        return $?
+    fi
+    return 0
+}
 
 # ============================================================================
 # PLAN MANAGEMENT
