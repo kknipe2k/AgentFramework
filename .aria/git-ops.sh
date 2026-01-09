@@ -5,6 +5,11 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common.sh" || { echo "Failed to load common.sh"; exit 1; }
+
+# Check dependencies
+aria_check_deps git jq || exit 1
+
 ARIA_DIR="$SCRIPT_DIR"
 STATE_DIR="$ARIA_DIR/state"
 RALPH_DIR="$ARIA_DIR/ralph"
@@ -13,12 +18,12 @@ PROGRESS_FILE="$RALPH_DIR/progress.txt"
 LOGS_DIR="$ARIA_DIR/logs"
 CHECKPOINTS_DIR="$ARIA_DIR/checkpoints"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+# Colors from common.sh
+RED="$ARIA_RED"
+GREEN="$ARIA_GREEN"
+YELLOW="$ARIA_YELLOW"
+BLUE="$ARIA_BLUE"
+NC="$ARIA_NC"
 
 mkdir -p "$STATE_DIR" "$LOGS_DIR" "$CHECKPOINTS_DIR"
 
@@ -430,8 +435,13 @@ main() {
     case "$command" in
         # Checkpoint commands
         "checkpoint"|"save")
-            local id=$(save_checkpoint "$1")
-            echo -e "${GREEN}Checkpoint saved: $id${NC}"
+            # Handle subcommands
+            if [[ "$1" == "list" ]]; then
+                list_checkpoints
+            else
+                local id=$(save_checkpoint "$1")
+                echo -e "${GREEN}Checkpoint saved: $id${NC}"
+            fi
             ;;
         "checkpoints"|"list-checkpoints")
             list_checkpoints

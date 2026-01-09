@@ -1,23 +1,28 @@
 #!/bin/bash
 # ARIA Human-in-the-Loop (HITL) System
 # Pauses execution and waits for human intervention
-# Supports multiple notification methods
+# Terminal-based notification and response
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common.sh" || { echo "Failed to load common.sh"; exit 1; }
+
+# Check dependencies (minimal - just git for context)
+aria_check_deps git || exit 1
+
 ARIA_DIR="$SCRIPT_DIR"
 STATE_DIR="$ARIA_DIR/state"
 HITL_DIR="$ARIA_DIR/hitl"
 LOGS_DIR="$ARIA_DIR/logs"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-MAGENTA='\033[0;35m'
-NC='\033[0m'
+# Colors from common.sh
+RED="$ARIA_RED"
+GREEN="$ARIA_GREEN"
+YELLOW="$ARIA_YELLOW"
+BLUE="$ARIA_BLUE"
+MAGENTA="$ARIA_MAGENTA"
+NC="$ARIA_NC"
 
 mkdir -p "$HITL_DIR" "$LOGS_DIR"
 
@@ -25,8 +30,8 @@ mkdir -p "$HITL_DIR" "$LOGS_DIR"
 # CONFIGURATION
 # ============================================
 
-# Notification methods (space-separated)
-HITL_NOTIFY="${HITL_NOTIFY:-terminal desktop sound}"
+# Notification method - simplified to terminal only
+HITL_NOTIFY="${HITL_NOTIFY:-terminal}"
 
 # Timeout waiting for human (0 = forever)
 HITL_TIMEOUT="${HITL_TIMEOUT:-0}"

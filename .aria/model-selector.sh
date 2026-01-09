@@ -9,6 +9,11 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common.sh" || { echo "Failed to load common.sh"; exit 1; }
+
+# Check dependencies
+aria_check_deps jq python3 bc || exit 1
+
 ARIA_DIR="$SCRIPT_DIR"
 STATE_DIR="$ARIA_DIR/state"
 RALPH_DIR="$ARIA_DIR/ralph"
@@ -17,13 +22,13 @@ LOGS_DIR="$ARIA_DIR/logs"
 USAGE_FILE="$LOGS_DIR/token_usage.json"
 LEARNING_FILE="$LOGS_DIR/model_learning.json"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-MAGENTA='\033[0;35m'
-NC='\033[0m'
+# Colors from common.sh
+RED="$ARIA_RED"
+GREEN="$ARIA_GREEN"
+YELLOW="$ARIA_YELLOW"
+BLUE="$ARIA_BLUE"
+MAGENTA="$ARIA_MAGENTA"
+NC="$ARIA_NC"
 
 mkdir -p "$LOGS_DIR" "$STATE_DIR"
 

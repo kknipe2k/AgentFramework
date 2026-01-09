@@ -1,22 +1,26 @@
 #!/bin/bash
 # ARIA Verification Executor
-# Actually runs the verification rails defined in YAML
-# Supports Playwright, Cypress, API checks, and manual verification
+# Runs verification checks: types, lint, tests, build, E2E
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common.sh" || { echo "Failed to load common.sh"; exit 1; }
+
+# Check dependencies
+aria_check_deps git || exit 1
+
 ARIA_DIR="$SCRIPT_DIR"
 SCREENSHOTS_DIR="$ARIA_DIR/screenshots"
 STATE_DIR="$ARIA_DIR/state"
 LOGS_DIR="$ARIA_DIR/logs"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+# Use colors from common.sh
+RED="$ARIA_RED"
+GREEN="$ARIA_GREEN"
+YELLOW="$ARIA_YELLOW"
+BLUE="$ARIA_BLUE"
+NC="$ARIA_NC"
 
 # Create directories
 mkdir -p "$SCREENSHOTS_DIR" "$STATE_DIR" "$LOGS_DIR"

@@ -8,19 +8,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARIA_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_DIR="$(dirname "$ARIA_DIR")"
 
+source "$ARIA_DIR/common.sh" || { echo "Failed to load common.sh"; exit 1; }
+
+# Check dependencies
+aria_check_deps git jq || exit 1
+
 # Configuration
 MAX_ITERATIONS=${1:-25}
 AGENT=${ARIA_RALPH_AGENT:-"claude"}  # claude, amp, etc.
 SLEEP_BETWEEN=${ARIA_RALPH_SLEEP:-5}
 MAX_CONSECUTIVE_FAILURES=${ARIA_RALPH_MAX_FAILURES:-3}  # Failures before HITL
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-MAGENTA='\033[0;35m'
-NC='\033[0m'
+# Colors from common.sh
+RED="$ARIA_RED"
+GREEN="$ARIA_GREEN"
+YELLOW="$ARIA_YELLOW"
+BLUE="$ARIA_BLUE"
+MAGENTA="$ARIA_MAGENTA"
+NC="$ARIA_NC"
 
 # Files
 PRD_FILE="$SCRIPT_DIR/prd.json"
