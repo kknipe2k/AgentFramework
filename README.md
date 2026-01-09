@@ -1,107 +1,163 @@
-# Aria Programming Language
+# ARIA: Agentic Rail-based Intent Architecture
 
-> *"Write once, run anywhere - beautifully."*
+> *"The LLM writes the recipe. The rails ensure it's followed."*
 
-**Aria** is a hybrid programming language that combines the best features of Python, JavaScript, and HTML into one cohesive, expressive language.
+## What is ARIA?
 
-## Why Aria?
+ARIA is **not a programming language** - it's a structured orchestration wrapper that makes LLM-driven development **deterministic and verifiable**.
 
-| Feature | Python | JavaScript | HTML | **Aria** |
-|---------|--------|------------|------|----------|
-| Clean syntax | Yes | No | N/A | **Yes** |
-| Async/await | Yes | Yes | N/A | **Yes** |
-| Declarative UI | No | JSX | Yes | **Yes** |
-| Type hints | Yes | TypeScript | No | **Yes** |
-| List comprehensions | Yes | No | N/A | **Yes** |
-| Destructuring | Limited | Yes | N/A | **Yes** |
-| Native web support | No | Yes | Yes | **Yes** |
-| Backend capable | Yes | Yes | No | **Yes** |
-
-## Key Features
-
-### From Python
-- Clean, indentation-based syntax
-- List/dict comprehensions
-- Decorators
-- Pattern matching
-- Context managers
-
-### From JavaScript
-- Arrow functions (`(x) => x * 2`)
-- Async/await with Promise-style chaining
-- Destructuring assignment
-- Spread operator (`...`)
-- Optional chaining (`?.`) and nullish coalescing (`??`)
-
-### From HTML
-- Declarative UI components with `@element` syntax
-- Reactive state management
-- Semantic structure
-- Built-in web rendering
-
-## Quick Example
-
-```aria
-from aria.http import get
-from aria.ui import state, effect, render
-
-# Async data fetching
-async def fetch_users() -> list[dict]:
-    response = await get("/api/users")
-    return response.json()
-
-# Reactive UI Component
-component UserList():
-    users = state([])
-    loading = state(True)
-
-    async def load():
-        users.set(await fetch_users())
-        loading.set(False)
-
-    effect(load, [])
-
-    return @div(class="user-list"):
-        @if loading.value:
-            @p: "Loading..."
-        @else:
-            @for user in users.value:
-                @div(class="card", key={user["id"]}):
-                    @h3: user["name"]
-                    @p: user["email"]
-
-# Render to DOM
-render(UserList(), document.getElementById("root"))
+```
+USER INTENT → LLM GENERATES PLAN → RAILS EXECUTE → GATES VERIFY → DONE
 ```
 
-## Documentation
+## The Problem
 
-- [Language Specification](./ARIA_LANGUAGE_SPEC.md) - Complete language design
-- [Implementation Roadmap](./IMPLEMENTATION_ROADMAP.md) - Technical implementation guide
-- [Examples](./examples/) - Code samples demonstrating features
+Current LLM coding has issues:
 
-## Examples
+| Problem | What Happens |
+|---------|--------------|
+| **Intent drift** | LLM forgets original goal halfway through |
+| **No verification** | Hope it worked, find bugs later |
+| **No rollback** | Stuck with broken state |
+| **Missed requirements** | "Oh, I forgot to add tests" |
+| **Ambiguous actions** | "Update the file" - which file? how? |
 
-| File | Description |
-|------|-------------|
-| [01_basics.aria](./examples/01_basics.aria) | Variables, functions, control flow |
-| [02_async.aria](./examples/02_async.aria) | Async/await, parallel execution, channels |
-| [03_components.aria](./examples/03_components.aria) | UI components, reactive state |
-| [04_classes.aria](./examples/04_classes.aria) | OOP, dataclasses, generics |
-| [05_interop.aria](./examples/05_interop.aria) | Python/JavaScript interoperability |
+## The ARIA Solution
 
-## Design Philosophy
+```aria
+@plan "Add user authentication"
 
-1. **Readability First** - Code should be easy to read and understand
-2. **Progressive Complexity** - Simple things should be simple, complex things possible
-3. **Universal Runtime** - Same code runs on browser, server, and native
-4. **Interoperability** - Leverage existing Python and JavaScript ecosystems
-5. **Type Safety** - Optional but encouraged gradual typing
-
-## File Extension
-
-`.aria` or `.ar`
+@intent
+  + User can register with email/password
+  + User can login and get JWT token
+  - No plain text passwords
+  - No tokens in URLs
 
 ---
 
-*Aria is a conceptual language design exploring the synthesis of modern programming paradigms.*
+@phase model
+  @ src/models/User.js
+    ```js
+    const bcrypt = require('bcrypt');
+    class User {
+      static async create(email, pass) {
+        return { email, hash: await bcrypt.hash(pass, 10) };
+      }
+    }
+    ```
+  ? no_plaintext: !contains(User.js, "password =")
+  * checkpoint
+
+@phase verify
+  ? tests: `npm test` == 0
+  ? intent: llm "Does this satisfy the original intent?"
+
+@done
+  > git commit -m "feat: add JWT auth"
+```
+
+**Every step verified. Every requirement checked. Every failure recoverable.**
+
+## Core Concepts
+
+### 1. INTENT - The Sacred Contract
+```aria
+@intent
+  + must have this feature
+  - must NOT have this anti-pattern
+```
+Checked at every gate. Drift = stop and review.
+
+### 2. RAILS - Constrained Actions
+```aria
+> npm install express     # Run command
+@ src/file.js             # Create/edit file
+? name: condition         # Verification gate
+* checkpoint              # Save state for rollback
+```
+Atomic, verifiable, reversible.
+
+### 3. GATES - Verification Checkpoints
+```aria
+? tests: `npm test` == 0                    # Command check
+? secure: !contains(file.js, "password")    # Content scan
+? intent: llm "Is the goal met?"            # LLM verification
+```
+Block progression until conditions met.
+
+### 4. CHECKPOINTS - Rollback Points
+```aria
+* checkpoint
+# If next gate fails, rollback here
+```
+Never stuck with broken state.
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [ARIA_ORCHESTRATION.md](./ARIA_ORCHESTRATION.md) | Full architecture and concepts |
+| [ARIA_SYNTAX.md](./ARIA_SYNTAX.md) | Concise syntax reference |
+| [ARIA_CLAUDE_INTEGRATION.md](./ARIA_CLAUDE_INTEGRATION.md) | Claude Code hooks/skills integration |
+
+## Syntax Quick Reference
+
+```aria
+@plan "name"           # Plan title
+@intent                # Requirements block
+  + must have          # Required feature
+  - must not           # Anti-requirement
+@require pkg1, pkg2    # Dependencies
+@env VAR1              # Required env vars
+
+@phase name            # Execution phase
+  > command            # Run shell command
+  @ path/file.js       # Create/edit file
+  ? gate: condition    # Verification
+  * checkpoint         # Save state
+
+@done                  # On success
+@fail                  # On failure
+```
+
+## How It Works
+
+1. **User states intent** → "Add authentication"
+2. **LLM generates ARIA plan** → Structured recipe with gates
+3. **User approves plan** → Or requests changes
+4. **Executor runs plan** → Phase by phase
+5. **Gates verify each step** → Block on failure
+6. **Intent verified at end** → Did we achieve the goal?
+7. **Auto-generate artifacts** → Docs, commits, changelog
+
+## Why ARIA?
+
+| Aspect | Traditional LLM | ARIA |
+|--------|-----------------|------|
+| Intent tracking | Hopes to remember | Locked and checked |
+| Verification | End-to-end prayer | Every step |
+| Failure recovery | Start over | Rollback to checkpoint |
+| Audit trail | Chat history | Structured logs |
+| Test coverage | If you're lucky | Required gate |
+
+## Integration
+
+ARIA integrates with Claude Code via:
+- **Skills** - Auto-trigger on complex tasks
+- **Hooks** - PreToolUse/PostToolUse verification
+- **Agents** - Specialized planner/verifier subagents
+
+See [ARIA_CLAUDE_INTEGRATION.md](./ARIA_CLAUDE_INTEGRATION.md) for details.
+
+---
+
+## Archive: Hybrid Language Design
+
+The original exploration of a hybrid programming language combining Python, JavaScript, and HTML features is archived in:
+- [ARIA_LANGUAGE_SPEC.md](./ARIA_LANGUAGE_SPEC.md) - Language specification
+- [IMPLEMENTATION_ROADMAP.md](./IMPLEMENTATION_ROADMAP.md) - Implementation guide
+- [examples/](./examples/) - Syntax examples
+
+---
+
+*ARIA: Making agentic coding deterministic, verifiable, and recoverable.*
