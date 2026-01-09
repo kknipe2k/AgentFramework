@@ -481,6 +481,27 @@ cmd_check() {
 }
 
 cmd_verify() {
+    local level="${1:-standard}"
+    local executor="$ARIA_DIR/verify-executor.sh"
+
+    # Use executor if available
+    if [[ -x "$executor" ]]; then
+        case "$level" in
+            "quick")   "$executor" quick ;;
+            "standard"|"commit") "$executor" standard ;;
+            "full"|"deploy"|"pr") "$executor" full ;;
+            *)
+                echo "Usage: aria verify [quick|standard|full]"
+                echo "  quick    - Tests, types, lint"
+                echo "  standard - Quick + build + app loads"
+                echo "  full     - Everything including E2E"
+                return 1
+                ;;
+        esac
+        return $?
+    fi
+
+    # Fallback: manual verification
     echo "═══════════════════════════════════════════════════════════"
     echo "                   USER VERIFICATION"
     echo "═══════════════════════════════════════════════════════════"
@@ -554,15 +575,20 @@ cmd_help() {
     echo "ARIA - Agentic Rail-based Intent Architecture"
     echo ""
     echo "Commands:"
-    echo "  aria init \"intent\"  - Start with intent"
-    echo "  aria status         - Show current state"
-    echo "  aria check [rail]   - Run rail checks"
-    echo "  aria verify         - User verification prompt"
-    echo "  aria done           - Complete and archive"
+    echo "  aria init \"intent\"     - Start with intent"
+    echo "  aria status            - Show current state"
+    echo "  aria check [rail]      - Run rail checks"
+    echo "  aria verify [level]    - Run verification (quick|standard|full)"
+    echo "  aria done              - Complete and archive"
     echo ""
-    echo "  aria pass           - Mark tests as passed"
-    echo "  aria fail           - Mark tests as failed"
-    echo "  aria reset          - Reset all counters"
+    echo "  aria pass              - Mark tests as passed"
+    echo "  aria fail              - Mark tests as failed"
+    echo "  aria reset             - Reset all counters"
+    echo ""
+    echo "Verification levels:"
+    echo "  quick    - Tests, types, lint (Stop hook)"
+    echo "  standard - Quick + build + app (before commit)"
+    echo "  full     - Everything + E2E + Playwright (before PR/deploy)"
     echo ""
     echo "Rails are enforced automatically via hooks."
 }
@@ -575,7 +601,7 @@ case "${1:-help}" in
     init)    cmd_init "$2" ;;
     status)  cmd_status ;;
     check)   cmd_check "$2" ;;
-    verify)  cmd_verify ;;
+    verify)  cmd_verify "$2" ;;
     done)    cmd_done ;;
     pass)    record_test; echo "Tests marked as passed" ;;
     fail)    record_test_failure; echo "Tests marked as failed" ;;

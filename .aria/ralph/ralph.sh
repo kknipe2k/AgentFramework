@@ -89,31 +89,52 @@ get_next_story() {
     jq -r '[.userStories[] | select(.passes == false)] | sort_by(.priority) | .[0] | .id // empty' "$PRD_FILE"
 }
 
-# Run safety checks (ARIA rails)
+# Run safety checks (ARIA rails + verification executor)
 safety_check() {
     echo -e "${YELLOW}Running ARIA safety rails...${NC}"
 
-    # Check for secrets in staged files
-    if git diff --cached --name-only | xargs grep -lE "(api[_-]?key|secret|password|token)\s*[=:]\s*['\"][A-Za-z0-9_\-]{10,}['\"]" 2>/dev/null; then
+    local failures=0
+    EXECUTOR="$ARIA_DIR/verify-executor.sh"
+
+    # 1. Check for secrets in staged files
+    if git diff --cached --name-only 2>/dev/null | xargs grep -lE "(api[_-]?key|secret|password|token)\s*[=:]\s*['\"][A-Za-z0-9_\-]{10,}['\"]" 2>/dev/null; then
         echo -e "${RED}BLOCKED: Possible secret in staged files${NC}"
+        echo "<aria-blocked>SECRET_DETECTED</aria-blocked>"
+        failures=$((failures + 1))
+    fi
+
+    # 2. Use verification executor if available
+    if [[ -x "$EXECUTOR" ]]; then
+        echo "Running verification executor..."
+        if ! "$EXECUTOR" standard; then
+            echo -e "${RED}BLOCKED: Verification failed${NC}"
+            echo "<aria-blocked>VERIFICATION_FAILED</aria-blocked>"
+            failures=$((failures + 1))
+        fi
+    else
+        # Fallback to basic checks
+        if [[ -f "package.json" ]]; then
+            if ! npm test --silent 2>/dev/null; then
+                echo -e "${RED}BLOCKED: Tests failing${NC}"
+                echo "<aria-blocked>TESTS_FAILING</aria-blocked>"
+                failures=$((failures + 1))
+            fi
+        elif [[ -f "pytest.ini" ]] || [[ -f "pyproject.toml" ]]; then
+            if ! pytest --quiet 2>/dev/null; then
+                echo -e "${RED}BLOCKED: Tests failing${NC}"
+                echo "<aria-blocked>TESTS_FAILING</aria-blocked>"
+                failures=$((failures + 1))
+            fi
+        fi
+    fi
+
+    if [[ $failures -eq 0 ]]; then
+        echo -e "${GREEN}Safety checks passed${NC}"
+        return 0
+    else
+        echo -e "${RED}Safety checks failed ($failures issues)${NC}"
         return 1
     fi
-
-    # Check tests pass
-    if [[ -f "package.json" ]]; then
-        if ! npm test --silent 2>/dev/null; then
-            echo -e "${RED}BLOCKED: Tests failing${NC}"
-            return 1
-        fi
-    elif [[ -f "pytest.ini" ]] || [[ -f "pyproject.toml" ]]; then
-        if ! pytest --quiet 2>/dev/null; then
-            echo -e "${RED}BLOCKED: Tests failing${NC}"
-            return 1
-        fi
-    fi
-
-    echo -e "${GREEN}Safety checks passed${NC}"
-    return 0
 }
 
 # Log iteration result
