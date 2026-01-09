@@ -1,0 +1,5 @@
+
+# ARIA runtime directories
+.aria/checkpoints/
+.aria/logs/
+.aria/state/

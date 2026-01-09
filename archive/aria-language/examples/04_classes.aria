@@ -1,0 +1,501 @@
+# Aria Classes and Object-Oriented Programming
+# Python-style classes with modern features
+
+from aria.json import Serializable
+from aria.validation import validate, ValidationError
+
+# ====================
+# BASIC CLASSES
+# ====================
+
+class Point:
+    """A simple 2D point class"""
+
+    def __init__(self, x: float, y: float):
+        self.x = x
+        self.y = y
+
+    def distance_from_origin(self) -> float:
+        return (self.x ** 2 + self.y ** 2) ** 0.5
+
+    def distance_to(self, other: Point) -> float:
+        return ((self.x - other.x) ** 2 + (self.y - other.y) ** 2) ** 0.5
+
+    def __str__(self) -> str:
+        return f"Point({self.x}, {self.y})"
+
+    def __repr__(self) -> str:
+        return self.__str__()
+
+    # Operator overloading
+    def __add__(self, other: Point) -> Point:
+        return Point(self.x + other.x, self.y + other.y)
+
+    def __eq__(self, other: Point) -> bool:
+        return self.x == other.x and self.y == other.y
+
+# Usage
+p1 = Point(3, 4)
+p2 = Point(6, 8)
+print(p1.distance_from_origin())  # 5.0
+print(p1 + p2)  # Point(9, 12)
+
+# ====================
+# PRIVATE FIELDS (JS-STYLE)
+# ====================
+
+class BankAccount:
+    """Bank account with private balance"""
+
+    # Private fields use # prefix (like JavaScript)
+    #balance: float
+    #transaction_history: list
+
+    def __init__(self, initial_balance: float = 0):
+        if initial_balance < 0:
+            raise ValueError("Initial balance cannot be negative")
+        self.#balance = initial_balance
+        self.#transaction_history = []
+
+    @property
+    def balance(self) -> float:
+        """Read-only access to balance"""
+        return self.#balance
+
+    def deposit(self, amount: float):
+        if amount <= 0:
+            raise ValueError("Deposit amount must be positive")
+        self.#balance += amount
+        self.#transaction_history.append({
+            "type": "deposit",
+            "amount": amount,
+            "timestamp": datetime.now()
+        })
+
+    def withdraw(self, amount: float):
+        if amount <= 0:
+            raise ValueError("Withdrawal amount must be positive")
+        if amount > self.#balance:
+            raise InsufficientFundsError(f"Cannot withdraw {amount}, balance is {self.#balance}")
+        self.#balance -= amount
+        self.#transaction_history.append({
+            "type": "withdrawal",
+            "amount": amount,
+            "timestamp": datetime.now()
+        })
+
+    def get_statement(self) -> list:
+        return self.#transaction_history.copy()
+
+# ====================
+# PROPERTIES AND DECORATORS
+# ====================
+
+class Temperature:
+    """Temperature with automatic conversion"""
+
+    def __init__(self, celsius: float = 0):
+        self._celsius = celsius
+
+    @property
+    def celsius(self) -> float:
+        return self._celsius
+
+    @celsius.setter
+    def celsius(self, value: float):
+        if value < -273.15:
+            raise ValueError("Temperature below absolute zero")
+        self._celsius = value
+
+    @property
+    def fahrenheit(self) -> float:
+        return self._celsius * 9/5 + 32
+
+    @fahrenheit.setter
+    def fahrenheit(self, value: float):
+        self.celsius = (value - 32) * 5/9
+
+    @property
+    def kelvin(self) -> float:
+        return self._celsius + 273.15
+
+    @kelvin.setter
+    def kelvin(self, value: float):
+        self.celsius = value - 273.15
+
+# Usage
+temp = Temperature(100)
+print(temp.fahrenheit)  # 212.0
+temp.fahrenheit = 32
+print(temp.celsius)     # 0.0
+
+# ====================
+# INHERITANCE
+# ====================
+
+class Animal:
+    def __init__(self, name: str):
+        self.name = name
+
+    def speak(self) -> str:
+        raise NotImplementedError("Subclasses must implement speak()")
+
+    def describe(self) -> str:
+        return f"{self.name} is a {self.__class__.__name__}"
+
+class Dog(Animal):
+    def __init__(self, name: str, breed: str):
+        super().__init__(name)
+        self.breed = breed
+
+    def speak(self) -> str:
+        return f"{self.name} says: Woof!"
+
+    def fetch(self) -> str:
+        return f"{self.name} fetches the ball!"
+
+class Cat(Animal):
+    def __init__(self, name: str, indoor: bool = True):
+        super().__init__(name)
+        self.indoor = indoor
+
+    def speak(self) -> str:
+        return f"{self.name} says: Meow!"
+
+    def purr(self) -> str:
+        return f"{self.name} purrs contentedly"
+
+# Polymorphism
+animals = [Dog("Rex", "German Shepherd"), Cat("Whiskers")]
+for animal in animals:
+    print(animal.speak())
+
+# ====================
+# ABSTRACT CLASSES
+# ====================
+
+from aria.abc import ABC, abstractmethod
+
+class Shape(ABC):
+    """Abstract base class for shapes"""
+
+    @abstractmethod
+    def area(self) -> float:
+        """Calculate the area"""
+        pass
+
+    @abstractmethod
+    def perimeter(self) -> float:
+        """Calculate the perimeter"""
+        pass
+
+    def describe(self) -> str:
+        return f"{self.__class__.__name__}: area={self.area():.2f}, perimeter={self.perimeter():.2f}"
+
+class Rectangle(Shape):
+    def __init__(self, width: float, height: float):
+        self.width = width
+        self.height = height
+
+    def area(self) -> float:
+        return self.width * self.height
+
+    def perimeter(self) -> float:
+        return 2 * (self.width + self.height)
+
+class Circle(Shape):
+    def __init__(self, radius: float):
+        self.radius = radius
+
+    def area(self) -> float:
+        return 3.14159 * self.radius ** 2
+
+    def perimeter(self) -> float:
+        return 2 * 3.14159 * self.radius
+
+# ====================
+# MIXINS AND MULTIPLE INHERITANCE
+# ====================
+
+class JsonMixin:
+    """Mixin for JSON serialization"""
+
+    def to_json(self) -> str:
+        return json.stringify(self.__dict__)
+
+    @classmethod
+    def from_json(cls, json_str: str):
+        data = json.parse(json_str)
+        return cls(**data)
+
+class ValidatableMixin:
+    """Mixin for validation"""
+
+    def validate(self) -> list[str]:
+        errors = []
+        for field, rules in getattr(self, '_validation_rules', {}).items():
+            value = getattr(self, field, None)
+            for rule in rules:
+                if not rule['check'](value):
+                    errors.append(rule['message'].format(field=field, value=value))
+        return errors
+
+    def is_valid(self) -> bool:
+        return len(self.validate()) == 0
+
+class User(JsonMixin, ValidatableMixin):
+    """User with JSON and validation support"""
+
+    _validation_rules = {
+        'name': [
+            {'check': lambda x: x and len(x) >= 2, 'message': '{field} must be at least 2 characters'}
+        ],
+        'email': [
+            {'check': lambda x: x and '@' in x, 'message': '{field} must be a valid email'}
+        ],
+        'age': [
+            {'check': lambda x: x is None or x >= 0, 'message': '{field} must be non-negative'}
+        ]
+    }
+
+    def __init__(self, name: str, email: str, age: int = None):
+        self.name = name
+        self.email = email
+        self.age = age
+
+# ====================
+# DATACLASSES (PYTHON-STYLE)
+# ====================
+
+@dataclass
+class Product:
+    """Auto-generated __init__, __repr__, __eq__"""
+    id: int
+    name: str
+    price: float
+    quantity: int = 0
+
+    @property
+    def total_value(self) -> float:
+        return self.price * self.quantity
+
+    def is_in_stock(self) -> bool:
+        return self.quantity > 0
+
+# Frozen (immutable) dataclass
+@dataclass(frozen=True)
+class Coordinate:
+    latitude: float
+    longitude: float
+
+# Dataclass with default factory
+@dataclass
+class Order:
+    id: int
+    items: list = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.now)
+
+    def add_item(self, item: Product):
+        self.items.append(item)
+
+# ====================
+# STATIC AND CLASS METHODS
+# ====================
+
+class MathUtils:
+    """Utility class with static and class methods"""
+
+    # Class variable
+    PI = 3.14159
+
+    @staticmethod
+    def add(a: float, b: float) -> float:
+        """Static method - no access to class or instance"""
+        return a + b
+
+    @classmethod
+    def circle_area(cls, radius: float) -> float:
+        """Class method - has access to class via cls"""
+        return cls.PI * radius ** 2
+
+    @classmethod
+    def create_from_config(cls, config: dict):
+        """Factory method pattern"""
+        return cls()
+
+# ====================
+# CONTEXT MANAGERS
+# ====================
+
+class FileHandler:
+    """Context manager for file operations"""
+
+    def __init__(self, filename: str, mode: str = "r"):
+        self.filename = filename
+        self.mode = mode
+        self.file = None
+
+    def __enter__(self):
+        self.file = open(self.filename, self.mode)
+        return self.file
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.file:
+            self.file.close()
+        # Return False to propagate exceptions
+        return False
+
+# Usage
+with FileHandler("data.txt", "w") as f:
+    f.write("Hello, World!")
+
+# Async context manager
+class AsyncDatabaseConnection:
+    def __init__(self, connection_string: str):
+        self.connection_string = connection_string
+        self.connection = None
+
+    async def __aenter__(self):
+        self.connection = await connect(self.connection_string)
+        return self.connection
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.connection:
+            await self.connection.close()
+        return False
+
+# Usage
+async def query_users():
+    async with AsyncDatabaseConnection("postgres://...") as db:
+        return await db.query("SELECT * FROM users")
+
+# ====================
+# GENERICS
+# ====================
+
+class Stack[T]:
+    """Generic stack implementation"""
+
+    def __init__(self):
+        self._items: list[T] = []
+
+    def push(self, item: T):
+        self._items.append(item)
+
+    def pop(self) -> T:
+        if not self._items:
+            raise IndexError("Stack is empty")
+        return self._items.pop()
+
+    def peek(self) -> T:
+        if not self._items:
+            raise IndexError("Stack is empty")
+        return self._items[-1]
+
+    def is_empty(self) -> bool:
+        return len(self._items) == 0
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+# Usage
+int_stack = Stack[int]()
+int_stack.push(1)
+int_stack.push(2)
+print(int_stack.pop())  # 2
+
+str_stack = Stack[str]()
+str_stack.push("hello")
+str_stack.push("world")
+
+# ====================
+# PROTOCOLS (STRUCTURAL TYPING)
+# ====================
+
+from aria.typing import Protocol
+
+class Drawable(Protocol):
+    """Protocol for drawable objects"""
+
+    def draw(self, canvas) -> None:
+        ...
+
+class Clickable(Protocol):
+    """Protocol for clickable objects"""
+
+    def on_click(self, handler: fn) -> None:
+        ...
+
+# Any class implementing these methods satisfies the protocol
+class Button:
+    def draw(self, canvas):
+        canvas.draw_rect(self.x, self.y, self.width, self.height)
+
+    def on_click(self, handler):
+        self._click_handler = handler
+
+def render_drawable(item: Drawable, canvas):
+    """Works with any Drawable"""
+    item.draw(canvas)
+
+# ====================
+# SINGLETON PATTERN
+# ====================
+
+class Singleton:
+    """Singleton pattern using class method"""
+
+    _instance = None
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self, value: str = "default"):
+        # Only initialize once
+        if not hasattr(self, '_initialized'):
+            self.value = value
+            self._initialized = True
+
+# Alternative: Singleton decorator
+@singleton
+class AppConfig:
+    def __init__(self):
+        self.debug = False
+        self.log_level = "INFO"
+
+# ====================
+# EXAMPLE APPLICATION
+# ====================
+
+def main():
+    # Create some objects
+    account = BankAccount(1000)
+    account.deposit(500)
+    account.withdraw(200)
+    print(f"Balance: ${account.balance}")
+
+    # Use shapes
+    shapes = [
+        Rectangle(10, 5),
+        Circle(7)
+    ]
+
+    for shape in shapes:
+        print(shape.describe())
+
+    # Use dataclass
+    product = Product(1, "Widget", 19.99, 100)
+    print(f"Product value: ${product.total_value}")
+
+    # Use generic stack
+    stack = Stack[int]()
+    for i in range(5):
+        stack.push(i)
+
+    while not stack.is_empty():
+        print(stack.pop())
+
+if __name__ == "__main__":
+    main()

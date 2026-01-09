@@ -1,0 +1,25 @@
+{
+  "rails": [
+    {
+      "id": "no_secrets",
+      "description": "Check for secrets in staged files",
+      "type": "hard",
+      "check": "test -z \"$(git diff --cached 2>/dev/null)\" || ! git diff --cached 2>/dev/null | grep -qE '(api[_-]?key|secret|password|token)\\s*[=:]\\s*[A-Za-z0-9_-]{16,}'",
+      "message": "Potential secret detected in staged changes. Remove before committing."
+    },
+    {
+      "id": "no_env_files",
+      "description": "Prevent committing .env files",
+      "type": "hard",
+      "check": "! git diff --cached --name-only 2>/dev/null | grep -qE '^\\.env'",
+      "message": "Cannot commit .env files. Add to .gitignore."
+    },
+    {
+      "id": "no_debug",
+      "description": "Check for debug statements",
+      "type": "soft",
+      "check": "! grep -r 'debugger' src/ 2>/dev/null | grep -v node_modules",
+      "message": "Found debugger statements. Consider removing before commit."
+    }
+  ]
+}

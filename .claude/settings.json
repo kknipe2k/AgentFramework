@@ -1,0 +1,22 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "command": ".claude/hooks/aria-rails.sh PreToolUse \"$TOOL_NAME\" \"$TOOL_INPUT\"",
+        "timeout": 5000
+      }
+    ],
+    "PostToolUse": [
+      {
+        "command": ".claude/hooks/aria-rails.sh PostToolUse \"$TOOL_NAME\" \"$TOOL_INPUT\"",
+        "timeout": 5000
+      }
+    ],
+    "Stop": [
+      {
+        "command": ".claude/hooks/stop-verify.sh",
+        "timeout": 30000
+      }
+    ]
+  }
+}

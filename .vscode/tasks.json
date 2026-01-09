@@ -1,0 +1,201 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "ARIA: Verify Quick",
+      "type": "shell",
+      "command": "./.aria/verify-executor.sh quick",
+      "group": "test",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "ARIA: Verify Standard",
+      "type": "shell",
+      "command": "./.aria/verify-executor.sh standard",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "ARIA: Verify Full",
+      "type": "shell",
+      "command": "./.aria/verify-executor.sh full",
+      "group": "test",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "ARIA: Ralph Run",
+      "type": "shell",
+      "command": "./.aria/ralph/ralph.sh run ${input:maxIterations}",
+      "group": "build",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "focus": true
+      }
+    },
+    {
+      "label": "ARIA: Ralph Status",
+      "type": "shell",
+      "command": "./.aria/ralph/ralph.sh status",
+      "group": "none",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "ARIA: Ralph Init",
+      "type": "shell",
+      "command": "./.aria/ralph/ralph.sh init \"${input:featureDescription}\"",
+      "group": "none",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "ARIA: Model Status",
+      "type": "shell",
+      "command": "./.aria/model-selector.sh status",
+      "group": "none",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "ARIA: Learning Stats",
+      "type": "shell",
+      "command": "./.aria/model-selector.sh stats",
+      "group": "none",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "ARIA: Save Checkpoint",
+      "type": "shell",
+      "command": "./.aria/git-ops.sh checkpoint ${input:checkpointName}",
+      "group": "none",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "ARIA: List Checkpoints",
+      "type": "shell",
+      "command": "./.aria/git-ops.sh checkpoint list",
+      "group": "none",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "ARIA: Rollback to Checkpoint",
+      "type": "shell",
+      "command": "./.aria/git-ops.sh rollback checkpoint ${input:checkpointName}",
+      "group": "none",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "ARIA: Create PR",
+      "type": "shell",
+      "command": "./.aria/git-ops.sh pr create",
+      "group": "none",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "ARIA: HITL Status",
+      "type": "shell",
+      "command": "./.aria/hitl.sh status",
+      "group": "none",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "ARIA: HITL Respond",
+      "type": "shell",
+      "command": "./.aria/hitl.sh respond \"${input:hitlResponse}\"",
+      "group": "none",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "ARIA: HITL Approve",
+      "type": "shell",
+      "command": "./.aria/hitl.sh approve",
+      "group": "none",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "maxIterations",
+      "type": "promptString",
+      "description": "Maximum iterations for Ralph loop",
+      "default": "25"
+    },
+    {
+      "id": "featureDescription",
+      "type": "promptString",
+      "description": "Feature description for initialization"
+    },
+    {
+      "id": "checkpointName",
+      "type": "promptString",
+      "description": "Checkpoint name",
+      "default": "checkpoint"
+    },
+    {
+      "id": "hitlResponse",
+      "type": "promptString",
+      "description": "Response message for HITL"
+    }
+  ]
+}
