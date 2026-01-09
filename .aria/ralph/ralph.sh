@@ -12,12 +12,14 @@ PROJECT_DIR="$(dirname "$ARIA_DIR")"
 MAX_ITERATIONS=${1:-25}
 AGENT=${ARIA_RALPH_AGENT:-"claude"}  # claude, amp, etc.
 SLEEP_BETWEEN=${ARIA_RALPH_SLEEP:-5}
+MAX_CONSECUTIVE_FAILURES=${ARIA_RALPH_MAX_FAILURES:-3}  # Failures before HITL
 
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
 NC='\033[0m'
 
 # Files
@@ -25,6 +27,10 @@ PRD_FILE="$SCRIPT_DIR/prd.json"
 PROGRESS_FILE="$SCRIPT_DIR/progress.txt"
 PROMPT_FILE="$SCRIPT_DIR/prompt.md"
 LEARNINGS_FILE="$SCRIPT_DIR/learnings.md"
+HITL_SCRIPT="$ARIA_DIR/hitl.sh"
+
+# Track consecutive failures per story
+declare -A story_failures
 
 echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
 echo -e "${BLUE}          ARIA-RALPH: Autonomous Execution Loop            ${NC}"
@@ -150,6 +156,82 @@ log_iteration() {
     echo "- Duration: ${duration}s" >> "$PROGRESS_FILE"
 }
 
+# ============================================
+# HUMAN-IN-THE-LOOP INTEGRATION
+# ============================================
+
+# Request human help via HITL system
+request_human_help() {
+    local reason="$1"
+    local story_id="$2"
+    local context="$3"
+
+    echo ""
+    echo -e "${MAGENTA}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${MAGENTA}           🚨 HUMAN INTERVENTION REQUIRED 🚨               ${NC}"
+    echo -e "${MAGENTA}═══════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    if [[ -x "$HITL_SCRIPT" ]]; then
+        local full_context="Story: $story_id
+
+$context
+
+Recent progress:
+$(tail -20 "$PROGRESS_FILE" 2>/dev/null || echo "No progress yet")"
+
+        local response=$("$HITL_SCRIPT" help "$reason" "$full_context")
+
+        if [[ -n "$response" ]]; then
+            echo ""
+            echo -e "${GREEN}Human guidance received: $response${NC}"
+
+            # Add guidance to progress file
+            cat >> "$PROGRESS_FILE" << EOF
+
+## $(date '+%Y-%m-%d %H:%M') - Human Guidance for $story_id
+- Reason: $reason
+- Guidance: $response
+EOF
+            echo "$response"
+            return 0
+        fi
+    else
+        # Fallback: just wait for Enter key
+        echo "Reason: $reason"
+        echo "Story: $story_id"
+        echo ""
+        echo "Press Enter to continue, or Ctrl+C to stop..."
+        read -r
+    fi
+
+    return 1
+}
+
+# Check if we should request human help (too many failures)
+check_failure_threshold() {
+    local story_id="$1"
+    local current_failures=${story_failures[$story_id]:-0}
+
+    if [[ $current_failures -ge $MAX_CONSECUTIVE_FAILURES ]]; then
+        return 0  # Should request help
+    fi
+    return 1  # Keep trying
+}
+
+# Increment failure count for a story
+increment_failures() {
+    local story_id="$1"
+    local current=${story_failures[$story_id]:-0}
+    story_failures[$story_id]=$((current + 1))
+}
+
+# Reset failure count (on success)
+reset_failures() {
+    local story_id="$1"
+    story_failures[$story_id]=0
+}
+
 # Main loop
 run_loop() {
     local iteration=0
@@ -225,18 +307,48 @@ $(tail -100 "$PROGRESS_FILE" 2>/dev/null || echo "No progress yet")
             break
         fi
 
+        # Check for help signal (agent explicitly requesting human)
+        if echo "$output" | grep -q "<aria-help>"; then
+            local help_reason=$(echo "$output" | grep -oP '<aria-help>\K[^<]+' || echo "Agent requested help")
+            echo -e "${MAGENTA}🆘 Agent requesting human help${NC}"
+            log_iteration $iteration "$next_story" "HELP_REQUESTED" $duration
+
+            # Request human help
+            request_human_help "$help_reason" "$next_story" "Agent explicitly requested assistance"
+            reset_failures "$next_story"
+            continue
+        fi
+
         # Check for blocked signal (ARIA rail triggered)
         if echo "$output" | grep -q "<aria-blocked>"; then
-            echo -e "${RED}🚫 ARIA rail blocked execution${NC}"
-            log_iteration $iteration "$next_story" "BLOCKED" $duration
-            # Don't exit, try next iteration (might be a different story)
+            local block_reason=$(echo "$output" | grep -oP '<aria-blocked>\K[^<]+' || echo "Unknown")
+            echo -e "${RED}🚫 ARIA rail blocked execution: $block_reason${NC}"
+            log_iteration $iteration "$next_story" "BLOCKED:$block_reason" $duration
+
+            # Increment failure count
+            increment_failures "$next_story"
+
+            # Check if we've hit the failure threshold
+            if check_failure_threshold "$next_story"; then
+                echo -e "${MAGENTA}Story $next_story has failed $MAX_CONSECUTIVE_FAILURES times${NC}"
+                request_human_help "Story blocked repeatedly: $block_reason" "$next_story" "Block reason: $block_reason"
+                reset_failures "$next_story"
+            fi
         else
+            # Successful iteration - reset failures
+            reset_failures "$next_story"
             log_iteration $iteration "$next_story" "ATTEMPTED" $duration
         fi
 
         # Safety check before continuing
         if ! safety_check; then
             echo -e "${YELLOW}Safety check failed, will retry next iteration${NC}"
+            increment_failures "$next_story"
+
+            if check_failure_threshold "$next_story"; then
+                request_human_help "Safety checks keep failing" "$next_story" "Verification or tests failing repeatedly"
+                reset_failures "$next_story"
+            fi
         fi
 
         # Sleep between iterations

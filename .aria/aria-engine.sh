@@ -597,6 +597,19 @@ cmd_agent() {
     "$runner" "$subcmd" "$@"
 }
 
+cmd_hitl() {
+    local subcmd="${1:-status}"
+    shift || true
+
+    local hitl_script="$ARIA_DIR/hitl.sh"
+    if [[ ! -x "$hitl_script" ]]; then
+        echo "HITL system not found"
+        return 1
+    fi
+
+    "$hitl_script" "$subcmd" "$@"
+}
+
 cmd_help() {
     echo "ARIA - Agentic Rail-based Intent Architecture"
     echo ""
@@ -607,6 +620,7 @@ cmd_help() {
     echo "  aria rails [cmd]       - Run YAML-defined rails"
     echo "  aria verify [level]    - Run verification (quick|standard|full)"
     echo "  aria agent [cmd]       - Run agents"
+    echo "  aria hitl [cmd]        - Human-in-the-loop system"
     echo "  aria done              - Complete and archive"
     echo ""
     echo "  aria pass              - Mark tests as passed"
@@ -623,6 +637,13 @@ cmd_help() {
     echo "  aria agent list        - List available agents"
     echo "  aria agent run <name>  - Run an agent"
     echo "  aria agent verify      - Run verify-app agent"
+    echo ""
+    echo "HITL commands:"
+    echo "  aria hitl status       - Show pending requests"
+    echo "  aria hitl list         - List pending requests"
+    echo "  aria hitl respond <id> - Respond to a request"
+    echo "  aria hitl approve <id> - Quick approve"
+    echo "  aria hitl reject <id>  - Quick reject"
     echo ""
     echo "Verification levels:"
     echo "  quick    - Tests, types, lint (Stop hook)"
@@ -641,6 +662,7 @@ case "${1:-help}" in
     rails)   shift; cmd_rails "$@" ;;
     verify)  cmd_verify "$2" ;;
     agent)   shift; cmd_agent "$@" ;;
+    hitl)    shift; cmd_hitl "$@" ;;
     done)    cmd_done ;;
     pass)    record_test; echo "Tests marked as passed" ;;
     fail)    record_test_failure; echo "Tests marked as failed" ;;
