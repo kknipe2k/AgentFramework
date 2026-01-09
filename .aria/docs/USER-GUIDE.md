@@ -16,7 +16,6 @@ Get ARIA running in 5 minutes.
 # Optional but recommended
 - Node.js/npm (for JS/TS projects)
 - Python 3 (for Python projects)
-- yq (YAML processor, for rails)
 ```
 
 ### 2. Initialize ARIA
@@ -35,21 +34,50 @@ mkdir -p .aria/{ralph,rails,logs,state,agents}
 chmod +x .aria/*.sh .aria/ralph/*.sh
 ```
 
-### 3. Create Your First Feature
+### 3. Create Your First Feature (Planning-First Workflow)
 
 ```bash
-# Initialize a new feature
-./.aria/ralph/ralph.sh init "Add user authentication"
+# Start the planning agent
+./.aria/ralph/ralph.sh plan "Add user authentication"
 
-# This creates:
-# - .aria/ralph/prd.json (edit this!)
-# - .aria/ralph/progress.txt
-# - .aria/ralph/prompt.md
+# The planner will:
+# 1. Create a plan with tasks, risks, and questions
+# 2. Present it for your review
+# 3. You choose: [a]pprove / [r]evise / [e]dit / [c]ancel
+# 4. Loop until you approve
 ```
 
-### 4. Edit the PRD
+### 4. Review and Approve the Plan
 
-Open `.aria/ralph/prd.json` and define your user stories:
+The planner presents a structured plan:
+
+```
+GOAL: Add user authentication
+
+TASKS:
+  [pending] 1. Create user model and database schema (simple)
+  [pending] 2. Implement registration endpoint (medium)
+  [pending] 3. Implement login endpoint (medium)
+  [pending] 4. Add JWT token generation (medium)
+  [pending] 5. Add tests for all endpoints (simple)
+
+RISKS:
+  - Database schema may conflict with existing models
+
+QUESTIONS (need your input):
+  ? Should passwords use bcrypt or argon2?
+  ? What should token expiration be?
+
+Options:
+  [a]pprove  - Start execution
+  [r]evise   - Provide feedback for revision
+  [e]dit     - Edit plan directly
+  [c]ancel   - Abort planning
+```
+
+### 5. (Legacy) Manual PRD Mode
+
+For backward compatibility, you can still use manual PRDs:
 
 ```json
 {
@@ -87,17 +115,26 @@ Open `.aria/ralph/prd.json` and define your user stories:
 }
 ```
 
-### 5. Run ARIA
+### 6. Run Execution
 
 ```bash
-# Run the autonomous loop (max 25 iterations)
-./.aria/ralph/ralph.sh run 25
+# Run with approved plan (requires plan approval first)
+./.aria/ralph/ralph.sh run
+
+# Or force run without plan check (legacy mode)
+./.aria/ralph/ralph.sh run --force
 
 # Or use the engine wrapper
-./.aria/aria-engine.sh ralph run 25
+./.aria/aria-engine.sh ralph run
 ```
 
-### 6. Monitor Progress
+**What happens during execution:**
+- Executor runs approved tasks in order
+- If stuck (3 consecutive failures), escalates to Planning Agent
+- Planning Agent asks you: [r]eplan / [s]kip / [a]bort
+- You decide how to proceed, execution continues
+
+### 7. Monitor Progress
 
 In another terminal:
 ```bash
@@ -122,7 +159,7 @@ tail -f .aria/ralph/progress.txt
 | Command | Description | Example |
 |---------|-------------|---------|
 | `verify [level]` | Run verification | `aria verify standard` |
-| `rails [file]` | Execute YAML rails | `aria rails .aria/rails/security.yaml` |
+| `rails [file]` | Execute JSON rails | `aria rails .aria/rails/safety.json` |
 | `agent [name]` | Run an agent | `aria agent verify` |
 | `hitl <cmd>` | HITL operations | `aria hitl respond "fix the tests"` |
 | `checkpoint [name]` | Save checkpoint | `aria checkpoint pre-refactor` |
@@ -139,10 +176,25 @@ tail -f .aria/ralph/progress.txt
 
 | Command | Description |
 |---------|-------------|
-| `init "description"` | Initialize new feature |
-| `run [max_iterations]` | Run the autonomous loop |
-| `status` | Show current status |
+| `plan "requirements"` | Start planning loop (get approval first) |
+| `run [--force]` | Run execution (requires approved plan) |
+| `init "description"` | Initialize new PRD (legacy mode) |
+| `status` | Show current status (plan + PRD) |
 | `help` | Show help |
+
+### Planner Commands
+
+```bash
+./.aria/planner/planner.sh <command> [args]
+```
+
+| Command | Description |
+|---------|-------------|
+| `plan "requirements"` | Start planning loop with HITL approval |
+| `replan "blocker"` | Re-plan due to execution blocker |
+| `status` | Show current plan status |
+| `approve` | Mark current plan as approved |
+| `reset` | Clear current plan |
 
 ### Model Selector Commands
 
@@ -195,20 +247,68 @@ tail -f .aria/ralph/progress.txt
 
 ## Workflows
 
-### Standard Feature Development
+### Planning-First Development (Recommended)
 
 ```bash
-# 1. Initialize
+# 1. Start planning with your requirements
+./.aria/ralph/ralph.sh plan "Add user dashboard with analytics"
+
+# 2. Review the generated plan
+#    - Check tasks make sense
+#    - Answer any questions
+#    - Provide feedback if needed
+#    Options: [a]pprove / [r]evise / [e]dit / [c]ancel
+
+# 3. Once approved, run execution
+./.aria/ralph/ralph.sh run
+
+# 4. If execution gets stuck (3 failures):
+#    - Planner asks: [r]eplan / [s]kip / [a]bort
+#    - Choose how to proceed
+
+# 5. Review PR when complete
+```
+
+### Architecture Overview
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                    User (HITL)                           │
+│         approve / revise / provide guidance              │
+└──────────────────────┬───────────────────────────────────┘
+                       │
+         ┌─────────────▼─────────────┐
+         │     Planning Agent        │
+         │  (.aria/planner/)         │
+         │                           │
+         │  - Creates plans          │
+         │  - Gets HITL approval     │
+         │  - Handles replanning     │
+         └─────────────┬─────────────┘
+                       │ approved plan
+         ┌─────────────▼─────────────┐
+         │    Execution Agent        │
+         │  (.aria/ralph/)           │
+         │                           │
+         │  - Executes tasks         │
+         │  - Tracks progress        │
+         │  - Escalates when stuck ──┼──► back to Planner
+         └───────────────────────────┘
+```
+
+### Legacy PRD-Based Development
+
+```bash
+# 1. Initialize (creates PRD template)
 ./.aria/ralph/ralph.sh init "My new feature"
 
 # 2. Edit PRD with your stories
 vim .aria/ralph/prd.json
 
-# 3. Run ARIA
-./.aria/ralph/ralph.sh run 50
+# 3. Run ARIA (skip plan check)
+./.aria/ralph/ralph.sh run --force
 
 # 4. Review PR when complete
-# (auto-created if ARIA_RALPH_AUTO_PR=true)
 ```
 
 ### Manual Verification
@@ -624,61 +724,63 @@ Report migration name and any manual steps needed.
 
 ## Creating Custom Rails
 
-### Rail File Structure
+### Rail File Structure (JSON)
 
-```yaml
-# .aria/rails/my-rails.yaml
-rails:
-  - id: unique_id
-    description: "Human-readable description"
-    type: hard  # hard (block) or soft (warn)
-    check: |
-      # Bash command that returns 0 (pass) or non-0 (fail)
-      ! grep -r "TODO" src/
-    message: "Error message shown when rail fails"
-    auto_fix: |
-      # Optional: command to fix the issue
-      echo "Run: remove-todos.sh"
+```json
+{
+  "rails": [
+    {
+      "id": "unique_id",
+      "description": "Human-readable description",
+      "type": "hard",
+      "check": "bash command that returns 0 (pass) or non-0 (fail)",
+      "message": "Error message shown when rail fails"
+    }
+  ]
+}
 ```
+
+- **type: "hard"** - Blocks execution if check fails
+- **type: "soft"** - Warns but allows continuation
 
 ### Example: Security Rails
 
-```yaml
-# .aria/rails/security.yaml
-rails:
-  - id: no_eval
-    description: "Block use of eval()"
-    type: hard
-    check: |
-      ! grep -r "eval(" src/ --include="*.ts" --include="*.js"
-    message: "eval() is a security risk. Use safer alternatives."
-
-  - id: no_innerhtml
-    description: "Block innerHTML assignments"
-    type: hard
-    check: |
-      ! grep -r "innerHTML\s*=" src/ --include="*.ts" --include="*.tsx"
-    message: "innerHTML can cause XSS. Use textContent or React."
-
-  - id: sql_parameterized
-    description: "Ensure parameterized SQL queries"
-    type: soft
-    check: |
-      # Check for string concatenation in SQL
-      ! grep -rE "\.(query|execute)\s*\(\s*['\`].*\+.*['\`]" src/
-    message: "Use parameterized queries to prevent SQL injection."
+```json
+{
+  "rails": [
+    {
+      "id": "no_secrets",
+      "description": "Check for secrets in staged files",
+      "type": "hard",
+      "check": "test -z \"$(git diff --cached 2>/dev/null)\" || ! git diff --cached 2>/dev/null | grep -qE '(api[_-]?key|secret|password|token)\\s*[=:]\\s*[A-Za-z0-9_-]{16,}'",
+      "message": "Potential secret detected in staged changes."
+    },
+    {
+      "id": "no_eval",
+      "description": "Block use of eval()",
+      "type": "hard",
+      "check": "! grep -r 'eval(' src/ --include='*.ts' --include='*.js' 2>/dev/null",
+      "message": "eval() is a security risk. Use safer alternatives."
+    },
+    {
+      "id": "no_debug",
+      "description": "Check for debug statements",
+      "type": "soft",
+      "check": "! grep -r 'debugger' src/ 2>/dev/null | grep -v node_modules",
+      "message": "Found debugger statements. Consider removing before commit."
+    }
+  ]
+}
 ```
 
 ### Running Rails
 
 ```bash
 # Run specific rail file
-./.aria/aria-engine.sh rails .aria/rails/security.yaml
+./.aria/rails-executor.sh .aria/rails/safety.json
 
-# Run all rails in directory
-for f in .aria/rails/*.yaml; do
-  ./.aria/rails-executor.sh "$f"
-done
+# Run via engine
+./.aria/aria-engine.sh rails .aria/rails/safety.json
 ```
 
 ---

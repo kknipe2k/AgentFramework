@@ -33,28 +33,82 @@ The result is a system that can autonomously develop features while maintaining 
 │                     (Central orchestration layer)                            │
 └───────────────────────────────────┬─────────────────────────────────────────┘
                                     │
-        ┌───────────────────────────┼───────────────────────────┐
-        │                           │                           │
-        ▼                           ▼                           ▼
-┌───────────────┐           ┌───────────────┐           ┌───────────────┐
-│  RALPH LOOP   │           │ SAFETY RAILS  │           │  INTELLIGENT  │
-│               │           │               │           │    MODEL      │
-│ - PRD-driven  │           │ - Hard blocks │           │   SELECTOR    │
-│ - Iterations  │           │ - Soft warns  │           │               │
-│ - Progress    │◀─────────▶│ - Executors   │◀─────────▶│ - Learning    │
-│ - Learnings   │           │ - Verification│           │ - Budget      │
-└───────┬───────┘           └───────┬───────┘           │ - Complexity  │
-        │                           │                   └───────────────┘
-        │                           │
-        ▼                           ▼
-┌───────────────┐           ┌───────────────┐           ┌───────────────┐
-│     HITL      │           │   GIT OPS     │           │    AGENTS     │
-│               │           │               │           │               │
-│ - Notify      │           │ - Checkpoint  │           │ - Verify      │
-│ - Wait        │           │ - Rollback    │           │ - Simplify    │
-│ - Respond     │           │ - Auto-PR     │           │ - Custom      │
-└───────────────┘           └───────────────┘           └───────────────┘
+                 ┌──────────────────┴──────────────────┐
+                 │                                     │
+                 ▼                                     ▼
+┌────────────────────────────┐           ┌────────────────────────────┐
+│      PLANNING AGENT        │           │    EXECUTION AGENT         │
+│    (.aria/planner/)        │           │    (.aria/ralph/)          │
+│                            │           │                            │
+│ - Takes requirements       │           │ - Executes approved plans  │
+│ - Creates structured plans │  approve  │ - Runs PRD stories         │
+│ - Identifies risks/unknowns│ ────────► │ - Tracks progress          │
+│ - HITL approval loop       │           │ - Detects stuck state      │
+│ - Handles re-planning      │ ◄──────── │ - Escalates to planner     │
+│                            │  escalate │                            │
+└────────────┬───────────────┘           └─────────────┬──────────────┘
+             │                                         │
+             └──────────────────┬──────────────────────┘
+                                │
+        ┌───────────────────────┼───────────────────────┐
+        │                       │                       │
+        ▼                       ▼                       ▼
+┌───────────────┐       ┌───────────────┐       ┌───────────────┐
+│ SAFETY RAILS  │       │  INTELLIGENT  │       │     HITL      │
+│               │       │    MODEL      │       │               │
+│ - Hard blocks │       │   SELECTOR    │       │ - Notify      │
+│ - Soft warns  │       │               │       │ - Wait        │
+│ - JSON rails  │       │ - Learning    │       │ - Respond     │
+│ - Verification│       │ - Budget      │       │ - Approve     │
+└───────┬───────┘       │ - Complexity  │       └───────────────┘
+        │               └───────────────┘
+        │
+        ▼
+┌───────────────┐       ┌───────────────┐
+│   GIT OPS     │       │    AGENTS     │
+│               │       │               │
+│ - Checkpoint  │       │ - Verify      │
+│ - Rollback    │       │ - Simplify    │
+│ - Auto-PR     │       │ - Custom      │
+└───────────────┘       └───────────────┘
 ```
+
+### Two-Agent Architecture
+
+ARIA uses a **Planning Agent** and **Execution Agent** working together:
+
+```
+User provides requirements
+         │
+         ▼
+┌─────────────────────────────────────────────┐
+│              PLANNING AGENT                  │
+│                                             │
+│  1. Analyze requirements                    │
+│  2. Break into atomic tasks                 │
+│  3. Identify risks and unknowns             │
+│  4. Present plan to HITL                    │
+│  5. Loop: approve / revise / edit / cancel  │
+└─────────────────────┬───────────────────────┘
+                      │ approved plan
+                      ▼
+┌─────────────────────────────────────────────┐
+│             EXECUTION AGENT                  │
+│                                             │
+│  1. Execute tasks from approved plan        │
+│  2. Run safety rails after each task        │
+│  3. Track progress and learnings            │
+│  4. If stuck (3 failures):                  │
+│     → Escalate to Planning Agent            │
+│     → Planner asks: replan/skip/abort       │
+│  5. Continue until complete                 │
+└─────────────────────────────────────────────┘
+```
+
+This separation ensures:
+- **Plans are reviewed before execution** - No runaway agent
+- **Blockers get proper handling** - Not just retry loops
+- **User stays in control** - Approve, revise, or abort at any point
 
 ---
 
@@ -122,36 +176,43 @@ ARIA wraps Ralph with additional capabilities:
 
 ### 3. Safety Rails System
 
-Rails are defined in YAML and executed automatically:
+Rails are defined in JSON and executed automatically:
 
-```yaml
-# .aria/rails/security.yaml
-rails:
-  - id: no_secrets
-    description: "Block commits with secrets"
-    type: hard  # hard = block, soft = warn
-    check: |
-      ! git diff --cached | grep -E "(api[_-]?key|secret|password).*['\"][A-Za-z0-9]{10,}['\"]"
-    message: "Detected potential secret in staged changes"
-    auto_fix: null  # Cannot auto-fix secrets
-
-  - id: no_console_log
-    description: "Remove console.log in production code"
-    type: soft
-    check: |
-      ! grep -r "console.log" src/ --include="*.ts" | grep -v ".test."
-    message: "Found console.log statements"
-    auto_fix: |
-      find src -name "*.ts" -not -name "*.test.*" -exec sed -i '/console.log/d' {} \;
+```json
+{
+  "rails": [
+    {
+      "id": "no_secrets",
+      "description": "Block commits with secrets",
+      "type": "hard",
+      "check": "test -z \"$(git diff --cached)\" || ! git diff --cached | grep -qE '(api[_-]?key|secret|password|token)\\s*[=:]\\s*[A-Za-z0-9_-]{16,}'",
+      "message": "Detected potential secret in staged changes"
+    },
+    {
+      "id": "no_env_files",
+      "description": "Prevent committing .env files",
+      "type": "hard",
+      "check": "! git diff --cached --name-only | grep -qE '^\\.env'",
+      "message": "Cannot commit .env files. Add to .gitignore."
+    },
+    {
+      "id": "no_debug",
+      "description": "Check for debug statements",
+      "type": "soft",
+      "check": "! grep -r 'debugger' src/ 2>/dev/null | grep -v node_modules",
+      "message": "Found debugger statements. Consider removing before commit."
+    }
+  ]
+}
 ```
 
 **Rail Types:**
 - **Hard Rails**: Block execution entirely (security issues, breaking changes)
 - **Soft Rails**: Warn but allow continuation (style issues, recommendations)
 
-**Rail Executor** parses YAML and runs each check:
+**Rail Executor** parses JSON with `jq` and runs each check:
 ```bash
-aria rails .aria/rails/security.yaml
+aria rails .aria/rails/safety.json
 # Executes each rail, blocks or warns as appropriate
 ```
 
