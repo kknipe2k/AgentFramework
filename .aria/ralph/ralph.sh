@@ -35,6 +35,8 @@ LEARNINGS_FILE="$SCRIPT_DIR/learnings.md"
 HITL_SCRIPT="$ARIA_DIR/hitl.sh"
 GIT_OPS_SCRIPT="$ARIA_DIR/git-ops.sh"
 MODEL_SELECTOR="$ARIA_DIR/model-selector.sh"
+PLANNER_SCRIPT="$ARIA_DIR/planner/planner.sh"
+PLAN_FILE="$ARIA_DIR/state/current-plan.json"
 
 # Track consecutive failures per story
 declare -A story_failures
@@ -239,6 +241,84 @@ check_failure_threshold() {
     return 1  # Keep trying
 }
 
+# ============================================
+# PLANNER INTEGRATION
+# ============================================
+
+# Check if we have an approved plan
+check_approved_plan() {
+    if [[ ! -f "$PLAN_FILE" ]]; then
+        return 1  # No plan
+    fi
+    local status=$(jq -r '.status // "none"' "$PLAN_FILE")
+    if [[ "$status" == "approved" ]]; then
+        return 0  # Plan approved
+    fi
+    return 1  # Plan not approved
+}
+
+# Escalate to planner when stuck
+escalate_to_planner() {
+    local blocker="$1"
+    local story_id="${2:-}"
+    local context="${3:-}"
+
+    echo ""
+    echo -e "${MAGENTA}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${MAGENTA}           ESCALATING TO PLANNING AGENT                    ${NC}"
+    echo -e "${MAGENTA}═══════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    if [[ -x "$PLANNER_SCRIPT" ]]; then
+        # Update plan state with blocker
+        if [[ -f "$PLAN_FILE" ]]; then
+            local plan=$(cat "$PLAN_FILE")
+            # Mark current task as blocked
+            if [[ -n "$story_id" ]]; then
+                plan=$(echo "$plan" | jq --arg id "$story_id" \
+                    '(.tasks[] | select(.id == ($id | tonumber) or .id == $id)) .status = "blocked"')
+            fi
+            echo "$plan" > "$PLAN_FILE"
+        fi
+
+        # Call planner replan
+        "$PLANNER_SCRIPT" replan "$blocker" "$context"
+        local result=$?
+
+        if [[ $result -eq 0 ]]; then
+            echo -e "${GREEN}Plan revised. Continuing execution...${NC}"
+            return 0
+        else
+            echo -e "${YELLOW}Replanning aborted. Stopping execution.${NC}"
+            return 1
+        fi
+    else
+        # Fallback to direct HITL
+        echo "Planner not available. Falling back to HITL."
+        request_human_help "$blocker" "$story_id" "$context"
+    fi
+}
+
+# Get tasks from plan (if using planner)
+get_plan_tasks() {
+    if [[ -f "$PLAN_FILE" ]]; then
+        jq -c '.tasks[]' "$PLAN_FILE" 2>/dev/null
+    fi
+}
+
+# Update task status in plan
+update_plan_task() {
+    local task_id="$1"
+    local status="$2"  # pending, in_progress, done, blocked, skipped
+
+    if [[ -f "$PLAN_FILE" ]]; then
+        local plan=$(cat "$PLAN_FILE")
+        plan=$(echo "$plan" | jq --arg id "$task_id" --arg s "$status" \
+            '(.tasks[] | select(.id == ($id | tonumber) or .id == $id)) .status = $s')
+        echo "$plan" > "$PLAN_FILE"
+    fi
+}
+
 # Increment failure count for a story
 increment_failures() {
     local story_id="$1"
@@ -415,10 +495,13 @@ $(tail -100 "$PROGRESS_FILE" 2>/dev/null || echo "No progress yet")
             # Increment failure count
             increment_failures "$next_story"
 
-            # Check if we've hit the failure threshold
+            # Check if we've hit the failure threshold - escalate to planner
             if check_failure_threshold "$next_story"; then
                 echo -e "${MAGENTA}Story $next_story has failed $MAX_CONSECUTIVE_FAILURES times${NC}"
-                request_human_help "Story blocked repeatedly: $block_reason" "$next_story" "Block reason: $block_reason"
+                if ! escalate_to_planner "Story blocked repeatedly: $block_reason" "$next_story" "Block reason: $block_reason"; then
+                    echo "Execution stopped due to unresolved blocker."
+                    break
+                fi
                 reset_failures "$next_story"
             fi
         else
@@ -445,7 +528,10 @@ $(tail -100 "$PROGRESS_FILE" 2>/dev/null || echo "No progress yet")
             increment_failures "$next_story"
 
             if check_failure_threshold "$next_story"; then
-                request_human_help "Safety checks keep failing" "$next_story" "Verification or tests failing repeatedly"
+                if ! escalate_to_planner "Safety checks keep failing" "$next_story" "Verification or tests failing repeatedly"; then
+                    echo "Execution stopped due to unresolved safety issues."
+                    break
+                fi
                 reset_failures "$next_story"
             fi
         fi
@@ -581,7 +667,28 @@ status() {
 
 # Main command handler
 case "${1:-help}" in
+    "plan")
+        # Start planning loop
+        if [[ -x "$PLANNER_SCRIPT" ]]; then
+            shift
+            "$PLANNER_SCRIPT" plan "$*"
+        else
+            echo -e "${RED}Planner not found at $PLANNER_SCRIPT${NC}"
+            exit 1
+        fi
+        ;;
     "run")
+        # Check for approved plan first
+        if [[ -x "$PLANNER_SCRIPT" ]] && [[ -f "$PLAN_FILE" ]]; then
+            if ! check_approved_plan; then
+                echo -e "${YELLOW}Plan exists but is not approved.${NC}"
+                echo "Run: aria-ralph plan \"requirements\" to create/approve a plan"
+                echo "Or:  aria-ralph run --force to skip plan check"
+                if [[ "${2:-}" != "--force" ]]; then
+                    exit 1
+                fi
+            fi
+        fi
         preflight_check
         run_loop
         ;;
@@ -590,14 +697,24 @@ case "${1:-help}" in
         ;;
     "status")
         status
+        # Also show plan status if exists
+        if [[ -x "$PLANNER_SCRIPT" ]]; then
+            echo ""
+            "$PLANNER_SCRIPT" status 2>/dev/null || true
+        fi
         ;;
     "help"|*)
         echo "ARIA-RALPH: Autonomous execution with safety rails"
         echo ""
         echo "Commands:"
-        echo "  aria-ralph init \"description\"  - Initialize new feature"
-        echo "  aria-ralph run [max_iterations] - Run the loop"
-        echo "  aria-ralph status               - Show current status"
+        echo "  plan \"requirements\"  - Start planning loop (get approval first)"
+        echo "  run [--force]        - Run execution (requires approved plan)"
+        echo "  init \"description\"   - Initialize new PRD (legacy mode)"
+        echo "  status               - Show current status"
+        echo ""
+        echo "Workflow:"
+        echo "  1. ralph plan \"Add user auth\"  - Create plan, get approval"
+        echo "  2. ralph run                   - Execute approved plan"
         echo ""
         echo "Environment:"
         echo "  ARIA_RALPH_AGENT  - Agent to use (claude, amp)"
