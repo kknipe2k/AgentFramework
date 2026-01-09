@@ -1,206 +1,136 @@
 # ARIA: Agentic Rail-based Intent Architecture
 
-> *"The LLM writes the recipe. The rails ensure it's followed."*
-
-## TL;DR - Working Implementation
-
-**Scripts that BLOCK Claude from bad behavior:**
-
-```bash
-# Start a task
-./.claude/hooks/aria init "Add user authentication"
-
-# Claude works... but after 3 edits:
-# BLOCKED: 3 edits without testing. Run tests before continuing.
-
-# After 5 edits:
-# BLOCKED: 5 edits without commit. Commit checkpoint before continuing.
-
-# Trying to commit with failing tests:
-# BLOCKED: Cannot commit with failing tests. Fix tests first.
-
-# When done:
-./.claude/hooks/aria done  # Forces intent verification
-```
-
-**See [ARIA_RAILS.md](./ARIA_RAILS.md) for the actual working implementation.**
-
----
+> *Autonomous AI development with safety rails, human oversight, and adaptive learning.*
 
 ## What is ARIA?
 
-ARIA is **not a programming language** - it's rails that make LLM-driven development **deterministic and verifiable**.
+ARIA is a comprehensive orchestration system for autonomous AI-assisted development. It combines:
 
-```
-INTENT LOCKED → RAILS BLOCK BAD BEHAVIOR → GATES VERIFY → DONE
-```
+- **Ralph's Autonomous Loop** - PRD-driven, fresh-context iteration
+- **Boris Cherny's Patterns** - Verification, subagents, structured prompts
+- **Safety Rails** - Hard blocks on dangerous operations
+- **Human-in-the-Loop** - Intervention when automation fails
+- **Adaptive Learning** - Model selection that improves over time
 
-## The Problem
+## Quick Start
 
-| Problem | What Happens |
-|---------|--------------|
-| **Intent drift** | LLM forgets original goal halfway through |
-| **No verification** | Hope it worked, find bugs later |
-| **No rollback** | Stuck with broken state |
-| **Missed requirements** | "Oh, I forgot to add tests" |
+```bash
+# 1. Initialize a feature
+./.aria/ralph/ralph.sh init "Add user authentication"
 
-## The ARIA Solution
+# 2. Edit the PRD with your user stories
+vim .aria/ralph/prd.json
 
-### Actual Rails (Working Now)
+# 3. Run the autonomous loop
+./.aria/ralph/ralph.sh run 25
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  RAIL 1: No edits without intent                           │
-│          Can't touch code until intent defined             │
-├─────────────────────────────────────────────────────────────┤
-│  RAIL 2: Max 3 edits without testing                       │
-│          BLOCKED until tests run                           │
-├─────────────────────────────────────────────────────────────┤
-│  RAIL 3: Max 5 edits without commit                        │
-│          BLOCKED until committed (checkpoint)              │
-├─────────────────────────────────────────────────────────────┤
-│  RAIL 4: Tests must pass before commit                     │
-│          Can't commit broken code                          │
-└─────────────────────────────────────────────────────────────┘
+# 4. Monitor progress (in another terminal)
+tail -f .aria/ralph/progress.txt
 ```
 
-### Future: Structured Plans
+## Architecture
 
-```aria
-@plan "Add user authentication"
-
-@intent
-  + User can register with email/password
-  + User can login and get JWT token
-  - No plain text passwords
-  - No tokens in URLs
-
----
-
-@phase model
-  @ src/models/User.js
-    ```js
-    const bcrypt = require('bcrypt');
-    class User {
-      static async create(email, pass) {
-        return { email, hash: await bcrypt.hash(pass, 10) };
-      }
-    }
-    ```
-  ? no_plaintext: !contains(User.js, "password =")
-  * checkpoint
-
-@phase verify
-  ? tests: `npm test` == 0
-  ? intent: llm "Does this satisfy the original intent?"
-
-@done
-  > git commit -m "feat: add JWT auth"
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         DEVELOPER INTERFACE LAYER                            │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
+│  │ Claude Code │  │  VS Code    │  │ Git Hooks   │  │   Shell     │        │
+│  │  /aria      │  │   Tasks     │  │ pre-commit  │  │  Aliases    │        │
+│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘        │
+└─────────┴────────────────┴────────────────┴────────────────┴────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              ARIA ENGINE                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Ralph Loop    │  Safety Rails   │  Model Selector  │  Git Ops   │  HITL   │
+│  - PRD-driven  │  - Hard blocks  │  - Learning      │  - Checkpoint│ - Notify│
+│  - Iterations  │  - Verification │  - Budget        │  - Rollback  │ - Wait  │
+│  - Progress    │  - Executors    │  - Complexity    │  - Auto-PR   │ - Guide │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Every step verified. Every requirement checked. Every failure recoverable.**
+## Key Features
 
-## Core Concepts
-
-### 1. INTENT - The Sacred Contract
-```aria
-@intent
-  + must have this feature
-  - must NOT have this anti-pattern
-```
-Checked at every gate. Drift = stop and review.
-
-### 2. RAILS - Constrained Actions
-```aria
-> npm install express     # Run command
-@ src/file.js             # Create/edit file
-? name: condition         # Verification gate
-* checkpoint              # Save state for rollback
-```
-Atomic, verifiable, reversible.
-
-### 3. GATES - Verification Checkpoints
-```aria
-? tests: `npm test` == 0                    # Command check
-? secure: !contains(file.js, "password")    # Content scan
-? intent: llm "Is the goal met?"            # LLM verification
-```
-Block progression until conditions met.
-
-### 4. CHECKPOINTS - Rollback Points
-```aria
-* checkpoint
-# If next gate fails, rollback here
-```
-Never stuck with broken state.
+| Feature | Description |
+|---------|-------------|
+| **PRD-Driven** | Clear goals with acceptance criteria |
+| **Fresh Context** | Each iteration starts clean |
+| **Safety Rails** | Blocks secrets, broken tests, bad patterns |
+| **Verification** | Types, lint, tests, build, E2E |
+| **Checkpoints** | Rollback to any point |
+| **HITL** | Human help when needed |
+| **Model Selection** | Opus/Sonnet/Haiku based on task |
+| **Learning** | Improves model selection over time |
+| **Auto-PR** | Creates PR when feature complete |
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
-| **[ARIA_RAILS.md](./ARIA_RAILS.md)** | **Working implementation - start here** |
-| [ARIA_ORCHESTRATION.md](./ARIA_ORCHESTRATION.md) | Full architecture and concepts |
-| [ARIA_SYNTAX.md](./ARIA_SYNTAX.md) | Concise syntax reference (future) |
-| [ARIA_CLAUDE_INTEGRATION.md](./ARIA_CLAUDE_INTEGRATION.md) | Claude Code hooks/skills integration |
+| **[User Guide](.aria/docs/USER-GUIDE.md)** | Complete usage guide - start here |
+| [Architecture](.aria/docs/ARIA-SYSTEM-ARCHITECTURE.md) | System design and components |
+| [Boris Cherny Patterns](.aria/docs/BORIS-CHERNY-PATTERNS.md) | Verification and subagent patterns |
+| [Ralph Autonomous Loop](.aria/docs/RALPH-AUTONOMOUS-LOOP.md) | PRD-driven iteration pattern |
 
-## Syntax Quick Reference
+## Commands
 
-```aria
-@plan "name"           # Plan title
-@intent                # Requirements block
-  + must have          # Required feature
-  - must not           # Anti-requirement
-@require pkg1, pkg2    # Dependencies
-@env VAR1              # Required env vars
+```bash
+# Ralph Loop
+./.aria/ralph/ralph.sh init "description"   # Initialize feature
+./.aria/ralph/ralph.sh run [iterations]     # Run autonomous loop
+./.aria/ralph/ralph.sh status               # Show status
 
-@phase name            # Execution phase
-  > command            # Run shell command
-  @ path/file.js       # Create/edit file
-  ? gate: condition    # Verification
-  * checkpoint         # Save state
+# Verification
+./.aria/verify-executor.sh quick            # Types + lint
+./.aria/verify-executor.sh standard         # + tests + build
+./.aria/verify-executor.sh full             # + integration + E2E
 
-@done                  # On success
-@fail                  # On failure
+# Git Operations
+./.aria/git-ops.sh checkpoint [name]        # Save checkpoint
+./.aria/git-ops.sh rollback checkpoint X    # Rollback
+./.aria/git-ops.sh pr create                # Create PR
+
+# Model Selection
+./.aria/model-selector.sh status            # Show budget/usage
+./.aria/model-selector.sh stats             # Show learning data
+
+# Human-in-the-Loop
+./.aria/hitl.sh status                      # Show pending requests
+./.aria/hitl.sh respond "guidance"          # Provide guidance
 ```
 
-## How It Works
+## IDE Integration
 
-1. **User states intent** → "Add authentication"
-2. **LLM generates ARIA plan** → Structured recipe with gates
-3. **User approves plan** → Or requests changes
-4. **Executor runs plan** → Phase by phase
-5. **Gates verify each step** → Block on failure
-6. **Intent verified at end** → Did we achieve the goal?
-7. **Auto-generate artifacts** → Docs, commits, changelog
+**Claude Code:** `/aria`, `/aria-verify`, `/aria-start`, `/aria-status`
 
-## Why ARIA?
+**VS Code:** `Cmd+Shift+P` → "Tasks: Run Task" → ARIA tasks
 
-| Aspect | Traditional LLM | ARIA |
-|--------|-----------------|------|
-| Intent tracking | Hopes to remember | Locked and checked |
-| Verification | End-to-end prayer | Every step |
-| Failure recovery | Start over | Rollback to checkpoint |
-| Audit trail | Chat history | Structured logs |
-| Test coverage | If you're lucky | Required gate |
+**Git Hooks:** `./.aria/hooks/install.sh install`
 
-## Integration
+## Directory Structure
 
-ARIA integrates with Claude Code via:
-- **Skills** - Auto-trigger on complex tasks
-- **Hooks** - PreToolUse/PostToolUse verification
-- **Agents** - Specialized planner/verifier subagents
+```
+.aria/
+├── aria-engine.sh          # Main orchestrator
+├── ralph/                  # Autonomous loop
+│   ├── ralph.sh           # Loop runner
+│   ├── prd.json           # Product requirements
+│   └── progress.txt       # Progress log
+├── verify-executor.sh      # Verification pipeline
+├── rails-executor.sh       # YAML rails executor
+├── model-selector.sh       # Intelligent model selection
+├── git-ops.sh             # Checkpoint/rollback/PR
+├── hitl.sh                # Human-in-the-loop
+├── hooks/                 # Git hooks
+├── rails/                 # YAML rail definitions
+└── docs/                  # Documentation
+```
 
-See [ARIA_CLAUDE_INTEGRATION.md](./ARIA_CLAUDE_INTEGRATION.md) for details.
+## Archive
 
----
-
-## Archive: Hybrid Language Design
-
-The original exploration of a hybrid programming language combining Python, JavaScript, and HTML features is archived in:
-- [ARIA_LANGUAGE_SPEC.md](./ARIA_LANGUAGE_SPEC.md) - Language specification
-- [IMPLEMENTATION_ROADMAP.md](./IMPLEMENTATION_ROADMAP.md) - Implementation guide
-- [examples/](./examples/) - Syntax examples
+Prior work on an ARIA programming language concept is archived in [`archive/aria-language/`](./archive/aria-language/).
 
 ---
 
-*ARIA: Making agentic coding deterministic, verifiable, and recoverable.*
+*ARIA: Autonomous, safe, and intelligent AI-assisted development.*
