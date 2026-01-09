@@ -28,9 +28,14 @@ PROGRESS_FILE="$SCRIPT_DIR/progress.txt"
 PROMPT_FILE="$SCRIPT_DIR/prompt.md"
 LEARNINGS_FILE="$SCRIPT_DIR/learnings.md"
 HITL_SCRIPT="$ARIA_DIR/hitl.sh"
+GIT_OPS_SCRIPT="$ARIA_DIR/git-ops.sh"
 
 # Track consecutive failures per story
 declare -A story_failures
+
+# Auto-PR configuration
+AUTO_PR=${ARIA_RALPH_AUTO_PR:-true}
+CHECKPOINT_EACH_ITERATION=${ARIA_RALPH_CHECKPOINT:-true}
 
 echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
 echo -e "${BLUE}          ARIA-RALPH: Autonomous Execution Loop            ${NC}"
@@ -246,6 +251,11 @@ run_loop() {
         echo -e "${BLUE}                    ITERATION $iteration / $MAX_ITERATIONS${NC}"
         echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
 
+        # Save checkpoint at start of iteration (for rollback safety)
+        if [[ "$CHECKPOINT_EACH_ITERATION" == "true" ]] && [[ -x "$GIT_OPS_SCRIPT" ]]; then
+            "$GIT_OPS_SCRIPT" checkpoint "iter_${iteration}" >/dev/null 2>&1 || true
+        fi
+
         # Check remaining stories
         local remaining=$(count_remaining)
         if [[ "$remaining" == "0" ]]; then
@@ -374,6 +384,38 @@ $(tail -100 "$PROGRESS_FILE" 2>/dev/null || echo "No progress yet")
     # Show final status
     echo "Story status:"
     jq -r '.userStories[] | "  \(.id): \(if .passes then "✅" else "❌" end) \(.title)"' "$PRD_FILE"
+
+    # Auto-create PR if all stories complete
+    local remaining=$(count_remaining)
+    if [[ "$remaining" == "0" ]] && [[ "$AUTO_PR" == "true" ]] && [[ -x "$GIT_OPS_SCRIPT" ]]; then
+        echo ""
+        echo -e "${GREEN}All stories complete - creating Pull Request...${NC}"
+
+        # Save final checkpoint
+        "$GIT_OPS_SCRIPT" checkpoint "complete" >/dev/null 2>&1 || true
+
+        # Create PR
+        local pr_url=$("$GIT_OPS_SCRIPT" pr create 2>&1)
+        if [[ $? -eq 0 ]]; then
+            echo -e "${GREEN}PR created: $pr_url${NC}"
+
+            # Add to progress
+            cat >> "$PROGRESS_FILE" << EOF
+
+## $(date '+%Y-%m-%d %H:%M') - Feature Complete
+- All stories passed
+- Total iterations: $iteration
+- Duration: ${total_duration}s
+- PR: $pr_url
+EOF
+        else
+            echo -e "${YELLOW}Could not auto-create PR. Create manually with: aria pr create${NC}"
+        fi
+    elif [[ "$remaining" != "0" ]]; then
+        echo ""
+        echo -e "${YELLOW}$remaining stories incomplete. No PR created.${NC}"
+        echo "Resume with: ./.aria/ralph/ralph.sh run"
+    fi
 }
 
 # Initialize new PRD

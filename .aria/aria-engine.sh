@@ -610,6 +610,44 @@ cmd_hitl() {
     "$hitl_script" "$subcmd" "$@"
 }
 
+cmd_rollback() {
+    local subcmd="${1:-help}"
+    shift || true
+
+    local git_ops="$ARIA_DIR/git-ops.sh"
+    if [[ ! -x "$git_ops" ]]; then
+        echo "Git operations not found"
+        return 1
+    fi
+
+    "$git_ops" rollback "$subcmd" "$@"
+}
+
+cmd_checkpoint() {
+    local name="${1:-auto}"
+
+    local git_ops="$ARIA_DIR/git-ops.sh"
+    if [[ ! -x "$git_ops" ]]; then
+        echo "Git operations not found"
+        return 1
+    fi
+
+    "$git_ops" checkpoint "$name"
+}
+
+cmd_pr() {
+    local subcmd="${1:-create}"
+    shift || true
+
+    local git_ops="$ARIA_DIR/git-ops.sh"
+    if [[ ! -x "$git_ops" ]]; then
+        echo "Git operations not found"
+        return 1
+    fi
+
+    "$git_ops" pr "$subcmd" "$@"
+}
+
 cmd_help() {
     echo "ARIA - Agentic Rail-based Intent Architecture"
     echo ""
@@ -621,34 +659,34 @@ cmd_help() {
     echo "  aria verify [level]    - Run verification (quick|standard|full)"
     echo "  aria agent [cmd]       - Run agents"
     echo "  aria hitl [cmd]        - Human-in-the-loop system"
+    echo "  aria rollback [cmd]    - Rollback to safe state"
+    echo "  aria pr [cmd]          - Pull request operations"
     echo "  aria done              - Complete and archive"
     echo ""
     echo "  aria pass              - Mark tests as passed"
     echo "  aria fail              - Mark tests as failed"
     echo "  aria reset             - Reset all counters"
+    echo "  aria checkpoint [name] - Save current state"
+    echo ""
+    echo "Rollback commands:"
+    echo "  aria rollback commits <n>     - Undo last N commits"
+    echo "  aria rollback checkpoint <id> - Restore to checkpoint"
+    echo "  aria rollback success         - Rollback to last good state"
+    echo ""
+    echo "PR commands:"
+    echo "  aria pr create [title] - Create pull request"
+    echo "  aria pr draft [title]  - Create draft PR"
+    echo "  aria pr auto           - Create PR if all stories done"
     echo ""
     echo "Rails commands:"
     echo "  aria rails all         - Run all applicable rails"
     echo "  aria rails fix         - Run rails with auto-fix"
     echo "  aria rails list        - List available rails"
-    echo "  aria rails cat <name>  - Run category (environment, quality, safety)"
-    echo ""
-    echo "Agent commands:"
-    echo "  aria agent list        - List available agents"
-    echo "  aria agent run <name>  - Run an agent"
-    echo "  aria agent verify      - Run verify-app agent"
     echo ""
     echo "HITL commands:"
     echo "  aria hitl status       - Show pending requests"
-    echo "  aria hitl list         - List pending requests"
     echo "  aria hitl respond <id> - Respond to a request"
     echo "  aria hitl approve <id> - Quick approve"
-    echo "  aria hitl reject <id>  - Quick reject"
-    echo ""
-    echo "Verification levels:"
-    echo "  quick    - Tests, types, lint (Stop hook)"
-    echo "  standard - Quick + build + app (before commit)"
-    echo "  full     - Everything + E2E + Playwright (before PR/deploy)"
 }
 
 # ============================================
@@ -656,16 +694,19 @@ cmd_help() {
 # ============================================
 
 case "${1:-help}" in
-    init)    cmd_init "$2" ;;
-    status)  cmd_status ;;
-    check)   cmd_check "$2" ;;
-    rails)   shift; cmd_rails "$@" ;;
-    verify)  cmd_verify "$2" ;;
-    agent)   shift; cmd_agent "$@" ;;
-    hitl)    shift; cmd_hitl "$@" ;;
-    done)    cmd_done ;;
-    pass)    record_test; echo "Tests marked as passed" ;;
-    fail)    record_test_failure; echo "Tests marked as failed" ;;
-    reset)   echo "0" > "$STATE_DIR/edit_count"; echo "0" > "$STATE_DIR/last_test"; echo "0" > "$STATE_DIR/last_commit"; rm -f "$STATE_DIR/tests_failed"; echo "Counters reset" ;;
-    help|*)  cmd_help ;;
+    init)       cmd_init "$2" ;;
+    status)     cmd_status ;;
+    check)      cmd_check "$2" ;;
+    rails)      shift; cmd_rails "$@" ;;
+    verify)     cmd_verify "$2" ;;
+    agent)      shift; cmd_agent "$@" ;;
+    hitl)       shift; cmd_hitl "$@" ;;
+    rollback)   shift; cmd_rollback "$@" ;;
+    checkpoint) cmd_checkpoint "$2" ;;
+    pr)         shift; cmd_pr "$@" ;;
+    done)       cmd_done ;;
+    pass)       record_test; echo "Tests marked as passed" ;;
+    fail)       record_test_failure; echo "Tests marked as failed" ;;
+    reset)      echo "0" > "$STATE_DIR/edit_count"; echo "0" > "$STATE_DIR/last_test"; echo "0" > "$STATE_DIR/last_commit"; rm -f "$STATE_DIR/tests_failed"; echo "Counters reset" ;;
+    help|*)     cmd_help ;;
 esac
