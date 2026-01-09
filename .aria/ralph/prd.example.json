@@ -1,0 +1,79 @@
+{
+  "feature": "Example Feature - Replace with your feature description",
+  "branchName": "aria-ralph/example-feature",
+  "createdAt": "2024-01-01T00:00:00Z",
+  "config": {
+    "testCommand": "npm test",
+    "lintCommand": "npm run lint",
+    "typeCheckCommand": "npx tsc --noEmit",
+    "buildCommand": "npm run build"
+  },
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Setup project structure",
+      "description": "Create the basic file structure and configuration for the feature",
+      "acceptanceCriteria": [
+        "All necessary directories created",
+        "Configuration files in place",
+        "Dependencies installed",
+        "Project builds without errors"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "",
+      "files": []
+    },
+    {
+      "id": "US-002",
+      "title": "Implement core functionality",
+      "description": "Build the main logic for the feature",
+      "acceptanceCriteria": [
+        "Core function implemented",
+        "Unit tests written and passing",
+        "No linting errors",
+        "Types are correct (if TypeScript)"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "files": []
+    },
+    {
+      "id": "US-003",
+      "title": "Add integration tests",
+      "description": "Ensure the feature works end-to-end",
+      "acceptanceCriteria": [
+        "Integration tests written",
+        "All tests passing",
+        "Edge cases covered",
+        "Error handling verified"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "files": []
+    },
+    {
+      "id": "US-004",
+      "title": "Documentation and cleanup",
+      "description": "Document the feature and clean up code",
+      "acceptanceCriteria": [
+        "README updated with usage",
+        "Code comments where needed",
+        "No console.log or debug code",
+        "Final review complete"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "",
+      "files": []
+    }
+  ],
+  "metadata": {
+    "totalStories": 4,
+    "completedStories": 0,
+    "lastUpdated": null,
+    "iterations": 0
+  }
+}

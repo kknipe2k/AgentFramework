@@ -1,6 +1,7 @@
 #!/bin/bash
-# ARIA RAILS v2 - Complete rail system
+# ARIA RAILS v3 - Complete rail system with Ralph compatibility
 # Blocks Claude from bad behavior with comprehensive checks
+# Supports both interactive mode and Ralph's autonomous loop
 
 HOOK_EVENT="$1"
 TOOL_NAME="$2"
@@ -9,6 +10,14 @@ TOOL_INPUT="$3"
 ARIA_DIR=".aria"
 STATE_DIR="$ARIA_DIR/state"
 INTENT_FILE="$ARIA_DIR/intent.md"
+RALPH_DIR="$ARIA_DIR/ralph"
+PRD_FILE="$RALPH_DIR/prd.json"
+PROGRESS_FILE="$RALPH_DIR/progress.txt"
+
+# Detect Ralph mode (autonomous loop)
+is_ralph_mode() {
+    [[ -f "$PRD_FILE" ]] && [[ "${ARIA_RALPH_MODE:-0}" == "1" ]]
+}
 
 # Create directories
 mkdir -p "$STATE_DIR"
@@ -33,9 +42,22 @@ increment_edits() {
 }
 
 # ============================================
-# RAIL: Intent Required
+# RAIL: Intent Required (supports Ralph PRD)
 # ============================================
 check_intent() {
+    # In Ralph mode, intent comes from PRD
+    if is_ralph_mode; then
+        if [[ ! -f "$PRD_FILE" ]]; then
+            echo "<aria-blocked>NO_PRD</aria-blocked>"
+            cat << 'EOF'
+{"error": "BLOCKED: No PRD found for Ralph mode.\n\nInitialize with: ./.aria/ralph/ralph.sh init \"Feature description\""}
+EOF
+            exit 2
+        fi
+        return 0
+    fi
+
+    # Interactive mode - need intent.md
     if [[ ! -f "$INTENT_FILE" ]]; then
         cat << 'EOF'
 {"error": "BLOCKED: No intent defined. Before making changes, define your intent:\n\nRun in terminal: ./.aria/aria-engine.sh init \"your intent here\"\n\nOr create .aria/intent.md manually with:\n- What you're building\n- Must have requirements\n- Must not requirements"}
@@ -97,6 +119,10 @@ check_no_secrets() {
     # Quick check for common secret patterns
     if [[ -f "$file_path" ]]; then
         if grep -qE "(api[_-]?key|secret|password|token)\s*[=:]\s*['\"][A-Za-z0-9_\-]{10,}['\"]" "$file_path" 2>/dev/null; then
+            # Output Ralph signal for loop detection
+            if is_ralph_mode; then
+                echo "<aria-blocked>SECRET_DETECTED</aria-blocked>"
+            fi
             cat << EOF
 {"error": "BLOCKED: Possible secret detected in $file_path.\n\nUse environment variables instead:\n  process.env.API_KEY\n  os.environ['SECRET']\n\nOr add to .gitignore if this is a config file."}
 EOF
@@ -128,6 +154,10 @@ check_no_destructive() {
 
     for pattern in "${dangerous_patterns[@]}"; do
         if echo "$cmd" | grep -qE "$pattern"; then
+            # Output Ralph signal for loop detection
+            if is_ralph_mode; then
+                echo "<aria-blocked>DESTRUCTIVE_COMMAND</aria-blocked>"
+            fi
             cat << EOF
 {"error": "BLOCKED: Destructive command detected.\n\nPattern matched: $pattern\n\nThis command could cause serious damage. If you really need to run it, do so manually outside of Claude."}
 EOF
@@ -137,6 +167,9 @@ EOF
 
     # Warn on force push to protected branches
     if echo "$cmd" | grep -qE "git push.*(--force|-f).*(main|master|production)"; then
+        if is_ralph_mode; then
+            echo "<aria-blocked>FORCE_PUSH_PROTECTED</aria-blocked>"
+        fi
         cat << 'EOF'
 {"error": "BLOCKED: Force push to protected branch.\n\nNever force push to main/master/production.\n\nUse a feature branch and create a pull request instead."}
 EOF
@@ -264,13 +297,13 @@ case "$HOOK_EVENT" in
         ;;
 
     "Stop")
-        # End of turn - show status
-        if [[ -f "$INTENT_FILE" ]]; then
-            local count=$(get_count)
-            local last_test=$(get_last_test)
-            local last_commit=$(get_last_commit)
-            local since_test=$((count - last_test))
-            local since_commit=$((count - last_commit))
+        # End of turn - show status (works in both interactive and Ralph mode)
+        if [[ -f "$INTENT_FILE" ]] || is_ralph_mode; then
+            count=$(get_count)
+            last_test=$(get_last_test)
+            last_commit=$(get_last_commit)
+            since_test=$((count - last_test))
+            since_commit=$((count - last_commit))
 
             # Warnings
             if [[ $since_test -ge $((TEST_CADENCE - 1)) ]]; then
@@ -281,6 +314,9 @@ case "$HOOK_EVENT" in
             fi
             if tests_failing; then
                 echo '{"warning": "Tests are currently failing."}'
+                if is_ralph_mode; then
+                    echo "<aria-blocked>TESTS_FAILING</aria-blocked>"
+                fi
             fi
         fi
         ;;
