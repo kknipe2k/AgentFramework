@@ -1,0 +1,96 @@
+# Quality Rails - Code quality checks
+
+rails:
+  tests_pass:
+    description: "All tests must pass"
+    category: quality
+    check:
+      node: "npm test"
+      python: "pytest"
+      rust: "cargo test"
+      go: "go test ./..."
+      auto: "detect_and_run_tests"
+    expect_exit: 0
+    applies_when:
+      any_file_exists: ["package.json", "pytest.ini", "Cargo.toml", "go.mod"]
+    message: "Tests are failing"
+    blocks: ["commit", "merge", "deploy"]
+    cadence:
+      after_edits: 3
+      before: ["commit"]
+
+  lint_clean:
+    description: "No linting errors"
+    category: quality
+    check:
+      node: "npm run lint 2>/dev/null || npx eslint . --ext .js,.ts,.jsx,.tsx"
+      python: "flake8 . || pylint **/*.py"
+      rust: "cargo clippy"
+      auto: "detect_and_run_lint"
+    expect_exit: 0
+    applies_when:
+      any_file_exists: [".eslintrc", ".eslintrc.js", ".eslintrc.json", "setup.cfg", ".flake8"]
+    message: "Linting errors found"
+    blocks: ["commit"]
+    severity: warning
+    auto_fix: "npm run lint -- --fix"
+
+  types_valid:
+    description: "No type errors"
+    category: quality
+    check:
+      typescript: "npx tsc --noEmit"
+      python: "mypy ."
+    expect_exit: 0
+    applies_when:
+      any_file_exists: ["tsconfig.json", "mypy.ini", "pyproject.toml"]
+    message: "Type errors found"
+    blocks: ["commit"]
+
+  build_succeeds:
+    description: "Project builds successfully"
+    category: quality
+    check:
+      node: "npm run build"
+      rust: "cargo build"
+      go: "go build ./..."
+    expect_exit: 0
+    applies_when:
+      script_exists: "build"
+    message: "Build failed"
+    blocks: ["deploy"]
+    required_before: ["deploy"]
+
+  no_console_logs:
+    description: "No console.log in production code"
+    category: quality
+    check:
+      command: "! grep -r 'console\\.log' src/ --include='*.js' --include='*.ts' | grep -v test | grep -v spec"
+      expect_exit: 0
+    applies_when:
+      directory_exists: "src"
+    message: "console.log found in source code"
+    severity: warning
+    blocks: ["deploy"]
+
+  no_todos_in_code:
+    description: "No TODO comments left behind"
+    category: quality
+    check:
+      command: "! grep -rn 'TODO\\|FIXME\\|HACK\\|XXX' src/ --include='*.js' --include='*.ts' --include='*.py'"
+      expect_exit: 0
+    applies_when:
+      directory_exists: "src"
+    message: "TODO/FIXME comments found"
+    severity: warning
+
+  test_coverage:
+    description: "Test coverage above threshold"
+    category: quality
+    check:
+      node: "npm test -- --coverage --coverageReporters=text | grep 'All files' | awk '{print $4}'"
+      expect_output_gte: 70
+    applies_when:
+      file_exists: "jest.config.js"
+    message: "Test coverage below 70%"
+    severity: warning

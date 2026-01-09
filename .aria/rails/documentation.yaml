@@ -1,0 +1,101 @@
+# Documentation Rails - Keep docs updated
+
+rails:
+  readme_exists:
+    description: "README.md must exist"
+    category: documentation
+    check:
+      command: "test -f README.md"
+      expect_exit: 0
+    message: "No README.md found"
+    required_before: ["done"]
+    auto_fix_prompt: "Create a README.md with project description and setup instructions?"
+
+  readme_has_setup:
+    description: "README has setup/run instructions"
+    category: documentation
+    check:
+      type: content_check
+      file: "README.md"
+      must_contain_any:
+        - "npm install"
+        - "npm i"
+        - "yarn install"
+        - "pip install"
+        - "## Installation"
+        - "## Setup"
+        - "## Getting Started"
+    message: "README missing installation instructions"
+    severity: warning
+
+  readme_has_run:
+    description: "README has run instructions"
+    category: documentation
+    check:
+      type: content_check
+      file: "README.md"
+      must_contain_any:
+        - "npm start"
+        - "npm run"
+        - "yarn start"
+        - "python"
+        - "## Usage"
+        - "## Running"
+    message: "README missing run instructions"
+    severity: warning
+
+  changelog_updated:
+    description: "CHANGELOG updated for significant changes"
+    category: documentation
+    check:
+      type: git_check
+      if_files_changed: ["src/**", "lib/**"]
+      lines_changed_threshold: 50
+      require_file_changed: "CHANGELOG.md"
+    applies_when:
+      file_exists: "CHANGELOG.md"
+    message: "CHANGELOG.md not updated for significant changes"
+    severity: warning
+
+  api_documented:
+    description: "API endpoints are documented"
+    category: documentation
+    check:
+      type: file_check
+      if_exists: ["src/routes/**", "src/api/**", "routes/**", "api/**"]
+      require_any: ["docs/api.md", "API.md", "openapi.yaml", "swagger.json"]
+    message: "API endpoints need documentation"
+    severity: warning
+
+  env_example_exists:
+    description: "Environment example file exists"
+    category: documentation
+    check:
+      type: file_check
+      if_exists: ".env"
+      require: ".env.example"
+    message: "Create .env.example for other developers"
+    auto_fix: "cp .env .env.example && sed -i 's/=.*/=/' .env.example"
+    severity: warning
+
+  inline_comments:
+    description: "Complex functions have comments"
+    category: documentation
+    check:
+      type: complexity_check
+      threshold: 10  # cyclomatic complexity
+      require_comment: true
+    message: "Complex function needs comments"
+    severity: info
+
+  jsdoc_for_exports:
+    description: "Exported functions have JSDoc"
+    category: documentation
+    check:
+      type: content_scan
+      pattern: "export (async )?function \\w+\\("
+      must_precede: "/\\*\\*"
+      within_lines: 3
+      files: ["src/**/*.ts", "src/**/*.js"]
+    message: "Exported functions should have JSDoc comments"
+    severity: info
