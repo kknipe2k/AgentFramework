@@ -34,10 +34,10 @@ case "$1" in
             exit 1
         fi
 
-        local edits=$(cat "$ARIA_DIR/edit_count" 2>/dev/null || echo 0)
-        local last_test=$(cat "$ARIA_DIR/last_test" 2>/dev/null || echo 0)
-        local last_commit=$(cat "$ARIA_DIR/last_commit" 2>/dev/null || echo 0)
-        local tests_ok="YES"
+        edits=$(cat "$ARIA_DIR/edit_count" 2>/dev/null || echo 0)
+        last_test=$(cat "$ARIA_DIR/last_test" 2>/dev/null || echo 0)
+        last_commit=$(cat "$ARIA_DIR/last_commit" 2>/dev/null || echo 0)
+        tests_ok="YES"
         [[ -f "$ARIA_DIR/tests_failed" ]] && tests_ok="NO"
 
         echo "═══════════════════════════════════"
