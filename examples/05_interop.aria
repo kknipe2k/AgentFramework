@@ -1,0 +1,401 @@
+# Aria Interoperability
+# Seamless integration with Python and JavaScript ecosystems
+
+# ====================
+# PYTHON INTEROP
+# ====================
+
+# Import Python standard library
+from python:os import path, environ
+from python:sys import argv
+from python:datetime import datetime, timedelta
+from python:json import loads as json_loads, dumps as json_dumps
+from python:re import compile as regex_compile
+
+# Import popular Python packages
+from python:numpy as np
+from python:pandas as pd
+from python:requests import get as http_get, post as http_post
+from python:sqlalchemy import create_engine, Column, Integer, String
+
+# Using NumPy for numerical operations
+def analyze_data(data: list[float]) -> dict:
+    arr = np.array(data)
+    return {
+        "mean": np.mean(arr),
+        "std": np.std(arr),
+        "min": np.min(arr),
+        "max": np.max(arr),
+        "median": np.median(arr)
+    }
+
+# Using Pandas for data analysis
+def process_csv(filename: str) -> dict:
+    df = pd.read_csv(filename)
+
+    # All Pandas operations work seamlessly
+    summary = df.describe()
+    grouped = df.groupby("category").agg({"value": "sum"})
+
+    return {
+        "rows": len(df),
+        "columns": list(df.columns),
+        "summary": summary.to_dict(),
+        "by_category": grouped.to_dict()
+    }
+
+# Using SQLAlchemy
+from python:sqlalchemy.orm import sessionmaker, declarative_base
+
+Base = declarative_base()
+
+class UserModel(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100))
+    email = Column(String(100), unique=True)
+
+engine = create_engine("sqlite:///app.db")
+Session = sessionmaker(bind=engine)
+
+def get_all_users() -> list[dict]:
+    session = Session()
+    try:
+        users = session.query(UserModel).all()
+        return [{"id": u.id, "name": u.name, "email": u.email} for u in users]
+    finally:
+        session.close()
+
+# ====================
+# JAVASCRIPT INTEROP
+# ====================
+
+# Import JavaScript/npm packages
+from js:lodash import debounce, throttle, cloneDeep, merge
+from js:axios as axios
+from js:uuid import v4 as uuid
+from js:date-fns import format as formatDate, parseISO, addDays
+from js:zod import z as zod
+
+# Using Lodash utilities
+users = [
+    {"name": "Alice", "age": 30},
+    {"name": "Bob", "age": 25},
+    {"name": "Charlie", "age": 35}
+]
+
+# Sort and filter with Lodash
+sorted_users = _.sortBy(users, ["age"])
+grouped = _.groupBy(users, (u) => "young" if u["age"] < 30 else "adult")
+
+# Debounce a function (great for search inputs)
+search_handler = debounce((query) => {
+    print(f"Searching for: {query}")
+    return fetch_results(query)
+}, 300)
+
+# Using Axios for HTTP
+async def fetch_github_user(username: str) -> dict:
+    response = await axios.get(f"https://api.github.com/users/{username}")
+    return response.data
+
+# Using date-fns for date manipulation
+def format_timestamp(iso_string: str) -> str:
+    date = parseISO(iso_string)
+    return formatDate(date, "MMMM do, yyyy 'at' h:mm a")
+
+def get_next_week() -> list[str]:
+    today = datetime.now()
+    return [
+        formatDate(addDays(today, i), "yyyy-MM-dd")
+        for i in range(7)
+    ]
+
+# Using Zod for validation
+UserSchema = zod.object({
+    name: zod.string().min(2).max(100),
+    email: zod.string().email(),
+    age: zod.number().int().positive().optional()
+})
+
+def validate_user(data: dict) -> dict:
+    try:
+        validated = UserSchema.parse(data)
+        return {"success": True, "data": validated}
+    except zod.ZodError as e:
+        return {"success": False, "errors": e.errors}
+
+# ====================
+# WEB APIS
+# ====================
+
+# Browser/DOM APIs (when running in browser)
+from web:dom import document, window, localStorage
+from web:fetch import fetch, Request, Headers
+from web:websocket import WebSocket
+from web:canvas import CanvasRenderingContext2D
+
+# DOM manipulation
+def setup_page():
+    # Query elements
+    header = document.querySelector("header")
+    buttons = document.querySelectorAll(".btn")
+
+    # Create elements
+    div = document.createElement("div")
+    div.className = "container"
+    div.innerHTML = "<h1>Welcome</h1>"
+
+    # Event listeners
+    for btn in buttons:
+        btn.addEventListener("click", (e) => {
+            print(f"Button clicked: {e.target.textContent}")
+        })
+
+    # Local storage
+    localStorage.setItem("theme", "dark")
+    theme = localStorage.getItem("theme")
+
+# Fetch API
+async def fetch_data(url: str, options: dict = {}) -> dict:
+    headers = Headers({
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {get_token()}"
+    })
+
+    request = Request(url, {
+        "method": options.get("method", "GET"),
+        "headers": headers,
+        "body": json.stringify(options.get("body")) if options.get("body") else None
+    })
+
+    response = await fetch(request)
+
+    if not response.ok:
+        raise HttpError(response.status, await response.text())
+
+    return await response.json()
+
+# WebSocket client
+class RealtimeClient:
+    def __init__(self, url: str):
+        self.url = url
+        self.socket = None
+        self.handlers = {}
+
+    def connect(self):
+        self.socket = WebSocket(self.url)
+
+        self.socket.onopen = () => {
+            print("Connected to server")
+            self.emit("connected", {})
+        }
+
+        self.socket.onmessage = (event) => {
+            data = json.parse(event.data)
+            event_type = data.get("type")
+            if event_type in self.handlers:
+                self.handlers[event_type](data.get("payload"))
+        }
+
+        self.socket.onclose = () => {
+            print("Disconnected from server")
+            self.emit("disconnected", {})
+        }
+
+    def on(self, event_type: str, handler: fn):
+        self.handlers[event_type] = handler
+
+    def send(self, event_type: str, payload: dict):
+        if self.socket and self.socket.readyState == WebSocket.OPEN:
+            self.socket.send(json.stringify({
+                "type": event_type,
+                "payload": payload
+            }))
+
+# ====================
+# NODE.JS APIS
+# ====================
+
+# Node.js modules (when running in Node)
+from node:fs import readFile, writeFile, readdir
+from node:path import join, dirname, basename
+from node:child_process import exec, spawn
+from node:crypto import createHash, randomBytes
+
+# File system operations
+async def read_json_file(filepath: str) -> dict:
+    content = await readFile(filepath, "utf-8")
+    return json.parse(content)
+
+async def write_json_file(filepath: str, data: dict):
+    content = json.stringify(data, indent=2)
+    await writeFile(filepath, content)
+
+async def list_directory(dirpath: str) -> list[str]:
+    entries = await readdir(dirpath, {"withFileTypes": True})
+    return [
+        {"name": e.name, "isDirectory": e.isDirectory()}
+        for e in entries
+    ]
+
+# Crypto operations
+def hash_password(password: str, salt: str = None) -> dict:
+    if salt is None:
+        salt = randomBytes(16).toString("hex")
+
+    hash_obj = createHash("sha256")
+    hash_obj.update(password + salt)
+    hash_value = hash_obj.digest("hex")
+
+    return {"hash": hash_value, "salt": salt}
+
+def verify_password(password: str, hash_value: str, salt: str) -> bool:
+    result = hash_password(password, salt)
+    return result["hash"] == hash_value
+
+# ====================
+# CROSS-RUNTIME COMPATIBILITY
+# ====================
+
+# Aria provides unified APIs that work across runtimes
+
+from aria.runtime import is_browser, is_node, is_native
+
+# Environment detection
+if is_browser():
+    storage = localStorage
+elif is_node():
+    storage = FileStorage("./data")
+else:
+    storage = MemoryStorage()
+
+# Unified HTTP client (works everywhere)
+from aria.http import HttpClient
+
+client = HttpClient({
+    "base_url": "https://api.example.com",
+    "timeout": 5000,
+    "headers": {"User-Agent": "Aria/1.0"}
+})
+
+async def api_call():
+    # Same code works in browser, Node.js, and native
+    response = await client.get("/users")
+    return response.json()
+
+# ====================
+# PRACTICAL EXAMPLE: DATA PIPELINE
+# ====================
+
+async def data_pipeline():
+    """
+    A complete data pipeline showing Python and JS interop.
+    Fetches data, processes with Pandas/NumPy, validates with Zod.
+    """
+
+    # Fetch data using Axios (JS)
+    print("Fetching data...")
+    response = await axios.get("https://api.example.com/data")
+    raw_data = response.data
+
+    # Validate schema using Zod (JS)
+    DataSchema = zod.array(zod.object({
+        id: zod.number(),
+        value: zod.number(),
+        category: zod.string()
+    }))
+
+    print("Validating data...")
+    validated = DataSchema.parse(raw_data)
+
+    # Convert to Pandas DataFrame (Python)
+    print("Processing with Pandas...")
+    df = pd.DataFrame(validated)
+
+    # Numerical analysis with NumPy (Python)
+    values = np.array(df["value"])
+    stats = {
+        "mean": float(np.mean(values)),
+        "std": float(np.std(values)),
+        "sum": float(np.sum(values))
+    }
+
+    # Group and aggregate with Pandas
+    by_category = df.groupby("category").agg({
+        "value": ["sum", "mean", "count"]
+    }).to_dict()
+
+    # Format dates with date-fns (JS)
+    timestamp = formatDate(datetime.now(), "yyyy-MM-dd HH:mm:ss")
+
+    # Build result using Lodash (JS)
+    result = merge({}, stats, {
+        "by_category": by_category,
+        "processed_at": timestamp,
+        "record_count": len(df)
+    })
+
+    return result
+
+# ====================
+# CALLING NATIVE CODE
+# ====================
+
+# C/C++ via FFI
+from aria.ffi import load_library, c_int, c_char_p, c_void_p
+
+# Load a shared library
+lib = load_library("./libexample.so")
+
+# Define function signatures
+lib.add_numbers.argtypes = [c_int, c_int]
+lib.add_numbers.restype = c_int
+
+lib.process_string.argtypes = [c_char_p]
+lib.process_string.restype = c_char_p
+
+# Call native functions
+result = lib.add_numbers(5, 3)  # Returns 8
+processed = lib.process_string(b"hello")
+
+# Rust crate integration
+from aria.rust import import_crate
+
+# Import a Rust crate compiled to WASM or native
+crypto_crate = import_crate("ring")
+
+def secure_hash(data: bytes) -> bytes:
+    return crypto_crate.digest.sha256(data)
+
+# ====================
+# ENTRY POINT
+# ====================
+
+async def main():
+    # Demonstrate Python interop
+    print("=== Python Interop ===")
+    data = [1.5, 2.3, 4.1, 3.7, 2.8]
+    stats = analyze_data(data)
+    print(f"Statistics: {stats}")
+
+    # Demonstrate JavaScript interop
+    print("\n=== JavaScript Interop ===")
+    dates = get_next_week()
+    print(f"Next 7 days: {dates}")
+
+    validation = validate_user({
+        "name": "Alice",
+        "email": "alice@example.com",
+        "age": 30
+    })
+    print(f"Validation: {validation}")
+
+    # Run data pipeline
+    print("\n=== Data Pipeline ===")
+    result = await data_pipeline()
+    print(f"Pipeline result: {result}")
+
+if __name__ == "__main__":
+    run(main())

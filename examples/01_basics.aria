@@ -1,0 +1,230 @@
+# Aria Basics - Variables, Functions, and Control Flow
+# This file demonstrates the fundamental syntax of Aria
+
+# ====================
+# VARIABLES
+# ====================
+
+# Simple variable declaration (Python-style)
+name = "Aria Language"
+version = 1.0
+is_awesome = True
+
+# Type-annotated variables (optional but recommended)
+user_count: int = 42
+pi_value: float = 3.14159
+tags: list[str] = ["python", "javascript", "html"]
+
+# Constants (immutable after declaration)
+const MAX_CONNECTIONS = 100
+const API_BASE = "https://api.example.com"
+
+# Destructuring assignment (JS-style)
+point = {"x": 10, "y": 20}
+{x, y} = point  # x = 10, y = 20
+
+coordinates = [1, 2, 3, 4, 5]
+[first, second, ...rest] = coordinates  # first=1, second=2, rest=[3,4,5]
+
+# ====================
+# FUNCTIONS
+# ====================
+
+# Standard function definition (Python-style)
+def greet(name: str) -> str:
+    return f"Hello, {name}!"
+
+# With default parameters
+def create_greeting(name: str, greeting = "Hello", punctuation = "!") -> str:
+    return f"{greeting}, {name}{punctuation}"
+
+# Arrow functions (JS-style lambdas)
+double = (x) => x * 2
+add = (a, b) => a + b
+identity = (x) => x
+
+# Multi-line arrow functions
+process_data = (data) => {
+    cleaned = data.strip()
+    validated = validate(cleaned)
+    return transform(validated)
+}
+
+# Functions with *args and **kwargs (Python-style)
+def log_message(level: str, *messages, **metadata):
+    timestamp = datetime.now()
+    for msg in messages:
+        print(f"[{timestamp}] [{level}] {msg}")
+    if metadata:
+        print(f"  Metadata: {metadata}")
+
+# Calling the function
+log_message("INFO", "Server started", "Listening on port 8000", server="main", pid=1234)
+
+# ====================
+# CONTROL FLOW
+# ====================
+
+# If/elif/else (Python-style)
+score = 85
+
+if score >= 90:
+    grade = "A"
+elif score >= 80:
+    grade = "B"
+elif score >= 70:
+    grade = "C"
+else:
+    grade = "F"
+
+print(f"Your grade: {grade}")
+
+# Ternary expression (Python-style)
+status = "adult" if age >= 18 else "minor"
+
+# Pattern matching (enhanced from Python 3.10)
+def handle_response(response):
+    match response:
+        case {"status": 200, "data": content}:
+            return process_success(content)
+        case {"status": 404}:
+            return handle_not_found()
+        case {"status": code} if code >= 500:
+            return handle_server_error(code)
+        case {"status": code}:
+            return handle_unknown_status(code)
+        case None:
+            return handle_no_response()
+        case _:
+            return handle_unexpected(response)
+
+# ====================
+# LOOPS
+# ====================
+
+# For loop (Python-style)
+fruits = ["apple", "banana", "cherry"]
+for fruit in fruits:
+    print(f"I like {fruit}")
+
+# With enumerate
+for index, fruit in enumerate(fruits):
+    print(f"{index + 1}. {fruit}")
+
+# Range-based loops
+for i in range(5):
+    print(i)  # 0, 1, 2, 3, 4
+
+for i in range(1, 10, 2):
+    print(i)  # 1, 3, 5, 7, 9
+
+# While loop
+count = 0
+while count < 5:
+    print(f"Count: {count}")
+    count += 1
+
+# Loop with break and continue
+for num in range(10):
+    if num == 3:
+        continue  # Skip 3
+    if num == 7:
+        break     # Stop at 7
+    print(num)
+
+# ====================
+# COMPREHENSIONS (Python)
+# ====================
+
+# List comprehension
+numbers = [1, 2, 3, 4, 5]
+squares = [x ** 2 for x in numbers]           # [1, 4, 9, 16, 25]
+evens = [x for x in numbers if x % 2 == 0]    # [2, 4]
+
+# Dict comprehension
+words = ["hello", "world", "aria"]
+lengths = {word: len(word) for word in words}  # {"hello": 5, "world": 5, "aria": 4}
+
+# Set comprehension
+unique_lengths = {len(word) for word in words}  # {4, 5}
+
+# Generator expression (lazy evaluation)
+large_squares = (x ** 2 for x in range(1000000))
+
+# Nested comprehension
+matrix = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+flattened = [num for row in matrix for num in row]  # [1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+# ====================
+# STRING FORMATTING
+# ====================
+
+name = "World"
+count = 42
+
+# F-strings (Python-style)
+message = f"Hello, {name}! Count is {count}."
+
+# Template literals (JS-style backticks also supported)
+multiline = `
+    This is a multiline string.
+    Name: {name}
+    Count: {count}
+`
+
+# Format specifiers
+price = 19.99
+formatted_price = f"Price: ${price:.2f}"      # "Price: $19.99"
+padded_num = f"ID: {count:05d}"               # "ID: 00042"
+
+# ====================
+# OPERATORS
+# ====================
+
+# Arithmetic
+result = 10 + 5   # 15
+result = 10 - 5   # 5
+result = 10 * 5   # 50
+result = 10 / 5   # 2.0 (float division)
+result = 10 // 5  # 2 (integer division)
+result = 10 % 3   # 1 (modulo)
+result = 2 ** 10  # 1024 (exponentiation)
+
+# Comparison
+is_equal = 5 == 5           # True
+is_not_equal = 5 != 3       # True
+is_greater = 5 > 3          # True
+is_less_or_equal = 5 <= 5   # True
+
+# Logical
+result = True and False     # False
+result = True or False      # True
+result = not True           # False
+
+# Nullish coalescing (JS-style)
+value = potentially_null ?? "default"
+
+# Optional chaining (JS-style)
+username = user?.profile?.name ?? "Anonymous"
+
+# Spread operator (JS-style)
+list1 = [1, 2, 3]
+list2 = [4, 5, 6]
+combined = [...list1, ...list2]  # [1, 2, 3, 4, 5, 6]
+
+obj1 = {"a": 1, "b": 2}
+obj2 = {"c": 3, "d": 4}
+merged = {...obj1, ...obj2}  # {"a": 1, "b": 2, "c": 3, "d": 4}
+
+# ====================
+# MAIN ENTRY POINT
+# ====================
+
+def main():
+    print("Welcome to Aria!")
+    print(greet("Developer"))
+    print(f"2 + 3 = {add(2, 3)}")
+    print(f"Squares: {squares}")
+
+if __name__ == "__main__":
+    main()

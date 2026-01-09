@@ -1,0 +1,296 @@
+# Aria Async Programming
+# Demonstrating JavaScript-inspired async/await with Python-style syntax
+
+from aria.http import get, post
+from aria.time import sleep, timeout
+from aria.concurrent import parallel, race, Channel
+
+# ====================
+# BASIC ASYNC/AWAIT
+# ====================
+
+# Async function declaration
+async def fetch_user(user_id: int) -> dict:
+    """Fetch a single user from the API"""
+    response = await get(f"/api/users/{user_id}")
+    return response.json()
+
+# Calling async functions
+async def main():
+    user = await fetch_user(1)
+    print(f"Got user: {user['name']}")
+
+# ====================
+# PARALLEL EXECUTION
+# ====================
+
+async def fetch_all_data():
+    """Fetch multiple resources in parallel (like Promise.all)"""
+
+    # All three requests start simultaneously
+    [users, posts, comments] = await parallel(
+        get("/api/users"),
+        get("/api/posts"),
+        get("/api/comments")
+    )
+
+    return {
+        "users": users.json(),
+        "posts": posts.json(),
+        "comments": comments.json()
+    }
+
+# With individual results handling
+async def fetch_with_results():
+    results = await parallel(
+        fetch_user(1),
+        fetch_user(2),
+        fetch_user(3),
+        return_exceptions=True  # Don't fail if one request fails
+    )
+
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            print(f"Request {i} failed: {result}")
+        else:
+            print(f"Request {i} succeeded: {result}")
+
+# ====================
+# RACING (FIRST WINS)
+# ====================
+
+async def fetch_fastest():
+    """Return result from whichever endpoint responds first (like Promise.race)"""
+
+    result = await race(
+        get("https://api1.example.com/data"),
+        get("https://api2.example.com/data"),
+        get("https://api3.example.com/data")
+    )
+
+    return result.json()
+
+# Race with timeout
+async def fetch_with_timeout(url: str, timeout_ms: int = 5000):
+    """Fetch with a timeout - whichever completes first"""
+
+    try:
+        result = await race(
+            get(url),
+            timeout(timeout_ms, TimeoutError("Request timed out"))
+        )
+        return result.json()
+    except TimeoutError as e:
+        print(f"Request timed out: {e}")
+        return None
+
+# ====================
+# PROMISE CHAINING
+# ====================
+
+# Traditional promise-style chaining (also supported)
+def process_user_chain(user_id: int):
+    return (
+        fetch_user(user_id)
+            .then((user) => fetch_posts(user["id"]))
+            .then((posts) => filter_recent(posts))
+            .then((recent) => format_output(recent))
+            .catch((err) => {
+                log_error(err)
+                return []
+            })
+            .finally(() => cleanup())
+    )
+
+# ====================
+# ASYNC GENERATORS
+# ====================
+
+async def stream_events(url: str):
+    """Async generator for streaming data"""
+
+    async for event in http.stream(url):
+        data = json.parse(event.data)
+        yield data
+
+# Consuming async generators
+async def process_stream():
+    async for event in stream_events("/api/events"):
+        print(f"Received event: {event['type']}")
+
+        if event["type"] == "close":
+            break
+
+# Async generator with transformation
+async def filtered_stream(url: str, event_type: str):
+    async for event in stream_events(url):
+        if event["type"] == event_type:
+            yield event
+
+# ====================
+# CHANNELS (GO-STYLE)
+# ====================
+
+# Create a channel for inter-task communication
+async def producer_consumer_example():
+    # Buffered channel
+    channel = Channel[int](buffer_size=10)
+
+    async def producer():
+        for i in range(100):
+            await channel.send(i)
+            await sleep(10)  # 10ms delay
+        channel.close()
+
+    async def consumer(name: str):
+        async for value in channel:
+            print(f"[{name}] Received: {value}")
+
+    # Run producer and multiple consumers in parallel
+    await parallel(
+        producer(),
+        consumer("A"),
+        consumer("B")
+    )
+
+# Select from multiple channels (like Go select)
+async def multi_channel_example():
+    data_channel = Channel[str]()
+    quit_channel = Channel[bool]()
+
+    async def listener():
+        while True:
+            match await select(data_channel, quit_channel):
+                case ("data", value):
+                    print(f"Received data: {value}")
+                case ("quit", _):
+                    print("Shutting down...")
+                    return
+                case ("timeout", _):
+                    print("No activity...")
+
+# ====================
+# ERROR HANDLING
+# ====================
+
+async def robust_fetch(url: str):
+    """Fetch with retry logic and error handling"""
+
+    max_retries = 3
+    retry_delay = 1000  # 1 second
+
+    for attempt in range(max_retries):
+        try:
+            response = await get(url)
+
+            if response.status >= 400:
+                raise HttpError(response.status, response.text())
+
+            return response.json()
+
+        except NetworkError as e:
+            if attempt < max_retries - 1:
+                print(f"Attempt {attempt + 1} failed, retrying...")
+                await sleep(retry_delay * (attempt + 1))
+            else:
+                raise
+
+        except HttpError as e:
+            # Don't retry client errors
+            if e.status < 500:
+                raise
+            # Retry server errors
+            if attempt < max_retries - 1:
+                await sleep(retry_delay)
+            else:
+                raise
+
+# Using async context managers
+async def managed_connection():
+    async with DatabaseConnection("postgres://...") as db:
+        users = await db.query("SELECT * FROM users")
+        return users
+    # Connection automatically closed here
+
+# ====================
+# CONCURRENT PATTERNS
+# ====================
+
+# Semaphore for limiting concurrency
+async def fetch_all_with_limit(urls: list[str], max_concurrent: int = 5):
+    """Fetch all URLs with limited concurrency"""
+
+    semaphore = Semaphore(max_concurrent)
+
+    async def fetch_one(url: str):
+        async with semaphore:
+            return await get(url)
+
+    return await parallel(*[fetch_one(url) for url in urls])
+
+# Worker pool pattern
+async def process_batch(items: list, worker_count: int = 4):
+    """Process items using a worker pool"""
+
+    queue = Channel[dict](buffer_size=len(items))
+    results = Channel[dict](buffer_size=len(items))
+
+    # Add items to queue
+    for item in items:
+        await queue.send(item)
+    queue.close()
+
+    # Worker function
+    async def worker(id: int):
+        async for item in queue:
+            result = await process_item(item)
+            await results.send({"id": id, "result": result})
+
+    # Start workers
+    await parallel(*[worker(i) for i in range(worker_count)])
+    results.close()
+
+    # Collect results
+    return [r async for r in results]
+
+# ====================
+# PRACTICAL EXAMPLE
+# ====================
+
+async def load_user_dashboard(user_id: int) -> dict:
+    """Load all data needed for a user dashboard"""
+
+    # First, fetch the user (needed for other queries)
+    user = await fetch_user(user_id)
+
+    # Then fetch related data in parallel
+    [posts, followers, notifications, settings] = await parallel(
+        fetch_user_posts(user_id),
+        fetch_followers(user_id),
+        fetch_notifications(user_id),
+        fetch_settings(user_id)
+    )
+
+    # Fetch comments for each post (with limited concurrency)
+    post_ids = [p["id"] for p in posts]
+    comments = await fetch_all_with_limit(
+        [f"/api/posts/{pid}/comments" for pid in post_ids],
+        max_concurrent=3
+    )
+
+    return {
+        "user": user,
+        "posts": posts,
+        "comments": dict(zip(post_ids, comments)),
+        "followers": followers,
+        "notifications": notifications,
+        "settings": settings
+    }
+
+# ====================
+# ENTRY POINT
+# ====================
+
+if __name__ == "__main__":
+    # Run the async main function
+    run(main())

@@ -1,0 +1,442 @@
+# Aria UI Components
+# HTML-like declarative UI with reactive state management
+
+from aria.ui import state, computed, effect, render
+from aria.http import get, post
+
+# ====================
+# BASIC COMPONENTS
+# ====================
+
+# Simple component (returns UI elements)
+component HelloWorld():
+    return @div(class="greeting"):
+        @h1: "Hello, World!"
+        @p: "Welcome to Aria"
+
+# Component with props
+component Greeting(name: str, formal: bool = False):
+    prefix = "Dear" if formal else "Hello"
+
+    return @div(class="greeting"):
+        @h1: f"{prefix}, {name}!"
+
+# Using components
+component App():
+    return @main:
+        Greeting(name="Alice")
+        Greeting(name="Bob", formal=True)
+
+# ====================
+# REACTIVE STATE
+# ====================
+
+# State creates reactive values that trigger re-renders
+component Counter():
+    count = state(0)
+
+    def increment():
+        count.set(count.value + 1)
+
+    def decrement():
+        count.set(count.value - 1)
+
+    def reset():
+        count.set(0)
+
+    return @div(class="counter"):
+        @h2: f"Count: {count.value}"
+        @div(class="buttons"):
+            @button(onclick={decrement}, disabled={count.value <= 0}): "-"
+            @button(onclick={increment}): "+"
+            @button(onclick={reset}): "Reset"
+
+# Multiple state values
+component TemperatureConverter():
+    celsius = state(0)
+    fahrenheit = state(32)
+
+    def update_celsius(e):
+        c = float(e.target.value)
+        celsius.set(c)
+        fahrenheit.set(c * 9/5 + 32)
+
+    def update_fahrenheit(e):
+        f = float(e.target.value)
+        fahrenheit.set(f)
+        celsius.set((f - 32) * 5/9)
+
+    return @div(class="converter"):
+        @div:
+            @label: "Celsius:"
+            @input(
+                type="number",
+                value={celsius.value},
+                onchange={update_celsius}
+            )
+        @div:
+            @label: "Fahrenheit:"
+            @input(
+                type="number",
+                value={fahrenheit.value},
+                onchange={update_fahrenheit}
+            )
+
+# ====================
+# COMPUTED VALUES
+# ====================
+
+component ShoppingCart(items: list[dict]):
+    # Computed values automatically update when dependencies change
+    subtotal = computed(() => sum(item["price"] * item["qty"] for item in items))
+    tax = computed(() => subtotal.value * 0.08)
+    total = computed(() => subtotal.value + tax.value)
+
+    return @div(class="cart"):
+        @h2: "Shopping Cart"
+        @ul:
+            @for item in items:
+                @li(key={item["id"]}):
+                    f"{item['name']} x {item['qty']} = ${item['price'] * item['qty']:.2f}"
+
+        @div(class="totals"):
+            @p: f"Subtotal: ${subtotal.value:.2f}"
+            @p: f"Tax (8%): ${tax.value:.2f}"
+            @p(class="total"): f"Total: ${total.value:.2f}"
+
+# ====================
+# EFFECTS (SIDE EFFECTS)
+# ====================
+
+component UserProfile(user_id: int):
+    user = state(None)
+    loading = state(True)
+    error = state(None)
+
+    # Effect runs when dependencies change
+    async def load_user():
+        loading.set(True)
+        error.set(None)
+        try:
+            response = await get(f"/api/users/{user_id}")
+            user.set(response.json())
+        except Exception as e:
+            error.set(str(e))
+        finally:
+            loading.set(False)
+
+    # Run effect when user_id changes
+    effect(load_user, [user_id])
+
+    return @div(class="profile"):
+        @if loading.value:
+            @div(class="spinner"): "Loading..."
+        @elif error.value:
+            @div(class="error"): f"Error: {error.value}"
+        @elif user.value:
+            @h1: user.value["name"]
+            @p: user.value["email"]
+            @img(src={user.value["avatar"]}, alt="Avatar")
+        @else:
+            @p: "No user found"
+
+# Effect with cleanup
+component WebSocketChat(room_id: str):
+    messages = state([])
+    socket = state(None)
+
+    def setup_socket():
+        ws = WebSocket(f"wss://chat.example.com/{room_id}")
+
+        ws.on("message", (msg) => {
+            messages.set([...messages.value, json.parse(msg)])
+        })
+
+        socket.set(ws)
+
+        # Return cleanup function
+        return () => ws.close()
+
+    effect(setup_socket, [room_id])
+
+    return @div(class="chat"):
+        @for msg in messages.value:
+            ChatMessage(message=msg, key={msg["id"]})
+
+# ====================
+# CONDITIONAL RENDERING
+# ====================
+
+component AuthGate(user: dict | None):
+    return @div:
+        @if user:
+            @h1: f"Welcome back, {user['name']}!"
+            Dashboard(user={user})
+        @else:
+            @h1: "Please log in"
+            LoginForm()
+
+# Complex conditionals
+component StatusBadge(status: str):
+    return @span(class=f"badge badge-{status}"):
+        @match status:
+            @case "active":
+                @span(class="dot green")
+                "Active"
+            @case "pending":
+                @span(class="dot yellow")
+                "Pending"
+            @case "inactive":
+                @span(class="dot gray")
+                "Inactive"
+            @case _:
+                "Unknown"
+
+# ====================
+# LIST RENDERING
+# ====================
+
+component TodoList():
+    todos = state([
+        {"id": 1, "text": "Learn Aria", "done": False},
+        {"id": 2, "text": "Build an app", "done": False},
+        {"id": 3, "text": "Deploy", "done": False}
+    ])
+    new_todo = state("")
+
+    def add_todo():
+        if new_todo.value.strip():
+            todos.set([
+                ...todos.value,
+                {"id": len(todos.value) + 1, "text": new_todo.value, "done": False}
+            ])
+            new_todo.set("")
+
+    def toggle_todo(id: int):
+        todos.set([
+            {...t, done: not t["done"]} if t["id"] == id else t
+            for t in todos.value
+        ])
+
+    def delete_todo(id: int):
+        todos.set([t for t in todos.value if t["id"] != id])
+
+    remaining = computed(() => sum(1 for t in todos.value if not t["done"]))
+
+    return @div(class="todo-app"):
+        @h1: "Todo List"
+
+        @div(class="input-group"):
+            @input(
+                type="text",
+                value={new_todo.value},
+                oninput={(e) => new_todo.set(e.target.value)},
+                placeholder="What needs to be done?",
+                onkeypress={(e) => add_todo() if e.key == "Enter" else None}
+            )
+            @button(onclick={add_todo}): "Add"
+
+        @ul(class="todos"):
+            @for todo in todos.value:
+                @li(key={todo["id"]}, class={"done": todo["done"]}):
+                    @input(
+                        type="checkbox",
+                        checked={todo["done"]},
+                        onchange={() => toggle_todo(todo["id"])}
+                    )
+                    @span: todo["text"]
+                    @button(onclick={() => delete_todo(todo["id"])}): "X"
+
+        @footer:
+            @p: f"{remaining.value} items remaining"
+
+# ====================
+# FORMS
+# ====================
+
+component ContactForm():
+    form_data = state({
+        "name": "",
+        "email": "",
+        "message": ""
+    })
+    errors = state({})
+    submitted = state(False)
+
+    def update_field(field: str, value: str):
+        form_data.set({...form_data.value, [field]: value})
+        # Clear error when user types
+        if field in errors.value:
+            errors.set({k: v for k, v in errors.value.items() if k != field})
+
+    def validate() -> bool:
+        new_errors = {}
+
+        if not form_data.value["name"]:
+            new_errors["name"] = "Name is required"
+
+        if not form_data.value["email"]:
+            new_errors["email"] = "Email is required"
+        elif "@" not in form_data.value["email"]:
+            new_errors["email"] = "Invalid email format"
+
+        if not form_data.value["message"]:
+            new_errors["message"] = "Message is required"
+
+        errors.set(new_errors)
+        return len(new_errors) == 0
+
+    async def handle_submit(e):
+        e.preventDefault()
+
+        if validate():
+            await post("/api/contact", json=form_data.value)
+            submitted.set(True)
+
+    return @div(class="contact-form"):
+        @if submitted.value:
+            @div(class="success"):
+                @h2: "Thank you!"
+                @p: "We'll be in touch soon."
+        @else:
+            @form(onsubmit={handle_submit}):
+                @div(class={"field": True, "error": "name" in errors.value}):
+                    @label(for="name"): "Name"
+                    @input(
+                        id="name",
+                        type="text",
+                        value={form_data.value["name"]},
+                        oninput={(e) => update_field("name", e.target.value)}
+                    )
+                    @if "name" in errors.value:
+                        @span(class="error-message"): errors.value["name"]
+
+                @div(class={"field": True, "error": "email" in errors.value}):
+                    @label(for="email"): "Email"
+                    @input(
+                        id="email",
+                        type="email",
+                        value={form_data.value["email"]},
+                        oninput={(e) => update_field("email", e.target.value)}
+                    )
+                    @if "email" in errors.value:
+                        @span(class="error-message"): errors.value["email"]
+
+                @div(class={"field": True, "error": "message" in errors.value}):
+                    @label(for="message"): "Message"
+                    @textarea(
+                        id="message",
+                        value={form_data.value["message"]},
+                        oninput={(e) => update_field("message", e.target.value)},
+                        rows=5
+                    )
+                    @if "message" in errors.value:
+                        @span(class="error-message"): errors.value["message"]
+
+                @button(type="submit"): "Send Message"
+
+# ====================
+# COMPONENT COMPOSITION
+# ====================
+
+component Card(title: str, children: any, footer: any = None):
+    return @div(class="card"):
+        @div(class="card-header"):
+            @h3: title
+        @div(class="card-body"):
+            {children}
+        @if footer:
+            @div(class="card-footer"):
+                {footer}
+
+component Dashboard(user: dict):
+    return @div(class="dashboard"):
+        Card(title="Profile"):
+            @p: f"Welcome, {user['name']}"
+            @p: f"Email: {user['email']}"
+
+        Card(
+            title="Statistics",
+            footer=@a(href="/stats"): "View all stats"
+        ):
+            @ul:
+                @li: "Posts: 42"
+                @li: "Followers: 1,234"
+                @li: "Following: 567"
+
+# ====================
+# STYLING
+# ====================
+
+component StyledButton(variant = "primary", size = "medium", children: any):
+    # Dynamic class based on props
+    classes = f"btn btn-{variant} btn-{size}"
+
+    # Inline styles (converted to CSS)
+    styles = {
+        "border-radius": "4px",
+        "cursor": "pointer",
+        "transition": "all 0.2s ease"
+    }
+
+    return @button(class={classes}, style={styles}):
+        {children}
+
+# CSS-in-Aria
+component StyledCard():
+    return @div:
+        @style: """
+            .styled-card {
+                background: white;
+                border-radius: 8px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                padding: 16px;
+            }
+            .styled-card:hover {
+                box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+            }
+        """
+        @div(class="styled-card"):
+            @slot
+
+# ====================
+# FULL APPLICATION
+# ====================
+
+component App():
+    user = state(None)
+    theme = state("light")
+
+    async def load_current_user():
+        try:
+            response = await get("/api/me")
+            user.set(response.json())
+        except:
+            user.set(None)
+
+    effect(load_current_user, [])
+
+    def toggle_theme():
+        theme.set("dark" if theme.value == "light" else "light")
+
+    return @html(lang="en"):
+        @head:
+            @meta(charset="UTF-8")
+            @meta(name="viewport", content="width=device-width, initial-scale=1.0")
+            @title: "My Aria App"
+            @link(rel="stylesheet", href="/styles.css")
+        @body(class={theme.value}):
+            @header:
+                @nav:
+                    @a(href="/"): "Home"
+                    @a(href="/about"): "About"
+                    @button(onclick={toggle_theme}):
+                        "Dark Mode" if theme.value == "light" else "Light Mode"
+            @main:
+                AuthGate(user={user.value})
+            @footer:
+                @p: "Built with Aria"
+
+# Render the app
+if __name__ == "__main__":
+    render(App(), document.getElementById("root"))
