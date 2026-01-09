@@ -571,26 +571,63 @@ cmd_done() {
     echo "State archived to $ARIA_DIR/archive/$timestamp"
 }
 
+cmd_rails() {
+    local subcmd="${1:-all}"
+    shift || true
+
+    local executor="$ARIA_DIR/rails-executor.sh"
+    if [[ ! -x "$executor" ]]; then
+        echo "Rails executor not found"
+        return 1
+    fi
+
+    "$executor" "$subcmd" "$@"
+}
+
+cmd_agent() {
+    local subcmd="${1:-list}"
+    shift || true
+
+    local runner="$ARIA_DIR/agent-runner.sh"
+    if [[ ! -x "$runner" ]]; then
+        echo "Agent runner not found"
+        return 1
+    fi
+
+    "$runner" "$subcmd" "$@"
+}
+
 cmd_help() {
     echo "ARIA - Agentic Rail-based Intent Architecture"
     echo ""
     echo "Commands:"
     echo "  aria init \"intent\"     - Start with intent"
     echo "  aria status            - Show current state"
-    echo "  aria check [rail]      - Run rail checks"
+    echo "  aria check [rail]      - Run rail checks (hardcoded)"
+    echo "  aria rails [cmd]       - Run YAML-defined rails"
     echo "  aria verify [level]    - Run verification (quick|standard|full)"
+    echo "  aria agent [cmd]       - Run agents"
     echo "  aria done              - Complete and archive"
     echo ""
     echo "  aria pass              - Mark tests as passed"
     echo "  aria fail              - Mark tests as failed"
     echo "  aria reset             - Reset all counters"
     echo ""
+    echo "Rails commands:"
+    echo "  aria rails all         - Run all applicable rails"
+    echo "  aria rails fix         - Run rails with auto-fix"
+    echo "  aria rails list        - List available rails"
+    echo "  aria rails cat <name>  - Run category (environment, quality, safety)"
+    echo ""
+    echo "Agent commands:"
+    echo "  aria agent list        - List available agents"
+    echo "  aria agent run <name>  - Run an agent"
+    echo "  aria agent verify      - Run verify-app agent"
+    echo ""
     echo "Verification levels:"
     echo "  quick    - Tests, types, lint (Stop hook)"
     echo "  standard - Quick + build + app (before commit)"
     echo "  full     - Everything + E2E + Playwright (before PR/deploy)"
-    echo ""
-    echo "Rails are enforced automatically via hooks."
 }
 
 # ============================================
@@ -601,7 +638,9 @@ case "${1:-help}" in
     init)    cmd_init "$2" ;;
     status)  cmd_status ;;
     check)   cmd_check "$2" ;;
+    rails)   shift; cmd_rails "$@" ;;
     verify)  cmd_verify "$2" ;;
+    agent)   shift; cmd_agent "$@" ;;
     done)    cmd_done ;;
     pass)    record_test; echo "Tests marked as passed" ;;
     fail)    record_test_failure; echo "Tests marked as failed" ;;
