@@ -111,6 +111,32 @@
 
 ---
 
+### 6. TDD Build (High Confidence)
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  planning   │ ──▶ │    tdd      │ ──▶ │  executing  │ ──▶ │   verify    │
+│             │     │             │     │             │     │             │
+└─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
+                          │
+                          ▼
+                    RED → GREEN → REFACTOR
+                    (per requirement)
+```
+
+**Flow:**
+1. planning: Break into testable requirements
+2. tdd: For each requirement:
+   - RED: Write failing test
+   - GREEN: Implement to pass
+   - REFACTOR: Clean up
+3. executing: Integration and final verification
+4. verify: Full test suite passes
+
+**When:** User says "write tests first", "tdd approach", "high confidence"
+
+---
+
 ## Parallel Execution
 
 Some skills run alongside others, not sequentially:
@@ -176,6 +202,29 @@ planning:
   └── Create plan with chosen approach
 ```
 
+### executing → tdd
+
+```
+executing:
+  ├── Task 1: Add user validation
+  │       │
+  │       └──▶ tdd (invoked for critical task)
+  │                 │
+  │                 ├── RED: Write test for validation
+  │                 ├── GREEN: Implement validator
+  │                 ├── REFACTOR: Clean up
+  │                 └── Return to executing
+  │
+  ├── Task 1 ✓ (with tests)
+  ├── Task 2 ✓ (simple, no TDD)
+  └── Task 3 ✓
+```
+
+**When to invoke TDD from executing:**
+- Task involves auth, payments, data integrity
+- Task is explicitly marked for TDD in plan
+- User requested "write tests first"
+
 ---
 
 ## Handoff Patterns
@@ -190,6 +239,9 @@ planning:
 | prototyping | planning | Prototype files as reference |
 | researcher | brainstorming | `concepts.json` |
 | planning | executing | `current-plan.json` |
+| planning | tdd | Testable requirements, acceptance criteria |
+| tdd | executing | Tests + implementation, coverage |
+| tdd | debugging | Failing test as reproduction |
 | executing | tracking | Task events, timing |
 | executing | context-refresh | Progress state, decisions |
 | context-refresh | executing | Handoff summary, preserved state |
@@ -247,8 +299,10 @@ When handing off to another skill:
 | Need | Chain |
 |------|-------|
 | Build something new | brainstorm → plan → execute |
+| Build with high confidence | brainstorm → plan → tdd → execute |
 | Fix a bug | debug → plan(lite) → execute |
 | Add a feature | discovery? → plan → execute |
+| Add critical feature | discovery? → plan → tdd → execute |
 | Understand this codebase | discovery |
 | Understand a paper | researcher → brainstorm |
 | Create a mockup | brainstorm → prototype |

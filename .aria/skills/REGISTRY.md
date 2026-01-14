@@ -12,6 +12,7 @@
 | [executing](./executing.md) | Approved plan exists | ALL | Core |
 | [debugging](./debugging.md) | Test failure, error | ALL | Core |
 | [discovery](./discovery.md) | New codebase, Modify flow | ALL | Core |
+| [tdd](./tdd.md) | "write tests first", "tdd" | ALL | Core |
 | [context-refresh](./context-refresh.md) | Between phases, 3+ failures | STANDARD+ | Core |
 | [tracking](./tracking.md) | During/after execution | STANDARD+ | Core |
 | [brainstorming](./brainstorming.md) | "explore", new project | STANDARD+ | Creative |
@@ -32,6 +33,7 @@ Essential skills used in every workflow.
 | **executing** | Implement tasks | Approved plan | Code, commits |
 | **debugging** | Fix failures | Error/test failure | Working code |
 | **discovery** | Explore codebase | Codebase access | `project-context.md` |
+| **tdd** | Test-driven development | Requirements | Tests, implementation |
 | **context-refresh** | Reset long sessions | Progress state | Handoff summary |
 | **tracking** | Monitor progress | Execution events | `progress.json`, metrics |
 
@@ -117,6 +119,7 @@ brainstorming ──→ prototyping ──→ planning ──→ executing
 | planning | ✓ (lite) | ✓ | ✓ | ✓ |
 | executing | ✓ | ✓ | ✓ | ✓ |
 | debugging | ✓ | ✓ | ✓ | ✓ |
+| tdd | ✓ (lite) | ✓ | ✓ (full) | ✓ (full) |
 | tracking | optional | ✓ | ✓ | ✓ |
 | brainstorming | optional | ✓ | ✓ | ✓ |
 | prototyping | - | optional | ✓ | ✓ |

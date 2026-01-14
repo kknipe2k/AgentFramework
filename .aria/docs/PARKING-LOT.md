@@ -19,7 +19,7 @@
 | Skill registry | ✅ DONE | `.aria/skills/REGISTRY.md` |
 | Skill composition | ✅ DONE | `.aria/skills/COMPOSITION.md` |
 | Cheatsheet | ✅ DONE | `.aria/docs/CHEATSHEET.md` |
-| TDD skill | ⏳ TODO | Not yet implemented |
+| TDD skill | ✅ DONE | `.aria/skills/tdd.md` |
 | ARIA CLI wrapper | ⏳ TODO | Future consideration |
 | NotebookLM automation | ⏳ TODO | Local only, low priority |
 | Publisher skills | ⏳ TODO | Extension, not core |
@@ -37,11 +37,10 @@
 | Brainstorming before planning | ✅ `brainstorming.md` |
 | Socratic questioning | ✅ In brainstorming workflow |
 | Systematic Debugging | ✅ `debugging.md` |
-| TDD workflow | ⏳ Not yet |
+| TDD workflow | ✅ `tdd.md` |
 | Code Review workflow | ⏳ Not yet |
 
 **Remaining from Superpowers:**
-- TDD skill (write test first pattern)
 - Code review skill (cross-model review)
 - Parallel agent dispatching (already using Task tool)
 
@@ -131,12 +130,11 @@
 ## What's Left (Prioritized)
 
 ### Should Do (High Value)
-1. **TDD skill** - Write test first pattern (from Superpowers)
-2. **Real-world testing** - Validate on actual projects
+1. **Real-world testing** - Validate on actual projects
 
 ### Could Do (Medium Value)
-3. **Code review skill** - Cross-model verification
-4. **Anthropic skills review** - Check for patterns to adopt
+2. **Code review skill** - Cross-model verification
+3. **Anthropic skills review** - Check for patterns to adopt
 
 ### Won't Do (Low Value / Bloat)
 - ~~ARIA CLI wrapper~~ - Premature optimization
@@ -160,11 +158,12 @@
 
 ## Done! Current Skill Set
 
-**Core (6):**
+**Core (7):**
 - planning.md
 - executing.md
 - debugging.md
 - discovery.md
+- tdd.md
 - context-refresh.md
 - tracking.md
 
@@ -181,7 +180,7 @@
 - COMPOSITION.md
 - CHEATSHEET.md
 
-**Total: 13 files** - Lean and complete.
+**Total: 14 files** - Lean and complete.
 
 ---
 
