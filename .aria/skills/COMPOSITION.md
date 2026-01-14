@@ -82,10 +82,32 @@
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│ brainstorm  │ ──▶ │  planning   │ ──▶ │  executing  │ ──▶ │  tracking   │
-│ (optional)  │     │             │     │             │     │             │
+│  discovery  │ ──▶ │  planning   │ ──▶ │  executing  │ ──▶ │  tracking   │
+│ (if new)    │     │             │     │             │     │             │
 └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
 ```
+
+**Flow:**
+1. discovery: Understand codebase (skip if already familiar)
+2. planning: Break down feature
+3. executing: Implement with verification
+4. tracking: Log progress
+
+---
+
+### 5. Codebase Exploration
+
+```
+┌─────────────┐     ┌─────────────┐
+│  discovery  │ ──▶ │  document   │
+│             │     │  (output)   │
+└─────────────┘     └─────────────┘
+        │
+        ▼
+  project-context.md
+```
+
+**When:** User says "what does this do", "explore this codebase"
 
 ---
 
@@ -97,6 +119,7 @@ Some skills run alongside others, not sequentially:
 |---------------|----------------|--------------|
 | executing | tracking | tracking observes executing |
 | executing | debugging | debugging invoked on failure |
+| executing | context-refresh | refresh triggered between phases |
 
 ### Tracking Integration
 
@@ -161,12 +184,15 @@ planning:
 
 | From | To | Data |
 |------|-----|------|
+| discovery | planning | `project-context.md`, don't-touch areas |
 | brainstorming | planning | `IDEA.md`, chosen approach |
 | brainstorming | prototyping | Key screens/concepts |
 | prototyping | planning | Prototype files as reference |
 | researcher | brainstorming | `concepts.json` |
 | planning | executing | `current-plan.json` |
 | executing | tracking | Task events, timing |
+| executing | context-refresh | Progress state, decisions |
+| context-refresh | executing | Handoff summary, preserved state |
 | tracking | report-writer | `progress.json`, metrics |
 | debugging | executing | Fix applied, ready to retry |
 
@@ -222,9 +248,11 @@ When handing off to another skill:
 |------|-------|
 | Build something new | brainstorm → plan → execute |
 | Fix a bug | debug → plan(lite) → execute |
-| Add a feature | plan → execute |
+| Add a feature | discovery? → plan → execute |
+| Understand this codebase | discovery |
 | Understand a paper | researcher → brainstorm |
 | Create a mockup | brainstorm → prototype |
+| Long session, need reset | context-refresh |
 | Finish and report | execute → tracking → report-writer |
 
 ---
