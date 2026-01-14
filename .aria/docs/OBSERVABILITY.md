@@ -154,7 +154,7 @@ Match:    ✓ VERIFIED
 
 ## Web Dashboard
 
-Interactive dashboard for exploring session traces.
+Interactive dashboard for exploring session traces with hierarchical drill-down.
 
 ### Start the Dashboard
 
@@ -163,18 +163,48 @@ python .aria/scripts/serve-dashboard.py
 # Opens at http://localhost:8420
 ```
 
+### Hierarchy Structure
+
+The dashboard presents lineage as a collapsible tree:
+
+```
+SESSION
+└── SKILL (container, click to expand)
+    ├── DECISION
+    │   └── SIGNALS (supporting tool calls)
+    ├── VERIFY (test run)
+    └── HITL (checkpoint)
+└── COMMIT (with linked decisions)
+└── ORPHAN events (before any skill loaded)
+```
+
+**Navigation:**
+- Click any node to expand/collapse
+- Use "Expand All" / "Collapse All" buttons
+- Skills are top-level containers
+- Decisions nest under the active skill
+- Signals nest under recent decisions (within 30s)
+- Commits link back to all decisions that led to them
+
 ### Dashboard Views
 
-**Summary Cards:**
+**Summary Bar:**
+- Skills (unique skills loaded)
+- Decisions (total decision blocks)
 - Signals (tool calls captured)
-- Decisions (with verification rate)
-- Commits (git commits in session)
-- Average confidence
-- Files touched
-- Tools used
+- HITL (checkpoints)
+- Tests (verify runs)
+- Commits (git commits)
+
+**Lineage Tab (default):**
+- Hierarchical tree view
+- Skills as collapsible containers
+- Decisions with confidence badges
+- Supporting signals nested under decisions
+- Click to drill down
 
 **Timeline Tab:**
-- Chronological view of all events
+- Chronological flat view of all events
 - Color-coded by type (signal, decision, commit, HITL)
 - Shows tool calls with file paths/commands
 
@@ -193,9 +223,51 @@ python .aria/scripts/serve-dashboard.py
 
 ```
 GET /api/session    - Session summary (counts, tools, files)
+GET /api/lineage    - Hierarchical tree structure (new!)
 GET /api/timeline   - Unified event timeline
 GET /api/decisions  - Decisions with supporting signals
 GET /api/commits    - Commits with linked decisions
+```
+
+### Lineage API Response
+
+```json
+{
+  "session_id": "session-20240114",
+  "summary": {
+    "skills": 3,
+    "decisions": 5,
+    "signals": 42,
+    "hitl": 1,
+    "verify": 2,
+    "commits": 3
+  },
+  "tree": [
+    {
+      "type": "skill",
+      "name": "planning",
+      "timestamp": "...",
+      "expanded": true,
+      "children": [
+        {
+          "type": "decision",
+          "action": "Use existing patterns",
+          "confidence": 0.85,
+          "signals": [
+            {"type": "signal", "tool": "Read", "file_path": "..."}
+          ]
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "hash": "abc123",
+      "message": "feat: add feature",
+      "linked_decisions": [...]
+    }
+  ]
+}
 ```
 
 ### Architecture

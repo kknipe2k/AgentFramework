@@ -390,62 +390,152 @@
             opacity: 0.9;
         }
 
-        /* Workflow/Lineage Tree */
-        .workflow-tree {
-            padding: 1rem 0;
+        /* Hierarchical Lineage Tree */
+        .lineage-tree {
+            padding: 0.5rem 0;
         }
 
-        .workflow-item {
+        .tree-node {
             position: relative;
-            padding: 0.75rem 1rem;
+            margin-left: 0;
+        }
+
+        .tree-node.nested {
             margin-left: 1.5rem;
             border-left: 2px solid var(--border);
+            padding-left: 0.75rem;
         }
 
-        .workflow-item:last-child {
+        .tree-node.nested:last-child {
             border-left-color: transparent;
         }
 
-        .workflow-item::before {
-            content: '';
-            position: absolute;
-            left: -8px;
-            top: 1rem;
-            width: 14px;
-            height: 14px;
-            border-radius: 50%;
-            background: var(--bg-card);
-            border: 2px solid var(--border);
+        .tree-node-header {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.5rem;
+            padding: 0.5rem;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background 0.15s;
         }
 
-        .workflow-item.skill::before { border-color: var(--accent-soft); background: var(--accent-soft); }
-        .workflow-item.decision::before { border-color: var(--success); background: var(--success); }
-        .workflow-item.commit::before { border-color: var(--accent); background: var(--accent); }
-        .workflow-item.hitl::before { border-color: var(--warning); background: var(--warning); }
-        .workflow-item.verify::before { border-color: var(--success); }
-        .workflow-item.subagent::before { border-color: var(--cyan); background: var(--cyan); }
+        .tree-node-header:hover {
+            background: var(--bg-secondary);
+        }
 
-        .workflow-type {
+        .tree-toggle {
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             font-size: 0.7rem;
+            color: var(--text-secondary);
+            flex-shrink: 0;
+        }
+
+        .tree-toggle.has-children::before {
+            content: '▶';
+            transition: transform 0.15s;
+        }
+
+        .tree-node.expanded > .tree-node-header .tree-toggle.has-children::before {
+            transform: rotate(90deg);
+        }
+
+        .tree-icon {
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            flex-shrink: 0;
+        }
+
+        .tree-icon.skill { background: var(--accent-soft); }
+        .tree-icon.decision { background: var(--success); color: #000; }
+        .tree-icon.signal { background: var(--border); }
+        .tree-icon.commit { background: var(--accent); color: #fff; }
+        .tree-icon.hitl { background: var(--warning); color: #000; }
+        .tree-icon.verify { background: var(--success); color: #000; }
+        .tree-icon.subagent { background: #06b6d4; color: #000; }
+        .tree-icon.template { background: #8b5cf6; }
+        .tree-icon.orphan { background: var(--text-secondary); }
+
+        .tree-content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .tree-label {
+            font-size: 0.65rem;
             text-transform: uppercase;
             color: var(--text-secondary);
-            margin-bottom: 0.25rem;
+            letter-spacing: 0.5px;
         }
 
-        .workflow-content {
+        .tree-title {
             font-size: 0.9rem;
+            font-weight: 500;
+            word-break: break-word;
         }
 
-        .workflow-time {
+        .tree-meta {
             font-size: 0.75rem;
             color: var(--text-secondary);
-            margin-top: 0.25rem;
+            margin-top: 0.15rem;
         }
 
-        /* Lineage summary */
+        .tree-children {
+            display: none;
+        }
+
+        .tree-node.expanded > .tree-children {
+            display: block;
+        }
+
+        /* Confidence badge */
+        .confidence-badge {
+            font-size: 0.7rem;
+            padding: 0.15rem 0.4rem;
+            border-radius: 3px;
+            background: var(--bg-secondary);
+            margin-left: 0.5rem;
+        }
+
+        .confidence-badge.high { color: var(--success); }
+        .confidence-badge.medium { color: var(--warning); }
+        .confidence-badge.low { color: var(--error); }
+
+        /* Signal list (compact under decisions) */
+        .signals-list {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            padding: 0.5rem;
+            margin-top: 0.25rem;
+            background: var(--bg-primary);
+            border-radius: 4px;
+        }
+
+        .signal-entry {
+            padding: 0.2rem 0;
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .signal-entry .tool-name {
+            color: var(--accent);
+            font-weight: 500;
+            min-width: 50px;
+        }
+
+        /* Lineage summary header */
         .lineage-summary {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
             gap: 1rem;
             margin-bottom: 1.5rem;
             padding: 1rem;
@@ -464,11 +554,35 @@
         }
 
         .lineage-stat-label {
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             color: var(--text-secondary);
             text-transform: uppercase;
         }
 
+        /* Expand/collapse all buttons */
+        .tree-controls {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .tree-control-btn {
+            font-size: 0.75rem;
+            padding: 0.4rem 0.75rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .tree-control-btn:hover {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+
+        /* Legacy compatibility */
         .skills-badges {
             display: flex;
             flex-wrap: wrap;
@@ -625,12 +739,12 @@
             document.getElementById('tools-detail').textContent = data.tools_used?.slice(0, 5).join(', ') || '-';
         }
 
-        // Render lineage
+        // Render lineage with hierarchical tree
         function renderLineage(data) {
             lineageData = data;
             const container = document.getElementById('lineage-content');
 
-            if (!data || (!data.workflow?.length && !data.skills_loaded?.length)) {
+            if (!data || !data.tree?.length) {
                 container.innerHTML = `
                     <div class="empty">
                         No lineage data yet.<br><br>
@@ -644,77 +758,191 @@
                 return;
             }
 
-            // Build summary
+            // Build summary from new format
+            const summary = data.summary || {};
             const summaryHtml = `
                 <div class="lineage-summary">
                     <div class="lineage-stat">
-                        <div class="lineage-stat-value">${data.skills_loaded?.length || 0}</div>
-                        <div class="lineage-stat-label">Skills Loaded</div>
-                        <div class="skills-badges">
-                            ${(data.skills_loaded || []).map(s => `<span class="skill-badge">${s}</span>`).join('')}
-                        </div>
+                        <div class="lineage-stat-value">${summary.skills || 0}</div>
+                        <div class="lineage-stat-label">Skills</div>
                     </div>
                     <div class="lineage-stat">
-                        <div class="lineage-stat-value">${data.workflow?.filter(w => w.type === 'decision').length || 0}</div>
+                        <div class="lineage-stat-value">${summary.decisions || 0}</div>
                         <div class="lineage-stat-label">Decisions</div>
                     </div>
                     <div class="lineage-stat">
-                        <div class="lineage-stat-value">${data.hitl_checkpoints?.length || 0}</div>
-                        <div class="lineage-stat-label">HITL Checkpoints</div>
+                        <div class="lineage-stat-value">${summary.signals || 0}</div>
+                        <div class="lineage-stat-label">Signals</div>
                     </div>
                     <div class="lineage-stat">
-                        <div class="lineage-stat-value">${data.commits?.length || 0}</div>
+                        <div class="lineage-stat-value">${summary.hitl || 0}</div>
+                        <div class="lineage-stat-label">HITL</div>
+                    </div>
+                    <div class="lineage-stat">
+                        <div class="lineage-stat-value">${summary.verify || 0}</div>
+                        <div class="lineage-stat-label">Tests</div>
+                    </div>
+                    <div class="lineage-stat">
+                        <div class="lineage-stat-value">${summary.commits || 0}</div>
                         <div class="lineage-stat-label">Commits</div>
                     </div>
                 </div>
             `;
 
-            // Build workflow tree
-            const workflowHtml = (data.workflow || []).map(item => {
-                let content = '';
-                let typeLabel = item.type.toUpperCase();
-                const time = item.timestamp ? new Date(item.timestamp).toLocaleTimeString() : '';
+            // Build hierarchical tree
+            function renderTreeNode(node, isNested = false) {
+                const type = node.type || 'unknown';
+                const hasChildren = (node.children && node.children.length > 0) ||
+                                   (node.signals && node.signals.length > 0);
+                const expandedClass = node.expanded ? 'expanded' : '';
+                const nestedClass = isNested ? 'nested' : '';
+                const time = node.timestamp ? new Date(node.timestamp).toLocaleTimeString() : '';
 
-                switch (item.type) {
+                // Build content based on type
+                let icon = type.charAt(0).toUpperCase();
+                let label = type.toUpperCase();
+                let title = '';
+                let meta = '';
+                let extraContent = '';
+
+                switch (type) {
                     case 'skill':
-                        content = `<strong>${item.name}</strong> loaded`;
+                        icon = 'S';
+                        title = node.name || 'Unnamed skill';
+                        meta = `${node.children?.length || 0} events`;
                         break;
+
                     case 'decision':
-                        const conf = item.confidence ? ` (${parseFloat(item.confidence).toFixed(2)})` : '';
-                        content = `${item.action || 'Decision'}${conf}`;
-                        if (item.rationale) {
-                            content += `<br><span style="color: var(--text-secondary)">${escapeHtml(item.rationale)}</span>`;
+                        icon = 'D';
+                        title = node.action || 'Decision';
+                        const conf = node.confidence ? parseFloat(node.confidence) : 0;
+                        const confClass = conf >= 0.8 ? 'high' : conf >= 0.5 ? 'medium' : 'low';
+                        if (conf > 0) {
+                            title += `<span class="confidence-badge ${confClass}">${conf.toFixed(2)}</span>`;
+                        }
+                        if (node.rationale) {
+                            meta = escapeHtml(node.rationale.substring(0, 80));
+                        }
+                        // Show signals if expanded
+                        if (node.signals && node.signals.length > 0) {
+                            extraContent = `
+                                <div class="signals-list">
+                                    <strong>${node.signals.length} supporting signals:</strong>
+                                    ${node.signals.map(s => `
+                                        <div class="signal-entry">
+                                            <span class="tool-name">${s.tool || 'Tool'}</span>
+                                            <span>${escapeHtml(s.file_path || s.command?.substring(0, 40) || '')}</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            `;
                         }
                         break;
+
+                    case 'signal':
+                        icon = '→';
+                        label = node.event === 'pre' ? 'SIGNAL START' : 'SIGNAL END';
+                        title = `<span style="color: var(--accent)">${node.tool || 'Tool'}</span>`;
+                        meta = node.file_path || node.command?.substring(0, 50) || '';
+                        break;
+
                     case 'commit':
-                        content = `<code>${item.hash}</code> ${escapeHtml(item.message || '')}`;
+                        icon = 'C';
+                        title = `<code>${node.hash || ''}</code> ${escapeHtml(node.message || '')}`;
+                        if (node.linked_decisions?.length) {
+                            meta = `${node.linked_decisions.length} decisions`;
+                        }
                         break;
+
                     case 'hitl':
-                        content = `${escapeHtml(item.action || 'Checkpoint')} → <strong>${item.response || 'pending'}</strong>`;
+                        icon = 'H';
+                        title = node.action || 'Checkpoint';
+                        meta = node.response ? `Response: ${node.response}` : 'Pending';
                         break;
+
                     case 'verify':
-                        content = `Test run: ${escapeHtml(item.command?.substring(0, 40) || '')}`;
+                        icon = '✓';
+                        title = 'Test run';
+                        meta = node.command?.substring(0, 50) || '';
                         break;
+
                     case 'subagent':
-                        content = `Subagent: <strong>${item.name || 'general-purpose'}</strong>`;
+                        icon = 'A';
+                        title = node.name || 'general-purpose';
                         break;
+
+                    case 'template':
+                        icon = 'T';
+                        title = node.name || 'Template';
+                        break;
+
+                    case 'orphan':
+                        icon = '?';
+                        title = node.name || 'Orphan events';
+                        meta = `${node.children?.length || 0} events before skill loaded`;
+                        break;
+
                     default:
-                        content = item.name || item.action || item.type;
+                        title = node.name || node.action || type;
+                }
+
+                // Build children HTML
+                let childrenHtml = '';
+                if (node.children && node.children.length > 0) {
+                    childrenHtml = node.children.map(child => renderTreeNode(child, true)).join('');
                 }
 
                 return `
-                    <div class="workflow-item ${item.type}">
-                        <div class="workflow-type">${typeLabel}</div>
-                        <div class="workflow-content">${content}</div>
-                        <div class="workflow-time">${time}</div>
+                    <div class="tree-node ${nestedClass} ${expandedClass}" data-type="${type}">
+                        <div class="tree-node-header" onclick="toggleTreeNode(this)">
+                            <div class="tree-toggle ${hasChildren ? 'has-children' : ''}"></div>
+                            <div class="tree-icon ${type}">${icon}</div>
+                            <div class="tree-content">
+                                <div class="tree-label">${label}</div>
+                                <div class="tree-title">${title}</div>
+                                ${meta ? `<div class="tree-meta">${escapeHtml(meta)}</div>` : ''}
+                                ${extraContent}
+                            </div>
+                            <div class="tree-time" style="font-size: 0.7rem; color: var(--text-secondary)">${time}</div>
+                        </div>
+                        ${childrenHtml ? `<div class="tree-children">${childrenHtml}</div>` : ''}
                     </div>
                 `;
-            }).join('');
+            }
+
+            // Render tree
+            const treeHtml = data.tree.map(node => renderTreeNode(node)).join('');
 
             container.innerHTML = summaryHtml + `
-                <h3 style="margin: 1rem 0 0.5rem; color: var(--text-secondary);">Workflow Timeline</h3>
-                <div class="workflow-tree">${workflowHtml || '<div class="empty">No workflow events</div>'}</div>
+                <div class="tree-controls">
+                    <button class="tree-control-btn" onclick="expandAllTree()">Expand All</button>
+                    <button class="tree-control-btn" onclick="collapseAllTree()">Collapse All</button>
+                </div>
+                <h3 style="margin: 0 0 0.5rem; color: var(--text-secondary);">Decision Lineage</h3>
+                <div class="lineage-tree">${treeHtml || '<div class="empty">No lineage events</div>'}</div>
             `;
+        }
+
+        // Toggle tree node expansion
+        function toggleTreeNode(header) {
+            const node = header.closest('.tree-node');
+            if (node) {
+                node.classList.toggle('expanded');
+            }
+        }
+
+        // Expand all tree nodes
+        function expandAllTree() {
+            document.querySelectorAll('.tree-node').forEach(node => {
+                node.classList.add('expanded');
+            });
+        }
+
+        // Collapse all tree nodes
+        function collapseAllTree() {
+            document.querySelectorAll('.tree-node').forEach(node => {
+                node.classList.remove('expanded');
+            });
         }
 
         // Render timeline
