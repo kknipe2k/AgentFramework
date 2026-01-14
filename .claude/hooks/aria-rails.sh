@@ -34,16 +34,58 @@ log_signal() {
     # Extract key fields based on tool type
     local file_path=""
     local command=""
+    local context_type=""
+    local context_name=""
 
     case "$tool_name" in
         "Edit"|"Write"|"MultiEdit"|"Read")
             file_path=$(echo "$tool_input" | grep -oP '"file_path"\s*:\s*"\K[^"]+' 2>/dev/null || true)
+
+            # Detect context type from file path
+            if [[ "$file_path" == *".aria/skills/"* ]]; then
+                context_type="skill"
+                context_name=$(basename "$file_path" .md)
+            elif [[ "$file_path" == *".aria/templates/"* ]]; then
+                context_type="template"
+                context_name=$(basename "$file_path" .md)
+            elif [[ "$file_path" == *"CLAUDE.md" ]]; then
+                context_type="framework"
+                context_name="CLAUDE.md"
+            elif [[ "$file_path" == *"progress.json" ]]; then
+                context_type="progress"
+                context_name="task_update"
+            elif [[ "$file_path" == *"current-plan.json" ]]; then
+                context_type="plan"
+                context_name="plan_update"
+            elif [[ "$file_path" == *"project-context.md" ]]; then
+                context_type="context"
+                context_name="project_context"
+            fi
             ;;
         "Bash")
             command=$(echo "$tool_input" | grep -oP '"command"\s*:\s*"\K[^"]+' 2>/dev/null | head -c 200 || true)
+
+            # Detect test runs
+            if echo "$command" | grep -qE "(npm test|pytest|jest|cargo test|go test|make test)"; then
+                context_type="verify"
+                context_name="test_run"
+            # Detect commits
+            elif echo "$command" | grep -q "git commit"; then
+                context_type="commit"
+                context_name="git_commit"
+            # Detect git operations
+            elif echo "$command" | grep -qE "^git (push|pull|checkout|merge)"; then
+                context_type="git"
+                context_name=$(echo "$command" | awk '{print $2}')
+            fi
             ;;
         "Glob"|"Grep")
             file_path=$(echo "$tool_input" | grep -oP '"pattern"\s*:\s*"\K[^"]+' 2>/dev/null || true)
+            context_type="search"
+            ;;
+        "Task")
+            context_type="subagent"
+            context_name=$(echo "$tool_input" | grep -oP '"subagent_type"\s*:\s*"\K[^"]+' 2>/dev/null || true)
             ;;
     esac
 
@@ -51,11 +93,12 @@ log_signal() {
     local timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     local signal_id="sig-$(date +%s%N | cut -c1-13)"
 
-    # Build JSON - escape special chars in command
+    # Build JSON - escape special chars
     local escaped_command=$(echo "$command" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\n/\\n/g')
+    local escaped_path=$(echo "$file_path" | sed 's/\\/\\\\/g; s/"/\\"/g')
 
-    printf '{"id":"%s","timestamp":"%s","event":"%s","tool":"%s","file_path":"%s","command":"%s"}\n' \
-        "$signal_id" "$timestamp" "$event_type" "$tool_name" "$file_path" "$escaped_command" \
+    printf '{"id":"%s","timestamp":"%s","event":"%s","tool":"%s","file_path":"%s","command":"%s","context_type":"%s","context_name":"%s"}\n' \
+        "$signal_id" "$timestamp" "$event_type" "$tool_name" "$escaped_path" "$escaped_command" "$context_type" "$context_name" \
         >> "$SIGNALS_FILE"
 }
 

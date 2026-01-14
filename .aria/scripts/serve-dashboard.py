@@ -48,7 +48,7 @@ def init_db():
         )
     ''')
 
-    # Events table (unified: signals, decisions, hitl, commits)
+    # Events table (unified: signals, decisions, hitl, commits, tasks)
     c.execute('''
         CREATE TABLE IF NOT EXISTS events (
             id TEXT PRIMARY KEY,
@@ -68,6 +68,10 @@ def init_db():
             commit_message TEXT,
             hitl_action TEXT,
             hitl_response TEXT,
+            context_type TEXT,
+            context_name TEXT,
+            task_id TEXT,
+            task_status TEXT,
             raw_data TEXT,
             FOREIGN KEY (session_id) REFERENCES sessions(id)
         )
@@ -77,6 +81,7 @@ def init_db():
     c.execute('CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_events_context ON events(context_type)')
 
     conn.commit()
     return conn
@@ -108,8 +113,9 @@ def sync_jsonl_to_db(conn):
                         continue
                     c.execute('''
                         INSERT OR IGNORE INTO events
-                        (id, session_id, timestamp, event_type, tool, file_path, command, raw_data)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        (id, session_id, timestamp, event_type, tool, file_path, command,
+                         context_type, context_name, raw_data)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         data.get('id'),
                         session_id,
@@ -118,6 +124,8 @@ def sync_jsonl_to_db(conn):
                         data.get('tool'),
                         data.get('file_path'),
                         data.get('command'),
+                        data.get('context_type'),
+                        data.get('context_name'),
                         line
                     ))
                 except json.JSONDecodeError:
@@ -363,6 +371,121 @@ def get_commits_with_decisions(conn) -> list:
     return commits
 
 
+def get_lineage(conn) -> dict:
+    """Get hierarchical lineage view: skills → decisions → signals → commits."""
+    c = conn.cursor()
+    session_id = get_current_session_id()
+
+    # Get all events ordered by timestamp
+    c.execute('''
+        SELECT * FROM events
+        WHERE session_id = ?
+        ORDER BY timestamp ASC
+    ''', (session_id,))
+    all_events = [dict(row) for row in c.fetchall()]
+
+    # Build lineage structure
+    lineage = {
+        'session_id': session_id,
+        'skills_loaded': [],
+        'templates_loaded': [],
+        'tasks': [],
+        'hitl_checkpoints': [],
+        'commits': [],
+        'workflow': []  # Chronological workflow items
+    }
+
+    # Extract by context type
+    for event in all_events:
+        ctx_type = event.get('context_type')
+        ctx_name = event.get('context_name')
+        event_type = event.get('event_type')
+
+        # Track skills
+        if ctx_type == 'skill' and event.get('event') != 'post':
+            if ctx_name and ctx_name not in lineage['skills_loaded']:
+                lineage['skills_loaded'].append(ctx_name)
+                lineage['workflow'].append({
+                    'type': 'skill',
+                    'name': ctx_name,
+                    'timestamp': event.get('timestamp'),
+                    'children': []
+                })
+
+        # Track templates
+        elif ctx_type == 'template':
+            if ctx_name and ctx_name not in lineage['templates_loaded']:
+                lineage['templates_loaded'].append(ctx_name)
+
+        # Track commits
+        elif event_type == 'commit' or ctx_type == 'commit':
+            lineage['commits'].append({
+                'hash': event.get('commit_hash', '')[:8],
+                'message': event.get('commit_message', event.get('command', '')),
+                'timestamp': event.get('timestamp')
+            })
+            lineage['workflow'].append({
+                'type': 'commit',
+                'hash': event.get('commit_hash', '')[:8],
+                'message': event.get('commit_message', ''),
+                'timestamp': event.get('timestamp')
+            })
+
+        # Track decisions
+        elif event_type == 'decision':
+            lineage['workflow'].append({
+                'type': 'decision',
+                'action': event.get('action'),
+                'confidence': event.get('confidence'),
+                'rationale': event.get('rationale'),
+                'timestamp': event.get('timestamp')
+            })
+
+        # Track HITL
+        elif event_type == 'hitl' or ctx_type == 'hitl':
+            lineage['hitl_checkpoints'].append({
+                'action': event.get('hitl_action') or event.get('action'),
+                'response': event.get('hitl_response'),
+                'timestamp': event.get('timestamp')
+            })
+            lineage['workflow'].append({
+                'type': 'hitl',
+                'action': event.get('hitl_action') or event.get('action'),
+                'response': event.get('hitl_response'),
+                'timestamp': event.get('timestamp')
+            })
+
+        # Track verify (test runs)
+        elif ctx_type == 'verify':
+            lineage['workflow'].append({
+                'type': 'verify',
+                'command': event.get('command'),
+                'timestamp': event.get('timestamp')
+            })
+
+        # Track subagents
+        elif ctx_type == 'subagent':
+            lineage['workflow'].append({
+                'type': 'subagent',
+                'name': ctx_name,
+                'timestamp': event.get('timestamp')
+            })
+
+    # Get summary stats
+    c.execute('''
+        SELECT context_type, context_name, COUNT(*) as count
+        FROM events
+        WHERE session_id = ? AND context_type IS NOT NULL AND context_type != ''
+        GROUP BY context_type, context_name
+    ''', (session_id,))
+    lineage['context_summary'] = [
+        {'type': row['context_type'], 'name': row['context_name'], 'count': row['count']}
+        for row in c.fetchall()
+    ]
+
+    return lineage
+
+
 class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     """HTTP handler for dashboard and API."""
 
@@ -399,6 +522,8 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 data = get_decisions_with_signals(self.db_conn)
             elif path == '/api/commits':
                 data = get_commits_with_decisions(self.db_conn)
+            elif path == '/api/lineage':
+                data = get_lineage(self.db_conn)
             else:
                 self.send_error(404, 'Unknown API endpoint')
                 return

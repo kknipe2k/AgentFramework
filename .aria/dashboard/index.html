@@ -390,6 +390,100 @@
             opacity: 0.9;
         }
 
+        /* Workflow/Lineage Tree */
+        .workflow-tree {
+            padding: 1rem 0;
+        }
+
+        .workflow-item {
+            position: relative;
+            padding: 0.75rem 1rem;
+            margin-left: 1.5rem;
+            border-left: 2px solid var(--border);
+        }
+
+        .workflow-item:last-child {
+            border-left-color: transparent;
+        }
+
+        .workflow-item::before {
+            content: '';
+            position: absolute;
+            left: -8px;
+            top: 1rem;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--bg-card);
+            border: 2px solid var(--border);
+        }
+
+        .workflow-item.skill::before { border-color: var(--accent-soft); background: var(--accent-soft); }
+        .workflow-item.decision::before { border-color: var(--success); background: var(--success); }
+        .workflow-item.commit::before { border-color: var(--accent); background: var(--accent); }
+        .workflow-item.hitl::before { border-color: var(--warning); background: var(--warning); }
+        .workflow-item.verify::before { border-color: var(--success); }
+        .workflow-item.subagent::before { border-color: var(--cyan); background: var(--cyan); }
+
+        .workflow-type {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            margin-bottom: 0.25rem;
+        }
+
+        .workflow-content {
+            font-size: 0.9rem;
+        }
+
+        .workflow-time {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }
+
+        /* Lineage summary */
+        .lineage-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            padding: 1rem;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+        }
+
+        .lineage-stat {
+            text-align: center;
+        }
+
+        .lineage-stat-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--accent);
+        }
+
+        .lineage-stat-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+
+        .skills-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .skill-badge {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.75rem;
+            background: var(--accent-soft);
+            color: var(--text-primary);
+            border-radius: 12px;
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             main {
@@ -452,13 +546,20 @@
 
         <!-- Tabs -->
         <div class="tabs">
-            <button class="tab active" data-tab="timeline">Timeline</button>
+            <button class="tab active" data-tab="lineage">Lineage</button>
+            <button class="tab" data-tab="timeline">Timeline</button>
             <button class="tab" data-tab="decisions">Decisions</button>
             <button class="tab" data-tab="commits">Commits</button>
         </div>
 
         <!-- Tab Contents -->
-        <div class="tab-content active" id="tab-timeline">
+        <div class="tab-content active" id="tab-lineage">
+            <div id="lineage-content">
+                <div class="loading">Loading lineage</div>
+            </div>
+        </div>
+
+        <div class="tab-content" id="tab-timeline">
             <div class="timeline" id="timeline-content">
                 <div class="loading">Loading timeline</div>
             </div>
@@ -480,6 +581,7 @@
     <script>
         // State
         let sessionData = null;
+        let lineageData = null;
         let timelineData = [];
         let decisionsData = [];
         let commitsData = [];
@@ -521,6 +623,98 @@
 
             // Tools detail
             document.getElementById('tools-detail').textContent = data.tools_used?.slice(0, 5).join(', ') || '-';
+        }
+
+        // Render lineage
+        function renderLineage(data) {
+            lineageData = data;
+            const container = document.getElementById('lineage-content');
+
+            if (!data || (!data.workflow?.length && !data.skills_loaded?.length)) {
+                container.innerHTML = `
+                    <div class="empty">
+                        No lineage data yet.<br><br>
+                        Lineage is built from:<br>
+                        - Skills loaded (.aria/skills/*.md)<br>
+                        - Decisions (&lt;decision&gt; blocks)<br>
+                        - HITL checkpoints<br>
+                        - Test runs and commits
+                    </div>
+                `;
+                return;
+            }
+
+            // Build summary
+            const summaryHtml = `
+                <div class="lineage-summary">
+                    <div class="lineage-stat">
+                        <div class="lineage-stat-value">${data.skills_loaded?.length || 0}</div>
+                        <div class="lineage-stat-label">Skills Loaded</div>
+                        <div class="skills-badges">
+                            ${(data.skills_loaded || []).map(s => `<span class="skill-badge">${s}</span>`).join('')}
+                        </div>
+                    </div>
+                    <div class="lineage-stat">
+                        <div class="lineage-stat-value">${data.workflow?.filter(w => w.type === 'decision').length || 0}</div>
+                        <div class="lineage-stat-label">Decisions</div>
+                    </div>
+                    <div class="lineage-stat">
+                        <div class="lineage-stat-value">${data.hitl_checkpoints?.length || 0}</div>
+                        <div class="lineage-stat-label">HITL Checkpoints</div>
+                    </div>
+                    <div class="lineage-stat">
+                        <div class="lineage-stat-value">${data.commits?.length || 0}</div>
+                        <div class="lineage-stat-label">Commits</div>
+                    </div>
+                </div>
+            `;
+
+            // Build workflow tree
+            const workflowHtml = (data.workflow || []).map(item => {
+                let content = '';
+                let typeLabel = item.type.toUpperCase();
+                const time = item.timestamp ? new Date(item.timestamp).toLocaleTimeString() : '';
+
+                switch (item.type) {
+                    case 'skill':
+                        content = `<strong>${item.name}</strong> loaded`;
+                        break;
+                    case 'decision':
+                        const conf = item.confidence ? ` (${parseFloat(item.confidence).toFixed(2)})` : '';
+                        content = `${item.action || 'Decision'}${conf}`;
+                        if (item.rationale) {
+                            content += `<br><span style="color: var(--text-secondary)">${escapeHtml(item.rationale)}</span>`;
+                        }
+                        break;
+                    case 'commit':
+                        content = `<code>${item.hash}</code> ${escapeHtml(item.message || '')}`;
+                        break;
+                    case 'hitl':
+                        content = `${escapeHtml(item.action || 'Checkpoint')} → <strong>${item.response || 'pending'}</strong>`;
+                        break;
+                    case 'verify':
+                        content = `Test run: ${escapeHtml(item.command?.substring(0, 40) || '')}`;
+                        break;
+                    case 'subagent':
+                        content = `Subagent: <strong>${item.name || 'general-purpose'}</strong>`;
+                        break;
+                    default:
+                        content = item.name || item.action || item.type;
+                }
+
+                return `
+                    <div class="workflow-item ${item.type}">
+                        <div class="workflow-type">${typeLabel}</div>
+                        <div class="workflow-content">${content}</div>
+                        <div class="workflow-time">${time}</div>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = summaryHtml + `
+                <h3 style="margin: 1rem 0 0.5rem; color: var(--text-secondary);">Workflow Timeline</h3>
+                <div class="workflow-tree">${workflowHtml || '<div class="empty">No workflow events</div>'}</div>
+            `;
         }
 
         // Render timeline
@@ -702,14 +896,16 @@
         // Load all data
         async function refreshAll() {
             try {
-                const [session, timeline, decisions, commits] = await Promise.all([
+                const [session, lineage, timeline, decisions, commits] = await Promise.all([
                     fetchApi('session'),
+                    fetchApi('lineage'),
                     fetchApi('timeline'),
                     fetchApi('decisions'),
                     fetchApi('commits')
                 ]);
 
                 updateSummary(session);
+                renderLineage(lineage);
                 renderTimeline(timeline);
                 renderDecisions(decisions);
                 renderCommits(commits);

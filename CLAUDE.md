@@ -614,4 +614,90 @@ python .aria/scripts/serve-dashboard.py  # Web dashboard at localhost:8420
 
 ---
 
+## Full Lineage Tracking
+
+For complete traceability, emit these additional blocks to build full workflow lineage.
+
+### HITL Block
+
+Emit when a human-in-the-loop checkpoint occurs:
+
+```xml
+<hitl>
+  <checkpoint>what approval was requested</checkpoint>
+  <response>approved|rejected|revised</response>
+  <details>any modifications or notes</details>
+</hitl>
+```
+
+**Example:**
+```xml
+<hitl>
+  <checkpoint>Delete legacy auth module</checkpoint>
+  <response>approved</response>
+  <details>User confirmed migration complete</details>
+</hitl>
+```
+
+### Task Block
+
+Emit when starting or completing a task from the plan:
+
+```xml
+<task>
+  <id>task number from plan</id>
+  <title>task title</title>
+  <status>started|completed|blocked</status>
+  <notes>any relevant notes</notes>
+</task>
+```
+
+**Example:**
+```xml
+<task>
+  <id>3</id>
+  <title>Add retry logic to API client</title>
+  <status>completed</status>
+  <notes>Used existing pattern from utils/retry.ts</notes>
+</task>
+```
+
+### What Hooks Capture Automatically
+
+The following are detected and tagged automatically via hooks (no emission needed):
+
+| Context Type | Detected When | Tag |
+|--------------|---------------|-----|
+| skill | Read .aria/skills/*.md | skill:planning, skill:tdd, etc. |
+| template | Read .aria/templates/*.md | template:skill-template |
+| framework | Read CLAUDE.md | framework:CLAUDE.md |
+| plan | Read/Write current-plan.json | plan:plan_update |
+| progress | Read/Write progress.json | progress:task_update |
+| verify | Bash npm test, pytest, etc. | verify:test_run |
+| commit | Bash git commit | commit:git_commit |
+| subagent | Task tool call | subagent:general-purpose |
+
+### Complete Lineage Structure
+
+```
+SESSION: 2024-01-14 (STANDARD mode)
+│
+├── TASK 1: Add retry logic
+│   ├── SKILL: planning loaded
+│   ├── SKILL: tdd loaded
+│   │   ├── DECISION: Use existing retry pattern (0.85)
+│   │   │   ├── SIGNAL: Read utils/retry.ts
+│   │   │   ├── SIGNAL: Read src/api/client.ts
+│   │   │   └── SIGNAL: Edit src/api/client.ts
+│   │   └── DECISION: Skip edge case tests (0.6)
+│   ├── HITL: "Modify auth config?" → approved
+│   ├── VERIFY: npm test → passed
+│   └── COMMIT: abc123 "Add retry logic"
+│
+├── TASK 2: Fix auth bug
+│   └── ...
+```
+
+---
+
 *ARIA Hybrid - Fast execution with enforced verification*
