@@ -2,6 +2,15 @@
 
 > Create structured implementation plans with HITL approval
 
+---
+version: 1.0.0
+modes: [LITE, STANDARD, FULL, FULL+]
+triggers: ["plan", "design", "figure out", start of work]
+inputs: [requirements, IDEA.md (optional), prototypes (optional)]
+outputs: [current-plan.json, plan summary for approval]
+dependencies: [brainstorming (optional)]
+---
+
 ## When to Use
 
 Use this skill when:

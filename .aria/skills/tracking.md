@@ -2,6 +2,15 @@
 
 > Monitor progress, time, tokens, and HITL interactions
 
+---
+version: 1.0.0
+modes: [STANDARD, FULL, FULL+] (optional in LITE)
+triggers: [during execution, task completion, project end]
+inputs: [execution events, task timing, HITL interactions]
+outputs: [progress.json, token_usage.json, hitl_interactions.json]
+dependencies: [executing (runs parallel)]
+---
+
 ## When to Use
 
 Use this skill:
