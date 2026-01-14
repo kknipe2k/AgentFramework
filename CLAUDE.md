@@ -440,6 +440,8 @@ Proceed? [y]es / [n]o / [e]xplain
 |------|---------|
 | `.aria/state/current-plan.json` | Current plan with tasks |
 | `.aria/state/progress.json` | Task completion status |
+| `.aria/state/decisions.jsonl` | Decision trace log |
+| `.aria/state/signals.jsonl` | Tool call signals (from hooks) |
 | `.aria/design-notes.md` | AI reasoning log |
 | `.aria/project-context.md` | Project knowledge (if exists) |
 | `.aria/docs/DESIGN.md` | Design doc (FULL+ only) |
@@ -549,6 +551,65 @@ ARIA supports two modes:
 | **External** | `ralph.sh` | Running from terminal, calling Claude as subprocess |
 
 Both use the same verification gates and plan format.
+
+---
+
+## Decision Tracing
+
+For consequential decisions, emit a decision block to enable traceability and precedent lookup.
+
+### When to Emit
+
+Emit `<decision>` blocks when:
+- Modifying files (architectural choices)
+- Choosing between alternatives
+- Deviating from existing patterns
+- Skipping something (and why)
+
+**Skip for:** Trivial reads, routine navigation, obvious single-path actions.
+
+### Schema
+
+```xml
+<decision>
+  <action>what you're doing</action>
+  <context>what you looked at to decide</context>
+  <rationale>why this approach</rationale>
+  <alternatives>what else you considered</alternatives>
+  <confidence>0.0-1.0</confidence>
+</decision>
+```
+
+### Example
+
+```xml
+<decision>
+  <action>Add retry wrapper to API client</action>
+  <context>Read utils/retry.ts, saw 3 similar uses in codebase</context>
+  <rationale>Consistency with existing patterns</rationale>
+  <alternatives>Custom retry logic, no retry</alternatives>
+  <confidence>0.85</confidence>
+</decision>
+```
+
+### Mode Variations
+
+| Mode | Decision Tracing |
+|------|-----------------|
+| LITE | Skip (speed over traceability) |
+| STANDARD | Key decisions only |
+| FULL/FULL+ | All consequential decisions |
+
+### Storage & Visualization
+
+Decisions are captured and stored in `.aria/state/decisions.jsonl`. Signals (tool calls) are logged to `.aria/state/signals.jsonl` via hooks.
+
+**View traces:**
+```bash
+.aria/scripts/trace-view.sh           # Recent session
+.aria/scripts/query-decisions.sh auth # Search by keyword
+.aria/scripts/reconcile.sh            # Verify claims match signals
+```
 
 ---
 

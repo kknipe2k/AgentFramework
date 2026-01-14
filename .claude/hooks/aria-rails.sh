@@ -9,6 +9,7 @@ TOOL_INPUT="$3"
 
 ARIA_DIR=".aria"
 STATE_DIR="$ARIA_DIR/state"
+SIGNALS_FILE="$STATE_DIR/signals.jsonl"
 INTENT_FILE="$ARIA_DIR/intent.md"
 RALPH_DIR="$ARIA_DIR/ralph"
 PRD_FILE="$RALPH_DIR/prd.json"
@@ -21,6 +22,42 @@ is_ralph_mode() {
 
 # Create directories
 mkdir -p "$STATE_DIR"
+
+# ============================================
+# SIGNAL LOGGING (Decision Tracing)
+# ============================================
+log_signal() {
+    local event_type="$1"
+    local tool_name="$2"
+    local tool_input="$3"
+
+    # Extract key fields based on tool type
+    local file_path=""
+    local command=""
+
+    case "$tool_name" in
+        "Edit"|"Write"|"MultiEdit"|"Read")
+            file_path=$(echo "$tool_input" | grep -oP '"file_path"\s*:\s*"\K[^"]+' 2>/dev/null || true)
+            ;;
+        "Bash")
+            command=$(echo "$tool_input" | grep -oP '"command"\s*:\s*"\K[^"]+' 2>/dev/null | head -c 200 || true)
+            ;;
+        "Glob"|"Grep")
+            file_path=$(echo "$tool_input" | grep -oP '"pattern"\s*:\s*"\K[^"]+' 2>/dev/null || true)
+            ;;
+    esac
+
+    # Write signal to JSONL
+    local timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local signal_id="sig-$(date +%s%N | cut -c1-13)"
+
+    # Build JSON - escape special chars in command
+    local escaped_command=$(echo "$command" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\n/\\n/g')
+
+    printf '{"id":"%s","timestamp":"%s","event":"%s","tool":"%s","file_path":"%s","command":"%s"}\n' \
+        "$signal_id" "$timestamp" "$event_type" "$tool_name" "$file_path" "$escaped_command" \
+        >> "$SIGNALS_FILE"
+}
 
 # ============================================
 # CONFIGURATION
@@ -229,6 +266,9 @@ track_commit() {
 
 case "$HOOK_EVENT" in
     "PreToolUse")
+        # Log signal for all tool calls
+        log_signal "pre" "$TOOL_NAME" "$TOOL_INPUT"
+
         case "$TOOL_NAME" in
             "Edit"|"Write"|"MultiEdit")
                 check_intent
@@ -267,6 +307,9 @@ case "$HOOK_EVENT" in
         ;;
 
     "PostToolUse")
+        # Log signal completion
+        log_signal "post" "$TOOL_NAME" "$TOOL_INPUT"
+
         case "$TOOL_NAME" in
             "Edit"|"Write"|"MultiEdit")
                 track_edit
