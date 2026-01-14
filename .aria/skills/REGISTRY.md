@@ -11,6 +11,7 @@
 | [planning](./planning.md) | Start of work, "plan this" | ALL | Core |
 | [executing](./executing.md) | Approved plan exists | ALL | Core |
 | [debugging](./debugging.md) | Test failure, error | ALL | Core |
+| [discovery](./discovery.md) | New codebase, Modify flow | ALL | Core |
 | [tracking](./tracking.md) | During/after execution | STANDARD+ | Core |
 | [brainstorming](./brainstorming.md) | "explore", new project | STANDARD+ | Creative |
 | [prototyping](./prototyping.md) | "mockup", visual needed | STANDARD+ | Creative |
@@ -29,6 +30,7 @@ Essential skills used in every workflow.
 | **planning** | Break work into tasks | Requirements | `current-plan.json` |
 | **executing** | Implement tasks | Approved plan | Code, commits |
 | **debugging** | Fix failures | Error/test failure | Working code |
+| **discovery** | Explore codebase | Codebase access | `project-context.md` |
 | **tracking** | Monitor progress | Execution events | `progress.json`, metrics |
 
 ### Creative (STANDARD+)
