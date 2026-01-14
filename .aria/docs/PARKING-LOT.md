@@ -40,3 +40,23 @@ Future ideas and features to consider.
 **Priority:** Low - nice to have for analysis
 
 ---
+
+## Layered Skills (Progressive Disclosure)
+
+**Source:** Effect Layers pattern, Vercel agent-skills repo
+
+**Why:**
+- Large skills could blow up context
+- Priority ordering (CRITICAL → LOW) helps focus
+- Only load detailed refs when needed
+
+**What:**
+- Skill summary (always loaded) + references/ folder (on demand)
+- Priority tags on sections
+- Agent fetches detail when needed
+
+**Trigger:** When a skill exceeds ~500 lines
+
+**Priority:** Low - YAGNI until skills get too big
+
+---
