@@ -606,9 +606,10 @@ Decisions are captured and stored in `.aria/state/decisions.jsonl`. Signals (too
 
 **View traces:**
 ```bash
-.aria/scripts/trace-view.sh           # Recent session
-.aria/scripts/query-decisions.sh auth # Search by keyword
-.aria/scripts/reconcile.sh            # Verify claims match signals
+python .aria/scripts/serve-dashboard.py  # Web dashboard at localhost:8420
+.aria/scripts/trace-view.sh              # CLI: recent session
+.aria/scripts/query-decisions.sh auth    # CLI: search by keyword
+.aria/scripts/reconcile.sh               # CLI: verify claims match signals
 ```
 
 ---

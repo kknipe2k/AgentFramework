@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ARIA Dashboard</title>
+    <style>
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-card: #0f3460;
+            --accent: #e94560;
+            --accent-soft: #533483;
+            --text-primary: #eaeaea;
+            --text-secondary: #a0a0a0;
+            --success: #4ade80;
+            --warning: #fbbf24;
+            --error: #f87171;
+            --border: #2d2d44;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        /* Header */
+        header {
+            background: var(--bg-secondary);
+            padding: 1rem 2rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--accent);
+        }
+
+        .logo span {
+            color: var(--text-secondary);
+            font-weight: normal;
+        }
+
+        .session-info {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        /* Main content */
+        main {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* Summary cards */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 1.25rem;
+            border: 1px solid var(--border);
+        }
+
+        .card-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .card-value {
+            font-size: 2rem;
+            font-weight: bold;
+        }
+
+        .card-value.success { color: var(--success); }
+        .card-value.warning { color: var(--warning); }
+        .card-value.error { color: var(--error); }
+        .card-value.accent { color: var(--accent); }
+
+        .card-detail {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-top: 0.5rem;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.5rem;
+        }
+
+        .tab {
+            padding: 0.75rem 1.5rem;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.9rem;
+            border-radius: 4px 4px 0 0;
+            transition: all 0.2s;
+        }
+
+        .tab:hover {
+            color: var(--text-primary);
+            background: var(--bg-secondary);
+        }
+
+        .tab.active {
+            color: var(--accent);
+            background: var(--bg-secondary);
+            border-bottom: 2px solid var(--accent);
+        }
+
+        /* Tab content */
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Timeline */
+        .timeline {
+            position: relative;
+        }
+
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 20px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: var(--border);
+        }
+
+        .timeline-item {
+            position: relative;
+            padding-left: 50px;
+            padding-bottom: 1.5rem;
+        }
+
+        .timeline-dot {
+            position: absolute;
+            left: 14px;
+            top: 4px;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--bg-card);
+            border: 2px solid var(--accent);
+        }
+
+        .timeline-dot.signal { border-color: var(--text-secondary); }
+        .timeline-dot.decision { border-color: var(--success); background: var(--success); }
+        .timeline-dot.commit { border-color: var(--accent); background: var(--accent); }
+        .timeline-dot.hitl { border-color: var(--warning); background: var(--warning); }
+
+        .timeline-time {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .timeline-title {
+            font-weight: bold;
+            margin: 0.25rem 0;
+        }
+
+        .timeline-detail {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        /* Decision cards */
+        .decision-card {
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+            border: 1px solid var(--border);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .decision-card:hover {
+            border-color: var(--accent);
+        }
+
+        .decision-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 0.75rem;
+        }
+
+        .decision-action {
+            font-weight: bold;
+            flex: 1;
+        }
+
+        .decision-confidence {
+            font-size: 0.85rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            background: var(--bg-secondary);
+        }
+
+        .confidence-high { color: var(--success); }
+        .confidence-medium { color: var(--warning); }
+        .confidence-low { color: var(--error); }
+
+        .decision-verified {
+            display: inline-block;
+            font-size: 0.75rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            margin-left: 0.5rem;
+        }
+
+        .verified-true { background: var(--success); color: #000; }
+        .verified-false { background: var(--error); color: #fff; }
+        .verified-pending { background: var(--text-secondary); color: #000; }
+
+        .decision-meta {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .decision-signals {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+            display: none;
+        }
+
+        .decision-card.expanded .decision-signals {
+            display: block;
+        }
+
+        .signal-item {
+            font-size: 0.8rem;
+            padding: 0.25rem 0;
+            color: var(--text-secondary);
+        }
+
+        .signal-item .tool {
+            color: var(--accent);
+        }
+
+        /* Commit cards */
+        .commit-card {
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+            border: 1px solid var(--border);
+            border-left: 4px solid var(--accent);
+        }
+
+        .commit-hash {
+            font-family: monospace;
+            color: var(--accent);
+            font-size: 0.85rem;
+        }
+
+        .commit-message {
+            font-weight: bold;
+            margin: 0.5rem 0;
+        }
+
+        .commit-stats {
+            display: flex;
+            gap: 1rem;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-top: 0.5rem;
+        }
+
+        .commit-decisions {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .commit-decisions h4 {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .mini-decision {
+            font-size: 0.85rem;
+            padding: 0.5rem;
+            background: var(--bg-secondary);
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
+        }
+
+        /* Tools breakdown */
+        .tools-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .tool-badge {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            background: var(--bg-secondary);
+            border-radius: 4px;
+            color: var(--text-secondary);
+        }
+
+        /* Loading state */
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-secondary);
+        }
+
+        .loading::after {
+            content: '...';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: ''; }
+            40% { content: '.'; }
+            60% { content: '..'; }
+            80%, 100% { content: '...'; }
+        }
+
+        /* Error state */
+        .error {
+            text-align: center;
+            padding: 2rem;
+            color: var(--error);
+            background: var(--bg-card);
+            border-radius: 8px;
+            border: 1px solid var(--error);
+        }
+
+        /* Empty state */
+        .empty {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-secondary);
+        }
+
+        /* Refresh button */
+        .refresh-btn {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.85rem;
+        }
+
+        .refresh-btn:hover {
+            opacity: 0.9;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            main {
+                padding: 1rem;
+            }
+
+            .summary-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .tabs {
+                overflow-x: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">ARIA <span>Dashboard</span></div>
+        <div>
+            <span class="session-info" id="session-id">Loading...</span>
+            <button class="refresh-btn" onclick="refreshAll()">Refresh</button>
+        </div>
+    </header>
+
+    <main>
+        <!-- Summary Cards -->
+        <div class="summary-grid" id="summary-cards">
+            <div class="card">
+                <div class="card-label">Signals</div>
+                <div class="card-value" id="signal-count">-</div>
+                <div class="card-detail">Tool calls captured</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Decisions</div>
+                <div class="card-value accent" id="decision-count">-</div>
+                <div class="card-detail" id="decision-detail">-</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Commits</div>
+                <div class="card-value" id="commit-count">-</div>
+                <div class="card-detail">Git commits</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Confidence</div>
+                <div class="card-value" id="avg-confidence">-</div>
+                <div class="card-detail">Average decision confidence</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Files</div>
+                <div class="card-value" id="file-count">-</div>
+                <div class="card-detail">Unique files touched</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Tools</div>
+                <div class="card-value" id="tool-count">-</div>
+                <div class="card-detail" id="tools-detail">-</div>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab active" data-tab="timeline">Timeline</button>
+            <button class="tab" data-tab="decisions">Decisions</button>
+            <button class="tab" data-tab="commits">Commits</button>
+        </div>
+
+        <!-- Tab Contents -->
+        <div class="tab-content active" id="tab-timeline">
+            <div class="timeline" id="timeline-content">
+                <div class="loading">Loading timeline</div>
+            </div>
+        </div>
+
+        <div class="tab-content" id="tab-decisions">
+            <div id="decisions-content">
+                <div class="loading">Loading decisions</div>
+            </div>
+        </div>
+
+        <div class="tab-content" id="tab-commits">
+            <div id="commits-content">
+                <div class="loading">Loading commits</div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // State
+        let sessionData = null;
+        let timelineData = [];
+        let decisionsData = [];
+        let commitsData = [];
+
+        // API calls
+        async function fetchApi(endpoint) {
+            try {
+                const response = await fetch(`/api/${endpoint}`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return await response.json();
+            } catch (error) {
+                console.error(`API error (${endpoint}):`, error);
+                throw error;
+            }
+        }
+
+        // Update summary cards
+        function updateSummary(data) {
+            sessionData = data;
+
+            document.getElementById('session-id').textContent = data.session_id;
+            document.getElementById('signal-count').textContent = data.counts.signals || 0;
+            document.getElementById('decision-count').textContent = data.counts.decisions || 0;
+            document.getElementById('commit-count').textContent = data.counts.commits || 0;
+            document.getElementById('file-count').textContent = data.files_touched?.length || 0;
+            document.getElementById('tool-count').textContent = data.tools_used?.length || 0;
+
+            // Decision details
+            const verified = data.decisions?.verified || 0;
+            const total = data.decisions?.total || 0;
+            const verifyPct = total > 0 ? Math.round((verified / total) * 100) : 0;
+            document.getElementById('decision-detail').textContent = `${verified}/${total} verified (${verifyPct}%)`;
+
+            // Confidence
+            const conf = data.decisions?.avg_confidence || 0;
+            const confEl = document.getElementById('avg-confidence');
+            confEl.textContent = conf > 0 ? conf.toFixed(2) : '-';
+            confEl.className = 'card-value ' + (conf >= 0.8 ? 'success' : conf >= 0.5 ? 'warning' : 'error');
+
+            // Tools detail
+            document.getElementById('tools-detail').textContent = data.tools_used?.slice(0, 5).join(', ') || '-';
+        }
+
+        // Render timeline
+        function renderTimeline(events) {
+            timelineData = events;
+            const container = document.getElementById('timeline-content');
+
+            if (!events || events.length === 0) {
+                container.innerHTML = '<div class="empty">No events recorded yet</div>';
+                return;
+            }
+
+            container.innerHTML = events.map(event => {
+                const type = event.event_type || 'unknown';
+                const dotClass = type.includes('signal') ? 'signal' :
+                                 type === 'decision' ? 'decision' :
+                                 type === 'commit' ? 'commit' :
+                                 type === 'hitl' ? 'hitl' : '';
+
+                const time = event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : '';
+
+                let title = '';
+                let detail = '';
+
+                if (type.includes('signal')) {
+                    title = `${event.tool || 'Tool'} ${type.includes('pre') ? '(start)' : '(done)'}`;
+                    detail = event.file_path || event.command?.substring(0, 50) || '';
+                } else if (type === 'decision') {
+                    title = event.action || 'Decision';
+                    detail = event.rationale || '';
+                } else if (type === 'commit') {
+                    title = event.commit_message || 'Commit';
+                    detail = event.commit_hash?.substring(0, 8) || '';
+                } else {
+                    title = type;
+                    detail = event.action || '';
+                }
+
+                return `
+                    <div class="timeline-item">
+                        <div class="timeline-dot ${dotClass}"></div>
+                        <div class="timeline-time">${time}</div>
+                        <div class="timeline-title">${escapeHtml(title)}</div>
+                        <div class="timeline-detail">${escapeHtml(detail)}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Render decisions
+        function renderDecisions(decisions) {
+            decisionsData = decisions;
+            const container = document.getElementById('decisions-content');
+
+            if (!decisions || decisions.length === 0) {
+                container.innerHTML = '<div class="empty">No decisions recorded yet.<br>Decisions are captured when the agent emits &lt;decision&gt; blocks.</div>';
+                return;
+            }
+
+            container.innerHTML = decisions.map((dec, i) => {
+                const conf = parseFloat(dec.confidence) || 0;
+                const confClass = conf >= 0.8 ? 'confidence-high' :
+                                  conf >= 0.5 ? 'confidence-medium' : 'confidence-low';
+
+                const verifiedClass = dec.verified === 1 ? 'verified-true' :
+                                      dec.verified === 0 ? 'verified-false' : 'verified-pending';
+                const verifiedText = dec.verified === 1 ? 'Verified' :
+                                     dec.verified === 0 ? 'Unverified' : 'Pending';
+
+                const time = dec.timestamp ? new Date(dec.timestamp).toLocaleString() : '';
+
+                const signals = dec.signals || [];
+                const signalsHtml = signals.length > 0 ?
+                    signals.map(s => `
+                        <div class="signal-item">
+                            <span class="tool">${s.tool}</span>
+                            ${s.file_path || s.command?.substring(0, 40) || ''}
+                        </div>
+                    `).join('') :
+                    '<div class="signal-item">No signals captured</div>';
+
+                return `
+                    <div class="decision-card" onclick="toggleDecision(${i})">
+                        <div class="decision-header">
+                            <div class="decision-action">${escapeHtml(dec.action || 'Unknown action')}</div>
+                            <div>
+                                <span class="decision-confidence ${confClass}">${conf.toFixed(2)}</span>
+                                <span class="decision-verified ${verifiedClass}">${verifiedText}</span>
+                            </div>
+                        </div>
+                        <div class="decision-meta">
+                            ${time}<br>
+                            <strong>Context:</strong> ${escapeHtml(dec.context || '-')}<br>
+                            <strong>Rationale:</strong> ${escapeHtml(dec.rationale || '-')}<br>
+                            ${dec.alternatives ? `<strong>Alternatives:</strong> ${escapeHtml(dec.alternatives)}` : ''}
+                        </div>
+                        <div class="decision-signals">
+                            <strong>Supporting Signals (${signals.length}):</strong>
+                            ${signalsHtml}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Render commits
+        function renderCommits(commits) {
+            commitsData = commits;
+            const container = document.getElementById('commits-content');
+
+            if (!commits || commits.length === 0) {
+                container.innerHTML = '<div class="empty">No commits found</div>';
+                return;
+            }
+
+            container.innerHTML = commits.map(commit => {
+                const time = commit.timestamp ? new Date(commit.timestamp).toLocaleString() : '';
+                const decisions = commit.decisions || [];
+                const toolCounts = commit.tool_counts || {};
+
+                const toolsHtml = Object.entries(toolCounts).map(([tool, count]) =>
+                    `<span class="tool-badge">${tool}: ${count}</span>`
+                ).join('');
+
+                const decisionsHtml = decisions.length > 0 ?
+                    decisions.map(d => `
+                        <div class="mini-decision">
+                            ${escapeHtml(d.action || 'Decision')}
+                            ${d.confidence ? `<span class="decision-confidence">${parseFloat(d.confidence).toFixed(2)}</span>` : ''}
+                        </div>
+                    `).join('') :
+                    '<div class="mini-decision" style="color: var(--text-secondary)">No decisions linked</div>';
+
+                return `
+                    <div class="commit-card">
+                        <div class="commit-hash">${commit.commit_hash?.substring(0, 8) || ''}</div>
+                        <div class="commit-message">${escapeHtml(commit.commit_message || 'No message')}</div>
+                        <div class="commit-stats">
+                            <span>${time}</span>
+                            <span>${decisions.length} decisions</span>
+                        </div>
+                        <div class="tools-list">${toolsHtml}</div>
+                        <div class="commit-decisions">
+                            <h4>Decisions leading to this commit:</h4>
+                            ${decisionsHtml}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Toggle decision expansion
+        function toggleDecision(index) {
+            const cards = document.querySelectorAll('.decision-card');
+            if (cards[index]) {
+                cards[index].classList.toggle('expanded');
+            }
+        }
+
+        // Tab switching
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+                tab.classList.add('active');
+                document.getElementById(`tab-${tab.dataset.tab}`).classList.add('active');
+            });
+        });
+
+        // Escape HTML
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Load all data
+        async function refreshAll() {
+            try {
+                const [session, timeline, decisions, commits] = await Promise.all([
+                    fetchApi('session'),
+                    fetchApi('timeline'),
+                    fetchApi('decisions'),
+                    fetchApi('commits')
+                ]);
+
+                updateSummary(session);
+                renderTimeline(timeline);
+                renderDecisions(decisions);
+                renderCommits(commits);
+            } catch (error) {
+                console.error('Failed to load data:', error);
+                document.getElementById('timeline-content').innerHTML =
+                    `<div class="error">Failed to load data: ${error.message}<br><br>Make sure the server is running.</div>`;
+            }
+        }
+
+        // Initial load
+        refreshAll();
+
+        // Auto-refresh every 30 seconds
+        setInterval(refreshAll, 30000);
+    </script>
+</body>
+</html>

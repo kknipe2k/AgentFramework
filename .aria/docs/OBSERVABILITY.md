@@ -152,7 +152,84 @@ Match:    ✓ VERIFIED
 
 ---
 
-## Visualization Tools
+## Web Dashboard
+
+Interactive dashboard for exploring session traces.
+
+### Start the Dashboard
+
+```bash
+python .aria/scripts/serve-dashboard.py
+# Opens at http://localhost:8420
+```
+
+### Dashboard Views
+
+**Summary Cards:**
+- Signals (tool calls captured)
+- Decisions (with verification rate)
+- Commits (git commits in session)
+- Average confidence
+- Files touched
+- Tools used
+
+**Timeline Tab:**
+- Chronological view of all events
+- Color-coded by type (signal, decision, commit, HITL)
+- Shows tool calls with file paths/commands
+
+**Decisions Tab:**
+- All decisions with confidence scores
+- Verification status (verified/unverified/pending)
+- Click to expand and see supporting signals
+- Context, rationale, alternatives
+
+**Commits Tab:**
+- Git commits in session
+- Linked decisions that led to each commit
+- Tool usage breakdown per commit
+
+### API Endpoints
+
+```
+GET /api/session    - Session summary (counts, tools, files)
+GET /api/timeline   - Unified event timeline
+GET /api/decisions  - Decisions with supporting signals
+GET /api/commits    - Commits with linked decisions
+```
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Web Dashboard (index.html)                  │
+│                         JS/CSS SPA                              │
+└─────────────────────────────────────────────────────────────────┘
+                              │ fetch /api/*
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                 Python Server (serve-dashboard.py)              │
+│                                                                 │
+│   - Syncs JSONL → sqlite on each request                       │
+│   - Parses git log for commits                                  │
+│   - Links decisions to signals by timestamp                     │
+│   - Links commits to decisions by time window                   │
+└─────────────────────────────────────────────────────────────────┘
+                              │ reads
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│   signals.jsonl │ decisions.jsonl │ traces.db │ git log        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Storage:**
+- JSONL files = source of truth (append-only, crash-safe)
+- sqlite = query cache (rebuilt on server start)
+- No external dependencies (Python stdlib only)
+
+---
+
+## CLI Tools
 
 ### trace-view.sh
 
