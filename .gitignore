@@ -3,3 +3,4 @@
 .aria/checkpoints/
 .aria/logs/
 .aria/state/
+__pycache__/

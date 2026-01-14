@@ -127,6 +127,21 @@ tail -f .aria/ralph/progress.txt
 └── docs/                  # Documentation
 ```
 
+## Two Entry Points
+
+ARIA supports two operational modes:
+
+| Mode | Entry Point | Use Case |
+|------|-------------|----------|
+| **External** | `ralph.sh` | Terminal-based autonomous loop |
+| **Hybrid** | `CLAUDE.md` | Inside Claude Code / VS Code |
+
+**External Mode** (this README): Shell scripts orchestrate Claude as subprocess. Best for autonomous batch work.
+
+**Hybrid Mode** ([CLAUDE.md](./CLAUDE.md)): Skills-based system with ARIA rules embedded in Claude's context. Best for interactive development. See also:
+- [Cheatsheet](.aria/docs/CHEATSHEET.md) - Quick reference
+- [Skill Registry](.aria/skills/REGISTRY.md) - Available skills
+
 ## Archive
 
 Prior work on an ARIA programming language concept is archived in [`archive/aria-language/`](./archive/aria-language/).

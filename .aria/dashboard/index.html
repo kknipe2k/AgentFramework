@@ -1,0 +1,1154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ARIA Dashboard</title>
+    <style>
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-card: #0f3460;
+            --accent: #e94560;
+            --accent-soft: #533483;
+            --text-primary: #eaeaea;
+            --text-secondary: #a0a0a0;
+            --success: #4ade80;
+            --warning: #fbbf24;
+            --error: #f87171;
+            --border: #2d2d44;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        /* Header */
+        header {
+            background: var(--bg-secondary);
+            padding: 1rem 2rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--accent);
+        }
+
+        .logo span {
+            color: var(--text-secondary);
+            font-weight: normal;
+        }
+
+        .session-info {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        /* Main content */
+        main {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* Summary cards */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 1.25rem;
+            border: 1px solid var(--border);
+        }
+
+        .card-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .card-value {
+            font-size: 2rem;
+            font-weight: bold;
+        }
+
+        .card-value.success { color: var(--success); }
+        .card-value.warning { color: var(--warning); }
+        .card-value.error { color: var(--error); }
+        .card-value.accent { color: var(--accent); }
+
+        .card-detail {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-top: 0.5rem;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.5rem;
+        }
+
+        .tab {
+            padding: 0.75rem 1.5rem;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.9rem;
+            border-radius: 4px 4px 0 0;
+            transition: all 0.2s;
+        }
+
+        .tab:hover {
+            color: var(--text-primary);
+            background: var(--bg-secondary);
+        }
+
+        .tab.active {
+            color: var(--accent);
+            background: var(--bg-secondary);
+            border-bottom: 2px solid var(--accent);
+        }
+
+        /* Tab content */
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Timeline */
+        .timeline {
+            position: relative;
+        }
+
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 20px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: var(--border);
+        }
+
+        .timeline-item {
+            position: relative;
+            padding-left: 50px;
+            padding-bottom: 1.5rem;
+        }
+
+        .timeline-dot {
+            position: absolute;
+            left: 14px;
+            top: 4px;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--bg-card);
+            border: 2px solid var(--accent);
+        }
+
+        .timeline-dot.signal { border-color: var(--text-secondary); }
+        .timeline-dot.decision { border-color: var(--success); background: var(--success); }
+        .timeline-dot.commit { border-color: var(--accent); background: var(--accent); }
+        .timeline-dot.hitl { border-color: var(--warning); background: var(--warning); }
+
+        .timeline-time {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .timeline-title {
+            font-weight: bold;
+            margin: 0.25rem 0;
+        }
+
+        .timeline-detail {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        /* Decision cards */
+        .decision-card {
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+            border: 1px solid var(--border);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .decision-card:hover {
+            border-color: var(--accent);
+        }
+
+        .decision-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 0.75rem;
+        }
+
+        .decision-action {
+            font-weight: bold;
+            flex: 1;
+        }
+
+        .decision-confidence {
+            font-size: 0.85rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            background: var(--bg-secondary);
+        }
+
+        .confidence-high { color: var(--success); }
+        .confidence-medium { color: var(--warning); }
+        .confidence-low { color: var(--error); }
+
+        .decision-verified {
+            display: inline-block;
+            font-size: 0.75rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            margin-left: 0.5rem;
+        }
+
+        .verified-true { background: var(--success); color: #000; }
+        .verified-false { background: var(--error); color: #fff; }
+        .verified-pending { background: var(--text-secondary); color: #000; }
+
+        .decision-meta {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .decision-signals {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+            display: none;
+        }
+
+        .decision-card.expanded .decision-signals {
+            display: block;
+        }
+
+        .signal-item {
+            font-size: 0.8rem;
+            padding: 0.25rem 0;
+            color: var(--text-secondary);
+        }
+
+        .signal-item .tool {
+            color: var(--accent);
+        }
+
+        /* Commit cards */
+        .commit-card {
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+            border: 1px solid var(--border);
+            border-left: 4px solid var(--accent);
+        }
+
+        .commit-hash {
+            font-family: monospace;
+            color: var(--accent);
+            font-size: 0.85rem;
+        }
+
+        .commit-message {
+            font-weight: bold;
+            margin: 0.5rem 0;
+        }
+
+        .commit-stats {
+            display: flex;
+            gap: 1rem;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-top: 0.5rem;
+        }
+
+        .commit-decisions {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .commit-decisions h4 {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .mini-decision {
+            font-size: 0.85rem;
+            padding: 0.5rem;
+            background: var(--bg-secondary);
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
+        }
+
+        /* Tools breakdown */
+        .tools-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .tool-badge {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            background: var(--bg-secondary);
+            border-radius: 4px;
+            color: var(--text-secondary);
+        }
+
+        /* Loading state */
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-secondary);
+        }
+
+        .loading::after {
+            content: '...';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: ''; }
+            40% { content: '.'; }
+            60% { content: '..'; }
+            80%, 100% { content: '...'; }
+        }
+
+        /* Error state */
+        .error {
+            text-align: center;
+            padding: 2rem;
+            color: var(--error);
+            background: var(--bg-card);
+            border-radius: 8px;
+            border: 1px solid var(--error);
+        }
+
+        /* Empty state */
+        .empty {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-secondary);
+        }
+
+        /* Refresh button */
+        .refresh-btn {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.85rem;
+        }
+
+        .refresh-btn:hover {
+            opacity: 0.9;
+        }
+
+        /* Hierarchical Lineage Tree */
+        .lineage-tree {
+            padding: 0.5rem 0;
+        }
+
+        .tree-node {
+            position: relative;
+            margin-left: 0;
+        }
+
+        .tree-node.nested {
+            margin-left: 1.5rem;
+            border-left: 2px solid var(--border);
+            padding-left: 0.75rem;
+        }
+
+        .tree-node.nested:last-child {
+            border-left-color: transparent;
+        }
+
+        .tree-node-header {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.5rem;
+            padding: 0.5rem;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background 0.15s;
+        }
+
+        .tree-node-header:hover {
+            background: var(--bg-secondary);
+        }
+
+        .tree-toggle {
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            flex-shrink: 0;
+        }
+
+        .tree-toggle.has-children::before {
+            content: '▶';
+            transition: transform 0.15s;
+        }
+
+        .tree-node.expanded > .tree-node-header .tree-toggle.has-children::before {
+            transform: rotate(90deg);
+        }
+
+        .tree-icon {
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            flex-shrink: 0;
+        }
+
+        .tree-icon.skill { background: var(--accent-soft); }
+        .tree-icon.decision { background: var(--success); color: #000; }
+        .tree-icon.signal { background: var(--border); }
+        .tree-icon.commit { background: var(--accent); color: #fff; }
+        .tree-icon.hitl { background: var(--warning); color: #000; }
+        .tree-icon.verify { background: var(--success); color: #000; }
+        .tree-icon.subagent { background: #06b6d4; color: #000; }
+        .tree-icon.template { background: #8b5cf6; }
+        .tree-icon.orphan { background: var(--text-secondary); }
+
+        .tree-content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .tree-label {
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            letter-spacing: 0.5px;
+        }
+
+        .tree-title {
+            font-size: 0.9rem;
+            font-weight: 500;
+            word-break: break-word;
+        }
+
+        .tree-meta {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 0.15rem;
+        }
+
+        .tree-children {
+            display: none;
+        }
+
+        .tree-node.expanded > .tree-children {
+            display: block;
+        }
+
+        /* Confidence badge */
+        .confidence-badge {
+            font-size: 0.7rem;
+            padding: 0.15rem 0.4rem;
+            border-radius: 3px;
+            background: var(--bg-secondary);
+            margin-left: 0.5rem;
+        }
+
+        .confidence-badge.high { color: var(--success); }
+        .confidence-badge.medium { color: var(--warning); }
+        .confidence-badge.low { color: var(--error); }
+
+        /* Signal list (compact under decisions) */
+        .signals-list {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            padding: 0.5rem;
+            margin-top: 0.25rem;
+            background: var(--bg-primary);
+            border-radius: 4px;
+        }
+
+        .signal-entry {
+            padding: 0.2rem 0;
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .signal-entry .tool-name {
+            color: var(--accent);
+            font-weight: 500;
+            min-width: 50px;
+        }
+
+        /* Lineage summary header */
+        .lineage-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            padding: 1rem;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+        }
+
+        .lineage-stat {
+            text-align: center;
+        }
+
+        .lineage-stat-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--accent);
+        }
+
+        .lineage-stat-label {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+
+        /* Expand/collapse all buttons */
+        .tree-controls {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .tree-control-btn {
+            font-size: 0.75rem;
+            padding: 0.4rem 0.75rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .tree-control-btn:hover {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+
+        /* Legacy compatibility */
+        .skills-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .skill-badge {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.75rem;
+            background: var(--accent-soft);
+            color: var(--text-primary);
+            border-radius: 12px;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            main {
+                padding: 1rem;
+            }
+
+            .summary-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .tabs {
+                overflow-x: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">ARIA <span>Dashboard</span></div>
+        <div>
+            <span class="session-info" id="session-id">Loading...</span>
+            <button class="refresh-btn" onclick="refreshAll()">Refresh</button>
+        </div>
+    </header>
+
+    <main>
+        <!-- Summary Cards -->
+        <div class="summary-grid" id="summary-cards">
+            <div class="card">
+                <div class="card-label">Signals</div>
+                <div class="card-value" id="signal-count">-</div>
+                <div class="card-detail">Tool calls captured</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Decisions</div>
+                <div class="card-value accent" id="decision-count">-</div>
+                <div class="card-detail" id="decision-detail">-</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Commits</div>
+                <div class="card-value" id="commit-count">-</div>
+                <div class="card-detail">Git commits</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Confidence</div>
+                <div class="card-value" id="avg-confidence">-</div>
+                <div class="card-detail">Average decision confidence</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Files</div>
+                <div class="card-value" id="file-count">-</div>
+                <div class="card-detail">Unique files touched</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Tools</div>
+                <div class="card-value" id="tool-count">-</div>
+                <div class="card-detail" id="tools-detail">-</div>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab active" data-tab="lineage">Lineage</button>
+            <button class="tab" data-tab="timeline">Timeline</button>
+            <button class="tab" data-tab="decisions">Decisions</button>
+            <button class="tab" data-tab="commits">Commits</button>
+        </div>
+
+        <!-- Tab Contents -->
+        <div class="tab-content active" id="tab-lineage">
+            <div id="lineage-content">
+                <div class="loading">Loading lineage</div>
+            </div>
+        </div>
+
+        <div class="tab-content" id="tab-timeline">
+            <div class="timeline" id="timeline-content">
+                <div class="loading">Loading timeline</div>
+            </div>
+        </div>
+
+        <div class="tab-content" id="tab-decisions">
+            <div id="decisions-content">
+                <div class="loading">Loading decisions</div>
+            </div>
+        </div>
+
+        <div class="tab-content" id="tab-commits">
+            <div id="commits-content">
+                <div class="loading">Loading commits</div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // State
+        let sessionData = null;
+        let lineageData = null;
+        let timelineData = [];
+        let decisionsData = [];
+        let commitsData = [];
+
+        // API calls
+        async function fetchApi(endpoint) {
+            try {
+                const response = await fetch(`/api/${endpoint}`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return await response.json();
+            } catch (error) {
+                console.error(`API error (${endpoint}):`, error);
+                throw error;
+            }
+        }
+
+        // Update summary cards
+        function updateSummary(data) {
+            sessionData = data;
+
+            document.getElementById('session-id').textContent = data.session_id;
+            document.getElementById('signal-count').textContent = data.counts.signals || 0;
+            document.getElementById('decision-count').textContent = data.counts.decisions || 0;
+            document.getElementById('commit-count').textContent = data.counts.commits || 0;
+            document.getElementById('file-count').textContent = data.files_touched?.length || 0;
+            document.getElementById('tool-count').textContent = data.tools_used?.length || 0;
+
+            // Decision details
+            const verified = data.decisions?.verified || 0;
+            const total = data.decisions?.total || 0;
+            const verifyPct = total > 0 ? Math.round((verified / total) * 100) : 0;
+            document.getElementById('decision-detail').textContent = `${verified}/${total} verified (${verifyPct}%)`;
+
+            // Confidence
+            const conf = data.decisions?.avg_confidence || 0;
+            const confEl = document.getElementById('avg-confidence');
+            confEl.textContent = conf > 0 ? conf.toFixed(2) : '-';
+            confEl.className = 'card-value ' + (conf >= 0.8 ? 'success' : conf >= 0.5 ? 'warning' : 'error');
+
+            // Tools detail
+            document.getElementById('tools-detail').textContent = data.tools_used?.slice(0, 5).join(', ') || '-';
+        }
+
+        // Render lineage with hierarchical tree
+        function renderLineage(data) {
+            lineageData = data;
+            const container = document.getElementById('lineage-content');
+
+            if (!data || !data.tree?.length) {
+                container.innerHTML = `
+                    <div class="empty">
+                        No lineage data yet.<br><br>
+                        Lineage is built from:<br>
+                        - Skills loaded (.aria/skills/*.md)<br>
+                        - Decisions (&lt;decision&gt; blocks)<br>
+                        - HITL checkpoints<br>
+                        - Test runs and commits
+                    </div>
+                `;
+                return;
+            }
+
+            // Build summary from new format
+            const summary = data.summary || {};
+            const summaryHtml = `
+                <div class="lineage-summary">
+                    <div class="lineage-stat">
+                        <div class="lineage-stat-value">${summary.skills || 0}</div>
+                        <div class="lineage-stat-label">Skills</div>
+                    </div>
+                    <div class="lineage-stat">
+                        <div class="lineage-stat-value">${summary.decisions || 0}</div>
+                        <div class="lineage-stat-label">Decisions</div>
+                    </div>
+                    <div class="lineage-stat">
+                        <div class="lineage-stat-value">${summary.signals || 0}</div>
+                        <div class="lineage-stat-label">Signals</div>
+                    </div>
+                    <div class="lineage-stat">
+                        <div class="lineage-stat-value">${summary.hitl || 0}</div>
+                        <div class="lineage-stat-label">HITL</div>
+                    </div>
+                    <div class="lineage-stat">
+                        <div class="lineage-stat-value">${summary.verify || 0}</div>
+                        <div class="lineage-stat-label">Tests</div>
+                    </div>
+                    <div class="lineage-stat">
+                        <div class="lineage-stat-value">${summary.commits || 0}</div>
+                        <div class="lineage-stat-label">Commits</div>
+                    </div>
+                </div>
+            `;
+
+            // Build hierarchical tree
+            function renderTreeNode(node, isNested = false) {
+                const type = node.type || 'unknown';
+                const hasChildren = (node.children && node.children.length > 0) ||
+                                   (node.signals && node.signals.length > 0);
+                const expandedClass = node.expanded ? 'expanded' : '';
+                const nestedClass = isNested ? 'nested' : '';
+                const time = node.timestamp ? new Date(node.timestamp).toLocaleTimeString() : '';
+
+                // Build content based on type
+                let icon = type.charAt(0).toUpperCase();
+                let label = type.toUpperCase();
+                let title = '';
+                let meta = '';
+                let extraContent = '';
+
+                switch (type) {
+                    case 'skill':
+                        icon = 'S';
+                        title = node.name || 'Unnamed skill';
+                        meta = `${node.children?.length || 0} events`;
+                        break;
+
+                    case 'decision':
+                        icon = 'D';
+                        title = node.action || 'Decision';
+                        const conf = node.confidence ? parseFloat(node.confidence) : 0;
+                        const confClass = conf >= 0.8 ? 'high' : conf >= 0.5 ? 'medium' : 'low';
+                        if (conf > 0) {
+                            title += `<span class="confidence-badge ${confClass}">${conf.toFixed(2)}</span>`;
+                        }
+                        if (node.rationale) {
+                            meta = escapeHtml(node.rationale.substring(0, 80));
+                        }
+                        // Show signals if expanded
+                        if (node.signals && node.signals.length > 0) {
+                            extraContent = `
+                                <div class="signals-list">
+                                    <strong>${node.signals.length} supporting signals:</strong>
+                                    ${node.signals.map(s => `
+                                        <div class="signal-entry">
+                                            <span class="tool-name">${s.tool || 'Tool'}</span>
+                                            <span>${escapeHtml(s.file_path || s.command?.substring(0, 40) || '')}</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            `;
+                        }
+                        break;
+
+                    case 'signal':
+                        icon = '→';
+                        label = node.event === 'pre' ? 'SIGNAL START' : 'SIGNAL END';
+                        title = `<span style="color: var(--accent)">${node.tool || 'Tool'}</span>`;
+                        meta = node.file_path || node.command?.substring(0, 50) || '';
+                        break;
+
+                    case 'commit':
+                        icon = 'C';
+                        title = `<code>${node.hash || ''}</code> ${escapeHtml(node.message || '')}`;
+                        if (node.linked_decisions?.length) {
+                            meta = `${node.linked_decisions.length} decisions`;
+                        }
+                        break;
+
+                    case 'hitl':
+                        icon = 'H';
+                        title = node.action || 'Checkpoint';
+                        meta = node.response ? `Response: ${node.response}` : 'Pending';
+                        break;
+
+                    case 'verify':
+                        icon = '✓';
+                        title = 'Test run';
+                        meta = node.command?.substring(0, 50) || '';
+                        break;
+
+                    case 'subagent':
+                        icon = 'A';
+                        title = node.name || 'general-purpose';
+                        break;
+
+                    case 'template':
+                        icon = 'T';
+                        title = node.name || 'Template';
+                        break;
+
+                    case 'orphan':
+                        icon = '?';
+                        title = node.name || 'Orphan events';
+                        meta = `${node.children?.length || 0} events before skill loaded`;
+                        break;
+
+                    default:
+                        title = node.name || node.action || type;
+                }
+
+                // Build children HTML
+                let childrenHtml = '';
+                if (node.children && node.children.length > 0) {
+                    childrenHtml = node.children.map(child => renderTreeNode(child, true)).join('');
+                }
+
+                return `
+                    <div class="tree-node ${nestedClass} ${expandedClass}" data-type="${type}">
+                        <div class="tree-node-header" onclick="toggleTreeNode(this)">
+                            <div class="tree-toggle ${hasChildren ? 'has-children' : ''}"></div>
+                            <div class="tree-icon ${type}">${icon}</div>
+                            <div class="tree-content">
+                                <div class="tree-label">${label}</div>
+                                <div class="tree-title">${title}</div>
+                                ${meta ? `<div class="tree-meta">${escapeHtml(meta)}</div>` : ''}
+                                ${extraContent}
+                            </div>
+                            <div class="tree-time" style="font-size: 0.7rem; color: var(--text-secondary)">${time}</div>
+                        </div>
+                        ${childrenHtml ? `<div class="tree-children">${childrenHtml}</div>` : ''}
+                    </div>
+                `;
+            }
+
+            // Render tree
+            const treeHtml = data.tree.map(node => renderTreeNode(node)).join('');
+
+            container.innerHTML = summaryHtml + `
+                <div class="tree-controls">
+                    <button class="tree-control-btn" onclick="expandAllTree()">Expand All</button>
+                    <button class="tree-control-btn" onclick="collapseAllTree()">Collapse All</button>
+                </div>
+                <h3 style="margin: 0 0 0.5rem; color: var(--text-secondary);">Decision Lineage</h3>
+                <div class="lineage-tree">${treeHtml || '<div class="empty">No lineage events</div>'}</div>
+            `;
+        }
+
+        // Toggle tree node expansion
+        function toggleTreeNode(header) {
+            const node = header.closest('.tree-node');
+            if (node) {
+                node.classList.toggle('expanded');
+            }
+        }
+
+        // Expand all tree nodes
+        function expandAllTree() {
+            document.querySelectorAll('.tree-node').forEach(node => {
+                node.classList.add('expanded');
+            });
+        }
+
+        // Collapse all tree nodes
+        function collapseAllTree() {
+            document.querySelectorAll('.tree-node').forEach(node => {
+                node.classList.remove('expanded');
+            });
+        }
+
+        // Render timeline
+        function renderTimeline(events) {
+            timelineData = events;
+            const container = document.getElementById('timeline-content');
+
+            if (!events || events.length === 0) {
+                container.innerHTML = '<div class="empty">No events recorded yet</div>';
+                return;
+            }
+
+            container.innerHTML = events.map(event => {
+                const type = event.event_type || 'unknown';
+                const dotClass = type.includes('signal') ? 'signal' :
+                                 type === 'decision' ? 'decision' :
+                                 type === 'commit' ? 'commit' :
+                                 type === 'hitl' ? 'hitl' : '';
+
+                const time = event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : '';
+
+                let title = '';
+                let detail = '';
+
+                if (type.includes('signal')) {
+                    title = `${event.tool || 'Tool'} ${type.includes('pre') ? '(start)' : '(done)'}`;
+                    detail = event.file_path || event.command?.substring(0, 50) || '';
+                } else if (type === 'decision') {
+                    title = event.action || 'Decision';
+                    detail = event.rationale || '';
+                } else if (type === 'commit') {
+                    title = event.commit_message || 'Commit';
+                    detail = event.commit_hash?.substring(0, 8) || '';
+                } else {
+                    title = type;
+                    detail = event.action || '';
+                }
+
+                return `
+                    <div class="timeline-item">
+                        <div class="timeline-dot ${dotClass}"></div>
+                        <div class="timeline-time">${time}</div>
+                        <div class="timeline-title">${escapeHtml(title)}</div>
+                        <div class="timeline-detail">${escapeHtml(detail)}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Render decisions
+        function renderDecisions(decisions) {
+            decisionsData = decisions;
+            const container = document.getElementById('decisions-content');
+
+            if (!decisions || decisions.length === 0) {
+                container.innerHTML = '<div class="empty">No decisions recorded yet.<br>Decisions are captured when the agent emits &lt;decision&gt; blocks.</div>';
+                return;
+            }
+
+            container.innerHTML = decisions.map((dec, i) => {
+                const conf = parseFloat(dec.confidence) || 0;
+                const confClass = conf >= 0.8 ? 'confidence-high' :
+                                  conf >= 0.5 ? 'confidence-medium' : 'confidence-low';
+
+                const verifiedClass = dec.verified === 1 ? 'verified-true' :
+                                      dec.verified === 0 ? 'verified-false' : 'verified-pending';
+                const verifiedText = dec.verified === 1 ? 'Verified' :
+                                     dec.verified === 0 ? 'Unverified' : 'Pending';
+
+                const time = dec.timestamp ? new Date(dec.timestamp).toLocaleString() : '';
+
+                const signals = dec.signals || [];
+                const signalsHtml = signals.length > 0 ?
+                    signals.map(s => `
+                        <div class="signal-item">
+                            <span class="tool">${s.tool}</span>
+                            ${s.file_path || s.command?.substring(0, 40) || ''}
+                        </div>
+                    `).join('') :
+                    '<div class="signal-item">No signals captured</div>';
+
+                return `
+                    <div class="decision-card" onclick="toggleDecision(${i})">
+                        <div class="decision-header">
+                            <div class="decision-action">${escapeHtml(dec.action || 'Unknown action')}</div>
+                            <div>
+                                <span class="decision-confidence ${confClass}">${conf.toFixed(2)}</span>
+                                <span class="decision-verified ${verifiedClass}">${verifiedText}</span>
+                            </div>
+                        </div>
+                        <div class="decision-meta">
+                            ${time}<br>
+                            <strong>Context:</strong> ${escapeHtml(dec.context || '-')}<br>
+                            <strong>Rationale:</strong> ${escapeHtml(dec.rationale || '-')}<br>
+                            ${dec.alternatives ? `<strong>Alternatives:</strong> ${escapeHtml(dec.alternatives)}` : ''}
+                        </div>
+                        <div class="decision-signals">
+                            <strong>Supporting Signals (${signals.length}):</strong>
+                            ${signalsHtml}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Render commits
+        function renderCommits(commits) {
+            commitsData = commits;
+            const container = document.getElementById('commits-content');
+
+            if (!commits || commits.length === 0) {
+                container.innerHTML = '<div class="empty">No commits found</div>';
+                return;
+            }
+
+            container.innerHTML = commits.map(commit => {
+                const time = commit.timestamp ? new Date(commit.timestamp).toLocaleString() : '';
+                const decisions = commit.decisions || [];
+                const toolCounts = commit.tool_counts || {};
+
+                const toolsHtml = Object.entries(toolCounts).map(([tool, count]) =>
+                    `<span class="tool-badge">${tool}: ${count}</span>`
+                ).join('');
+
+                const decisionsHtml = decisions.length > 0 ?
+                    decisions.map(d => `
+                        <div class="mini-decision">
+                            ${escapeHtml(d.action || 'Decision')}
+                            ${d.confidence ? `<span class="decision-confidence">${parseFloat(d.confidence).toFixed(2)}</span>` : ''}
+                        </div>
+                    `).join('') :
+                    '<div class="mini-decision" style="color: var(--text-secondary)">No decisions linked</div>';
+
+                return `
+                    <div class="commit-card">
+                        <div class="commit-hash">${commit.commit_hash?.substring(0, 8) || ''}</div>
+                        <div class="commit-message">${escapeHtml(commit.commit_message || 'No message')}</div>
+                        <div class="commit-stats">
+                            <span>${time}</span>
+                            <span>${decisions.length} decisions</span>
+                        </div>
+                        <div class="tools-list">${toolsHtml}</div>
+                        <div class="commit-decisions">
+                            <h4>Decisions leading to this commit:</h4>
+                            ${decisionsHtml}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Toggle decision expansion
+        function toggleDecision(index) {
+            const cards = document.querySelectorAll('.decision-card');
+            if (cards[index]) {
+                cards[index].classList.toggle('expanded');
+            }
+        }
+
+        // Tab switching
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+                tab.classList.add('active');
+                document.getElementById(`tab-${tab.dataset.tab}`).classList.add('active');
+            });
+        });
+
+        // Escape HTML
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Load all data
+        async function refreshAll() {
+            try {
+                const [session, lineage, timeline, decisions, commits] = await Promise.all([
+                    fetchApi('session'),
+                    fetchApi('lineage'),
+                    fetchApi('timeline'),
+                    fetchApi('decisions'),
+                    fetchApi('commits')
+                ]);
+
+                updateSummary(session);
+                renderLineage(lineage);
+                renderTimeline(timeline);
+                renderDecisions(decisions);
+                renderCommits(commits);
+            } catch (error) {
+                console.error('Failed to load data:', error);
+                document.getElementById('timeline-content').innerHTML =
+                    `<div class="error">Failed to load data: ${error.message}<br><br>Make sure the server is running.</div>`;
+            }
+        }
+
+        // Initial load
+        refreshAll();
+
+        // Auto-refresh every 30 seconds
+        setInterval(refreshAll, 30000);
+    </script>
+</body>
+</html>
