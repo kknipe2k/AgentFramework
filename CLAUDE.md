@@ -291,6 +291,7 @@ STEP 5: HITL - Prototype decision (STOP AND ASK)
         │ [p]rototype / [d]one with docs         │
         └────────────────────────────────────────┘
         → WAIT for user response before proceeding
+        → If [d]one: Skip to STEP 7 (MANDATORY)
 
 STEP 6: If prototype = yes (STOP AND ASK)
         ┌────────────────────────────────────────┐
@@ -302,13 +303,29 @@ STEP 6: If prototype = yes (STOP AND ASK)
         → WAIT for user response
         → Build prototype with chosen variant
         → Output: .aria/prototypes/
+        → Continue to STEP 7 (MANDATORY)
 
-STEP 7: Generate final report
+STEP 7: MANDATORY - Final report & dashboard (ALWAYS EXECUTE)
+        ┌────────────────────────────────────────┐
+        │ This step is REQUIRED regardless of    │
+        │ whether prototype was built or skipped │
+        └────────────────────────────────────────┘
+        → List all artifacts created
         → Run report-writer skill
-        → HITL: View dashboard? [y/n/s]
+        → Display summary with metrics
+        ┌────────────────────────────────────────┐
+        │ HITL: View dashboard?                  │
+        │ [y]es - launch localhost:8420          │
+        │ [n]o - done                            │
+        │ [s]ave - export to .aria/reports/      │
+        └────────────────────────────────────────┘
+        → WAIT for user response
+        → Execute chosen action
+        → WORKFLOW COMPLETE
 ```
 
 **CRITICAL: Each HITL checkpoint is BLOCKING. Do NOT proceed until user responds.**
+**CRITICAL: STEP 7 is MANDATORY - always execute after prototype decision (yes or no).**
 
 **Slide Generation Details:**
 
