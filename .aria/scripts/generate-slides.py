@@ -126,6 +126,7 @@ async def generate_nblm(focus_path: Path, idea_path: Path, source_paths: list) -
             # Create notebook
             print(f"Creating NotebookLM notebook: {title}")
             notebook = await client.notebooks.create(f"Slides: {title}")
+            print(f"  Notebook ID: {notebook.id}")
 
             # Add sources - use add_url for text content or add_file for files
             print("Adding FOCUS.md content...")
@@ -145,22 +146,37 @@ async def generate_nblm(focus_path: Path, idea_path: Path, source_paths: list) -
                     print(f"Adding {source_path.name}...")
                     await client.sources.add_file(notebook.id, str(source_path))
 
-            # Generate slides
-            print("Generating slide deck (this may take a minute)...")
-            await client.chat.ask(notebook.id, SLIDES_PROMPT)
-            status = await client.artifacts.generate_slide_deck(notebook.id)
-            await client.artifacts.wait_for_completion(notebook.id, status.task_id)
+            # Send slide generation prompt
+            print("\nSending slide generation prompt...")
+            print(f"  Prompt: {SLIDES_PROMPT[:100]}...")
+            response = await client.chat.ask(notebook.id, SLIDES_PROMPT)
+            print(f"  Prompt sent successfully")
 
-            # Download
-            output_path = OUTPUTS_DIR / f"slides-{timestamp}.pdf"
-            await client.artifacts.download_slide_deck(notebook.id, str(OUTPUTS_DIR))
+            # Start slide deck generation (don't wait - takes 5-10 min)
+            print("\nStarting slide deck generation...")
+            print("  NOTE: This takes 5-10 minutes. Check NotebookLM directly.")
+            status = await client.artifacts.generate_slide_deck(notebook.id)
+            print(f"  Task started: {status.task_id}")
+            print(f"  Status: {status.status}")
+
+            # Get notebook URL
+            notebook_url = f"https://notebooklm.google.com/notebook/{notebook.id}"
 
             # Cleanup temp files
             focus_temp.unlink(missing_ok=True)
             idea_temp.unlink(missing_ok=True)
 
-            print(f"Slides saved to: {output_path}")
-            return output_path
+            print("\n" + "="*60)
+            print("SLIDE GENERATION STARTED")
+            print("="*60)
+            print(f"\nNotebook URL: {notebook_url}")
+            print("\nNext steps:")
+            print("  1. Open the URL above in your browser")
+            print("  2. Wait 5-10 minutes for slide deck to generate")
+            print("  3. Download from NotebookLM when ready")
+            print("="*60)
+
+            return notebook_url
 
     except Exception as e:
         print(f"NotebookLM error: {e}")
