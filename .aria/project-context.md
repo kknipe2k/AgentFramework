@@ -48,6 +48,24 @@ Set your integrated terminal to Git Bash:
 - JSON for structured data (not YAML)
 - Color output with ANSI codes
 
+### Silent Error Handling (Issue #3)
+
+Prefer these functions from `common.sh` over raw `2>/dev/null`:
+
+```bash
+# Instead of:  cmd 2>/dev/null
+aria_silent cmd                        # Captures errors to debug log
+
+# For critical operations:
+aria_silent_traced "operation" cmd     # Also emits signal on failure
+```
+
+Enable debug logging: `export ARIA_DEBUG_LOG=.aria/logs/debug.log ARIA_DEBUG_LEVEL=1`
+
+**When raw `2>/dev/null` is acceptable:**
+- Checking if commands exist: `command -v jq >/dev/null 2>&1`
+- Suppressing expected missing files: `cat /optional/file 2>/dev/null || true`
+
 ## Testing
 
 - Test files: 1 (`src/counter.test.js`)

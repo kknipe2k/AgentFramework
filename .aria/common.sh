@@ -156,6 +156,105 @@ aria_get_project_root() {
 }
 
 # ============================================
+# SILENT ERROR HANDLING (Issue #3)
+# ============================================
+# Captures errors for traceability while suppressing user-facing noise.
+# Instead of `command 2>/dev/null`, use `aria_silent command` or `aria_try command`.
+#
+# Benefits:
+#   - Errors are logged to debug file for troubleshooting
+#   - Commands still suppress stderr from terminal
+#   - Optional: Emit signals on failure for full traceability
+
+# Debug log location (disabled by default to avoid noise)
+ARIA_DEBUG_LOG="${ARIA_DEBUG_LOG:-}"
+ARIA_DEBUG_LEVEL="${ARIA_DEBUG_LEVEL:-0}"  # 0=off, 1=errors, 2=all
+
+# Internal: Write to debug log if enabled
+_aria_debug_log() {
+    if [[ -n "$ARIA_DEBUG_LOG" && -n "$1" ]]; then
+        local timestamp
+        timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        mkdir -p "$(dirname "$ARIA_DEBUG_LOG")" 2>/dev/null || true
+        echo "[$timestamp] $*" >> "$ARIA_DEBUG_LOG"
+    fi
+}
+
+# Run a command silently but capture stderr for debugging
+# Usage: aria_silent command [args...]
+# Returns: Exit code of command
+# Stderr is captured to debug log (if ARIA_DEBUG_LOG is set)
+#
+# Example:
+#   aria_silent git status          # Instead of: git status 2>/dev/null
+#   aria_silent rm -f "$file"       # Instead of: rm -f "$file" 2>/dev/null
+aria_silent() {
+    local stderr_capture
+    local exit_code
+
+    if [[ -n "$ARIA_DEBUG_LOG" && "$ARIA_DEBUG_LEVEL" -ge 1 ]]; then
+        # Capture stderr while suppressing it
+        stderr_capture=$("$@" 2>&1 >/dev/null)
+        exit_code=$?
+        if [[ $exit_code -ne 0 && -n "$stderr_capture" ]]; then
+            _aria_debug_log "STDERR [$exit_code]: $* -> $stderr_capture"
+        fi
+    else
+        # Fast path: just suppress stderr
+        "$@" 2>/dev/null
+        exit_code=$?
+    fi
+
+    return $exit_code
+}
+
+# Try to run a command, returning success/failure
+# Usage: aria_try command [args...] && echo "success" || echo "failed"
+# Returns: Exit code of command
+# Does NOT suppress stderr (use aria_silent for that)
+#
+# Example:
+#   if aria_try command -v jq; then
+#       echo "jq is installed"
+#   fi
+aria_try() {
+    "$@"
+    return $?
+}
+
+# Run a command silently, emit signal on failure (for traceability)
+# Usage: aria_silent_traced "operation_name" command [args...]
+# Returns: Exit code of command
+#
+# Example:
+#   aria_silent_traced "cleanup_temp" rm -rf /tmp/aria-*
+aria_silent_traced() {
+    local operation_name="$1"
+    shift
+
+    local stderr_capture
+    local exit_code
+
+    # Capture stderr
+    stderr_capture=$("$@" 2>&1 >/dev/null)
+    exit_code=$?
+
+    if [[ $exit_code -ne 0 ]]; then
+        # Log to debug file
+        _aria_debug_log "TRACED_FAILURE: $operation_name -> exit=$exit_code stderr=$stderr_capture"
+
+        # Emit signal for traceability (if emit_signal is available)
+        if type emit_signal >/dev/null 2>&1; then
+            emit_signal "silent_operation_failed" "debug" "$operation_name" \
+                "exit_code=$exit_code" \
+                "command=$1"
+        fi
+    fi
+
+    return $exit_code
+}
+
+# ============================================
 # FILE OWNERSHIP MODEL (Issue #7)
 # ============================================
 # Single-writer pattern: Each state file has ONE owner function.
@@ -368,4 +467,142 @@ aria_atomic_write() {
         rm -f "$tmp_file" 2>/dev/null
         return 1
     fi
+}
+
+# ============================================
+# STATE FILE CLEANUP (Issue #17)
+# ============================================
+# Manages retention of old state files to prevent disk bloat.
+# All deletions are logged for traceability.
+
+# Default retention settings (can be overridden)
+ARIA_RETENTION_COUNT="${ARIA_RETENTION_COUNT:-10}"      # Keep last N files
+ARIA_RETENTION_DAYS="${ARIA_RETENTION_DAYS:-30}"        # Or files newer than N days
+
+# Clean up old files in a directory, keeping the most recent N
+# Usage: aria_cleanup_by_count /path/to/dir "pattern" [keep_count]
+# Example: aria_cleanup_by_count "$STATE_DIR/handoffs" "handoff-*.md" 5
+aria_cleanup_by_count() {
+    local dir="$1"
+    local pattern="$2"
+    local keep="${3:-$ARIA_RETENTION_COUNT}"
+
+    if [[ ! -d "$dir" ]]; then
+        return 0
+    fi
+
+    # Count matching files
+    local count
+    count=$(find "$dir" -maxdepth 1 -name "$pattern" -type f 2>/dev/null | wc -l)
+
+    if [[ "$count" -le "$keep" ]]; then
+        return 0  # Nothing to clean
+    fi
+
+    local to_delete=$((count - keep))
+    local deleted=0
+
+    # Delete oldest files (by modification time)
+    while IFS= read -r file; do
+        if [[ -f "$file" ]]; then
+            rm -f "$file"
+            ((deleted++))
+        fi
+    done < <(find "$dir" -maxdepth 1 -name "$pattern" -type f -printf '%T@ %p\n' 2>/dev/null | \
+             sort -n | head -n "$to_delete" | cut -d' ' -f2-)
+
+    if [[ "$deleted" -gt 0 ]]; then
+        emit_signal "cleanup_by_count" "maintenance" "retention" \
+            "dir=$dir" \
+            "pattern=$pattern" \
+            "deleted=$deleted" \
+            "retained=$keep"
+    fi
+
+    return 0
+}
+
+# Clean up files older than N days
+# Usage: aria_cleanup_by_age /path/to/dir "pattern" [days]
+aria_cleanup_by_age() {
+    local dir="$1"
+    local pattern="$2"
+    local days="${3:-$ARIA_RETENTION_DAYS}"
+
+    if [[ ! -d "$dir" ]]; then
+        return 0
+    fi
+
+    local deleted=0
+
+    while IFS= read -r file; do
+        if [[ -f "$file" ]]; then
+            rm -f "$file"
+            ((deleted++))
+        fi
+    done < <(find "$dir" -maxdepth 1 -name "$pattern" -type f -mtime "+$days" 2>/dev/null)
+
+    if [[ "$deleted" -gt 0 ]]; then
+        emit_signal "cleanup_by_age" "maintenance" "retention" \
+            "dir=$dir" \
+            "pattern=$pattern" \
+            "deleted=$deleted" \
+            "older_than_days=$days"
+    fi
+
+    return 0
+}
+
+# Clean up stale lock files (older than 1 hour)
+aria_cleanup_stale_locks() {
+    local state_dir="${ARIA_STATE_DIR:-$(dirname "${BASH_SOURCE[0]}")/state}"
+
+    local deleted=0
+    while IFS= read -r file; do
+        if [[ -f "$file" ]]; then
+            rm -f "$file"
+            ((deleted++))
+        fi
+    done < <(find "$state_dir" -maxdepth 1 -name "*.lock" -type f -mmin +60 2>/dev/null)
+
+    if [[ "$deleted" -gt 0 ]]; then
+        emit_signal "cleanup_stale_locks" "maintenance" "retention" \
+            "deleted=$deleted"
+    fi
+}
+
+# Run all cleanup tasks
+# Usage: aria_run_cleanup [--dry-run]
+aria_run_cleanup() {
+    local dry_run=""
+    [[ "${1:-}" == "--dry-run" ]] && dry_run="true"
+
+    local aria_dir="${ARIA_STATE_DIR:-$(dirname "${BASH_SOURCE[0]}")}"
+    local state_dir="$aria_dir/state"
+    local logs_dir="$aria_dir/logs"
+
+    if [[ -n "$dry_run" ]]; then
+        echo "DRY RUN - Would clean:"
+        echo "  Handoffs: $(find "$state_dir/handoffs" -name "handoff-*.md" 2>/dev/null | wc -l) files (keep last $ARIA_RETENTION_COUNT)"
+        echo "  Usage logs: $(find "$logs_dir" -name "token_usage_*.json" 2>/dev/null | wc -l) files"
+        echo "  Failure logs: $(find "$logs_dir" -name "story_failures_*.log" 2>/dev/null | wc -l) files"
+        echo "  Lock files: $(find "$state_dir" -name "*.lock" -mmin +60 2>/dev/null | wc -l) stale"
+        return 0
+    fi
+
+    # Clean handoffs (keep last N)
+    aria_cleanup_by_count "$state_dir/handoffs" "handoff-*.md" "$ARIA_RETENTION_COUNT"
+
+    # Clean old usage logs
+    aria_cleanup_by_count "$logs_dir" "token_usage_*.json" "$ARIA_RETENTION_COUNT"
+
+    # Clean old failure logs
+    aria_cleanup_by_count "$logs_dir" "story_failures_*.log" "$ARIA_RETENTION_COUNT"
+
+    # Clean stale lock files
+    aria_cleanup_stale_locks
+
+    # Clean old signals (by age - keep 30 days worth)
+    # Note: signals.jsonl itself is not cleaned, only archived versions
+    aria_cleanup_by_age "$state_dir" "signals-*.jsonl.bak" "$ARIA_RETENTION_DAYS"
 }
