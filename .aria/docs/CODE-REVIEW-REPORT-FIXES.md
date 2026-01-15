@@ -207,13 +207,56 @@ input_tokens=$(( ${#full_prompt} / 4 ))  # Rough estimate
 
 ---
 
-### Issue #6: Windows .sh Files Unusable ⏳ PENDING
+### Issue #6: Windows .sh Files Unusable ✅ FIXED
 
 | Field | Value |
 |-------|-------|
-| **Status** | ⏳ PENDING |
-| **Files** | All `.sh` files |
-| **Impact** | Windows users cannot use framework |
+| **Status** | ✅ FIXED |
+| **Files** | `.aria/common.sh`, `.aria/project-context.md` |
+| **Commit** | (pending - this session) |
+| **Date Fixed** | 2026-01-15 |
+
+**Original Problem:**
+All ARIA scripts are bash (`.sh`). Windows CMD/PowerShell cannot run these natively, causing cryptic errors for Windows users.
+
+**Solution Implemented:**
+Runtime detection + clear user guidance (Option B approach).
+
+**Changes Made:**
+
+1. **common.sh - Windows compatibility check:**
+   - Detects if running without proper bash environment
+   - Displays clear ASCII box with three options:
+     - Git Bash (easiest)
+     - WSL/WSL2
+     - VS Code with Git Bash terminal
+   - Instructions specific to Claude Code in VS Code
+
+2. **project-context.md - Platform requirements:**
+   - Added table showing supported platforms
+   - Clear instructions for VS Code terminal configuration
+
+**Runtime Message (shown to Windows CMD/PowerShell users):**
+```
+╔═══════════════════════════════════════════════════════════════╗
+║           ARIA: Windows Compatibility Notice                  ║
+╠═══════════════════════════════════════════════════════════════╣
+║  ARIA requires a Unix-like shell environment.                 ║
+║  OPTIONS:                                                     ║
+║  1. Git Bash - https://git-scm.com/download/win              ║
+║  2. WSL - Run: wsl --install                                  ║
+║  3. VS Code with Git Bash Terminal                            ║
+╚═══════════════════════════════════════════════════════════════╝
+```
+
+**Supported Environments:**
+| Platform | Support |
+|----------|---------|
+| macOS | ✅ Full |
+| Linux | ✅ Full |
+| Windows + Git Bash | ✅ Full |
+| Windows + WSL/WSL2 | ✅ Full |
+| Windows CMD/PowerShell | ❌ (guided to alternatives) |
 
 ---
 

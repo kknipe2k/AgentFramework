@@ -6,6 +6,24 @@ This file captures what ARIA learned about this project. Review and edit as need
 
 ---
 
+## Platform Requirements
+
+ARIA requires a Unix-like shell environment:
+
+| Platform | Support | Notes |
+|----------|---------|-------|
+| **macOS** | ✅ Full | Native support |
+| **Linux** | ✅ Full | Native support |
+| **Windows + Git Bash** | ✅ Full | Install Git for Windows |
+| **Windows + WSL/WSL2** | ✅ Full | Run `wsl --install` |
+| **Windows CMD/PowerShell** | ❌ None | Use Git Bash or WSL |
+
+**For VS Code on Windows:**
+Set your integrated terminal to Git Bash:
+1. Open Settings (Ctrl+,)
+2. Search `terminal.integrated.defaultProfile.windows`
+3. Select "Git Bash"
+
 ## Tech Stack
 
 - Bash scripts (core framework)

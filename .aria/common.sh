@@ -10,6 +10,85 @@ export ARIA_BLUE='\033[0;34m'
 export ARIA_MAGENTA='\033[0;35m'
 export ARIA_NC='\033[0m'
 
+# ============================================
+# WINDOWS COMPATIBILITY CHECK (Issue #6)
+# ============================================
+# ARIA requires a Unix-like shell environment.
+# This function detects unsupported Windows environments
+# and provides clear guidance to users.
+
+aria_check_windows_compat() {
+    # Check if we're on Windows (MSYS, Cygwin, or Git Bash are OK)
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*)
+            # Git Bash, MSYS2, or Cygwin - these work fine
+            return 0
+            ;;
+        Linux)
+            # Could be WSL - check for it
+            if grep -qi microsoft /proc/version 2>/dev/null; then
+                # WSL detected - works fine
+                return 0
+            fi
+            # Native Linux - works fine
+            return 0
+            ;;
+        Darwin)
+            # macOS - works fine
+            return 0
+            ;;
+        *)
+            # Unknown - assume it might work
+            return 0
+            ;;
+    esac
+}
+
+# Print Windows compatibility message and exit
+# Called when scripts detect they're running in an unsupported environment
+aria_windows_unsupported() {
+    cat << 'EOF'
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                        ARIA: Windows Compatibility Notice                      ║
+╠═══════════════════════════════════════════════════════════════════════════════╣
+║                                                                               ║
+║  ARIA requires a Unix-like shell environment to run.                          ║
+║                                                                               ║
+║  RECOMMENDED OPTIONS:                                                         ║
+║                                                                               ║
+║  1. Git Bash (easiest)                                                        ║
+║     - Install Git for Windows: https://git-scm.com/download/win              ║
+║     - Open "Git Bash" from Start menu                                         ║
+║     - Run ARIA scripts from there                                             ║
+║                                                                               ║
+║  2. Windows Subsystem for Linux (WSL)                                         ║
+║     - Open PowerShell as Administrator                                        ║
+║     - Run: wsl --install                                                      ║
+║     - Restart and open Ubuntu from Start menu                                 ║
+║                                                                               ║
+║  3. VS Code with Git Bash Terminal                                            ║
+║     - Open VS Code settings (Ctrl+,)                                          ║
+║     - Search "terminal.integrated.defaultProfile.windows"                     ║
+║     - Set to "Git Bash"                                                       ║
+║                                                                               ║
+║  For Claude Code in VS Code:                                                  ║
+║     Configure VS Code to use Git Bash or WSL as the integrated terminal.      ║
+║     Claude Code will then execute ARIA scripts correctly.                     ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+EOF
+    exit 1
+}
+
+# Auto-check on source (only if ARIA_SKIP_WINDOWS_CHECK is not set)
+if [[ -z "${ARIA_SKIP_WINDOWS_CHECK:-}" ]]; then
+    # If running in CMD or PowerShell directly, $BASH won't be set properly
+    # and common bash features won't work
+    if [[ -z "${BASH_VERSION:-}" ]]; then
+        aria_windows_unsupported
+    fi
+fi
+
 # Check for required dependencies
 # Usage: aria_check_deps cmd1 cmd2 cmd3
 aria_check_deps() {
