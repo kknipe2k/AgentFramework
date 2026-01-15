@@ -19,6 +19,7 @@
 | [prototyping](./prototyping.md) | "mockup", visual needed | STANDARD+ | Creative |
 | [researcher](./researcher.md) | Article/paper input | Explicit | Research |
 | [report-writer](./report-writer.md) | Project complete | STANDARD+ | Research |
+| [slide-generation](./slide-generation.md) | After IDEA.md, "slides" | Explicit | Research |
 
 ---
 
@@ -52,6 +53,7 @@ Article-to-code and documentation skills.
 |-------|---------|--------|---------|
 | **researcher** | Extract concepts | Article/paper | Concept JSON |
 | **report-writer** | Generate reports | Completed work | `REPORT.md` |
+| **slide-generation** | Create presentations | IDEA.md, sources | FOCUS.md, slides |
 
 ---
 
@@ -86,6 +88,8 @@ These require explicit user request:
 | "analyze this paper" | researcher |
 | "create a report" | report-writer |
 | "debug this" | debugging |
+| "generate slides" | slide-generation |
+| "create presentation" | slide-generation |
 
 ---
 
@@ -125,6 +129,7 @@ brainstorming ──→ prototyping ──→ planning ──→ executing
 | prototyping | - | optional | ✓ | ✓ |
 | researcher | explicit | explicit | explicit | explicit |
 | report-writer | - | ✓ | ✓ | ✓ |
+| slide-generation | explicit | explicit | explicit | explicit |
 
 ---
 

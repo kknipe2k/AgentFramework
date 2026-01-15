@@ -27,6 +27,7 @@ X-LARGE (40+ tasks)   → FULL+     → Epic-level management
 | "what does this codebase do" | discovery |
 | (test fails) | debugging |
 | "analyze this paper" | researcher |
+| "generate slides", "presentation" | slide-generation |
 
 ---
 
@@ -38,7 +39,7 @@ X-LARGE (40+ tasks)   → FULL+     → Epic-level management
 
 **Modify:** discovery → plan → execute
 
-**Research:** researcher → brainstorm → prototype? → plan → execute
+**Research:** researcher → brainstorm → IDEA.md → slides? → prototype? → plan → execute
 
 ---
 
@@ -85,6 +86,9 @@ bash .aria/verify.sh
 | `.aria/state/progress.json` | Task status |
 | `.aria/project-context.md` | Codebase knowledge |
 | `.aria/design-notes.md` | Decision log |
+| `.aria/docs/IDEA.md` | Research synthesis |
+| `.aria/outputs/FOCUS.md` | Slide outline |
+| `.aria/outputs/slides-*.pptx` | Generated slides |
 
 ---
 
@@ -95,6 +99,13 @@ bash .aria/verify.sh
 | `/aria:plan` | Start planning |
 | `/aria:status` | Show progress |
 | `/aria:verify` | Run verification |
+
+## Scripts
+
+| Script | Action |
+|--------|--------|
+| `python .aria/scripts/serve-dashboard.py` | Open dashboard at :8420 |
+| `python .aria/scripts/generate-slides.py` | Generate slides from IDEA.md |
 
 ---
 
