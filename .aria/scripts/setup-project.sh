@@ -1,29 +1,28 @@
 #!/bin/bash
 # ARIA Project Workspace Setup (Mac/Linux)
-# Usage: setup-project.sh <project-name> [aria-path] [eval-path]
-# Example: setup-project.sh SVM
-# Example: setup-project.sh SVM ~/aria-test ~/aria/eval
+# Usage: setup-project.sh <project-path> <aria-path>
+# Example: setup-project.sh ~/aria-eval/Projects/SVM ~/aria-test
 
 set -e
 
-PROJECT_NAME="$1"
-ARIA="${2:-$HOME/aria-test}"
-EVAL="${3:-$HOME/aria/eval}"
+PROJECT="$1"
+ARIA="$2"
 
-if [ -z "$PROJECT_NAME" ]; then
-    echo "Usage: setup-project.sh <project-name> [aria-path] [eval-path]"
+if [ -z "$PROJECT" ] || [ -z "$ARIA" ]; then
+    echo "Usage: setup-project.sh <project-path> <aria-path>"
     echo ""
     echo "Examples:"
-    echo "  setup-project.sh SVM"
-    echo "  setup-project.sh SVM ~/aria-test ~/aria/eval"
+    echo "  setup-project.sh ~/aria-eval/Projects/SVM ~/aria-test"
+    echo "  setup-project.sh /tmp/my-test ~/aria-test"
     echo ""
-    echo "Defaults:"
-    echo "  aria-path: ~/aria-test"
-    echo "  eval-path: ~/aria/eval"
+    echo "Arguments:"
+    echo "  project-path: Full path to create workspace"
+    echo "  aria-path:    Path to cloned ARIA framework"
     exit 1
 fi
 
-PROJECT="$EVAL/$PROJECT_NAME"
+# Extract project name from path for display
+PROJECT_NAME=$(basename "$PROJECT")
 
 # Check ARIA source exists
 if [ ! -f "$ARIA/CLAUDE.md" ]; then
