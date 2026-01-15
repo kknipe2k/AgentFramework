@@ -355,6 +355,243 @@ cleanup_handoffs() {
 }
 
 # ============================================
+# SESSION RESUMPTION (Issue #24)
+# ============================================
+# Allows continuation after crashes or context loss.
+# Saves persistent session state that can be restored.
+
+RESUME_FILE="$STATE_DIR/resume-session.json"
+SESSION_ID_FILE="$STATE_DIR/.current_session_id"
+
+# Save resumable session state
+# Called periodically during workflow execution
+save_resume_point() {
+    local task_id="${1:-unknown}"
+    local task_status="${2:-in_progress}"
+    local notes="${3:-}"
+
+    # Get current session ID
+    local session_id="no-session"
+    if [[ -f "$SESSION_ID_FILE" ]]; then
+        session_id=$(cat "$SESSION_ID_FILE")
+    fi
+
+    # Get current mode
+    local mode="STANDARD"
+    if type aria_get_mode >/dev/null 2>&1; then
+        mode=$(aria_get_mode)
+    fi
+
+    # Get plan info
+    local plan_id=""
+    local plan_title=""
+    local total_tasks=0
+    local completed_tasks=0
+    if [[ -f "$PLAN_FILE" ]]; then
+        plan_id=$(jq -r '.id // "unknown"' "$PLAN_FILE" 2>/dev/null || echo "unknown")
+        plan_title=$(jq -r '.title // "unknown"' "$PLAN_FILE" 2>/dev/null || echo "unknown")
+        total_tasks=$(jq '.tasks | length' "$PLAN_FILE" 2>/dev/null || echo "0")
+        completed_tasks=$(jq '[.tasks[] | select(.status == "completed")] | length' "$PLAN_FILE" 2>/dev/null || echo "0")
+    fi
+
+    # Get branch info
+    local branch
+    branch=$(git branch --show-current 2>/dev/null || echo "unknown")
+
+    # Build resume state
+    local resume_state
+    resume_state=$(cat << EOF
+{
+    "version": 1,
+    "created_at": "$(get_timestamp)",
+    "session_id": "$session_id",
+    "mode": "$mode",
+    "plan": {
+        "id": "$plan_id",
+        "title": "$plan_title",
+        "file": "$PLAN_FILE"
+    },
+    "progress": {
+        "total_tasks": $total_tasks,
+        "completed_tasks": $completed_tasks,
+        "current_task": "$task_id",
+        "task_status": "$task_status"
+    },
+    "git": {
+        "branch": "$branch"
+    },
+    "notes": "$notes",
+    "state_files": {
+        "plan": "$PLAN_FILE",
+        "progress": "$PROGRESS_FILE",
+        "decisions": "$DECISIONS_FILE",
+        "checkpoint": "$CHECKPOINT_FILE"
+    },
+    "resumable": true
+}
+EOF
+)
+
+    # Save atomically
+    echo "$resume_state" > "$RESUME_FILE.tmp" && mv "$RESUME_FILE.tmp" "$RESUME_FILE"
+
+    emit_signal "resume_point_saved" "session" "resume" \
+        "session_id=$session_id" \
+        "task_id=$task_id" \
+        "completed=$completed_tasks" \
+        "total=$total_tasks"
+
+    echo -e "${GREEN}Resume point saved: task $task_id${NC}"
+}
+
+# Check if there's an incomplete session to resume
+# Returns: 0 if resumable session exists, 1 otherwise
+check_resumable_session() {
+    if [[ ! -f "$RESUME_FILE" ]]; then
+        return 1
+    fi
+
+    # Check if marked as resumable
+    local resumable
+    resumable=$(jq -r '.resumable // false' "$RESUME_FILE" 2>/dev/null || echo "false")
+
+    if [[ "$resumable" != "true" ]]; then
+        return 1
+    fi
+
+    # Check if session is actually incomplete
+    local task_status
+    task_status=$(jq -r '.progress.task_status // "unknown"' "$RESUME_FILE" 2>/dev/null || echo "unknown")
+
+    if [[ "$task_status" == "completed" ]]; then
+        # Session was properly completed
+        return 1
+    fi
+
+    return 0
+}
+
+# Show resume prompt
+show_resume_prompt() {
+    if ! check_resumable_session; then
+        echo "No resumable session found."
+        return 1
+    fi
+
+    echo ""
+    echo -e "${YELLOW}════════════════════════════════════════════════════════${NC}"
+    echo -e "${YELLOW}       INCOMPLETE SESSION DETECTED                       ${NC}"
+    echo -e "${YELLOW}════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    # Show session details
+    local created_at
+    local session_id
+    local mode
+    local plan_title
+    local completed
+    local total
+    local current_task
+    local branch
+
+    created_at=$(jq -r '.created_at // "unknown"' "$RESUME_FILE")
+    session_id=$(jq -r '.session_id // "unknown"' "$RESUME_FILE")
+    mode=$(jq -r '.mode // "STANDARD"' "$RESUME_FILE")
+    plan_title=$(jq -r '.plan.title // "unknown"' "$RESUME_FILE")
+    completed=$(jq -r '.progress.completed_tasks // 0' "$RESUME_FILE")
+    total=$(jq -r '.progress.total_tasks // 0' "$RESUME_FILE")
+    current_task=$(jq -r '.progress.current_task // "unknown"' "$RESUME_FILE")
+    branch=$(jq -r '.git.branch // "unknown"' "$RESUME_FILE")
+
+    echo "  Session:    $session_id"
+    echo "  Created:    $created_at"
+    echo "  Mode:       $mode"
+    echo "  Plan:       $plan_title"
+    echo "  Progress:   $completed/$total tasks completed"
+    echo "  Current:    $current_task"
+    echo "  Branch:     $branch"
+    echo ""
+    echo "  Options:"
+    echo "    [r]esume   - Continue from last checkpoint"
+    echo "    [s]tart    - Start fresh (discard incomplete session)"
+    echo "    [v]iew     - View session details"
+    echo ""
+
+    return 0
+}
+
+# Interactive resume flow
+do_resume() {
+    if ! show_resume_prompt; then
+        return 1
+    fi
+
+    # If non-interactive, default to resume
+    if [[ ! -t 0 ]]; then
+        echo "Non-interactive mode: Auto-resuming..."
+        emit_signal "session_auto_resumed" "session" "resume" \
+            "reason=non_interactive"
+        return 0
+    fi
+
+    read -r -p "Choice [r/s/v]: " choice
+    case "$choice" in
+        r|R)
+            echo ""
+            echo -e "${GREEN}Resuming session...${NC}"
+            emit_signal "session_resumed" "session" "resume" \
+                "user_choice=resume"
+
+            # Load the checkpoint
+            load_checkpoint
+            echo ""
+            echo "Session resumed. Continue with the current task."
+            return 0
+            ;;
+        s|S)
+            echo ""
+            echo -e "${YELLOW}Starting fresh session...${NC}"
+
+            # Mark old session as not resumable
+            if [[ -f "$RESUME_FILE" ]]; then
+                jq '.resumable = false | .ended_reason = "user_discarded"' "$RESUME_FILE" > "$RESUME_FILE.tmp" \
+                    && mv "$RESUME_FILE.tmp" "$RESUME_FILE"
+            fi
+
+            emit_signal "session_discarded" "session" "resume" \
+                "user_choice=start_fresh"
+
+            echo "Old session discarded. Starting fresh."
+            return 0
+            ;;
+        v|V)
+            echo ""
+            jq '.' "$RESUME_FILE"
+            echo ""
+            # Recursive call to show prompt again
+            do_resume
+            ;;
+        *)
+            echo "Invalid choice. Please enter r, s, or v."
+            do_resume
+            ;;
+    esac
+}
+
+# Mark session as completed (call at end of successful workflow)
+mark_session_complete() {
+    if [[ -f "$RESUME_FILE" ]]; then
+        jq '.resumable = false | .progress.task_status = "completed" | .completed_at = "'"$(get_timestamp)"'"' \
+            "$RESUME_FILE" > "$RESUME_FILE.tmp" && mv "$RESUME_FILE.tmp" "$RESUME_FILE"
+
+        emit_signal "session_completed" "session" "resume" \
+            "session_file=$RESUME_FILE"
+
+        echo -e "${GREEN}Session marked as complete${NC}"
+    fi
+}
+
+# ============================================
 # MAIN
 # ============================================
 main() {
@@ -378,22 +615,49 @@ main() {
         cleanup)
             cleanup_handoffs "${1:-3}"
             ;;
+        # Session resumption commands (Issue #24)
+        resume-save)
+            save_resume_point "${1:-unknown}" "${2:-in_progress}" "${3:-}"
+            ;;
+        resume-check)
+            if check_resumable_session; then
+                echo "Resumable session found"
+                exit 0
+            else
+                echo "No resumable session"
+                exit 1
+            fi
+            ;;
+        resume)
+            do_resume
+            ;;
+        resume-complete)
+            mark_session_complete
+            ;;
         help|--help|-h)
             echo "ARIA Context Refresh"
             echo ""
             echo "Usage: context-refresh.sh <command> [options]"
             echo ""
-            echo "Commands:"
-            echo "  save [name]      Save current state as checkpoint"
-            echo "  handoff [name]   Generate handoff summary (saves checkpoint first)"
-            echo "  list             List available checkpoints and handoffs"
-            echo "  load [name]      Show checkpoint for loading"
-            echo "  cleanup [n]      Keep only last N handoffs (default: 3)"
+            echo "Checkpoint Commands:"
+            echo "  save [name]          Save current state as checkpoint"
+            echo "  handoff [name]       Generate handoff summary (saves checkpoint first)"
+            echo "  list                 List available checkpoints and handoffs"
+            echo "  load [name]          Show checkpoint for loading"
+            echo "  cleanup [n]          Keep only last N handoffs (default: 3)"
+            echo ""
+            echo "Session Resumption Commands (Issue #24):"
+            echo "  resume-save <task> [status] [notes]"
+            echo "                       Save resumable session checkpoint"
+            echo "  resume-check         Check if resumable session exists (exit 0/1)"
+            echo "  resume               Interactive resume prompt"
+            echo "  resume-complete      Mark session as successfully completed"
             echo ""
             echo "Examples:"
             echo "  context-refresh.sh save after_phase_1"
             echo "  context-refresh.sh handoff"
-            echo "  context-refresh.sh list"
+            echo "  context-refresh.sh resume-save task-5 in_progress"
+            echo "  context-refresh.sh resume"
             ;;
         *)
             echo "Unknown command: $cmd"

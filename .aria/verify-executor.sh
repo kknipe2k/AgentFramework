@@ -427,14 +427,31 @@ verify_unit_tests() {
 
     local project_type=$(detect_project_type)
     local result=0
+    local test_timeout
+    test_timeout=$(aria_get_timeout "test" 2>/dev/null || echo "300")
 
     case "$project_type" in
         "node"|"react"|"vue"|"angular"|"svelte"|"nextjs"|"express")
             if [[ -f "package.json" ]] && grep -q '"test"' package.json; then
-                if npm test 2>&1 | tee "$LOGS_DIR/unit_tests.log"; then
+                # Use timeout wrapper if available (Issue #21)
+                local test_result
+                if type aria_run_with_timeout >/dev/null 2>&1; then
+                    aria_run_with_timeout "$test_timeout" "unit_tests" npm test 2>&1 | tee "$LOGS_DIR/unit_tests.log"
+                    test_result=${PIPESTATUS[0]}
+                else
+                    npm test 2>&1 | tee "$LOGS_DIR/unit_tests.log"
+                    test_result=${PIPESTATUS[0]}
+                fi
+
+                if [[ $test_result -eq 0 ]]; then
                     echo -e "${GREEN}Unit tests passed${NC}"
                     echo "pass" > "$STATE_DIR/unit_tests"
                     rm -f "$STATE_DIR/tests_failed"
+                elif [[ $test_result -eq 124 ]]; then
+                    echo -e "${RED}Unit tests TIMED OUT after ${test_timeout}s${NC}"
+                    echo "timeout" > "$STATE_DIR/unit_tests"
+                    touch "$STATE_DIR/tests_failed"
+                    result=1
                 else
                     echo -e "${RED}Unit tests failed${NC}"
                     echo "fail" > "$STATE_DIR/unit_tests"
@@ -448,10 +465,24 @@ verify_unit_tests() {
             ;;
         "python")
             if command -v pytest >/dev/null 2>&1; then
-                if pytest 2>&1 | tee "$LOGS_DIR/unit_tests.log"; then
+                local test_result
+                if type aria_run_with_timeout >/dev/null 2>&1; then
+                    aria_run_with_timeout "$test_timeout" "pytest" pytest 2>&1 | tee "$LOGS_DIR/unit_tests.log"
+                    test_result=${PIPESTATUS[0]}
+                else
+                    pytest 2>&1 | tee "$LOGS_DIR/unit_tests.log"
+                    test_result=${PIPESTATUS[0]}
+                fi
+
+                if [[ $test_result -eq 0 ]]; then
                     echo -e "${GREEN}Unit tests passed${NC}"
                     echo "pass" > "$STATE_DIR/unit_tests"
                     rm -f "$STATE_DIR/tests_failed"
+                elif [[ $test_result -eq 124 ]]; then
+                    echo -e "${RED}pytest TIMED OUT after ${test_timeout}s${NC}"
+                    echo "timeout" > "$STATE_DIR/unit_tests"
+                    touch "$STATE_DIR/tests_failed"
+                    result=1
                 else
                     echo -e "${RED}Unit tests failed${NC}"
                     echo "fail" > "$STATE_DIR/unit_tests"
@@ -476,11 +507,27 @@ verify_unit_tests() {
 verify_lint() {
     echo -e "${BLUE}Running linter...${NC}"
 
+    local lint_timeout
+    lint_timeout=$(aria_get_timeout "lint" 2>/dev/null || echo "120")
+
     if [[ -f "package.json" ]] && grep -q '"lint"' package.json; then
-        if npm run lint 2>&1 | tee "$LOGS_DIR/lint.log"; then
+        local lint_result
+        if type aria_run_with_timeout >/dev/null 2>&1; then
+            aria_run_with_timeout "$lint_timeout" "lint" npm run lint 2>&1 | tee "$LOGS_DIR/lint.log"
+            lint_result=${PIPESTATUS[0]}
+        else
+            npm run lint 2>&1 | tee "$LOGS_DIR/lint.log"
+            lint_result=${PIPESTATUS[0]}
+        fi
+
+        if [[ $lint_result -eq 0 ]]; then
             echo -e "${GREEN}Lint passed${NC}"
             echo "pass" > "$STATE_DIR/lint"
             return 0
+        elif [[ $lint_result -eq 124 ]]; then
+            echo -e "${RED}Lint TIMED OUT after ${lint_timeout}s${NC}"
+            echo "timeout" > "$STATE_DIR/lint"
+            return 1
         else
             echo -e "${RED}Lint failed${NC}"
             echo "fail" > "$STATE_DIR/lint"
@@ -497,11 +544,27 @@ verify_lint() {
 verify_types() {
     echo -e "${BLUE}Checking TypeScript types...${NC}"
 
+    local type_timeout
+    type_timeout=$(aria_get_timeout "typecheck" 2>/dev/null || echo "120")
+
     if [[ -f "tsconfig.json" ]]; then
-        if npx tsc --noEmit 2>&1 | tee "$LOGS_DIR/types.log"; then
+        local type_result
+        if type aria_run_with_timeout >/dev/null 2>&1; then
+            aria_run_with_timeout "$type_timeout" "typecheck" npx tsc --noEmit 2>&1 | tee "$LOGS_DIR/types.log"
+            type_result=${PIPESTATUS[0]}
+        else
+            npx tsc --noEmit 2>&1 | tee "$LOGS_DIR/types.log"
+            type_result=${PIPESTATUS[0]}
+        fi
+
+        if [[ $type_result -eq 0 ]]; then
             echo -e "${GREEN}Type check passed${NC}"
             echo "pass" > "$STATE_DIR/types"
             return 0
+        elif [[ $type_result -eq 124 ]]; then
+            echo -e "${RED}Type check TIMED OUT after ${type_timeout}s${NC}"
+            echo "timeout" > "$STATE_DIR/types"
+            return 1
         else
             echo -e "${RED}Type check failed${NC}"
             echo "fail" > "$STATE_DIR/types"
@@ -518,11 +581,27 @@ verify_types() {
 verify_build() {
     echo -e "${BLUE}Running build...${NC}"
 
+    local build_timeout
+    build_timeout=$(aria_get_timeout "build" 2>/dev/null || echo "600")
+
     if [[ -f "package.json" ]] && grep -q '"build"' package.json; then
-        if npm run build 2>&1 | tee "$LOGS_DIR/build.log"; then
+        local build_result
+        if type aria_run_with_timeout >/dev/null 2>&1; then
+            aria_run_with_timeout "$build_timeout" "build" npm run build 2>&1 | tee "$LOGS_DIR/build.log"
+            build_result=${PIPESTATUS[0]}
+        else
+            npm run build 2>&1 | tee "$LOGS_DIR/build.log"
+            build_result=${PIPESTATUS[0]}
+        fi
+
+        if [[ $build_result -eq 0 ]]; then
             echo -e "${GREEN}Build passed${NC}"
             echo "pass" > "$STATE_DIR/build"
             return 0
+        elif [[ $build_result -eq 124 ]]; then
+            echo -e "${RED}Build TIMED OUT after ${build_timeout}s${NC}"
+            echo "timeout" > "$STATE_DIR/build"
+            return 1
         else
             echo -e "${RED}Build failed${NC}"
             echo "fail" > "$STATE_DIR/build"
@@ -760,9 +839,16 @@ main() {
             echo "  status              - Show verification report"
             echo ""
             echo "Environment:"
-            echo "  APP_URL             - App URL (default: http://localhost:3000)"
-            echo "  API_URL             - API URL (default: http://localhost:3000/api)"
-            echo "  VERIFICATION_TIMEOUT - Timeout in ms (default: 30000)"
+            echo "  APP_URL               - App URL (default: http://localhost:3000)"
+            echo "  API_URL               - API URL (default: http://localhost:3000/api)"
+            echo "  VERIFICATION_TIMEOUT  - Browser timeout in ms (default: 30000)"
+            echo ""
+            echo "Timeouts (Issue #21 - in seconds):"
+            echo "  ARIA_TEST_TIMEOUT     - Unit test timeout (default: 300)"
+            echo "  ARIA_LINT_TIMEOUT     - Lint timeout (default: 120)"
+            echo "  ARIA_BUILD_TIMEOUT    - Build timeout (default: 600)"
+            echo "  ARIA_TYPECHECK_TIMEOUT - TypeScript check (default: 120)"
+            echo "  ARIA_E2E_TIMEOUT      - E2E test timeout (default: 600)"
             ;;
     esac
 }

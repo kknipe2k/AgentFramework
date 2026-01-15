@@ -295,6 +295,21 @@ preflight_check() {
         exit 1
     fi
 
+    # Validate PRD format (Issue #8)
+    if type aria_validate_prd >/dev/null 2>&1; then
+        if ! aria_validate_prd "$PRD_FILE"; then
+            echo -e "${RED}ERROR: PRD validation failed${NC}"
+            echo "Fix the PRD format issues above before running."
+            exit 1
+        fi
+    else
+        # Fallback: quick JSON check
+        if ! jq -e '.feature and .branchName and .userStories' "$PRD_FILE" >/dev/null 2>&1; then
+            echo -e "${RED}ERROR: PRD missing required fields (feature, branchName, userStories)${NC}"
+            exit 1
+        fi
+    fi
+
     # Check prompt exists
     if [[ ! -f "$PROMPT_FILE" ]]; then
         echo -e "${RED}ERROR: prompt.md not found${NC}"
