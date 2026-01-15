@@ -10,7 +10,7 @@
 
 | Category | Total | Fixed | In Progress | Parking Lot | Remaining |
 |----------|-------|-------|-------------|-------------|-----------|
-| **FIX NOW (Critical)** | 18 | 6 | 0 | 1 | 11 |
+| **FIX NOW (Critical)** | 18 | 8 | 0 | 1 | 9 |
 | **FIX LATER** | 24 | 0 | 0 | 0 | 24 |
 | **PARKING LOT** | 12 | - | - | 12 | - |
 
@@ -324,17 +324,63 @@ Added `_log_hitl_signal()` function with full traceability:
 
 ---
 
-### Issue #15: Skill Touch Not Logged ⏳ PENDING
+### Issue #15: Skill Touch Not Logged ✅ FIXED
 
 | Field | Value |
 |-------|-------|
-| **Status** | ⏳ PENDING |
-| **File** | Hooks |
-| **Impact** | No record of which skills were used |
+| **Status** | ✅ FIXED |
+| **File** | `.claude/hooks/aria-rails.sh` |
+| **Commit** | (pending - this session) |
+| **Date Fixed** | 2026-01-15 |
+
+**Original Problem:**
+When Claude reads skill files (`.aria/skills/*.md`), there was no explicit logging to track which skills were loaded during a session.
+
+**Solution Implemented:**
+Added explicit skill/template/framework touch logging functions to aria-rails.sh:
+
+**New Functions:**
+- `log_skill_touch()` - Logs `skill_loaded` event when skill file is read
+- `log_template_touch()` - Logs `template_loaded` event when template is read
+- `log_framework_touch()` - Logs `framework_loaded` event for CLAUDE.md, project-context.md
+
+**Events Logged:**
+- `skill_loaded` - When `.aria/skills/*.md` files are read
+- `template_loaded` - When `.aria/templates/*.md` files are read
+- `framework_loaded` - When CLAUDE.md or project-context.md is read
+
+**Signal Data Captured:**
+- Event ID, timestamp
+- Skill/template/framework name
+- File path
+- Context type and name
+
+**Usage - Query skill usage:**
+```bash
+grep "skill_loaded" .aria/state/signals.jsonl | jq -r '.skill_name' | sort | uniq -c
+```
+
+**Tests Added:**
+- `test-skill-touch.sh` with 11 assertions validating skill touch logging
 
 ---
 
-### Issue #16: HITL Count Not Tracked ⏳ PENDING
+### Issue #16: HITL Count Not Tracked ✅ FIXED
+
+| Field | Value |
+|-------|-------|
+| **Status** | ✅ FIXED |
+| **Resolved By** | Issue #12 fix |
+| **Date Fixed** | 2026-01-15 |
+
+**Note:** HITL events are now logged to signals.jsonl (Issue #12), making them countable:
+```bash
+grep "hitl_request_created" .aria/state/signals.jsonl | wc -l
+```
+
+---
+
+### Issue #17: No Agent Decision Summary ⏳ PENDING
 
 | Field | Value |
 |-------|-------|
@@ -431,6 +477,8 @@ Added `_log_hitl_signal()` function with full traceability:
 | - | #4 | Created test framework with 57 assertions, integrated with verify.sh | `4bfa64e` |
 | - | #5 | Moved to parking lot (acceptable limitation for cost estimation) | - |
 | - | #12 | Added HITL signal logging to signals.jsonl for traceability | (pending) |
+| - | #15 | Added skill/template/framework touch logging to signals.jsonl | (pending) |
+| - | #16 | Resolved by Issue #12 (HITL events now countable) | - |
 
 ---
 

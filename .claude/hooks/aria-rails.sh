@@ -26,6 +26,43 @@ mkdir -p "$STATE_DIR"
 # ============================================
 # SIGNAL LOGGING (Decision Tracing)
 # ============================================
+
+# Log skill touch events explicitly (Issue #15 fix)
+log_skill_touch() {
+    local skill_name="$1"
+    local file_path="$2"
+    local timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local event_id="skill-$(date +%s%N | cut -c1-13)"
+
+    printf '{"id":"%s","timestamp":"%s","event":"skill_loaded","skill_name":"%s","file_path":"%s","context_type":"skill","context_name":"%s"}\n' \
+        "$event_id" "$timestamp" "$skill_name" "$file_path" "$skill_name" \
+        >> "$SIGNALS_FILE"
+}
+
+# Log template touch events
+log_template_touch() {
+    local template_name="$1"
+    local file_path="$2"
+    local timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local event_id="tmpl-$(date +%s%N | cut -c1-13)"
+
+    printf '{"id":"%s","timestamp":"%s","event":"template_loaded","template_name":"%s","file_path":"%s","context_type":"template","context_name":"%s"}\n' \
+        "$event_id" "$timestamp" "$template_name" "$file_path" "$template_name" \
+        >> "$SIGNALS_FILE"
+}
+
+# Log framework file access
+log_framework_touch() {
+    local file_name="$1"
+    local file_path="$2"
+    local timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local event_id="fw-$(date +%s%N | cut -c1-13)"
+
+    printf '{"id":"%s","timestamp":"%s","event":"framework_loaded","file_name":"%s","file_path":"%s","context_type":"framework","context_name":"%s"}\n' \
+        "$event_id" "$timestamp" "$file_name" "$file_path" "$file_name" \
+        >> "$SIGNALS_FILE"
+}
+
 log_signal() {
     local event_type="$1"
     local tool_name="$2"
@@ -41,16 +78,28 @@ log_signal() {
         "Edit"|"Write"|"MultiEdit"|"Read")
             file_path=$(echo "$tool_input" | grep -oP '"file_path"\s*:\s*"\K[^"]+' 2>/dev/null || true)
 
-            # Detect context type from file path
+            # Detect context type from file path and log explicit events
             if [[ "$file_path" == *".aria/skills/"* ]]; then
                 context_type="skill"
                 context_name=$(basename "$file_path" .md)
+                # Log explicit skill touch event (only on Read, pre-event)
+                if [[ "$tool_name" == "Read" ]] && [[ "$event_type" == "pre" ]]; then
+                    log_skill_touch "$context_name" "$file_path"
+                fi
             elif [[ "$file_path" == *".aria/templates/"* ]]; then
                 context_type="template"
                 context_name=$(basename "$file_path" .md)
+                # Log explicit template touch event
+                if [[ "$tool_name" == "Read" ]] && [[ "$event_type" == "pre" ]]; then
+                    log_template_touch "$context_name" "$file_path"
+                fi
             elif [[ "$file_path" == *"CLAUDE.md" ]]; then
                 context_type="framework"
                 context_name="CLAUDE.md"
+                # Log explicit framework touch event
+                if [[ "$tool_name" == "Read" ]] && [[ "$event_type" == "pre" ]]; then
+                    log_framework_touch "CLAUDE.md" "$file_path"
+                fi
             elif [[ "$file_path" == *"progress.json" ]]; then
                 context_type="progress"
                 context_name="task_update"
@@ -60,6 +109,10 @@ log_signal() {
             elif [[ "$file_path" == *"project-context.md" ]]; then
                 context_type="context"
                 context_name="project_context"
+                # Log framework touch for project context
+                if [[ "$tool_name" == "Read" ]] && [[ "$event_type" == "pre" ]]; then
+                    log_framework_touch "project-context" "$file_path"
+                fi
             fi
             ;;
         "Bash")
