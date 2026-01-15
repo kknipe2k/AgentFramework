@@ -366,15 +366,32 @@ Plan first, then execute. Ask for approval before implementing.
 
 Load and follow these skills:
 
+### Core Skills (All Modes)
+
+| Skill | When to Use |
+|-------|-------------|
+| `.aria/skills/planning.md` | Creating implementation plans |
+| `.aria/skills/executing.md` | Implementing tasks from approved plan |
+| `.aria/skills/debugging.md` | Test failures, errors, troubleshooting |
+| `.aria/skills/discovery.md` | Exploring unfamiliar codebase (Modify flow) |
+| `.aria/skills/tdd.md` | Test-driven development |
+
+### Extended Skills (STANDARD+)
+
 | Skill | When to Use |
 |-------|-------------|
 | `.aria/skills/brainstorming.md` | Exploring options before planning |
-| `.aria/skills/prototyping.md` | Visual mockups and API specs |
-| `.aria/skills/planning.md` | Creating implementation plans |
-| `.aria/skills/executing.md` | Implementing tasks |
+| `.aria/skills/prototyping.md` | Visual mockups, API specs, learning tools |
 | `.aria/skills/tracking.md` | Progress, time, token metrics |
-| `.aria/skills/researcher.md` | Extracting concepts from articles |
-| `.aria/skills/report-writer.md` | Generating final reports |
+| `.aria/skills/context-refresh.md` | Between phases, after 3+ failures |
+| `.aria/skills/report-writer.md` | End-of-workflow summary + dashboard |
+
+### Research Skills (Explicit)
+
+| Skill | When to Use |
+|-------|-------------|
+| `.aria/skills/researcher.md` | Extracting concepts from articles/papers |
+| `.aria/skills/slide-generation.md` | Create presentations from IDEA.md |
 
 ---
 

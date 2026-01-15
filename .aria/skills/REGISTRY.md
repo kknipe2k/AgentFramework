@@ -80,6 +80,10 @@ These skills activate when conditions are met:
 | Article/URL input | researcher | Research flow |
 | All tasks complete | report-writer | Auto-triggers, offers dashboard |
 | "summary", "metrics" | report-writer | Manual request |
+| New/unfamiliar codebase | discovery | Modify flow entry |
+| "write tests first" | tdd | Test-driven approach |
+| 3+ consecutive failures | context-refresh | Context drift recovery |
+| Between phases/epics | context-refresh | FULL/FULL+ mode |
 
 ### Explicit (User Request)
 These require explicit user request:
@@ -126,7 +130,9 @@ brainstorming ──→ prototyping ──→ planning ──→ executing
 | planning | ✓ (lite) | ✓ | ✓ | ✓ |
 | executing | ✓ | ✓ | ✓ | ✓ |
 | debugging | ✓ | ✓ | ✓ | ✓ |
+| discovery | ✓ | ✓ | ✓ | ✓ |
 | tdd | ✓ (lite) | ✓ | ✓ (full) | ✓ (full) |
+| context-refresh | - | ✓ | ✓ | ✓ |
 | tracking | optional | ✓ | ✓ | ✓ |
 | brainstorming | optional | ✓ | ✓ | ✓ |
 | prototyping | - | optional | ✓ | ✓ |

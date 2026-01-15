@@ -133,8 +133,9 @@ After extraction, pause for human review:
 
 ## Integration
 
-Called by: `.aria/planner/planner.sh`
-Output to: `.aria/state/research-output.json`
+Called by: Research flow in `CLAUDE.md`, brainstorming skill
+Output to: `.aria/docs/research-output.json`
+Feeds into: `brainstorming.md` → `IDEA.md`
 
 ---
 

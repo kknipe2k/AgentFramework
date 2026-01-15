@@ -95,12 +95,13 @@ This creates `~/aria/eval/SVM` (or `c:\aria\eval\SVM`) with:
 | Document | Description |
 |----------|-------------|
 | **[User Guide](.aria/docs/USER-GUIDE.md)** | Complete usage guide - start here |
-| [Cheatsheet](.aria/docs/CHEATSHEET.md) | Quick reference |
+| [Cheatsheet](.aria/docs/CHEATSHEET.md) | Quick reference for all modes/skills |
+| [Skill Registry](.aria/skills/REGISTRY.md) | All 12 skills with triggers |
 | [Observability](.aria/docs/OBSERVABILITY.md) | Decision tracing and dashboard |
-| [Skill Registry](.aria/skills/REGISTRY.md) | Available skills |
-| [Architecture](.aria/docs/ARIA-SYSTEM-ARCHITECTURE.md) | System design and components |
-| [Boris Cherny Patterns](.aria/docs/BORIS-CHERNY-PATTERNS.md) | Verification and subagent patterns |
-| [Ralph Autonomous Loop](.aria/docs/RALPH-AUTONOMOUS-LOOP.md) | PRD-driven iteration pattern |
+| [Architecture](.aria/docs/CONCEPT-aria-architecture.md) | System design and components |
+| [Boris Cherny Patterns](.aria/docs/CONCEPT-boris-cherny-patterns.md) | Verification and subagent patterns |
+| [Ralph Autonomous Loop](.aria/docs/CONCEPT-ralph-autonomous-loop.md) | PRD-driven iteration pattern |
+| [Parking Lot](.aria/docs/PARKING-LOT.md) | Future ideas (whisper, metrics) |
 
 ## Commands
 

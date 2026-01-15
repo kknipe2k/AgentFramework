@@ -19,27 +19,47 @@ X-LARGE (40+ tasks)   → FULL+     → Epic-level management
 
 ## Skill Triggers
 
+### Core Skills
 | Say This | Skill Invoked |
 |----------|---------------|
 | "plan this", "design" | planning |
+| "implement", "build it" | executing |
+| (test fails) | debugging |
+| "what does this codebase do" | discovery |
+| "write tests first", "tdd" | tdd |
+
+### Extended Skills (STANDARD+)
+| Say This | Skill Invoked |
+|----------|---------------|
 | "explore options", "brainstorm" | brainstorming |
 | "show mockup", "prototype" | prototyping |
-| "what does this codebase do" | discovery |
-| (test fails) | debugging |
+| (during/after execution) | tracking |
+| (3+ failures, between phases) | context-refresh |
+| (all tasks complete) | report-writer |
+
+### Research Skills
+| Say This | Skill Invoked |
+|----------|---------------|
 | "analyze this paper" | researcher |
 | "generate slides", "presentation" | slide-generation |
+| "show summary", "metrics" | report-writer |
 
 ---
 
 ## Workflows
 
-**Build:** brainstorm → prototype? → plan → execute → report
+**Build:** brainstorm → prototype? → plan → execute → verify → report → dashboard?
 
-**Bug Fix:** debug → plan(lite) → execute
+**Bug Fix:** debug → plan(lite) → execute → verify
 
-**Modify:** discovery → plan → execute
+**Modify:** discovery → plan → execute → verify → report → dashboard?
 
-**Research:** researcher → brainstorm → IDEA.md → slides? → prototype? → plan → execute
+**Research:** researcher → brainstorm → IDEA.md → slides? → prototype? → report
+
+**End of Workflow (STANDARD+):**
+```
+All tasks complete → Summary report → HITL: View dashboard? [y/n/s]
+```
 
 ---
 
@@ -99,6 +119,8 @@ bash .aria/verify.sh
 | `/aria:plan` | Start planning |
 | `/aria:status` | Show progress |
 | `/aria:verify` | Run verification |
+| `/aria-summary` | Generate session summary |
+| `/aria-dashboard` | Launch lineage dashboard |
 
 ## Scripts
 
