@@ -14,15 +14,18 @@ RALPH_SCRIPT="$ARIA_DIR/ralph/ralph.sh"
 TEST_SIGNALS_FILE="/tmp/aria-test-invoke-signals-$$"
 
 setup() {
-    export SIGNALS_FILE="$TEST_SIGNALS_FILE"
+    export ARIA_SIGNALS_FILE="$TEST_SIGNALS_FILE"
     rm -f "$TEST_SIGNALS_FILE" 2>/dev/null || true
+
+    # Source common.sh for emit_signal (single-writer pattern)
+    source "$ARIA_DIR/common.sh"
 
     # Define color codes (needed by extracted functions)
     RED='\033[0;31m'
     NC='\033[0m'
 
-    # Extract invoke_agent functions from ralph.sh (lines ~144-267)
-    eval "$(sed -n '144,267p' "$RALPH_SCRIPT")"
+    # Extract invoke_agent functions from ralph.sh (lines ~139-259)
+    eval "$(sed -n '139,259p' "$RALPH_SCRIPT")"
 }
 
 teardown() {

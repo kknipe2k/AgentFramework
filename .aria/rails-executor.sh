@@ -15,7 +15,6 @@ aria_check_deps jq || exit 1
 RAILS_DIR="$SCRIPT_DIR/rails"
 STATE_DIR="$SCRIPT_DIR/state"
 LOGS_DIR="$SCRIPT_DIR/logs"
-SIGNALS_FILE="$STATE_DIR/signals.jsonl"
 
 # Colors from common.sh
 RED="$ARIA_RED"
@@ -66,23 +65,22 @@ validate_command() {
     return 0
 }
 
-# Log rail execution to signals.jsonl for traceability
+# Log rail execution - delegates to emit_signal (single-writer pattern)
 _log_rail_signal() {
     local event="$1"      # check_pass, check_fail, autofix_attempt, blocked
     local rail_id="$2"
     local status="$3"
     local details="${4:-}"
-    local timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    local event_id="rail-$(date +%s%N | cut -c1-13)"
 
-    mkdir -p "$(dirname "$SIGNALS_FILE")" 2>/dev/null || true
+    # Build optional key=value pairs
+    local -a extra_args=("rail_id=${rail_id}" "status=${status}")
 
-    # Escape quotes
-    details="${details//\"/\\\"}"
+    if [[ -n "$details" ]]; then
+        extra_args+=("details=${details}")
+    fi
 
-    printf '{"id":"%s","timestamp":"%s","event":"rail_%s","rail_id":"%s","status":"%s","details":"%s","context_type":"rail","context_name":"executor"}\n' \
-        "$event_id" "$timestamp" "$event" "$rail_id" "$status" "$details" \
-        >> "$SIGNALS_FILE" 2>/dev/null || true
+    # Delegate to centralized emit_signal (single owner of signals.jsonl)
+    emit_signal "rail_${event}" "rail" "executor" "${extra_args[@]}"
 }
 
 # Safe command execution (replaces eval)

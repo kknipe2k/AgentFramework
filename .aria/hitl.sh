@@ -27,44 +27,33 @@ NC="$ARIA_NC"
 
 mkdir -p "$HITL_DIR" "$LOGS_DIR"
 
-# Signals file for traceability
-SIGNALS_FILE="$STATE_DIR/signals.jsonl"
-
 # ============================================
-# TRACEABILITY - Log to signals.jsonl
+# TRACEABILITY - Uses emit_signal() from common.sh
 # ============================================
+# HITL events are logged via the centralized emit_signal() function
+# (single-writer pattern for signals.jsonl)
 
-# Log HITL events to signals.jsonl for audit trail
+# Wrapper for HITL signal emission (delegates to emit_signal)
 _log_hitl_signal() {
     local event_type="$1"      # request_created, response_received, timeout
     local request_id="$2"
     local request_type="$3"    # help, confirm, choice, input
     local details="${4:-}"
     local response="${5:-}"
-    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    local event_id="hitl-$(date +%s%N | cut -c1-13)"
 
-    # Ensure signals file directory exists
-    mkdir -p "$(dirname "$SIGNALS_FILE")" 2>/dev/null || true
-    touch "$SIGNALS_FILE" 2>/dev/null || true
-
-    # Escape quotes in details and response
-    details="${details//\"/\\\"}"
-    response="${response//\"/\\\"}"
-
-    local json="{\"id\":\"${event_id}\",\"timestamp\":\"${timestamp}\",\"event\":\"hitl_${event_type}\",\"request_id\":\"${request_id}\",\"request_type\":\"${request_type}\""
+    # Build optional key=value pairs
+    local -a extra_args=("request_id=${request_id}" "request_type=${request_type}")
 
     if [[ -n "$details" ]]; then
-        json="${json},\"details\":\"${details}\""
+        extra_args+=("details=${details}")
     fi
 
     if [[ -n "$response" ]]; then
-        json="${json},\"response\":\"${response}\""
+        extra_args+=("response=${response}")
     fi
 
-    json="${json},\"context_type\":\"hitl\",\"context_name\":\"human_intervention\"}"
-
-    echo "$json" >> "$SIGNALS_FILE" 2>/dev/null || true
+    # Delegate to centralized emit_signal (single owner of signals.jsonl)
+    emit_signal "hitl_${event_type}" "hitl" "human_intervention" "${extra_args[@]}"
 }
 
 # ============================================

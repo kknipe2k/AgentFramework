@@ -36,31 +36,31 @@ mkdir -p "$LOGS_DIR" "$STATE_DIR"
 # ============================================
 # SESSION LIFECYCLE TRACKING (Issue #14)
 # ============================================
+# Uses emit_signal() from common.sh (single-writer pattern)
 
-SIGNALS_FILE="${SIGNALS_FILE:-$STATE_DIR/signals.jsonl}"
 SESSION_ID_FILE="$STATE_DIR/.current_session_id"
 
-# Log session events to signals.jsonl for traceability
+# Wrapper for session signal emission (delegates to emit_signal)
 _log_session_signal() {
     local event_type="$1"       # session_started, session_ended
     local session_id="$2"
     local details="${3:-}"
     local metrics="${4:-}"
 
-    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    local event_id="sess-$(date +%s%N | cut -c1-13)"
+    # Build optional key=value pairs
+    local -a extra_args=("session_id=${session_id}")
 
-    # Build JSON entry
-    local json_entry
-    if [[ -n "$metrics" ]]; then
-        json_entry=$(printf '{"id":"%s","timestamp":"%s","event":"%s","session_id":"%s","details":"%s","metrics":%s,"context_type":"session","context_name":"lifecycle"}' \
-            "$event_id" "$timestamp" "$event_type" "$session_id" "$details" "$metrics")
-    else
-        json_entry=$(printf '{"id":"%s","timestamp":"%s","event":"%s","session_id":"%s","details":"%s","context_type":"session","context_name":"lifecycle"}' \
-            "$event_id" "$timestamp" "$event_type" "$session_id" "$details")
+    if [[ -n "$details" ]]; then
+        extra_args+=("details=${details}")
     fi
 
-    echo "$json_entry" >> "$SIGNALS_FILE"
+    if [[ -n "$metrics" ]]; then
+        # metrics is JSON - emit as raw JSON string for now
+        extra_args+=("metrics=${metrics}")
+    fi
+
+    # Delegate to centralized emit_signal (single owner of signals.jsonl)
+    emit_signal "$event_type" "session" "lifecycle" "${extra_args[@]}"
 }
 
 # Generate a unique session ID

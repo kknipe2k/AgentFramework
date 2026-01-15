@@ -8,7 +8,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARIA_DIR="$(dirname "$SCRIPT_DIR")"
-SIGNALS_FILE="$ARIA_DIR/state/signals.jsonl"
+
+# Source common.sh for emit_signal (single-writer pattern)
+source "$ARIA_DIR/common.sh" || { echo "Failed to load common.sh"; exit 1; }
 
 # Colors
 RED='\033[0;31m'
@@ -27,7 +29,7 @@ CURRENT_FILE=""
 TEST_FAILURES=()
 
 # ============================================
-# TRACEABILITY - Log to signals.jsonl
+# TRACEABILITY - Uses emit_signal from common.sh
 # ============================================
 
 _log_test_event() {
@@ -35,25 +37,19 @@ _log_test_event() {
     local test_name="$2"
     local status="$3"
     local details="${4:-}"
-    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    local event_id="test-$(date +%s%N | cut -c1-13)"
 
-    # Ensure signals file directory exists
-    mkdir -p "$(dirname "$SIGNALS_FILE")" 2>/dev/null || true
-    touch "$SIGNALS_FILE" 2>/dev/null || true
+    # Build optional key=value pairs
+    local -a extra_args=("test_name=${test_name}" "status=${status}")
 
-    local json="{\"id\":\"${event_id}\",\"timestamp\":\"${timestamp}\",\"event\":\"${event_type}\",\"test_name\":\"${test_name}\",\"status\":\"${status}\""
     if [[ -n "$details" ]]; then
-        # Escape quotes in details
-        details="${details//\"/\\\"}"
-        json="${json},\"details\":\"${details}\""
+        extra_args+=("details=${details}")
     fi
     if [[ -n "$CURRENT_FILE" ]]; then
-        json="${json},\"test_file\":\"${CURRENT_FILE}\""
+        extra_args+=("test_file=${CURRENT_FILE}")
     fi
-    json="${json},\"context_type\":\"test\",\"context_name\":\"test_runner\"}"
 
-    echo "$json" >> "$SIGNALS_FILE" 2>/dev/null || true
+    # Delegate to centralized emit_signal (single owner of signals.jsonl)
+    emit_signal "$event_type" "test" "test_runner" "${extra_args[@]}"
 }
 
 # ============================================

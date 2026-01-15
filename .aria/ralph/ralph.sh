@@ -44,27 +44,22 @@ PAUSE_SCRIPT="$ARIA_DIR/pause.sh"
 # ============================================
 # Uses file-based storage instead of bash 4+ associative arrays
 # for cross-platform compatibility (Windows Git Bash, older macOS)
-# All operations are logged to signals.jsonl for traceability
+# All operations logged via emit_signal (single-writer pattern)
 
 STORY_FAILURES_FILE="$SCRIPT_DIR/.story_failures"
-SIGNALS_FILE="$ARIA_DIR/state/signals.jsonl"
 
 # Ensure state directory exists
 mkdir -p "$ARIA_DIR/state"
 
-# Log failure tracking operation to signals.jsonl for traceability
+# Log failure tracking operation - delegates to emit_signal
 _log_failure_tracking() {
     local operation="$1"
     local story_id="$2"
     local count="$3"
-    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    local event_id="fail-track-$(date +%s%N | cut -c1-13)"
 
-    # Ensure signals file exists
-    touch "$SIGNALS_FILE" 2>/dev/null || true
-
-    # Append to signals.jsonl (atomic append is safe)
-    echo "{\"id\":\"${event_id}\",\"timestamp\":\"${timestamp}\",\"event\":\"failure_tracking\",\"operation\":\"${operation}\",\"story_id\":\"${story_id}\",\"count\":${count},\"context_type\":\"ralph\",\"context_name\":\"story_failures\"}" >> "$SIGNALS_FILE" 2>/dev/null || true
+    # Delegate to centralized emit_signal (single owner of signals.jsonl)
+    emit_signal "failure_tracking" "ralph" "story_failures" \
+        "operation=${operation}" "story_id=${story_id}" "count=${count}"
 }
 
 # Get failure count for a story (returns 0 if not found)
@@ -139,28 +134,25 @@ cleanup_story_failures() {
 # AGENT INVOCATION WITH TRACEABILITY
 # ============================================
 # Proper error handling for Claude/amp invocations
-# Logs all invocations to signals.jsonl for audit trail
+# All invocations logged via emit_signal (single-writer pattern)
 
-# Log agent invocation to signals.jsonl
+# Log agent invocation - delegates to emit_signal
 _log_agent_invocation() {
     local agent="$1"
     local status="$2"  # start, success, error
     local exit_code="$3"
     local model="${4:-unknown}"
     local error_type="${5:-}"
-    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    local event_id="agent-invoke-$(date +%s%N | cut -c1-13)"
 
-    # Ensure signals file exists
-    touch "$SIGNALS_FILE" 2>/dev/null || true
+    # Build optional key=value pairs
+    local -a extra_args=("agent=${agent}" "status=${status}" "exit_code=${exit_code}" "model=${model}")
 
-    local json="{\"id\":\"${event_id}\",\"timestamp\":\"${timestamp}\",\"event\":\"agent_invocation\",\"agent\":\"${agent}\",\"status\":\"${status}\",\"exit_code\":${exit_code},\"model\":\"${model}\""
     if [[ -n "$error_type" ]]; then
-        json="${json},\"error_type\":\"${error_type}\""
+        extra_args+=("error_type=${error_type}")
     fi
-    json="${json},\"context_type\":\"ralph\",\"context_name\":\"main_loop\"}"
 
-    echo "$json" >> "$SIGNALS_FILE" 2>/dev/null || true
+    # Delegate to centralized emit_signal (single owner of signals.jsonl)
+    emit_signal "agent_invocation" "ralph" "main_loop" "${extra_args[@]}"
 }
 
 # Check if output contains known error patterns

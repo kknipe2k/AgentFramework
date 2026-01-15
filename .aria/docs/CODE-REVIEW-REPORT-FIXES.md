@@ -222,7 +222,7 @@ input_tokens=$(( ${#full_prompt} / 4 ))  # Rough estimate
 | Field | Value |
 |-------|-------|
 | **Status** | ✅ FIXED |
-| **File** | `.aria/common.sh` |
+| **File** | `.aria/common.sh` + all scripts |
 | **Commit** | (pending - this session) |
 | **Date Fixed** | 2026-01-15 |
 
@@ -230,23 +230,42 @@ input_tokens=$(( ${#full_prompt} / 4 ))  # Rough estimate
 Multiple processes could read/write state files (progress.json, signals.jsonl) simultaneously, causing potential corruption.
 
 **Solution Implemented:**
-Added safe state file operations to common.sh using flock and atomic writes:
+Replaced flock-based locking with **File Ownership Model** (single-writer pattern):
 
-**New Functions:**
-- `aria_atomic_write()` - Write to temp file then mv (atomic)
-- `aria_locked_write()` - Use flock for exclusive lock with timeout
-- `aria_append_jsonl()` - Safely append to JSONL with locking
-- `aria_read_json()` - Read with shared lock (concurrent reads OK)
-- `aria_write_json()` - Write atomically with exclusive lock
-- `aria_update_json()` - Atomic read-modify-write with jq
+| File | Owner | Non-owners call |
+|------|-------|-----------------|
+| `signals.jsonl` | `emit_signal()` | All scripts delegate here |
+| `decisions.jsonl` | `emit_decision()` | All scripts delegate here |
 
-**Key Features:**
-- File locking via `flock` with configurable timeout
-- Atomic writes via temp file + mv
-- Shared locks for reads, exclusive for writes
+**New Functions in common.sh:**
+- `emit_signal()` - SINGLE OWNER of signals.jsonl
+  - Usage: `emit_signal EVENT CONTEXT_TYPE CONTEXT_NAME [key=value ...]`
+  - Handles timestamps, IDs, JSON escaping centrally
+  - All scripts must use this to write signals
+
+- `emit_decision()` - SINGLE OWNER of decisions.jsonl
+  - Usage: `emit_decision ACTION CONTEXT RATIONALE ALTERNATIVES CONFIDENCE [VERIFIED]`
+  - Validates confidence 0.0-1.0
+  - Centralized decision logging
+
+- `aria_atomic_write()` - General-purpose atomic file writes
+
+**Why Ownership Model:**
+- JSONL appends are inherently atomic (single write operation)
+- Centralized write logic ensures consistent schema
+- No need for flock complexity (simpler, more portable)
+- Better traceability (all writes go through one path)
+- Prevents scattered direct file access
+
+**Scripts Updated:**
+- `hitl.sh` - `_log_hitl_signal()` now delegates to `emit_signal()`
+- `model-selector.sh` - `_log_session_signal()` now delegates to `emit_signal()`
+- `rails-executor.sh` - `_log_rail_signal()` now delegates to `emit_signal()`
+- `ralph/ralph.sh` - `_log_failure_tracking()` and `_log_agent_invocation()` delegate
+- `tests/test-runner.sh` - `_log_test_event()` delegates to `emit_signal()`
 
 **Tests Added:**
-- `test-safe-state.sh` with 12 assertions
+- `test-safe-state.sh` with 18 assertions for ownership model
 
 ---
 

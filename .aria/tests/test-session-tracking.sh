@@ -191,7 +191,7 @@ test_start "multiple sessions have unique IDs"
 setup
 id1=$(start_session)
 rm -f "$SESSION_ID_FILE"  # Clear to start new
-sleep 0.01
+sleep 1.1  # Session ID uses seconds precision, so need >1s for uniqueness
 id2=$(start_session)
 assert_neq "$id1" "$id2" "Sessions should have unique IDs"
 teardown
