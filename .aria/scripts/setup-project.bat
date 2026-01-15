@@ -69,32 +69,32 @@ echo Linking framework files...
 REM Root CLAUDE.md
 mklink "%PROJECT%\CLAUDE.md" "%ARIA%\CLAUDE.md" >nul
 
-REM Skill definitions (read-only)
-mklink /D "%PROJECT%\.aria\skills" "%ARIA%\.aria\skills" >nul
+REM Skill definitions (read-only) - use /J junction for Windows compatibility
+mklink /J "%PROJECT%\.aria\skills" "%ARIA%\.aria\skills" >nul
 
 REM Scripts (read-only)
-mklink /D "%PROJECT%\.aria\scripts" "%ARIA%\.aria\scripts" >nul
+mklink /J "%PROJECT%\.aria\scripts" "%ARIA%\.aria\scripts" >nul
 
 REM Templates (read-only)
-if exist "%ARIA%\.aria\templates" mklink /D "%PROJECT%\.aria\templates" "%ARIA%\.aria\templates" >nul 2>&1
+if exist "%ARIA%\.aria\templates" mklink /J "%PROJECT%\.aria\templates" "%ARIA%\.aria\templates" >nul 2>&1
 
 REM Dashboard (read-only)
-if exist "%ARIA%\.aria\dashboard" mklink /D "%PROJECT%\.aria\dashboard" "%ARIA%\.aria\dashboard" >nul 2>&1
+if exist "%ARIA%\.aria\dashboard" mklink /J "%PROJECT%\.aria\dashboard" "%ARIA%\.aria\dashboard" >nul 2>&1
 
 REM Git hooks (read-only)
-if exist "%ARIA%\.aria\hooks" mklink /D "%PROJECT%\.aria\hooks" "%ARIA%\.aria\hooks" >nul 2>&1
+if exist "%ARIA%\.aria\hooks" mklink /J "%PROJECT%\.aria\hooks" "%ARIA%\.aria\hooks" >nul 2>&1
 
 REM Safety rails (read-only)
-if exist "%ARIA%\.aria\rails" mklink /D "%PROJECT%\.aria\rails" "%ARIA%\.aria\rails" >nul 2>&1
+if exist "%ARIA%\.aria\rails" mklink /J "%PROJECT%\.aria\rails" "%ARIA%\.aria\rails" >nul 2>&1
 
 REM Planner (read-only)
-if exist "%ARIA%\.aria\planner" mklink /D "%PROJECT%\.aria\planner" "%ARIA%\.aria\planner" >nul 2>&1
+if exist "%ARIA%\.aria\planner" mklink /J "%PROJECT%\.aria\planner" "%ARIA%\.aria\planner" >nul 2>&1
 
 REM Ralph executor (read-only)
-if exist "%ARIA%\.aria\ralph" mklink /D "%PROJECT%\.aria\ralph" "%ARIA%\.aria\ralph" >nul 2>&1
+if exist "%ARIA%\.aria\ralph" mklink /J "%PROJECT%\.aria\ralph" "%ARIA%\.aria\ralph" >nul 2>&1
 
 REM Claude IDE integration (read-only)
-if exist "%ARIA%\.claude" mklink /D "%PROJECT%\.claude" "%ARIA%\.claude" >nul 2>&1
+if exist "%ARIA%\.claude" mklink /J "%PROJECT%\.claude" "%ARIA%\.claude" >nul 2>&1
 
 REM ============================================
 REM Symlink core shell scripts
