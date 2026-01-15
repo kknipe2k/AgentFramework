@@ -47,6 +47,8 @@ echo ""
 mkdir -p "$PROJECT/.aria/state"
 mkdir -p "$PROJECT/.aria/docs"
 mkdir -p "$PROJECT/.aria/outputs"
+mkdir -p "$PROJECT/.aria/prototypes"
+mkdir -p "$PROJECT/sources"
 
 # Symlink immutable framework files
 echo "Linking framework files..."
@@ -76,11 +78,22 @@ cat > "$PROJECT/README.md" << EOF
 
 ARIA workspace created: $(date)
 
+## Structure
+
+\`\`\`
+sources/              ← Drop papers, docs, repos here
+.aria/
+├── docs/IDEA.md      ← Research synthesis
+├── outputs/          ← Slides, FOCUS.md
+└── prototypes/       ← Working demos
+\`\`\`
+
 ## Usage
 
-1. Drop your source materials (papers, docs, repos) here
+1. Drop source materials in \`sources/\`
 2. Open this folder in VS Code
-3. Run ARIA - outputs will be saved in .aria/outputs/
+3. Run ARIA research workflow
+4. Choose prototype variant when prompted
 EOF
 
 echo ""
@@ -89,12 +102,13 @@ echo "Project ready: $PROJECT"
 echo "========================================"
 echo ""
 echo "Next steps:"
-echo "  1. Drop your source materials in: $PROJECT"
+echo "  1. Drop source materials in: $PROJECT/sources/"
 echo "  2. Open VS Code: code \"$PROJECT\""
 echo "  3. Run ARIA research workflow"
 echo ""
 echo "Results will be saved in:"
-echo "  - .aria/docs/IDEA.md"
-echo "  - .aria/outputs/FOCUS.md"
-echo "  - .aria/outputs/slides-*.pptx"
+echo "  - .aria/docs/IDEA.md       (research synthesis)"
+echo "  - .aria/outputs/FOCUS.md   (slide outline)"
+echo "  - .aria/outputs/slides-*   (presentation)"
+echo "  - .aria/prototypes/        (working demos)"
 echo ""

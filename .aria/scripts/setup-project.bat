@@ -52,6 +52,8 @@ mkdir "%PROJECT%\.aria"
 mkdir "%PROJECT%\.aria\state"
 mkdir "%PROJECT%\.aria\docs"
 mkdir "%PROJECT%\.aria\outputs"
+mkdir "%PROJECT%\.aria\prototypes"
+mkdir "%PROJECT%\sources"
 
 REM Symlink immutable framework files
 echo Linking framework files...
@@ -84,15 +86,28 @@ if exist "%ARIA%\.aria\verify.sh" (
 )
 
 REM Create README for the project
-echo # %PROJECT_NAME% > "%PROJECT%\README.md"
-echo. >> "%PROJECT%\README.md"
-echo ARIA workspace created: %date% %time% >> "%PROJECT%\README.md"
-echo. >> "%PROJECT%\README.md"
-echo ## Usage >> "%PROJECT%\README.md"
-echo. >> "%PROJECT%\README.md"
-echo 1. Drop your source materials (papers, docs, repos) here >> "%PROJECT%\README.md"
-echo 2. Open this folder in VS Code >> "%PROJECT%\README.md"
-echo 3. Run ARIA - outputs will be saved in .aria/outputs/ >> "%PROJECT%\README.md"
+(
+echo # %PROJECT_NAME%
+echo.
+echo ARIA workspace created: %date% %time%
+echo.
+echo ## Structure
+echo.
+echo ```
+echo sources/              - Drop papers, docs, repos here
+echo .aria/
+echo   docs/IDEA.md        - Research synthesis
+echo   outputs/            - Slides, FOCUS.md
+echo   prototypes/         - Working demos
+echo ```
+echo.
+echo ## Usage
+echo.
+echo 1. Drop source materials in sources/
+echo 2. Open this folder in VS Code
+echo 3. Run ARIA research workflow
+echo 4. Choose prototype variant when prompted
+) > "%PROJECT%\README.md"
 
 echo.
 echo ========================================
@@ -100,14 +115,15 @@ echo Project ready: %PROJECT%
 echo ========================================
 echo.
 echo Next steps:
-echo   1. Drop your source materials in: %PROJECT%
+echo   1. Drop source materials in: %PROJECT%\sources\
 echo   2. Open VS Code: code "%PROJECT%"
 echo   3. Run ARIA research workflow
 echo.
 echo Results will be saved in:
-echo   - .aria/docs/IDEA.md
-echo   - .aria/outputs/FOCUS.md
-echo   - .aria/outputs/slides-*.pptx
+echo   - .aria/docs/IDEA.md       (research synthesis)
+echo   - .aria/outputs/FOCUS.md   (slide outline)
+echo   - .aria/outputs/slides-*   (presentation)
+echo   - .aria/prototypes/        (working demos)
 echo.
 
 endlocal
