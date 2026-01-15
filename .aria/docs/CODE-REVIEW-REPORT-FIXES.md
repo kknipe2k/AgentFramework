@@ -10,7 +10,7 @@
 
 | Category | Total | Fixed | In Progress | Parking Lot | Remaining |
 |----------|-------|-------|-------------|-------------|-----------|
-| **FIX NOW (Critical)** | 18 | 12 | 0 | 1 | 5 |
+| **FIX NOW (Critical)** | 18 | 13 | 0 | 1 | 4 |
 | **FIX LATER** | 24 | 0 | 0 | 0 | 24 |
 | **PARKING LOT** | 12 | - | - | 12 | - |
 
@@ -503,23 +503,54 @@ grep "hitl_request_created" .aria/state/signals.jsonl | wc -l
 
 ---
 
-### Issue #17: No Agent Decision Summary ⏳ PENDING
+### Issue #17: No Agent Decision Summary ✅ FIXED
 
 | Field | Value |
 |-------|-------|
-| **Status** | ⏳ PENDING |
-| **File** | `.aria/hitl.sh` |
-| **Impact** | Cannot measure human intervention frequency |
+| **Status** | ✅ FIXED |
+| **Files** | `.aria/scripts/generate-summary.py` (new) |
+| **Commit** | (pending - this session) |
+| **Date Fixed** | 2026-01-15 |
 
----
+**Original Problem:**
+Reports lacked decision traceability:
+- No way to measure human intervention frequency
+- Key decisions not extracted for reports
+- No aggregate decision statistics
 
-### Issue #17: No Agent Decision Summary ⏳ PENDING
+**Solution Implemented:**
+Created `generate-summary.py` script with comprehensive reporting:
 
-| Field | Value |
-|-------|-------|
-| **Status** | ⏳ PENDING |
-| **File** | report-writer |
-| **Impact** | Final reports lack decision traceability |
+**Features:**
+- Extracts decisions from `decisions.jsonl`
+- Counts HITL interactions from `signals.jsonl`
+- Ranks decisions by confidence score
+- Calculates decision statistics (total, verified, confidence breakdown)
+- Tracks session metadata (mode, workflow, duration)
+- Reports skills loaded during session
+
+**Output Formats:**
+- `--format text` - Human-readable console output
+- `--format json` - Structured JSON for APIs
+- `--format markdown` - For report generation
+
+**Metrics Included:**
+- Total decisions with confidence breakdown
+- HITL checkpoints (requests, responses, timeouts)
+- Key decisions (top 5 by confidence)
+- Skills loaded
+- Token usage summary
+
+**Usage:**
+```bash
+python .aria/scripts/generate-summary.py                    # Text output
+python .aria/scripts/generate-summary.py --format markdown  # For reports
+python .aria/scripts/generate-summary.py --format json      # For APIs
+python .aria/scripts/generate-summary.py -o summary.md      # Save to file
+```
+
+**Integration:**
+Report-writer skill can now call this script to generate decision summaries for inclusion in final reports.
 
 ---
 
@@ -605,7 +636,8 @@ grep "hitl_request_created" .aria/state/signals.jsonl | wc -l
 | - | #9 | Replaced eval with safe_execute + command validation | `b9f86af` |
 | - | #10 | Added URL validation to block shell metacharacters | `0e79c0a` |
 | - | #14 | Added session lifecycle tracking with signals.jsonl logging | `3fb874e` |
-| - | #11 | Applied escapeHtml() consistently to all user content in dashboard | (pending) |
+| - | #11 | Applied escapeHtml() consistently to all user content in dashboard | `29e2cd5` |
+| - | #17 | Created generate-summary.py for decision summaries in reports | (pending) |
 
 ---
 
