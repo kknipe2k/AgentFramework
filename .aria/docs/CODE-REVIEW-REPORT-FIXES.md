@@ -10,7 +10,7 @@
 
 | Category | Total | Fixed | In Progress | Parking Lot | Remaining |
 |----------|-------|-------|-------------|-------------|-----------|
-| **FIX NOW (Critical)** | 18 | 3 | 0 | 0 | 15 |
+| **FIX NOW (Critical)** | 18 | 4 | 0 | 0 | 14 |
 | **FIX LATER** | 24 | 0 | 0 | 0 | 24 |
 | **PARKING LOT** | 12 | - | - | 12 | - |
 
@@ -103,18 +103,44 @@ All 16 scripts updated from `set -e` to `set -euo pipefail`:
 
 ---
 
-### Issue #3: Error Swallowing `|| true` ⏳ PENDING
+### Issue #3: Error Swallowing `|| true` ✅ FIXED
 
 | Field | Value |
 |-------|-------|
-| **Status** | ⏳ PENDING |
-| **File** | `.aria/ralph/ralph.sh:583` (was 483) |
-| **Impact** | Claude errors completely masked |
+| **Status** | ✅ FIXED |
+| **File** | `.aria/ralph/ralph.sh` |
+| **Commit** | (pending - this session) |
+| **Date Fixed** | 2026-01-15 |
 
-**Problem:**
+**Original Problem:**
 ```bash
 output=$(echo "$full_prompt" | claude ... 2>&1 | tee /dev/stderr) || true
 ```
+The `|| true` masked all Claude CLI errors - API failures, auth issues, network problems were silently ignored.
+
+**Solution Implemented:**
+Created comprehensive agent invocation system with full traceability:
+
+**New Functions Added:**
+- `_log_agent_invocation()` - Log all invocations to signals.jsonl
+- `_check_agent_output_for_errors()` - Detect error patterns in output
+- `invoke_agent()` - Wrapper with proper error handling
+
+**Error Categories Detected:**
+- `api_error` - API/auth/rate limit issues (recoverable)
+- `network_error` - Connection/timeout issues (recoverable)
+- `model_error` - Model not found/overloaded (recoverable)
+- `cli_error` - Command not found/permissions (fatal)
+
+**Behavior:**
+- Exit code 0: Success, logged to signals.jsonl
+- Exit code 1: Recoverable error, increments failure count, triggers HITL after 3 failures
+- Exit code 2: Fatal error, stops execution immediately
+
+**Traceability:**
+All invocations logged to `signals.jsonl` with:
+- Event ID, timestamp, agent type, status
+- Exit code, model used, error type (if any)
 
 ---
 
@@ -337,6 +363,7 @@ input_tokens=$(( ${#full_prompt} / 4 ))  # Rough estimate
 | - | #1 | Fixed Bash 4+ associative arrays with file-based storage + traceability | `f6fc856` |
 | - | #2 | Updated 16 scripts to use `set -euo pipefail` for proper pipeline error handling | `5ac0d16` |
 | - | #18 | Resolved by Issue #2 fix | `5ac0d16` |
+| - | #3 | Replaced `\|\| true` with proper invoke_agent() error handling + traceability | (pending) |
 
 ---
 

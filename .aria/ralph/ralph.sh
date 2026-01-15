@@ -135,6 +135,137 @@ cleanup_story_failures() {
     fi
 }
 
+# ============================================
+# AGENT INVOCATION WITH TRACEABILITY
+# ============================================
+# Proper error handling for Claude/amp invocations
+# Logs all invocations to signals.jsonl for audit trail
+
+# Log agent invocation to signals.jsonl
+_log_agent_invocation() {
+    local agent="$1"
+    local status="$2"  # start, success, error
+    local exit_code="$3"
+    local model="${4:-unknown}"
+    local error_type="${5:-}"
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local event_id="agent-invoke-$(date +%s%N | cut -c1-13)"
+
+    # Ensure signals file exists
+    touch "$SIGNALS_FILE" 2>/dev/null || true
+
+    local json="{\"id\":\"${event_id}\",\"timestamp\":\"${timestamp}\",\"event\":\"agent_invocation\",\"agent\":\"${agent}\",\"status\":\"${status}\",\"exit_code\":${exit_code},\"model\":\"${model}\""
+    if [[ -n "$error_type" ]]; then
+        json="${json},\"error_type\":\"${error_type}\""
+    fi
+    json="${json},\"context_type\":\"ralph\",\"context_name\":\"main_loop\"}"
+
+    echo "$json" >> "$SIGNALS_FILE" 2>/dev/null || true
+}
+
+# Check if output contains known error patterns
+_check_agent_output_for_errors() {
+    local output="$1"
+    local error_type=""
+
+    # Check for API/auth errors
+    if echo "$output" | grep -qi "api.*error\|authentication.*failed\|unauthorized\|invalid.*key\|rate.*limit"; then
+        error_type="api_error"
+    # Check for network errors
+    elif echo "$output" | grep -qi "connection.*refused\|timeout\|network.*error\|could not connect"; then
+        error_type="network_error"
+    # Check for CLI errors
+    elif echo "$output" | grep -qi "command not found\|no such file\|permission denied"; then
+        error_type="cli_error"
+    # Check for model errors
+    elif echo "$output" | grep -qi "model.*not.*found\|invalid.*model\|overloaded"; then
+        error_type="model_error"
+    fi
+
+    echo "$error_type"
+}
+
+# Invoke agent with proper error handling and traceability
+# Returns: 0 on success, 1 on recoverable error, 2 on fatal error
+# Sets: AGENT_OUTPUT, AGENT_EXIT_CODE, AGENT_ERROR_TYPE
+invoke_agent() {
+    local agent="$1"
+    local prompt="$2"
+    local model_flag="${3:-}"
+    local model="${4:-unknown}"
+
+    AGENT_OUTPUT=""
+    AGENT_EXIT_CODE=0
+    AGENT_ERROR_TYPE=""
+
+    # Log invocation start
+    _log_agent_invocation "$agent" "start" 0 "$model"
+
+    # Temporarily disable errexit to capture exit code
+    set +e
+
+    case "$agent" in
+        "claude")
+            AGENT_OUTPUT=$(echo "$prompt" | claude --dangerously-skip-permissions -p $model_flag 2>&1 | tee /dev/stderr)
+            AGENT_EXIT_CODE=$?
+            ;;
+        "amp")
+            AGENT_OUTPUT=$(echo "$prompt" | amp --dangerously-allow-all 2>&1 | tee /dev/stderr)
+            AGENT_EXIT_CODE=$?
+            ;;
+        *)
+            echo -e "${RED}Unknown agent: $agent${NC}"
+            AGENT_EXIT_CODE=2
+            AGENT_ERROR_TYPE="unknown_agent"
+            ;;
+    esac
+
+    # Re-enable errexit
+    set -e
+
+    # Check for error patterns in output even if exit code was 0
+    if [[ -z "$AGENT_ERROR_TYPE" ]]; then
+        AGENT_ERROR_TYPE=$(_check_agent_output_for_errors "$AGENT_OUTPUT")
+    fi
+
+    # Determine final status
+    if [[ $AGENT_EXIT_CODE -eq 0 ]] && [[ -z "$AGENT_ERROR_TYPE" ]]; then
+        _log_agent_invocation "$agent" "success" "$AGENT_EXIT_CODE" "$model"
+        return 0
+    else
+        # Log the error
+        _log_agent_invocation "$agent" "error" "$AGENT_EXIT_CODE" "$model" "${AGENT_ERROR_TYPE:-exit_code_nonzero}"
+
+        # Print warning
+        echo -e "${RED}⚠️  Agent invocation issue detected${NC}"
+        if [[ $AGENT_EXIT_CODE -ne 0 ]]; then
+            echo -e "${RED}   Exit code: $AGENT_EXIT_CODE${NC}"
+        fi
+        if [[ -n "$AGENT_ERROR_TYPE" ]]; then
+            echo -e "${RED}   Error type: $AGENT_ERROR_TYPE${NC}"
+        fi
+
+        # Determine if error is fatal or recoverable
+        case "$AGENT_ERROR_TYPE" in
+            "api_error"|"network_error"|"model_error")
+                # Recoverable - can retry
+                return 1
+                ;;
+            "cli_error"|"unknown_agent")
+                # Fatal - configuration issue
+                return 2
+                ;;
+            *)
+                # Unknown error with non-zero exit - treat as recoverable
+                if [[ $AGENT_EXIT_CODE -ne 0 ]]; then
+                    return 1
+                fi
+                return 0
+                ;;
+        esac
+    fi
+}
+
 # Track model used for current iteration (for learning)
 current_iteration_model=""
 current_iteration_task_type=""
@@ -576,29 +707,52 @@ $(tail -100 "$PROGRESS_FILE" 2>/dev/null || echo "No progress yet")
             echo -e "${BLUE}Model: $selected_model (forced)${NC}"
         fi
 
-        # Run the agent
+        # Run the agent with proper error handling
         echo -e "${YELLOW}Running agent...${NC}"
         local output=""
         local input_tokens=0
         local output_tokens=0
+        local invoke_result=0
 
-        case "$AGENT" in
-            "claude")
-                output=$(echo "$full_prompt" | claude --dangerously-skip-permissions -p $model_flag 2>&1 | tee /dev/stderr) || true
-                # Estimate tokens (rough: 4 chars = 1 token)
-                input_tokens=$(( ${#full_prompt} / 4 ))
-                output_tokens=$(( ${#output} / 4 ))
-                ;;
-            "amp")
-                output=$(echo "$full_prompt" | amp --dangerously-allow-all 2>&1 | tee /dev/stderr) || true
-                input_tokens=$(( ${#full_prompt} / 4 ))
-                output_tokens=$(( ${#output} / 4 ))
-                ;;
-            *)
-                echo -e "${RED}Unknown agent: $AGENT${NC}"
-                exit 1
-                ;;
-        esac
+        # Use invoke_agent for proper error handling and traceability
+        invoke_agent "$AGENT" "$full_prompt" "$model_flag" "$selected_model" || invoke_result=$?
+
+        output="$AGENT_OUTPUT"
+        input_tokens=$(( ${#full_prompt} / 4 ))
+        output_tokens=$(( ${#output} / 4 ))
+
+        # Handle agent invocation errors
+        if [[ $invoke_result -eq 2 ]]; then
+            # Fatal error (CLI error, unknown agent) - cannot continue
+            echo -e "${RED}Fatal agent error. Cannot continue.${NC}"
+            log_iteration $iteration "$next_story" "FATAL_ERROR:$AGENT_ERROR_TYPE" 0
+            exit 1
+        elif [[ $invoke_result -eq 1 ]]; then
+            # Recoverable error - count as failure and potentially retry
+            echo -e "${YELLOW}Agent invocation failed (recoverable)${NC}"
+            log_iteration $iteration "$next_story" "AGENT_ERROR:$AGENT_ERROR_TYPE" 0
+
+            # Record learning outcome: FAIL due to agent error
+            record_learning_outcome "$next_story" "fail"
+
+            # Increment failure count
+            increment_failures "$next_story"
+
+            # Check if we've hit the failure threshold
+            if check_failure_threshold "$next_story"; then
+                echo -e "${MAGENTA}Story $next_story has failed $MAX_CONSECUTIVE_FAILURES times due to agent errors${NC}"
+                if ! escalate_to_planner "Agent invocation keeps failing: $AGENT_ERROR_TYPE" "$next_story" "Error type: $AGENT_ERROR_TYPE"; then
+                    echo "Execution stopped due to repeated agent failures."
+                    break
+                fi
+                reset_failures "$next_story"
+            fi
+
+            # Sleep and retry
+            echo "Sleeping ${SLEEP_BETWEEN}s before retry..."
+            sleep $SLEEP_BETWEEN
+            continue
+        fi
 
         # Record token usage
         if [[ -x "$MODEL_SELECTOR" ]]; then
