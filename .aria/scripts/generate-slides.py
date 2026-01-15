@@ -123,9 +123,20 @@ async def generate_nblm(focus_path: Path, idea_path: Path, source_paths: list) -
 
     try:
         async with await NotebookLMClient.from_storage() as client:
+            # Check for existing notebook with same title
+            print(f"Checking for existing notebooks...")
+            existing = await client.notebooks.list()
+            for nb in existing:
+                if title.lower() in str(nb).lower():
+                    print(f"\n⚠️  Found existing notebook that may match: {nb}")
+                    print("To avoid duplicates, please check NotebookLM directly.")
+                    print("URL: https://notebooklm.google.com")
+                    return None
+
             # Create notebook
             print(f"Creating NotebookLM notebook: {title}")
             notebook = await client.notebooks.create(f"Slides: {title}")
+            print(f"  Notebook ID: {notebook.id}")
 
             # Add sources - use add_url for text content or add_file for files
             print("Adding FOCUS.md content...")
@@ -145,28 +156,50 @@ async def generate_nblm(focus_path: Path, idea_path: Path, source_paths: list) -
                     print(f"Adding {source_path.name}...")
                     await client.sources.add_file(notebook.id, str(source_path))
 
-            # Generate slides
-            print("Generating slides (this may take a minute)...")
-            await client.chat.ask(notebook.id, SLIDES_PROMPT)
-            status = await client.artifacts.generate_slides(notebook.id)
-            await client.artifacts.wait_for_completion(notebook.id, status.task_id)
+            # Send slide generation prompt
+            print("\nSending slide generation prompt...")
+            print(f"  Prompt: {SLIDES_PROMPT[:100]}...")
+            response = await client.chat.ask(notebook.id, SLIDES_PROMPT)
+            print(f"  Prompt sent successfully")
 
-            # Download
-            output_path = OUTPUTS_DIR / f"slides-{timestamp}.pdf"
-            await client.artifacts.download_slides(notebook.id, str(OUTPUTS_DIR))
+            # Start slide deck generation (don't wait - takes 5-10 min)
+            print("\nStarting slide deck generation...")
+            print("  NOTE: This takes 5-10 minutes. Check NotebookLM directly.")
+            status = await client.artifacts.generate_slide_deck(notebook.id)
+            print(f"  Task started: {status.task_id}")
+            print(f"  Status: {status.status}")
+
+            # Get notebook URL
+            notebook_url = f"https://notebooklm.google.com/notebook/{notebook.id}"
 
             # Cleanup temp files
             focus_temp.unlink(missing_ok=True)
             idea_temp.unlink(missing_ok=True)
 
-            print(f"Slides saved to: {output_path}")
-            return output_path
+            print("\n" + "="*60)
+            print("SLIDE GENERATION STARTED")
+            print("="*60)
+            print(f"\nNotebook URL: {notebook_url}")
+            print("\nNext steps:")
+            print("  1. Open the URL above in your browser")
+            print("  2. Wait 5-10 minutes for slide deck to generate")
+            print("  3. Download from NotebookLM when ready")
+            print("="*60)
+
+            return notebook_url
 
     except Exception as e:
-        print(f"NotebookLM error: {e}")
-        print("Run 'notebooklm login' to authenticate, then try again.")
-        print("Falling back to pptx...")
-        return await generate_pptx(focus_path, idea_path, source_paths)
+        print(f"\n❌ NotebookLM error: {e}")
+        print("\n" + "="*60)
+        print("HITL REQUIRED: NotebookLM failed")
+        print("="*60)
+        print("\nOptions:")
+        print("  [1] Check NotebookLM directly: https://notebooklm.google.com")
+        print("  [2] Run 'notebooklm login' to re-authenticate")
+        print("  [3] Use local pptx instead (run with --method pptx)")
+        print("\nDo NOT auto-retry. User must decide next step.")
+        print("="*60)
+        return None
 
 
 # ============================================================

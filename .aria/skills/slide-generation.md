@@ -120,13 +120,13 @@ async with await NotebookLMClient.from_storage() as client:
     await client.sources.add_file(notebook.id, "IDEA.md")
     await client.sources.add_file(notebook.id, "paper.pdf")
 
-    # 3. Generate slides with prompt
+    # 3. Generate slide deck with prompt
     await client.chat.ask(notebook.id, SLIDES_PROMPT)
-    status = await client.artifacts.generate_slides(notebook.id)
+    status = await client.artifacts.generate_slide_deck(notebook.id)
     await client.artifacts.wait_for_completion(notebook.id, status.task_id)
 
     # 4. Download
-    await client.artifacts.download_slides(notebook.id, ".aria/outputs/")
+    await client.artifacts.download_slide_deck(notebook.id, ".aria/outputs/")
 ```
 
 **Output:** `.aria/outputs/slides-[topic]-[date].pdf`
