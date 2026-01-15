@@ -109,7 +109,7 @@ All 16 scripts updated from `set -e` to `set -euo pipefail`:
 |-------|-------|
 | **Status** | ✅ FIXED |
 | **File** | `.aria/ralph/ralph.sh` |
-| **Commit** | (pending - this session) |
+| **Commit** | `2ce7c75` |
 | **Date Fixed** | 2026-01-15 |
 
 **Original Problem:**
@@ -363,7 +363,7 @@ input_tokens=$(( ${#full_prompt} / 4 ))  # Rough estimate
 | - | #1 | Fixed Bash 4+ associative arrays with file-based storage + traceability | `f6fc856` |
 | - | #2 | Updated 16 scripts to use `set -euo pipefail` for proper pipeline error handling | `5ac0d16` |
 | - | #18 | Resolved by Issue #2 fix | `5ac0d16` |
-| - | #3 | Replaced `\|\| true` with proper invoke_agent() error handling + traceability | (pending) |
+| - | #3 | Replaced `\|\| true` with proper invoke_agent() error handling + traceability | `2ce7c75` |
 
 ---
 
