@@ -63,12 +63,17 @@ tail -f .aria/ralph/progress.txt
 | **Model Selection** | Opus/Sonnet/Haiku based on task |
 | **Learning** | Improves model selection over time |
 | **Auto-PR** | Creates PR when feature complete |
+| **Dashboard** | Web UI for decision lineage tracking |
+| **Slide Generation** | Create presentations from research |
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
 | **[User Guide](.aria/docs/USER-GUIDE.md)** | Complete usage guide - start here |
+| [Cheatsheet](.aria/docs/CHEATSHEET.md) | Quick reference |
+| [Observability](.aria/docs/OBSERVABILITY.md) | Decision tracing and dashboard |
+| [Skill Registry](.aria/skills/REGISTRY.md) | Available skills |
 | [Architecture](.aria/docs/ARIA-SYSTEM-ARCHITECTURE.md) | System design and components |
 | [Boris Cherny Patterns](.aria/docs/BORIS-CHERNY-PATTERNS.md) | Verification and subagent patterns |
 | [Ralph Autonomous Loop](.aria/docs/RALPH-AUTONOMOUS-LOOP.md) | PRD-driven iteration pattern |
@@ -98,6 +103,10 @@ tail -f .aria/ralph/progress.txt
 # Human-in-the-Loop
 ./.aria/hitl.sh status                      # Show pending requests
 ./.aria/hitl.sh respond "guidance"          # Provide guidance
+
+# Dashboard & Research
+python .aria/scripts/serve-dashboard.py     # Open dashboard at :8420
+python .aria/scripts/generate-slides.py     # Generate slides from IDEA.md
 ```
 
 ## IDE Integration
@@ -124,6 +133,12 @@ tail -f .aria/ralph/progress.txt
 ├── hitl.sh                # Human-in-the-loop
 ├── hooks/                 # Git hooks
 ├── rails/                 # YAML rail definitions
+├── scripts/               # Utility scripts
+│   ├── serve-dashboard.py # Decision lineage dashboard
+│   └── generate-slides.py # Slide generation
+├── skills/                # Skill definitions
+├── outputs/               # Generated artifacts (slides, etc.)
+├── dashboard/             # Dashboard web UI
 └── docs/                  # Documentation
 ```
 
