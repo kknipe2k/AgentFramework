@@ -2,7 +2,8 @@
 # ARIA-RALPH: Autonomous loop with safety rails
 # Combines Ralph's fresh-context loop with ARIA's hard blocks
 
-set -e
+# Exit on error, undefined vars, and pipeline failures
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARIA_DIR="$(dirname "$SCRIPT_DIR")"

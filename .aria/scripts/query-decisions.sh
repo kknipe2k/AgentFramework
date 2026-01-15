@@ -2,7 +2,8 @@
 # ARIA Decision Query - Search past decisions for precedent
 # Usage: .aria/scripts/query-decisions.sh <search_term> [OPTIONS]
 
-set -e
+# Exit on error, undefined vars, and pipeline failures
+set -euo pipefail
 
 ARIA_DIR=".aria"
 STATE_DIR="$ARIA_DIR/state"

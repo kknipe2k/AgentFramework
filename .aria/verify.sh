@@ -3,7 +3,11 @@
 # Run after EVERY task that modifies code
 # AI must stop if this fails
 
-set -e
+# Exit on error, undefined vars, and pipeline failures
+# -e: Exit immediately if a command exits with non-zero status
+# -u: Treat unset variables as an error
+# -o pipefail: Return exit code of first failing command in pipeline
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"

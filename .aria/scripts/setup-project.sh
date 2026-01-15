@@ -3,7 +3,8 @@
 # Usage: setup-project.sh <project-path> <aria-path>
 # Example: setup-project.sh ~/aria-eval/Projects/SVM ~/aria-test
 
-set -e
+# Exit on error, undefined vars, and pipeline failures
+set -euo pipefail
 
 PROJECT="$1"
 ARIA="$2"

@@ -3,7 +3,8 @@
 # Pauses execution and waits for human intervention
 # Terminal-based notification and response
 
-set -e
+# Exit on error, undefined vars, and pipeline failures
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh" || { echo "Failed to load common.sh"; exit 1; }

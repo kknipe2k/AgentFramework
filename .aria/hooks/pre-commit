@@ -2,7 +2,8 @@
 # ARIA Pre-Commit Hook
 # Runs quick verification before allowing commit
 
-set -e
+# Exit on error, undefined vars, and pipeline failures
+set -euo pipefail
 
 ARIA_DIR="$(git rev-parse --show-toplevel)/.aria"
 VERIFY_SCRIPT="$ARIA_DIR/verify-executor.sh"

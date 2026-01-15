@@ -2,7 +2,8 @@
 # ARIA Agent Runner
 # Invokes agents defined in .claude/agents/ via Claude CLI
 
-set -e
+# Exit on error, undefined vars, and pipeline failures
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"

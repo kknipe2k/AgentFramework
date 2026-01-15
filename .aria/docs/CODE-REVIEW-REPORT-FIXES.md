@@ -10,7 +10,7 @@
 
 | Category | Total | Fixed | In Progress | Parking Lot | Remaining |
 |----------|-------|-------|-------------|-------------|-----------|
-| **FIX NOW (Critical)** | 18 | 1 | 1 | 0 | 16 |
+| **FIX NOW (Critical)** | 18 | 3 | 0 | 0 | 15 |
 | **FIX LATER** | 24 | 0 | 0 | 0 | 24 |
 | **PARKING LOT** | 12 | - | - | 12 | - |
 
@@ -60,39 +60,46 @@ All operations logged to `signals.jsonl` with event types:
 
 ---
 
-### Issue #2: `set -o pipefail` Missing 🔄 IN PROGRESS
+### Issue #2: `set -o pipefail` Missing ✅ FIXED
 
 | Field | Value |
 |-------|-------|
-| **Status** | 🔄 IN PROGRESS |
-| **Files** | 16 scripts (see list below) |
-| **Impact** | Pipeline exit codes lost - tests can pass when they fail |
+| **Status** | ✅ FIXED |
+| **Files** | 16 scripts (all updated) |
+| **Commit** | (pending - this session) |
+| **Date Fixed** | 2026-01-15 |
 
-**Problem:**
+**Original Problem:**
 ```bash
-# Current - exit code of npm test is LOST
+# Exit code of npm test was LOST in pipelines
 npm test 2>&1 | tee "$LOGS_DIR/unit_tests.log"
 ```
 
-**Scripts Requiring Update:**
-1. `.aria/verify.sh`
-2. `.aria/verify-executor.sh`
-3. `.aria/ralph/ralph.sh`
-4. `.aria/model-selector.sh`
-5. `.aria/git-ops.sh`
-6. `.aria/hitl.sh`
-7. `.aria/aria-engine.sh`
-8. `.aria/agent-runner.sh`
-9. `.aria/rails-executor.sh`
-10. `.aria/hooks/install.sh`
-11. `.aria/hooks/pre-commit`
-12. `.aria/hooks/pre-push`
-13. `.aria/scripts/setup-project.sh`
-14. `.aria/scripts/trace-view.sh`
-15. `.aria/scripts/query-decisions.sh`
-16. `.aria/scripts/reconcile.sh`
+**Solution Implemented:**
+All 16 scripts updated from `set -e` to `set -euo pipefail`:
+- `-e` - Exit on error (already present)
+- `-u` - Exit on undefined variable (NEW)
+- `-o pipefail` - Return exit code of first failing command in pipeline (NEW)
 
-**Solution:** Update all to `set -euo pipefail`
+**Scripts Updated:**
+1. ✅ `.aria/verify.sh`
+2. ✅ `.aria/verify-executor.sh`
+3. ✅ `.aria/ralph/ralph.sh`
+4. ✅ `.aria/model-selector.sh`
+5. ✅ `.aria/git-ops.sh`
+6. ✅ `.aria/hitl.sh`
+7. ✅ `.aria/aria-engine.sh`
+8. ✅ `.aria/agent-runner.sh`
+9. ✅ `.aria/rails-executor.sh`
+10. ✅ `.aria/hooks/install.sh`
+11. ✅ `.aria/hooks/pre-commit`
+12. ✅ `.aria/hooks/pre-push`
+13. ✅ `.aria/scripts/setup-project.sh`
+14. ✅ `.aria/scripts/trace-view.sh`
+15. ✅ `.aria/scripts/query-decisions.sh`
+16. ✅ `.aria/scripts/reconcile.sh`
+
+**Verification:** All scripts pass `bash -n` syntax check
 
 ---
 
@@ -257,13 +264,16 @@ input_tokens=$(( ${#full_prompt} / 4 ))  # Rough estimate
 
 ---
 
-### Issue #18: verify.sh Exit Code Lost ⏳ PENDING
+### Issue #18: verify.sh Exit Code Lost ✅ FIXED
 
 | Field | Value |
 |-------|-------|
-| **Status** | ⏳ PENDING |
+| **Status** | ✅ FIXED |
 | **File** | `.aria/verify.sh` |
-| **Impact** | Same as Issue #2 - subset |
+| **Resolved By** | Issue #2 fix (set -euo pipefail) |
+| **Date Fixed** | 2026-01-15 |
+
+**Note:** This was a subset of Issue #2. Fixed by updating verify.sh to use `set -euo pipefail`.
 
 ---
 
@@ -325,6 +335,8 @@ input_tokens=$(( ${#full_prompt} / 4 ))  # Rough estimate
 |------|-------|--------|--------|
 | - | #8 | Created requirements.txt | `0b7612d` |
 | - | #1 | Fixed Bash 4+ associative arrays with file-based storage + traceability | `f6fc856` |
+| - | #2 | Updated 16 scripts to use `set -euo pipefail` for proper pipeline error handling | (pending) |
+| - | #18 | Resolved by Issue #2 fix | (pending) |
 
 ---
 

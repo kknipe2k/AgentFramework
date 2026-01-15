@@ -2,7 +2,8 @@
 # ARIA Git Hooks Installer
 # Installs ARIA hooks into .git/hooks
 
-set -e
+# Exit on error, undefined vars, and pipeline failures
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)"
