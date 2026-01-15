@@ -10,7 +10,7 @@
 
 | Category | Total | Fixed | In Progress | Parking Lot | Remaining |
 |----------|-------|-------|-------------|-------------|-----------|
-| **FIX NOW (Critical)** | 18 | 9 | 0 | 1 | 8 |
+| **FIX NOW (Critical)** | 18 | 10 | 0 | 1 | 7 |
 | **FIX LATER** | 24 | 0 | 0 | 0 | 24 |
 | **PARKING LOT** | 12 | - | - | 12 | - |
 
@@ -272,13 +272,31 @@ Commands from JSON rail files were executed via `eval`, allowing arbitrary code 
 
 ---
 
-### Issue #10: URL Injection Risk ⏳ PENDING
+### Issue #10: URL Injection Risk ✅ FIXED
 
 | Field | Value |
 |-------|-------|
-| **Status** | ⏳ PENDING |
+| **Status** | ✅ FIXED |
 | **File** | `.aria/verify-executor.sh` |
-| **Impact** | Command injection possible via APP_URL |
+| **Commit** | (pending - this session) |
+| **Date Fixed** | 2026-01-15 |
+
+**Original Problem:**
+```bash
+APP_URL="${APP_URL:-http://localhost:3000}"
+curl -s -o /dev/null -w "%{http_code}" "$APP_URL"
+```
+If APP_URL contained shell metacharacters (`;|&$`), commands could be injected.
+
+**Solution Implemented:**
+Added `validate_url()` function that checks URLs at startup:
+
+1. **Format validation** - Must start with `http://` or `https://`
+2. **Metacharacter blocking** - Rejects URLs containing: `;|&$`><(){}[]!#`
+3. **Newline blocking** - Rejects URLs with `\n` or `\r`
+4. **Early exit** - Script exits if APP_URL or API_URL are invalid
+
+Both APP_URL and API_URL are validated before any curl commands run.
 
 ---
 
@@ -504,6 +522,7 @@ grep "hitl_request_created" .aria/state/signals.jsonl | wc -l
 | - | #15 | Added skill/template/framework touch logging to signals.jsonl | `35190a6` |
 | - | #16 | Resolved by Issue #12 (HITL events now countable) | - |
 | - | #9 | Replaced eval with safe_execute + command validation | (pending) |
+| - | #10 | Added URL validation to block shell metacharacters | (pending) |
 
 ---
 

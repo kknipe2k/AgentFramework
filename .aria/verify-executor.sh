@@ -32,6 +32,50 @@ API_URL="${API_URL:-http://localhost:3000/api}"
 VERIFICATION_TIMEOUT="${VERIFICATION_TIMEOUT:-30000}"
 
 # ============================================
+# SECURITY: URL Validation (Issue #10 fix)
+# ============================================
+
+# Validate URL is safe (no shell injection)
+validate_url() {
+    local url="$1"
+    local name="$2"
+
+    # Check URL format - must start with http:// or https://
+    if ! echo "$url" | grep -qE "^https?://[a-zA-Z0-9]"; then
+        echo -e "${RED}SECURITY: Invalid URL format for $name${NC}"
+        echo -e "${RED}URL must start with http:// or https://${NC}"
+        return 1
+    fi
+
+    # Block shell metacharacters that could enable injection
+    local dangerous_chars=';|&$`><(){}[]!#'
+    if echo "$url" | grep -qE "[$dangerous_chars]"; then
+        echo -e "${RED}SECURITY: Dangerous characters in $name${NC}"
+        echo -e "${RED}URL contains shell metacharacters - blocked for safety${NC}"
+        return 1
+    fi
+
+    # Block newlines and carriage returns
+    if echo "$url" | grep -qE $'\n|\r'; then
+        echo -e "${RED}SECURITY: Newlines in $name - blocked${NC}"
+        return 1
+    fi
+
+    return 0
+}
+
+# Validate configured URLs at startup
+if ! validate_url "$APP_URL" "APP_URL"; then
+    echo -e "${RED}Set a valid APP_URL (e.g., http://localhost:3000)${NC}"
+    exit 1
+fi
+
+if ! validate_url "$API_URL" "API_URL"; then
+    echo -e "${RED}Set a valid API_URL (e.g., http://localhost:3000/api)${NC}"
+    exit 1
+fi
+
+# ============================================
 # DEPENDENCY DETECTION & INSTALLATION
 # ============================================
 
