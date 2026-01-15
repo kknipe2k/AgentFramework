@@ -10,7 +10,7 @@
 
 | Category | Total | Fixed | In Progress | Parking Lot | Remaining |
 |----------|-------|-------|-------------|-------------|-----------|
-| **FIX NOW (Critical)** | 18 | 13 | 0 | 1 | 4 |
+| **FIX NOW (Critical)** | 18 | 14 | 0 | 1 | 3 |
 | **FIX LATER** | 24 | 0 | 0 | 0 | 24 |
 | **PARKING LOT** | 12 | - | - | 12 | - |
 
@@ -217,13 +217,36 @@ input_tokens=$(( ${#full_prompt} / 4 ))  # Rough estimate
 
 ---
 
-### Issue #7: Race Conditions on State Files ⏳ PENDING
+### Issue #7: Race Conditions on State Files ✅ FIXED
 
 | Field | Value |
 |-------|-------|
-| **Status** | ⏳ PENDING |
-| **Files** | Multiple |
-| **Impact** | Potential state corruption |
+| **Status** | ✅ FIXED |
+| **File** | `.aria/common.sh` |
+| **Commit** | (pending - this session) |
+| **Date Fixed** | 2026-01-15 |
+
+**Original Problem:**
+Multiple processes could read/write state files (progress.json, signals.jsonl) simultaneously, causing potential corruption.
+
+**Solution Implemented:**
+Added safe state file operations to common.sh using flock and atomic writes:
+
+**New Functions:**
+- `aria_atomic_write()` - Write to temp file then mv (atomic)
+- `aria_locked_write()` - Use flock for exclusive lock with timeout
+- `aria_append_jsonl()` - Safely append to JSONL with locking
+- `aria_read_json()` - Read with shared lock (concurrent reads OK)
+- `aria_write_json()` - Write atomically with exclusive lock
+- `aria_update_json()` - Atomic read-modify-write with jq
+
+**Key Features:**
+- File locking via `flock` with configurable timeout
+- Atomic writes via temp file + mv
+- Shared locks for reads, exclusive for writes
+
+**Tests Added:**
+- `test-safe-state.sh` with 12 assertions
 
 ---
 
@@ -637,7 +660,8 @@ Report-writer skill can now call this script to generate decision summaries for 
 | - | #10 | Added URL validation to block shell metacharacters | `0e79c0a` |
 | - | #14 | Added session lifecycle tracking with signals.jsonl logging | `3fb874e` |
 | - | #11 | Applied escapeHtml() consistently to all user content in dashboard | `29e2cd5` |
-| - | #17 | Created generate-summary.py for decision summaries in reports | (pending) |
+| - | #17 | Created generate-summary.py for decision summaries in reports | `a63c9d6` |
+| - | #7 | Added safe state file operations with flock and atomic writes | (pending) |
 
 ---
 
