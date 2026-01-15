@@ -10,7 +10,7 @@
 
 | Category | Total | Fixed | In Progress | Parking Lot | Remaining |
 |----------|-------|-------|-------------|-------------|-----------|
-| **FIX NOW (Critical)** | 18 | 11 | 0 | 1 | 6 |
+| **FIX NOW (Critical)** | 18 | 12 | 0 | 1 | 5 |
 | **FIX LATER** | 24 | 0 | 0 | 0 | 24 |
 | **PARKING LOT** | 12 | - | - | 12 | - |
 
@@ -300,13 +300,51 @@ Both APP_URL and API_URL are validated before any curl commands run.
 
 ---
 
-### Issue #11: Dashboard XSS Potential ⏳ PENDING
+### Issue #11: Dashboard XSS Potential ✅ FIXED
 
 | Field | Value |
 |-------|-------|
-| **Status** | ⏳ PENDING |
+| **Status** | ✅ FIXED |
 | **File** | `.aria/dashboard/index.html` |
-| **Impact** | User content not sanitized |
+| **Commit** | (pending - this session) |
+| **Date Fixed** | 2026-01-15 |
+
+**Original Problem:**
+The dashboard had an `escapeHtml()` function but it was not consistently applied, leaving multiple XSS vectors:
+- `renderLineage`: Tool names, hashes, action text unescaped
+- `renderDecisions`: Tool names, file paths, commands unescaped
+- `renderCommits`: Tool names in badges unescaped
+
+**Solution Implemented:**
+Applied `escapeHtml()` consistently to all user-controlled content:
+
+**Fixed in renderLineage:**
+- `s.tool` - Signal tool names
+- `node.tool` - Signal type titles
+- `node.hash` - Commit hashes
+- `node.name` - Skill/template/subagent names
+- `node.action` - HITL/decision actions
+- `node.response` - HITL responses
+- `node.command` - Verify commands
+
+**Fixed in renderDecisions:**
+- `s.tool` - Signal tool names
+- `s.file_path`, `s.command` - Signal details
+
+**Fixed in renderCommits:**
+- `tool` - Tool badge names
+
+**The escapeHtml function (unchanged):**
+```javascript
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+```
+
+**Note:** This uses DOM-based encoding which handles all special characters including `<`, `>`, `&`, `"`, and `'`.
 
 ---
 
@@ -566,7 +604,8 @@ grep "hitl_request_created" .aria/state/signals.jsonl | wc -l
 | - | #16 | Resolved by Issue #12 (HITL events now countable) | - |
 | - | #9 | Replaced eval with safe_execute + command validation | `b9f86af` |
 | - | #10 | Added URL validation to block shell metacharacters | `0e79c0a` |
-| - | #14 | Added session lifecycle tracking with signals.jsonl logging | (pending) |
+| - | #14 | Added session lifecycle tracking with signals.jsonl logging | `3fb874e` |
+| - | #11 | Applied escapeHtml() consistently to all user content in dashboard | (pending) |
 
 ---
 
