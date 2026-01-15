@@ -1,0 +1,1157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ARIA Framework Complete Review Guide</title>
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-card: #21262d;
+            --accent: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-yellow: #d29922;
+            --accent-red: #f85149;
+            --accent-purple: #a371f7;
+            --text-primary: #c9d1d9;
+            --text-secondary: #8b949e;
+            --border: #30363d;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        .container { max-width: 1600px; margin: 0 auto; padding: 2rem; }
+
+        header {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            padding: 1.5rem 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header-content {
+            max-width: 1600px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 { color: var(--accent); font-size: 1.5rem; }
+        .subtitle { color: var(--text-secondary); font-size: 0.9rem; }
+
+        .nav {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .nav a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .nav a:hover { background: var(--bg-card); color: var(--text-primary); }
+        .nav a.active { background: var(--accent); color: #fff; }
+
+        section {
+            margin: 2rem 0;
+            padding: 1.5rem;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        h2 {
+            color: var(--accent);
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        h3 { color: var(--text-primary); margin: 1.5rem 0 0.75rem; }
+
+        .grade-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 0.85rem;
+        }
+
+        .grade-a { background: var(--accent-green); color: #000; }
+        .grade-b { background: var(--accent-yellow); color: #000; }
+        .grade-c { background: #f0883e; color: #000; }
+        .grade-d { background: var(--accent-red); color: #fff; }
+
+        .flow-diagram {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            padding: 1rem;
+            background: var(--bg-card);
+            border-radius: 8px;
+            margin: 1rem 0;
+            overflow-x: auto;
+        }
+
+        .flow-node {
+            background: var(--bg-secondary);
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            min-width: 120px;
+            text-align: center;
+            position: relative;
+        }
+
+        .flow-node.entry { border-color: var(--accent-green); }
+        .flow-node.skill { border-color: var(--accent); }
+        .flow-node.output { border-color: var(--accent-purple); }
+        .flow-node.hitl { border-color: var(--accent-yellow); }
+        .flow-node.error { border-color: var(--accent-red); }
+
+        .flow-arrow {
+            display: flex;
+            align-items: center;
+            color: var(--text-secondary);
+            font-size: 1.5rem;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+        }
+
+        th, td {
+            padding: 0.75rem;
+            text-align: left;
+            border: 1px solid var(--border);
+        }
+
+        th { background: var(--bg-card); color: var(--accent); }
+        tr:hover { background: var(--bg-card); }
+
+        .issue-card {
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 0.5rem 0;
+            border-left: 4px solid var(--accent-red);
+        }
+
+        .issue-card.warning { border-left-color: var(--accent-yellow); }
+        .issue-card.info { border-left-color: var(--accent); }
+
+        .issue-title {
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+        }
+
+        .issue-location {
+            font-family: monospace;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        code {
+            background: var(--bg-card);
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            font-family: 'SF Mono', monospace;
+            font-size: 0.9rem;
+        }
+
+        pre {
+            background: var(--bg-card);
+            padding: 1rem;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+
+        pre code {
+            background: transparent;
+            padding: 0;
+        }
+
+        .component-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+
+        .component-card {
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 1rem;
+            border: 1px solid var(--border);
+        }
+
+        .component-card h4 {
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 1rem;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: var(--accent);
+        }
+
+        .stat-label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .connection-map {
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+        }
+
+        .connection-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin: 0.5rem 0;
+            padding: 0.5rem;
+            border-radius: 4px;
+        }
+
+        .connection-row:hover {
+            background: var(--bg-secondary);
+        }
+
+        .conn-source, .conn-target {
+            background: var(--bg-secondary);
+            padding: 0.25rem 0.75rem;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.85rem;
+        }
+
+        .conn-source { border: 1px solid var(--accent-green); }
+        .conn-target { border: 1px solid var(--accent-purple); }
+
+        .conn-via {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.5rem;
+        }
+
+        .tab {
+            padding: 0.5rem 1rem;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            border-radius: 4px 4px 0 0;
+        }
+
+        .tab:hover { color: var(--text-primary); }
+        .tab.active { color: var(--accent); border-bottom: 2px solid var(--accent); }
+
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        .legend {
+            display: flex;
+            gap: 1.5rem;
+            padding: 1rem;
+            background: var(--bg-card);
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.85rem;
+        }
+
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .legend-dot.entry { background: var(--accent-green); }
+        .legend-dot.skill { background: var(--accent); }
+        .legend-dot.output { background: var(--accent-purple); }
+        .legend-dot.hitl { background: var(--accent-yellow); }
+        .legend-dot.error { background: var(--accent-red); }
+
+        .tree {
+            font-family: monospace;
+            background: var(--bg-card);
+            padding: 1rem;
+            border-radius: 8px;
+            white-space: pre;
+            overflow-x: auto;
+        }
+
+        .collapsible {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .collapsible:before {
+            content: '+ ';
+            color: var(--accent);
+        }
+
+        .collapsible.open:before {
+            content: '- ';
+        }
+
+        .collapsible-content {
+            display: none;
+            padding-left: 1.5rem;
+        }
+
+        .collapsible.open + .collapsible-content {
+            display: block;
+        }
+
+        @media (max-width: 768px) {
+            .header-content { flex-direction: column; gap: 1rem; }
+            .nav { flex-wrap: wrap; justify-content: center; }
+            .container { padding: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <div>
+                <h1>ARIA Framework Review Guide</h1>
+                <div class="subtitle">Complete System Documentation & Audit | v1.0 | 2026-01-15</div>
+            </div>
+            <nav class="nav">
+                <a href="#overview" class="active">Overview</a>
+                <a href="#architecture">Architecture</a>
+                <a href="#skills">Skills</a>
+                <a href="#scripts">Scripts</a>
+                <a href="#workflows">Workflows</a>
+                <a href="#issues">Issues</a>
+            </nav>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- OVERVIEW SECTION -->
+        <section id="overview">
+            <h2>Framework Overview</h2>
+
+            <div class="stat-grid">
+                <div class="stat-card">
+                    <div class="stat-value">24</div>
+                    <div class="stat-label">Shell Scripts</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">13</div>
+                    <div class="stat-label">Skills</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">9</div>
+                    <div class="stat-label">Commands</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">2</div>
+                    <div class="stat-label">Agents</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">11K+</div>
+                    <div class="stat-label">Lines of Code</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">18</div>
+                    <div class="stat-label">Critical Issues</div>
+                </div>
+            </div>
+
+            <h3>Assessment Summary</h3>
+            <table>
+                <tr>
+                    <th>Category</th>
+                    <th>Grade</th>
+                    <th>Status</th>
+                    <th>Notes</th>
+                </tr>
+                <tr>
+                    <td>Architecture</td>
+                    <td><span class="grade-badge grade-b">B+</span></td>
+                    <td>Good</td>
+                    <td>Solid design, two entry points well-defined</td>
+                </tr>
+                <tr>
+                    <td>Documentation</td>
+                    <td><span class="grade-badge grade-a">A-</span></td>
+                    <td>Good</td>
+                    <td>Comprehensive but some gaps with implementation</td>
+                </tr>
+                <tr>
+                    <td>Cross-Platform</td>
+                    <td><span class="grade-badge grade-c">C</span></td>
+                    <td>Needs Work</td>
+                    <td>Major Windows compatibility issues</td>
+                </tr>
+                <tr>
+                    <td>Error Handling</td>
+                    <td><span class="grade-badge grade-c">C+</span></td>
+                    <td>Needs Work</td>
+                    <td>Inconsistent, many silent failures</td>
+                </tr>
+                <tr>
+                    <td>Security</td>
+                    <td><span class="grade-badge grade-b">B-</span></td>
+                    <td>Moderate</td>
+                    <td>Good intentions, implementation gaps</td>
+                </tr>
+                <tr>
+                    <td>Testing</td>
+                    <td><span class="grade-badge grade-d">D</span></td>
+                    <td>Critical</td>
+                    <td>No test suite for framework itself</td>
+                </tr>
+                <tr>
+                    <td>Session Tracking</td>
+                    <td><span class="grade-badge grade-b">B</span></td>
+                    <td>Functional</td>
+                    <td>Works but missing key features</td>
+                </tr>
+            </table>
+        </section>
+
+        <!-- ARCHITECTURE SECTION -->
+        <section id="architecture">
+            <h2>System Architecture</h2>
+
+            <h3>Entry Points</h3>
+            <div class="legend">
+                <div class="legend-item"><div class="legend-dot entry"></div>Entry Point</div>
+                <div class="legend-item"><div class="legend-dot skill"></div>Skill/Script</div>
+                <div class="legend-item"><div class="legend-dot output"></div>Output/State</div>
+                <div class="legend-item"><div class="legend-dot hitl"></div>HITL Checkpoint</div>
+                <div class="legend-item"><div class="legend-dot error"></div>Error Handler</div>
+            </div>
+
+            <h4>External Mode (ralph.sh)</h4>
+            <div class="flow-diagram">
+                <div class="flow-node entry">ralph.sh</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">preflight_check</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node hitl">HITL: Plan?</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node skill">planner.sh</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">run_loop</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node skill">claude CLI</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">safety_check</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node output">progress.txt</div>
+            </div>
+
+            <h4>Hybrid Mode (CLAUDE.md + hooks)</h4>
+            <div class="flow-diagram">
+                <div class="flow-node entry">Claude Code</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">settings.json</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node skill">PreToolUse Hook</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node skill">aria-rails.sh</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node hitl">Safety Check</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">Tool Execution</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node skill">PostToolUse</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node output">signals.jsonl</div>
+            </div>
+
+            <h3>Directory Structure</h3>
+            <div class="tree">AgentFramework/
+├── CLAUDE.md          # Main entry point for Claude Code
+├── README.md          # Framework overview
+├── .aria/             # Core framework
+│   ├── Core Scripts
+│   │   ├── verify.sh           # Verification gate
+│   │   ├── verify-executor.sh  # Advanced verification
+│   │   ├── aria-engine.sh      # Main orchestrator
+│   │   ├── common.sh           # Shared utilities
+│   │   ├── git-ops.sh          # Git operations
+│   │   ├── hitl.sh             # Human-in-the-loop
+│   │   ├── model-selector.sh   # Model + token tracking
+│   │   ├── agent-runner.sh     # Task execution
+│   │   ├── design-notes.sh     # Reasoning logger
+│   │   ├── discover.sh         # Codebase analysis
+│   │   └── pause.sh            # Session control
+│   │
+│   ├── skills/        # 13 skill definitions
+│   │   ├── planning.md
+│   │   ├── executing.md
+│   │   ├── debugging.md
+│   │   ├── discovery.md
+│   │   ├── tdd.md
+│   │   ├── brainstorming.md
+│   │   ├── prototyping.md
+│   │   ├── researcher.md
+│   │   ├── slide-generation.md
+│   │   ├── report-writer.md
+│   │   ├── tracking.md
+│   │   ├── context-refresh.md
+│   │   ├── REGISTRY.md
+│   │   └── COMPOSITION.md
+│   │
+│   ├── ralph/         # Autonomous loop
+│   │   ├── ralph.sh
+│   │   ├── prompt.md
+│   │   └── prd.example.json
+│   │
+│   ├── planner/       # Planning agent
+│   │   ├── planner.sh
+│   │   └── prompt.md
+│   │
+│   ├── scripts/       # Utilities
+│   │   ├── serve-dashboard.py
+│   │   ├── generate-slides.py
+│   │   ├── setup-project.sh
+│   │   ├── setup-project.bat
+│   │   ├── trace-view.sh
+│   │   ├── query-decisions.sh
+│   │   └── reconcile.sh
+│   │
+│   ├── dashboard/     # Web UI
+│   │   └── index.html
+│   │
+│   ├── hooks/         # Git hooks
+│   │   ├── install.sh
+│   │   ├── commit-msg
+│   │   ├── pre-commit
+│   │   └── pre-push
+│   │
+│   ├── rails/         # Safety configuration
+│   │   └── safety.json
+│   │
+│   ├── state/         # Runtime state
+│   │   ├── current-plan.json
+│   │   ├── progress.json
+│   │   ├── decisions.jsonl
+│   │   └── signals.jsonl
+│   │
+│   └── docs/          # Documentation
+│       └── (8 files)
+│
+├── .claude/           # Claude Code integration
+│   ├── settings.json  # Hook configuration
+│   ├── commands/      # Slash commands (9 files)
+│   ├── hooks/         # Hook scripts
+│   │   ├── aria
+│   │   ├── aria-rails.sh
+│   │   └── stop-verify.sh
+│   └── agents/        # Subagent definitions
+│       ├── code-simplifier.md
+│       └── verify-app.md
+│
+└── src/               # Example code
+    ├── counter.js
+    └── counter.test.js</div>
+
+            <h3>Component Connections</h3>
+            <div class="connection-map">
+                <div class="connection-row">
+                    <span class="conn-source">CLAUDE.md</span>
+                    <span class="conn-via">→ loads skills →</span>
+                    <span class="conn-target">.aria/skills/*.md</span>
+                </div>
+                <div class="connection-row">
+                    <span class="conn-source">settings.json</span>
+                    <span class="conn-via">→ triggers hooks →</span>
+                    <span class="conn-target">aria-rails.sh</span>
+                </div>
+                <div class="connection-row">
+                    <span class="conn-source">aria-rails.sh</span>
+                    <span class="conn-via">→ reads rules →</span>
+                    <span class="conn-target">rails/safety.json</span>
+                </div>
+                <div class="connection-row">
+                    <span class="conn-source">aria-rails.sh</span>
+                    <span class="conn-via">→ writes signals →</span>
+                    <span class="conn-target">state/signals.jsonl</span>
+                </div>
+                <div class="connection-row">
+                    <span class="conn-source">ralph.sh</span>
+                    <span class="conn-via">→ calls →</span>
+                    <span class="conn-target">planner/planner.sh</span>
+                </div>
+                <div class="connection-row">
+                    <span class="conn-source">ralph.sh</span>
+                    <span class="conn-via">→ uses →</span>
+                    <span class="conn-target">model-selector.sh</span>
+                </div>
+                <div class="connection-row">
+                    <span class="conn-source">ralph.sh</span>
+                    <span class="conn-via">→ runs →</span>
+                    <span class="conn-target">verify-executor.sh</span>
+                </div>
+                <div class="connection-row">
+                    <span class="conn-source">model-selector.sh</span>
+                    <span class="conn-via">→ writes →</span>
+                    <span class="conn-target">logs/token_usage.json</span>
+                </div>
+                <div class="connection-row">
+                    <span class="conn-source">serve-dashboard.py</span>
+                    <span class="conn-via">→ reads →</span>
+                    <span class="conn-target">state/*.jsonl</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- SKILLS SECTION -->
+        <section id="skills">
+            <h2>Skills Evaluation</h2>
+
+            <table>
+                <tr>
+                    <th>Skill</th>
+                    <th>Grade</th>
+                    <th>Size</th>
+                    <th>Completeness</th>
+                    <th>Called By</th>
+                    <th>Outputs</th>
+                    <th>Issues</th>
+                </tr>
+                <tr>
+                    <td><code>planning.md</code></td>
+                    <td><span class="grade-badge grade-a">A-</span></td>
+                    <td>9.0 KB</td>
+                    <td>95%</td>
+                    <td>User, brainstorming, mode start</td>
+                    <td>current-plan.json</td>
+                    <td>Missing complex plan examples</td>
+                </tr>
+                <tr>
+                    <td><code>executing.md</code></td>
+                    <td><span class="grade-badge grade-b">B+</span></td>
+                    <td>4.7 KB</td>
+                    <td>85%</td>
+                    <td>planning</td>
+                    <td>Code changes, commits</td>
+                    <td>Needs mode variations detail</td>
+                </tr>
+                <tr>
+                    <td><code>debugging.md</code></td>
+                    <td><span class="grade-badge grade-b">B</span></td>
+                    <td>6.3 KB</td>
+                    <td>80%</td>
+                    <td>executing (on failure)</td>
+                    <td>Fix, design-notes</td>
+                    <td>Missing troubleshooting trees</td>
+                </tr>
+                <tr>
+                    <td><code>discovery.md</code></td>
+                    <td><span class="grade-badge grade-b">B-</span></td>
+                    <td>4.1 KB</td>
+                    <td>75%</td>
+                    <td>User, modify flow</td>
+                    <td>project-context.md</td>
+                    <td>Light on implementation details</td>
+                </tr>
+                <tr>
+                    <td><code>tdd.md</code></td>
+                    <td><span class="grade-badge grade-a">A</span></td>
+                    <td>13 KB</td>
+                    <td>98%</td>
+                    <td>executing, planning</td>
+                    <td>Tests + implementation</td>
+                    <td>Exemplary - best in collection</td>
+                </tr>
+                <tr>
+                    <td><code>brainstorming.md</code></td>
+                    <td><span class="grade-badge grade-b">B+</span></td>
+                    <td>5.8 KB</td>
+                    <td>85%</td>
+                    <td>User, research flow</td>
+                    <td>IDEA.md</td>
+                    <td>Well structured</td>
+                </tr>
+                <tr>
+                    <td><code>prototyping.md</code></td>
+                    <td><span class="grade-badge grade-b">B</span></td>
+                    <td>15 KB</td>
+                    <td>80%</td>
+                    <td>brainstorming</td>
+                    <td>.aria/prototypes/*</td>
+                    <td>Long but thorough</td>
+                </tr>
+                <tr>
+                    <td><code>researcher.md</code></td>
+                    <td><span class="grade-badge grade-c">C+</span></td>
+                    <td>3.6 KB</td>
+                    <td>70%</td>
+                    <td>User</td>
+                    <td>concepts.json, IDEA.md</td>
+                    <td><strong>TOO LIGHT</strong> - needs expansion</td>
+                </tr>
+                <tr>
+                    <td><code>slide-generation.md</code></td>
+                    <td><span class="grade-badge grade-c">C</span></td>
+                    <td>4.6 KB</td>
+                    <td>65%</td>
+                    <td>researcher</td>
+                    <td>FOCUS.md, slides.pptx</td>
+                    <td><strong>INCOMPLETE</strong> - missing templates</td>
+                </tr>
+                <tr>
+                    <td><code>report-writer.md</code></td>
+                    <td><span class="grade-badge grade-b">B</span></td>
+                    <td>6.3 KB</td>
+                    <td>80%</td>
+                    <td>Workflow end</td>
+                    <td>REPORT.md</td>
+                    <td>Solid but script missing</td>
+                </tr>
+                <tr>
+                    <td><code>tracking.md</code></td>
+                    <td><span class="grade-badge grade-b">B+</span></td>
+                    <td>9.0 KB</td>
+                    <td>85%</td>
+                    <td>executing (parallel)</td>
+                    <td>progress.json</td>
+                    <td>Missing some tracking features</td>
+                </tr>
+                <tr>
+                    <td><code>context-refresh.md</code></td>
+                    <td><span class="grade-badge grade-c">C+</span></td>
+                    <td>4.0 KB</td>
+                    <td>70%</td>
+                    <td>Long sessions</td>
+                    <td>Handoff summary</td>
+                    <td><strong>UNDERDEVELOPED</strong></td>
+                </tr>
+            </table>
+
+            <h3>Skill Importance & Grading Criteria</h3>
+            <div class="component-grid">
+                <div class="component-card">
+                    <h4>Why Skills Matter</h4>
+                    <p>Skills define HOW Claude should behave. Incomplete skills lead to inconsistent behavior, missed HITL checkpoints, and poor output quality.</p>
+                </div>
+                <div class="component-card">
+                    <h4>Professional Standard</h4>
+                    <p>Professional skills should include: clear triggers, explicit outputs, mode variations, error handling, examples, and integration points.</p>
+                </div>
+                <div class="component-card">
+                    <h4>Underdeveloped Skills Risk</h4>
+                    <p><code>researcher.md</code>, <code>slide-generation.md</code>, and <code>context-refresh.md</code> are too light and may lead to unpredictable AI behavior.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- SCRIPTS SECTION -->
+        <section id="scripts">
+            <h2>Script Analysis</h2>
+
+            <h3>Core Scripts</h3>
+            <table>
+                <tr>
+                    <th>Script</th>
+                    <th>Size</th>
+                    <th>Purpose</th>
+                    <th>Windows</th>
+                    <th>Issues</th>
+                </tr>
+                <tr>
+                    <td><code>verify.sh</code></td>
+                    <td>7.5 KB</td>
+                    <td>Verification gate</td>
+                    <td>❌</td>
+                    <td>Missing pipefail, weak secret regex</td>
+                </tr>
+                <tr>
+                    <td><code>verify-executor.sh</code></td>
+                    <td>23 KB</td>
+                    <td>Advanced verification</td>
+                    <td>❌</td>
+                    <td>URL injection risk, pipe exit code</td>
+                </tr>
+                <tr>
+                    <td><code>aria-engine.sh</code></td>
+                    <td>22 KB</td>
+                    <td>Main orchestrator</td>
+                    <td>❌</td>
+                    <td>Not integrated with hooks</td>
+                </tr>
+                <tr>
+                    <td><code>ralph.sh</code></td>
+                    <td>28 KB</td>
+                    <td>Autonomous loop</td>
+                    <td>❌</td>
+                    <td>Bash 4+ required, error swallowing</td>
+                </tr>
+                <tr>
+                    <td><code>model-selector.sh</code></td>
+                    <td>24 KB</td>
+                    <td>Model + token tracking</td>
+                    <td>❌</td>
+                    <td>Token estimation inaccurate</td>
+                </tr>
+                <tr>
+                    <td><code>hitl.sh</code></td>
+                    <td>18 KB</td>
+                    <td>Human-in-the-loop</td>
+                    <td>❌</td>
+                    <td>Inconsistent return codes</td>
+                </tr>
+                <tr>
+                    <td><code>git-ops.sh</code></td>
+                    <td>17 KB</td>
+                    <td>Git checkpoint/rollback</td>
+                    <td>⚠️</td>
+                    <td>mktemp differences</td>
+                </tr>
+                <tr>
+                    <td><code>aria-rails.sh</code></td>
+                    <td>15 KB</td>
+                    <td>Safety rails executor</td>
+                    <td>❌</td>
+                    <td>eval usage, error suppression</td>
+                </tr>
+            </table>
+
+            <h3>Critical Code Issues</h3>
+
+            <div class="issue-card">
+                <div class="issue-title">Bash 4+ Associative Arrays</div>
+                <div class="issue-location">ralph.sh:41-42</div>
+                <pre><code>declare -A story_failures</code></pre>
+                <p>Windows Git Bash ships with bash 3.x. Associative arrays require bash 4+.</p>
+                <p><strong>Fix:</strong> Use file-based storage or simple indexed arrays.</p>
+            </div>
+
+            <div class="issue-card">
+                <div class="issue-title">Error Swallowing Pattern</div>
+                <div class="issue-location">ralph.sh:483</div>
+                <pre><code>output=$(echo "$full_prompt" | claude --dangerously-skip-permissions -p $model_flag 2>&1 | tee /dev/stderr) || true</code></pre>
+                <p>The <code>|| true</code> swallows ALL errors. No way to detect Claude crash vs success.</p>
+                <p><strong>Fix:</strong> Use <code>set -o pipefail</code> and proper error handling.</p>
+            </div>
+
+            <div class="issue-card warning">
+                <div class="issue-title">Token Estimation Inaccurate</div>
+                <div class="issue-location">model-selector.sh:485-486</div>
+                <pre><code>input_tokens=$(( ${#full_prompt} / 4 ))
+output_tokens=$(( ${#output} / 4 ))</code></pre>
+                <p>Rough estimate. Claude tokenizer averages ~3.5 chars/token but varies by content.</p>
+                <p><strong>Fix:</strong> Use tiktoken library or Claude's tokenizer API.</p>
+            </div>
+
+            <div class="issue-card warning">
+                <div class="issue-title">URL Injection Risk</div>
+                <div class="issue-location">verify-executor.sh:29</div>
+                <pre><code>APP_URL="${APP_URL:-http://localhost:3000}"
+# Later used in:
+curl -s -o /dev/null -w "%{http_code}" "$APP_URL"</code></pre>
+                <p>If APP_URL contains shell metacharacters, could inject commands.</p>
+                <p><strong>Fix:</strong> Validate URL format before use.</p>
+            </div>
+        </section>
+
+        <!-- WORKFLOWS SECTION -->
+        <section id="workflows">
+            <h2>Workflow Diagrams</h2>
+
+            <h3>Build Workflow (New Project)</h3>
+            <div class="flow-diagram">
+                <div class="flow-node entry">User Request</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node skill">brainstorming</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node skill">prototyping</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node skill">planning</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node hitl">HITL: Approve?</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node skill">executing</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">verify.sh</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node output">Git Commit</div>
+            </div>
+
+            <h3>Modify Workflow (Bug Fix)</h3>
+            <div class="flow-diagram">
+                <div class="flow-node entry">Bug Report</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node skill">debugging</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node skill">planning</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node skill">executing</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">verify.sh</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node output">Git Commit</div>
+            </div>
+
+            <h3>Research Workflow</h3>
+            <div class="flow-diagram">
+                <div class="flow-node entry">Paper/Article</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node skill">researcher</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node skill">brainstorming</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node hitl">HITL: Slides?</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node skill">slide-generation</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node hitl">HITL: Prototype?</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node skill">prototyping</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node skill">report-writer</div>
+            </div>
+
+            <h3>Ralph Autonomous Loop</h3>
+            <div class="flow-diagram">
+                <div class="flow-node entry">PRD.json</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">preflight_check</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">get_next_story</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node skill">model-selector</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node skill">claude CLI</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">safety_check</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node error">3 fails?</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node hitl">HITL: Escalate</div>
+            </div>
+
+            <h3>Verification Gate Flow</h3>
+            <div class="flow-diagram">
+                <div class="flow-node entry">Task Complete</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">verify.sh</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">Secret Check</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">npm test</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">tsc --noEmit</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">npm run lint</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node output">PASS/FAIL</div>
+            </div>
+        </section>
+
+        <!-- ISSUES SECTION -->
+        <section id="issues">
+            <h2>Issue Tracker</h2>
+
+            <div class="tabs">
+                <button class="tab active" onclick="showTab('critical')">Critical (18)</button>
+                <button class="tab" onclick="showTab('important')">Important (24)</button>
+                <button class="tab" onclick="showTab('parking')">Parking Lot (12)</button>
+            </div>
+
+            <div id="critical" class="tab-content active">
+                <h3>FIX NOW - Block Production Use</h3>
+                <table>
+                    <tr><th>#</th><th>Issue</th><th>File</th><th>Fix</th></tr>
+                    <tr><td>1</td><td>Bash 4+ associative arrays</td><td>ralph.sh</td><td>Use file-based storage</td></tr>
+                    <tr><td>2</td><td><code>set -o pipefail</code> missing</td><td>verify.sh, verify-executor.sh</td><td>Add to all scripts</td></tr>
+                    <tr><td>3</td><td>Windows .sh files unusable</td><td>All .sh</td><td>Create .bat wrappers</td></tr>
+                    <tr><td>4</td><td>Token counting is estimate</td><td>model-selector.sh</td><td>Use proper tokenizer</td></tr>
+                    <tr><td>5</td><td>No test suite</td><td>Framework-wide</td><td>Add basic test coverage</td></tr>
+                    <tr><td>6</td><td>Error swallowing <code>|| true</code></td><td>ralph.sh:483</td><td>Proper error handling</td></tr>
+                    <tr><td>7</td><td>Race conditions on state files</td><td>Multiple</td><td>Add file locking</td></tr>
+                    <tr><td>8</td><td>Missing requirements.txt</td><td>Scripts dir</td><td>Create with dependencies</td></tr>
+                    <tr><td>9</td><td><code>eval</code> usage in rails</td><td>aria-rails.sh</td><td>Safer command execution</td></tr>
+                    <tr><td>10</td><td>URL injection risk</td><td>verify-executor.sh</td><td>Input validation</td></tr>
+                    <tr><td>11</td><td>Dashboard XSS potential</td><td>index.html</td><td>Sanitize user content</td></tr>
+                    <tr><td>12</td><td>HITL not writing decisions</td><td>hitl.sh</td><td>Fix decision logging</td></tr>
+                    <tr><td>13</td><td>Context refresh not implemented</td><td>Multiple</td><td>Implement or remove docs</td></tr>
+                    <tr><td>14</td><td>Session start/end not tracked</td><td>model-selector.sh</td><td>Add timestamps</td></tr>
+                    <tr><td>15</td><td>Skill touch not logged</td><td>Hooks</td><td>Add skill load signals</td></tr>
+                    <tr><td>16</td><td>HITL count not tracked</td><td>hitl.sh</td><td>Add counter</td></tr>
+                    <tr><td>17</td><td>No agent decision summary</td><td>report-writer</td><td>Implement</td></tr>
+                    <tr><td>18</td><td>verify.sh exit code lost</td><td>verify.sh</td><td>Fix pipe handling</td></tr>
+                </table>
+            </div>
+
+            <div id="important" class="tab-content">
+                <h3>FIX LATER - Important but Not Blocking</h3>
+                <table>
+                    <tr><th>#</th><th>Issue</th><th>File</th><th>Fix</th></tr>
+                    <tr><td>1</td><td>Color codes on Windows</td><td>common.sh</td><td>Add terminal detection</td></tr>
+                    <tr><td>2</td><td>Inconsistent error messages</td><td>Multiple</td><td>Standardize format</td></tr>
+                    <tr><td>3</td><td>Silent 2>/dev/null</td><td>47 occurrences</td><td>Log to debug file</td></tr>
+                    <tr><td>4</td><td>researcher.md too light</td><td>Skills</td><td>Expand documentation</td></tr>
+                    <tr><td>5</td><td>slide-generation.md incomplete</td><td>Skills</td><td>Add examples, templates</td></tr>
+                    <tr><td>6</td><td>context-refresh.md underdeveloped</td><td>Skills</td><td>Expand significantly</td></tr>
+                    <tr><td>7</td><td>No skill validation on load</td><td>Hooks</td><td>Add file existence check</td></tr>
+                    <tr><td>8</td><td>PRD format not validated</td><td>ralph.sh</td><td>Add JSON schema</td></tr>
+                    <tr><td>9</td><td>Budget can go negative</td><td>model-selector.sh</td><td>Add hard stop</td></tr>
+                    <tr><td>10</td><td>Dashboard data not persisted</td><td>serve-dashboard.py</td><td>Add export function</td></tr>
+                    <tr><td>11</td><td>No rollback on failed verification</td><td>git-ops.sh</td><td>Auto-rollback</td></tr>
+                    <tr><td>12</td><td>Mode not enforced by code</td><td>Multiple</td><td>Add enforcement</td></tr>
+                </table>
+            </div>
+
+            <div id="parking" class="tab-content">
+                <h3>PARKING LOT - Future Enhancements</h3>
+                <table>
+                    <tr><th>#</th><th>Feature</th><th>Description</th><th>Priority</th></tr>
+                    <tr><td>1</td><td>Whisper integration</td><td>Voice input for HITL</td><td>LOW</td></tr>
+                    <tr><td>2</td><td>Visual diff in dashboard</td><td>Show code changes</td><td>MEDIUM</td></tr>
+                    <tr><td>3</td><td>Multi-agent coordination</td><td>Parallel subagents</td><td>LOW</td></tr>
+                    <tr><td>4</td><td>Custom model endpoints</td><td>Support other LLMs</td><td>MEDIUM</td></tr>
+                    <tr><td>5</td><td>Real-time dashboard</td><td>WebSocket updates</td><td>LOW</td></tr>
+                    <tr><td>6</td><td>Skill marketplace</td><td>Share custom skills</td><td>LOW</td></tr>
+                    <tr><td>7</td><td>Git bisect integration</td><td>Auto bug finding</td><td>MEDIUM</td></tr>
+                    <tr><td>8</td><td>PR template generation</td><td>Auto-fill descriptions</td><td>MEDIUM</td></tr>
+                    <tr><td>9</td><td>Dependency graph</td><td>Show skill deps</td><td>LOW</td></tr>
+                    <tr><td>10</td><td>Cost prediction</td><td>Estimate before run</td><td>MEDIUM</td></tr>
+                    <tr><td>11</td><td>Team collaboration</td><td>Multi-user sessions</td><td>LOW</td></tr>
+                    <tr><td>12</td><td>Audit trail export</td><td>Compliance reports</td><td>MEDIUM</td></tr>
+                </table>
+            </div>
+        </section>
+
+        <!-- TRACKING SECTION -->
+        <section id="tracking">
+            <h2>Session Tracking Analysis</h2>
+
+            <h3>Current Capabilities</h3>
+            <div class="component-grid">
+                <div class="component-card">
+                    <h4>Token Usage ✓</h4>
+                    <p>Tracked in <code>logs/token_usage.json</code></p>
+                    <p>By model (opus/sonnet/haiku)</p>
+                    <p><strong>Issue:</strong> Estimate only (chars/4)</p>
+                </div>
+                <div class="component-card">
+                    <h4>Cost Tracking ✓</h4>
+                    <p>Input/output costs calculated</p>
+                    <p>Budget tracking with alerts</p>
+                    <p><strong>Issue:</strong> Rates hardcoded</p>
+                </div>
+                <div class="component-card">
+                    <h4>Learning System ✓</h4>
+                    <p>Success/fail rates by task type</p>
+                    <p>Model selection adapts over time</p>
+                    <p><strong>Issue:</strong> Unbounded growth</p>
+                </div>
+            </div>
+
+            <h3>Missing Tracking Features</h3>
+            <table>
+                <tr><th>Feature</th><th>Priority</th><th>Status</th></tr>
+                <tr><td>Session start/end timestamps</td><td>HIGH</td><td>❌ Not implemented</td></tr>
+                <tr><td>Skill touch tracking</td><td>HIGH</td><td>❌ Not implemented</td></tr>
+                <tr><td>HITL interaction count</td><td>HIGH</td><td>❌ Not implemented</td></tr>
+                <tr><td>Agent decision logging</td><td>MEDIUM</td><td>⚠️ Partial (decisions.jsonl exists but not always written)</td></tr>
+                <tr><td>Per-session cost breakdown</td><td>MEDIUM</td><td>❌ Only aggregate</td></tr>
+                <tr><td>Prompt/response size history</td><td>LOW</td><td>❌ Not implemented</td></tr>
+            </table>
+        </section>
+    </div>
+
+    <script>
+        function showTab(tabId) {
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+
+            // Show selected tab
+            document.getElementById(tabId).classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        // Smooth scroll for nav links
+        document.querySelectorAll('.nav a').forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                const target = document.querySelector(link.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({ behavior: 'smooth' });
+                }
+                // Update active nav
+                document.querySelectorAll('.nav a').forEach(l => l.classList.remove('active'));
+                link.classList.add('active');
+            });
+        });
+
+        // Highlight current section on scroll
+        window.addEventListener('scroll', () => {
+            const sections = document.querySelectorAll('section');
+            let current = '';
+
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop;
+                if (scrollY >= sectionTop - 200) {
+                    current = section.getAttribute('id');
+                }
+            });
+
+            document.querySelectorAll('.nav a').forEach(link => {
+                link.classList.remove('active');
+                if (link.getAttribute('href') === '#' + current) {
+                    link.classList.add('active');
+                }
+            });
+        });
+    </script>
+</body>
+</html>
