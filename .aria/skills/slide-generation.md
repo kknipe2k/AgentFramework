@@ -100,36 +100,52 @@ Generate slides via:
 
 ## NotebookLM Path
 
-**Setup (one-time):**
+**IMPORTANT: Use the generate-slides.py script - do NOT implement manually.**
+
+**Run this command:**
+```bash
+python .aria/scripts/generate-slides.py \
+  --focus .aria/outputs/FOCUS.md \
+  --idea .aria/docs/IDEA.md \
+  --sources sources/[original-paper.pdf] \
+  --method nblm
+```
+
+**What the script does:**
+1. Creates a new NotebookLM notebook
+2. Uploads FOCUS.md, IDEA.md, and original paper
+3. Sends the slide generation prompt
+4. Starts slide deck generation
+5. Returns the notebook URL
+
+**Expected output:**
+```
+============================================================
+SLIDE GENERATION STARTED
+============================================================
+
+Notebook URL: https://notebooklm.google.com/notebook/{id}
+
+Next steps:
+  1. Open the URL above in your browser
+  2. Wait 5-10 minutes for slide deck to generate
+  3. Download from NotebookLM when ready
+============================================================
+```
+
+**DO NOT:**
+- Manually create files and tell user to upload them
+- Try to implement the NotebookLM API yourself
+- Skip running the script
+
+**Setup (one-time, if not done):**
 ```bash
 pip install "notebooklm-py[browser]"
 playwright install chromium
 notebooklm login  # Opens browser for Google auth
 ```
 
-**API Usage:**
-```python
-from notebooklm import NotebookLMClient
-
-async with await NotebookLMClient.from_storage() as client:
-    # 1. Create notebook
-    notebook = await client.notebooks.create("Research Slides")
-
-    # 2. Add sources
-    await client.sources.add_file(notebook.id, "FOCUS.md")
-    await client.sources.add_file(notebook.id, "IDEA.md")
-    await client.sources.add_file(notebook.id, "paper.pdf")
-
-    # 3. Generate slide deck with prompt
-    await client.chat.ask(notebook.id, SLIDES_PROMPT)
-    status = await client.artifacts.generate_slide_deck(notebook.id)
-    await client.artifacts.wait_for_completion(notebook.id, status.task_id)
-
-    # 4. Download
-    await client.artifacts.download_slide_deck(notebook.id, ".aria/outputs/")
-```
-
-**Output:** `.aria/outputs/slides-[topic]-[date].pdf`
+**Output:** NotebookLM URL (user downloads slides when ready)
 
 ---
 
