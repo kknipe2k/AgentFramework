@@ -426,13 +426,64 @@ Added `_log_hitl_signal()` function with full traceability:
 
 ---
 
-### Issue #13: Context Refresh Not Implemented ⏳ PENDING
+### Issue #13: Context Refresh Not Implemented ✅ FIXED
 
 | Field | Value |
 |-------|-------|
-| **Status** | ⏳ PENDING |
-| **Files** | Multiple |
-| **Impact** | Documented feature doesn't exist |
+| **Status** | ✅ FIXED |
+| **File** | `.aria/context-refresh.sh` |
+| **Commit** | (pending - this session) |
+| **Date Fixed** | 2026-01-15 |
+
+**Original Problem:**
+CLAUDE.md documents context refresh as a feature (STANDARD+, FULL, FULL+ modes) but no implementation existed. The skill file `.aria/skills/context-refresh.md` was documentation only.
+
+**Solution Implemented:**
+Created `context-refresh.sh` script with full functionality:
+
+**Commands:**
+- `save [name]` - Save checkpoint state to JSON
+- `handoff [name]` - Generate markdown handoff summary
+- `list` - Show available checkpoints and handoffs
+- `load` - Display checkpoint details for resuming
+- `cleanup [n]` - Keep only last N handoffs (default: 3)
+
+**Checkpoint State Saved:**
+```json
+{
+  "refresh_point": "after_phase_1",
+  "timestamp": "ISO-8601",
+  "plan_id": "plan-YYYYMMDD-HHMMSS",
+  "progress": {
+    "completed_tasks": ["1", "2"],
+    "current_task": "3",
+    "remaining_tasks": ["4", "5"],
+    "total": 5,
+    "completed": 2
+  },
+  "key_decisions": ["decision 1", "decision 2"],
+  "files_modified": ["src/file.ts"],
+  "blockers": [],
+  "notes": ""
+}
+```
+
+**Handoff Summary Generated:**
+- Project name and branch
+- Progress (X/Y tasks)
+- Key files modified (from git)
+- Key decisions (from decisions.jsonl)
+- Don't-touch areas (from project-context.md)
+- Next action to continue
+
+**Traceability:**
+All operations logged via `emit_signal()`:
+- `context_checkpoint_saved` - When checkpoint is saved
+- `context_handoff_created` - When handoff is generated
+- `context_checkpoint_loaded` - When checkpoint is loaded
+
+**Tests Added:**
+- `test-context-refresh.sh` with 10 test cases
 
 ---
 
