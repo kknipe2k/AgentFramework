@@ -109,67 +109,64 @@ def extract_title_from_idea(idea_path: Path) -> str:
 async def generate_nblm(focus_path: Path, idea_path: Path, source_paths: list) -> Path:
     """Generate slides via NotebookLM."""
     try:
-        from notebooklm import NotebookLM
+        from notebooklm import NotebookLMClient
     except ImportError:
         print("ERROR: notebooklm-py not installed")
-        print("Install with: pip install notebooklm-py")
+        print("Install with: pip install \"notebooklm-py[browser]\"")
+        print("Then run: playwright install chromium")
+        print("Then run: notebooklm login")
         print("Falling back to pptx...")
         return await generate_pptx(focus_path, idea_path, source_paths)
-    
+
     title = extract_title_from_idea(idea_path)
     timestamp = datetime.now().strftime('%Y%m%d-%H%M')
-    
-    async with NotebookLM() as client:
-        # Create notebook
-        print(f"Creating NotebookLM notebook: {title}")
-        notebook = await client.notebooks.create(f"Slides: {title}")
-        
-        # Add sources
-        print("Adding FOCUS.md...")
-        await client.sources.add_text(
-            notebook.id, 
-            focus_path.read_text(), 
-            "FOCUS - Outline"
-        )
-        
-        print("Adding IDEA.md...")
-        await client.sources.add_text(
-            notebook.id, 
-            idea_path.read_text(), 
-            "IDEA - Summary"
-        )
-        
-        for source in source_paths:
-            source_path = Path(source)
-            if source_path.exists():
-                print(f"Adding {source_path.name}...")
-                if source_path.suffix == '.pdf':
+
+    try:
+        async with await NotebookLMClient.from_storage() as client:
+            # Create notebook
+            print(f"Creating NotebookLM notebook: {title}")
+            notebook = await client.notebooks.create(f"Slides: {title}")
+
+            # Add sources - use add_url for text content or add_file for files
+            print("Adding FOCUS.md content...")
+            # Write temp file for FOCUS content
+            focus_temp = OUTPUTS_DIR / f"_temp_focus_{timestamp}.md"
+            focus_temp.write_text(focus_path.read_text())
+            await client.sources.add_file(notebook.id, str(focus_temp))
+
+            print("Adding IDEA.md content...")
+            idea_temp = OUTPUTS_DIR / f"_temp_idea_{timestamp}.md"
+            idea_temp.write_text(idea_path.read_text())
+            await client.sources.add_file(notebook.id, str(idea_temp))
+
+            for source in source_paths:
+                source_path = Path(source)
+                if source_path.exists():
+                    print(f"Adding {source_path.name}...")
                     await client.sources.add_file(notebook.id, str(source_path))
-                elif source_path.suffix == '.md':
-                    await client.sources.add_text(
-                        notebook.id, 
-                        source_path.read_text(),
-                        source_path.stem
-                    )
-                else:
-                    await client.sources.add_text(
-                        notebook.id,
-                        source_path.read_text(),
-                        source_path.name
-                    )
-        
-        # Generate slides
-        print("Generating slides (this may take a minute)...")
-        await client.chat.send(notebook.id, SLIDES_PROMPT)
-        status = await client.artifacts.generate_slides(notebook.id)
-        await client.artifacts.wait_for_completion(notebook.id, status.task_id)
-        
-        # Download
-        output_path = OUTPUTS_DIR / f"slides-{timestamp}.pdf"
-        await client.artifacts.download_slides(notebook.id, str(OUTPUTS_DIR))
-        
-        print(f"Slides saved to: {output_path}")
-        return output_path
+
+            # Generate slides
+            print("Generating slides (this may take a minute)...")
+            await client.chat.ask(notebook.id, SLIDES_PROMPT)
+            status = await client.artifacts.generate_slides(notebook.id)
+            await client.artifacts.wait_for_completion(notebook.id, status.task_id)
+
+            # Download
+            output_path = OUTPUTS_DIR / f"slides-{timestamp}.pdf"
+            await client.artifacts.download_slides(notebook.id, str(OUTPUTS_DIR))
+
+            # Cleanup temp files
+            focus_temp.unlink(missing_ok=True)
+            idea_temp.unlink(missing_ok=True)
+
+            print(f"Slides saved to: {output_path}")
+            return output_path
+
+    except Exception as e:
+        print(f"NotebookLM error: {e}")
+        print("Run 'notebooklm login' to authenticate, then try again.")
+        print("Falling back to pptx...")
+        return await generate_pptx(focus_path, idea_path, source_paths)
 
 
 # ============================================================
