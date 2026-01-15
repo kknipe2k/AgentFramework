@@ -28,6 +28,30 @@ vim .aria/ralph/prd.json
 tail -f .aria/ralph/progress.txt
 ```
 
+## Workspace Setup
+
+For testing and evaluation, keep ARIA pristine and create isolated project workspaces:
+
+```bash
+# Windows
+.aria\scripts\setup-project.bat SVM
+
+# Mac/Linux
+.aria/scripts/setup-project.sh SVM
+```
+
+This creates `~/aria/eval/SVM` (or `c:\aria\eval\SVM`) with:
+- Symlinks to ARIA framework files (immutable)
+- Fresh state directories (per-project)
+- Ready for your source materials
+
+**Workflow:**
+1. Clone ARIA once: `git clone ... ~/aria-test`
+2. Create project: `setup-project.sh MyResearch`
+3. Drop papers/docs into `~/aria/eval/MyResearch`
+4. Open VS Code there, run ARIA
+5. Results stay in project folder, ARIA stays clean
+
 ## Architecture
 
 ```
@@ -71,12 +95,13 @@ tail -f .aria/ralph/progress.txt
 | Document | Description |
 |----------|-------------|
 | **[User Guide](.aria/docs/USER-GUIDE.md)** | Complete usage guide - start here |
-| [Cheatsheet](.aria/docs/CHEATSHEET.md) | Quick reference |
+| [Cheatsheet](.aria/docs/CHEATSHEET.md) | Quick reference for all modes/skills |
+| [Skill Registry](.aria/skills/REGISTRY.md) | All 12 skills with triggers |
 | [Observability](.aria/docs/OBSERVABILITY.md) | Decision tracing and dashboard |
-| [Skill Registry](.aria/skills/REGISTRY.md) | Available skills |
-| [Architecture](.aria/docs/ARIA-SYSTEM-ARCHITECTURE.md) | System design and components |
-| [Boris Cherny Patterns](.aria/docs/BORIS-CHERNY-PATTERNS.md) | Verification and subagent patterns |
-| [Ralph Autonomous Loop](.aria/docs/RALPH-AUTONOMOUS-LOOP.md) | PRD-driven iteration pattern |
+| [Architecture](.aria/docs/CONCEPT-aria-architecture.md) | System design and components |
+| [Boris Cherny Patterns](.aria/docs/CONCEPT-boris-cherny-patterns.md) | Verification and subagent patterns |
+| [Ralph Autonomous Loop](.aria/docs/CONCEPT-ralph-autonomous-loop.md) | PRD-driven iteration pattern |
+| [Parking Lot](.aria/docs/PARKING-LOT.md) | Future ideas (whisper, metrics) |
 
 ## Commands
 
@@ -107,6 +132,9 @@ tail -f .aria/ralph/progress.txt
 # Dashboard & Research
 python .aria/scripts/serve-dashboard.py     # Open dashboard at :8420
 python .aria/scripts/generate-slides.py     # Generate slides from IDEA.md
+
+# Workspace Setup
+.aria/scripts/setup-project.sh <name>       # Create isolated project workspace
 ```
 
 ## IDE Integration
@@ -135,7 +163,9 @@ python .aria/scripts/generate-slides.py     # Generate slides from IDEA.md
 ├── rails/                 # YAML rail definitions
 ├── scripts/               # Utility scripts
 │   ├── serve-dashboard.py # Decision lineage dashboard
-│   └── generate-slides.py # Slide generation
+│   ├── generate-slides.py # Slide generation
+│   ├── setup-project.sh   # Workspace setup (Mac/Linux)
+│   └── setup-project.bat  # Workspace setup (Windows)
 ├── skills/                # Skill definitions
 ├── outputs/               # Generated artifacts (slides, etc.)
 ├── dashboard/             # Dashboard web UI

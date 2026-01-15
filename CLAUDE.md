@@ -134,6 +134,8 @@ Features OFF:
 5. HITL checkpoint before risky actions
 6. Commit after each verified task
 7. On 2 consecutive failures: stop and report
+8. **On completion:** Generate summary report with metrics
+9. **HITL:** "View dashboard? [y]es / [n]o / [s]ave report"
 
 ---
 
@@ -167,7 +169,9 @@ Features ON:
    - HITL if risky
    - Commit
 5. After 3 consecutive failures: escalation prompt
-6. On completion: summary report
+6. **On completion:** Full summary report with metrics comparison
+7. **HITL:** "View dashboard? [y]es / [n]o / [s]ave report"
+8. If [y]es: Launch dashboard at http://localhost:8420
 
 ---
 
@@ -197,7 +201,9 @@ Features ON:
    - Context refresh after completion
    - Epic summary report
 5. After 3 consecutive failures: escalation prompt
-6. On completion: full project report + architecture validation
+6. **On completion:** Full project report + architecture validation
+7. **HITL:** "View dashboard? [y]es / [n]o / [s]ave report"
+8. If [y]es: Launch dashboard at http://localhost:8420
 
 ---
 
@@ -360,15 +366,32 @@ Plan first, then execute. Ask for approval before implementing.
 
 Load and follow these skills:
 
+### Core Skills (All Modes)
+
+| Skill | When to Use |
+|-------|-------------|
+| `.aria/skills/planning.md` | Creating implementation plans |
+| `.aria/skills/executing.md` | Implementing tasks from approved plan |
+| `.aria/skills/debugging.md` | Test failures, errors, troubleshooting |
+| `.aria/skills/discovery.md` | Exploring unfamiliar codebase (Modify flow) |
+| `.aria/skills/tdd.md` | Test-driven development |
+
+### Extended Skills (STANDARD+)
+
 | Skill | When to Use |
 |-------|-------------|
 | `.aria/skills/brainstorming.md` | Exploring options before planning |
-| `.aria/skills/prototyping.md` | Visual mockups and API specs |
-| `.aria/skills/planning.md` | Creating implementation plans |
-| `.aria/skills/executing.md` | Implementing tasks |
+| `.aria/skills/prototyping.md` | Visual mockups, API specs, learning tools |
 | `.aria/skills/tracking.md` | Progress, time, token metrics |
-| `.aria/skills/researcher.md` | Extracting concepts from articles |
-| `.aria/skills/report-writer.md` | Generating final reports |
+| `.aria/skills/context-refresh.md` | Between phases, after 3+ failures |
+| `.aria/skills/report-writer.md` | End-of-workflow summary + dashboard |
+
+### Research Skills (Explicit)
+
+| Skill | When to Use |
+|-------|-------------|
+| `.aria/skills/researcher.md` | Extracting concepts from articles/papers |
+| `.aria/skills/slide-generation.md` | Create presentations from IDEA.md |
 
 ---
 

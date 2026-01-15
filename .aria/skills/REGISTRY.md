@@ -52,7 +52,7 @@ Article-to-code and documentation skills.
 | Skill | Purpose | Inputs | Outputs |
 |-------|---------|--------|---------|
 | **researcher** | Extract concepts | Article/paper | Concept JSON |
-| **report-writer** | Generate reports | Completed work | `REPORT.md` |
+| **report-writer** | End-of-workflow summary | State files | Summary + dashboard offer |
 | **slide-generation** | Create presentations | IDEA.md, sources | FOCUS.md, slides |
 
 ---
@@ -78,7 +78,12 @@ These skills activate when conditions are met:
 | "explore options" | brainstorming | User wants alternatives |
 | "show me a mockup" | prototyping | Visual needed |
 | Article/URL input | researcher | Research flow |
-| Project complete | report-writer | Summary needed |
+| All tasks complete | report-writer | Auto-triggers, offers dashboard |
+| "summary", "metrics" | report-writer | Manual request |
+| New/unfamiliar codebase | discovery | Modify flow entry |
+| "write tests first" | tdd | Test-driven approach |
+| 3+ consecutive failures | context-refresh | Context drift recovery |
+| Between phases/epics | context-refresh | FULL/FULL+ mode |
 
 ### Explicit (User Request)
 These require explicit user request:
@@ -86,10 +91,12 @@ These require explicit user request:
 | Request | Skill |
 |---------|-------|
 | "analyze this paper" | researcher |
-| "create a report" | report-writer |
+| "show summary", "metrics" | report-writer |
 | "debug this" | debugging |
 | "generate slides" | slide-generation |
 | "create presentation" | slide-generation |
+| `/aria-summary` | report-writer |
+| `/aria-dashboard` | dashboard (lineage view) |
 
 ---
 
@@ -123,7 +130,9 @@ brainstorming ──→ prototyping ──→ planning ──→ executing
 | planning | ✓ (lite) | ✓ | ✓ | ✓ |
 | executing | ✓ | ✓ | ✓ | ✓ |
 | debugging | ✓ | ✓ | ✓ | ✓ |
+| discovery | ✓ | ✓ | ✓ | ✓ |
 | tdd | ✓ (lite) | ✓ | ✓ (full) | ✓ (full) |
+| context-refresh | - | ✓ | ✓ | ✓ |
 | tracking | optional | ✓ | ✓ | ✓ |
 | brainstorming | optional | ✓ | ✓ | ✓ |
 | prototyping | - | optional | ✓ | ✓ |
@@ -164,4 +173,4 @@ dependencies: [other skills required]
 
 ---
 
-*Last updated: 2026-01-14*
+*Last updated: 2026-01-15*

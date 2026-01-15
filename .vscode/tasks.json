@@ -172,6 +172,31 @@
         "reveal": "always",
         "panel": "shared"
       }
+    },
+    {
+      "label": "ARIA: Dashboard",
+      "type": "shell",
+      "command": "python .aria/scripts/serve-dashboard.py",
+      "group": "none",
+      "problemMatcher": [],
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": false
+      }
+    },
+    {
+      "label": "ARIA: Dashboard (Open Browser)",
+      "type": "shell",
+      "command": "python .aria/scripts/serve-dashboard.py & sleep 1 && open http://localhost:8420 || xdg-open http://localhost:8420 || start http://localhost:8420",
+      "group": "none",
+      "problemMatcher": [],
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
     }
   ],
   "inputs": [

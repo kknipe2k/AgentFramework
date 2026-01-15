@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ARIA Workflow Map - Complete E2E Reference</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background: #fafafa;
+            color: #333;
+            line-height: 1.6;
+            padding: 20px;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+
+        h1 { font-size: 28px; margin-bottom: 8px; color: #1a1a2e; }
+        h2 { font-size: 22px; margin: 24px 0 12px; color: #16213e; border-bottom: 2px solid #e8e8e8; padding-bottom: 8px; }
+        h3 { font-size: 18px; margin: 16px 0 8px; color: #0f3460; }
+        .subtitle { color: #666; margin-bottom: 24px; }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e8e8e8;
+        }
+        .tab {
+            padding: 12px 24px;
+            background: #fff;
+            border: 1px solid #e8e8e8;
+            border-bottom: none;
+            cursor: pointer;
+            font-weight: 500;
+            border-radius: 8px 8px 0 0;
+            transition: all 0.2s;
+        }
+        .tab:hover { background: #f0f0f0; }
+        .tab.active {
+            background: #2563eb;
+            color: white;
+            border-color: #2563eb;
+        }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* Cards */
+        .card {
+            background: #fff;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 12px 0;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+
+        /* Flow diagrams */
+        .flow {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            padding: 16px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin: 12px 0;
+        }
+        .flow-step {
+            background: #fff;
+            border: 2px solid #dee2e6;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            position: relative;
+        }
+        .flow-step.skill { border-color: #4dabf7; background: #e7f5ff; }
+        .flow-step.hitl { border-color: #ffc107; background: #fff9db; }
+        .flow-step.file { border-color: #51cf66; background: #d3f9d8; }
+        .flow-step.decision { border-color: #cc5de8; background: #f8f0fc; border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; }
+        .flow-arrow { color: #868e96; font-size: 20px; }
+
+        /* Mode badges */
+        .mode-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 4px;
+        }
+        .mode-lite { background: #d3f9d8; color: #2b8a3e; }
+        .mode-standard { background: #e7f5ff; color: #1971c2; }
+        .mode-full { background: #fff9db; color: #e67700; }
+        .mode-fullplus { background: #ffe3e3; color: #c92a2a; }
+
+        /* File reference table */
+        .file-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 12px 0;
+            font-size: 14px;
+        }
+        .file-table th, .file-table td {
+            border: 1px solid #e0e0e0;
+            padding: 8px 12px;
+            text-align: left;
+        }
+        .file-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+        .file-table tr:hover { background: #f8f9fa; }
+        .file-path { font-family: monospace; font-size: 13px; color: #495057; }
+
+        /* Collapsible sections */
+        .collapsible {
+            cursor: pointer;
+            padding: 12px 16px;
+            background: #f8f9fa;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            margin: 8px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .collapsible:hover { background: #f0f0f0; }
+        .collapsible::after { content: '+'; font-size: 20px; color: #666; }
+        .collapsible.open::after { content: '−'; }
+        .collapsible-content {
+            display: none;
+            padding: 16px;
+            background: #fff;
+            border: 1px solid #e0e0e0;
+            border-top: none;
+            border-radius: 0 0 6px 6px;
+            margin-top: -8px;
+        }
+        .collapsible-content.open { display: block; }
+
+        /* Legend */
+        .legend {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            padding: 12px;
+            background: #fff;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+        }
+        .legend-box {
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+            border: 2px solid;
+        }
+
+        /* Skill grid */
+        .skill-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 12px;
+            margin: 16px 0;
+        }
+        .skill-card {
+            background: #fff;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 12px;
+        }
+        .skill-card h4 {
+            font-size: 15px;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .skill-card p { font-size: 13px; color: #666; margin-bottom: 8px; }
+        .skill-card .triggers { font-size: 12px; color: #495057; }
+
+        /* Workflow branch */
+        .branch {
+            margin-left: 24px;
+            padding-left: 16px;
+            border-left: 2px solid #dee2e6;
+        }
+        .branch-label {
+            font-size: 13px;
+            color: #666;
+            margin: 8px 0;
+            font-style: italic;
+        }
+
+        code {
+            background: #f1f3f4;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>ARIA Workflow Map</h1>
+        <p class="subtitle">Complete E2E reference showing all workflows, skills, files, and decision points</p>
+
+        <!-- Legend -->
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-box" style="border-color: #4dabf7; background: #e7f5ff;"></div>
+                <span>Skill</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box" style="border-color: #ffc107; background: #fff9db;"></div>
+                <span>HITL Checkpoint</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box" style="border-color: #51cf66; background: #d3f9d8;"></div>
+                <span>File Created/Updated</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box" style="border-color: #cc5de8; background: #f8f0fc; border-radius: 50%;"></div>
+                <span>Decision Point</span>
+            </div>
+            <div class="legend-item">
+                <span class="mode-badge mode-lite">LITE</span>
+                <span class="mode-badge mode-standard">STANDARD</span>
+                <span class="mode-badge mode-full">FULL</span>
+                <span class="mode-badge mode-fullplus">FULL+</span>
+            </div>
+        </div>
+
+        <!-- Main Tabs -->
+        <div class="tabs">
+            <div class="tab active" data-tab="workflows">Workflows</div>
+            <div class="tab" data-tab="skills">Skills</div>
+            <div class="tab" data-tab="files">Files</div>
+            <div class="tab" data-tab="modes">Modes</div>
+        </div>
+
+        <!-- WORKFLOWS TAB -->
+        <div id="workflows" class="tab-content active">
+            <h2>Entry Point: Router</h2>
+            <div class="flow">
+                <div class="flow-step">User Request</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step skill">Router (CLAUDE.md)</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step decision">?</div>
+            </div>
+            <div class="branch">
+                <div class="branch-label">Size assessment → Mode selection</div>
+                <div class="flow">
+                    <div class="flow-step">SMALL (1-5 tasks)</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step" style="border-color: #2b8a3e;">LITE Mode</div>
+                </div>
+                <div class="flow">
+                    <div class="flow-step">MEDIUM (6-15 tasks)</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step" style="border-color: #1971c2;">STANDARD Mode</div>
+                </div>
+                <div class="flow">
+                    <div class="flow-step">LARGE (16-40 tasks)</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step" style="border-color: #e67700;">FULL Mode</div>
+                </div>
+                <div class="flow">
+                    <div class="flow-step">X-LARGE (40+ tasks)</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step" style="border-color: #c92a2a;">FULL+ Mode</div>
+                </div>
+            </div>
+
+            <!-- BUILD WORKFLOW -->
+            <div class="collapsible" onclick="toggleCollapsible(this)">
+                <span><strong>BUILD Workflow</strong> - Greenfield projects</span>
+            </div>
+            <div class="collapsible-content">
+                <h3>Full Flow</h3>
+                <div class="flow">
+                    <div class="flow-step skill">brainstorming</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step file">IDEA.md</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step decision">?</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step skill">prototyping</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step file">prototype-*.html</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step hitl">Approve</div>
+                </div>
+                <div class="flow">
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step skill">planning</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step file">current-plan.json</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step hitl">[a]pprove</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step skill">executing</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step file">verify.sh</div>
+                </div>
+                <div class="flow">
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step skill">tracking</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step file">progress.json</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step skill">report-writer</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step hitl">[y/n/s]</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step file">dashboard</div>
+                </div>
+
+                <h3>Mode Variations</h3>
+                <table class="file-table">
+                    <tr>
+                        <th>Mode</th>
+                        <th>Path</th>
+                    </tr>
+                    <tr>
+                        <td><span class="mode-badge mode-lite">LITE</span></td>
+                        <td>plan (optional) → execute → verify → done</td>
+                    </tr>
+                    <tr>
+                        <td><span class="mode-badge mode-standard">STANDARD</span></td>
+                        <td>brainstorm? → plan → execute → verify → report → dashboard?</td>
+                    </tr>
+                    <tr>
+                        <td><span class="mode-badge mode-full">FULL</span></td>
+                        <td>brainstorm → prototype? → plan → execute → verify → report → dashboard</td>
+                    </tr>
+                    <tr>
+                        <td><span class="mode-badge mode-fullplus">FULL+</span></td>
+                        <td>design doc → brainstorm → prototype → plan → execute → verify → report → dashboard</td>
+                    </tr>
+                </table>
+
+                <h3>Files Created</h3>
+                <table class="file-table">
+                    <tr><th>File</th><th>Skill</th><th>Purpose</th></tr>
+                    <tr><td class="file-path">.aria/docs/IDEA.md</td><td>brainstorming</td><td>Research synthesis, options, recommendation</td></tr>
+                    <tr><td class="file-path">.aria/prototypes/*.html</td><td>prototyping</td><td>Visual mockups</td></tr>
+                    <tr><td class="file-path">.aria/state/current-plan.json</td><td>planning</td><td>Task breakdown with estimates</td></tr>
+                    <tr><td class="file-path">.aria/state/progress.json</td><td>tracking</td><td>Task completion status</td></tr>
+                    <tr><td class="file-path">.aria/state/decisions.jsonl</td><td>executing</td><td>Decision trace log</td></tr>
+                    <tr><td class="file-path">.aria/design-notes.md</td><td>executing</td><td>Implementation reasoning</td></tr>
+                </table>
+            </div>
+
+            <!-- MODIFY WORKFLOW -->
+            <div class="collapsible" onclick="toggleCollapsible(this)">
+                <span><strong>MODIFY Workflow</strong> - Existing codebase changes</span>
+            </div>
+            <div class="collapsible-content">
+                <h3>Full Flow</h3>
+                <div class="flow">
+                    <div class="flow-step skill">discovery</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step file">project-context.md</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step skill">planning</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step file">current-plan.json</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step hitl">[a]pprove</div>
+                </div>
+                <div class="flow">
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step skill">executing</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step file">verify.sh</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step skill">report-writer</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step hitl">[y/n/s]</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step file">dashboard</div>
+                </div>
+
+                <h3>Key Difference</h3>
+                <p>Starts with <strong>discovery</strong> skill to understand existing codebase structure and "don't touch" areas.</p>
+
+                <h3>Files Read</h3>
+                <table class="file-table">
+                    <tr><th>File</th><th>Purpose</th></tr>
+                    <tr><td class="file-path">.aria/project-context.md</td><td>Existing codebase knowledge, don't-touch areas</td></tr>
+                    <tr><td class="file-path">Existing source files</td><td>Understanding current implementation</td></tr>
+                </table>
+            </div>
+
+            <!-- RESEARCH WORKFLOW -->
+            <div class="collapsible" onclick="toggleCollapsible(this)">
+                <span><strong>RESEARCH Workflow</strong> - Article/paper analysis</span>
+            </div>
+            <div class="collapsible-content">
+                <h3>Full Flow</h3>
+                <div class="flow">
+                    <div class="flow-step">Article/Paper</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step skill">researcher</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step file">research-output.json</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step hitl">Confirm concepts</div>
+                </div>
+                <div class="flow">
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step skill">brainstorming</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step file">IDEA.md</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step decision">?</div>
+                </div>
+
+                <div class="branch">
+                    <div class="branch-label">HITL: Generate slides? [y/n]</div>
+                    <div class="flow">
+                        <div class="flow-step hitl">[y]es</div>
+                        <span class="flow-arrow">→</span>
+                        <div class="flow-step skill">slide-generation</div>
+                        <span class="flow-arrow">→</span>
+                        <div class="flow-step file">FOCUS.md</div>
+                        <span class="flow-arrow">→</span>
+                        <div class="flow-step decision">?</div>
+                    </div>
+                    <div class="branch">
+                        <div class="branch-label">HITL: [1] NotebookLM / [2] pptx</div>
+                        <div class="flow">
+                            <div class="flow-step">[1]</div>
+                            <span class="flow-arrow">→</span>
+                            <div class="flow-step file">slides-*.pdf</div>
+                        </div>
+                        <div class="flow">
+                            <div class="flow-step">[2]</div>
+                            <span class="flow-arrow">→</span>
+                            <div class="flow-step file">slides-*.pptx</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flow" style="margin-top: 16px;">
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step decision">?</div>
+                </div>
+                <div class="branch">
+                    <div class="branch-label">HITL: [p]rototype / [d]one</div>
+                    <div class="flow">
+                        <div class="flow-step hitl">[p]</div>
+                        <span class="flow-arrow">→</span>
+                        <div class="flow-step decision">?</div>
+                    </div>
+                    <div class="branch">
+                        <div class="branch-label">Variant: [1] mockup / [2] learning tool / [3] reference</div>
+                        <div class="flow">
+                            <div class="flow-step">[2] learning</div>
+                            <span class="flow-arrow">→</span>
+                            <div class="flow-step skill">prototyping</div>
+                            <span class="flow-arrow">→</span>
+                            <div class="flow-step file">prototype-*.html</div>
+                            <span class="flow-arrow">→</span>
+                            <div class="flow-step skill">executing</div>
+                            <span class="flow-arrow">→</span>
+                            <div class="flow-step file">Playwright tests</div>
+                        </div>
+                    </div>
+                </div>
+
+                <h3>Files Created</h3>
+                <table class="file-table">
+                    <tr><th>File</th><th>Skill</th><th>Purpose</th></tr>
+                    <tr><td class="file-path">.aria/docs/research-output.json</td><td>researcher</td><td>Extracted concepts</td></tr>
+                    <tr><td class="file-path">.aria/docs/IDEA.md</td><td>brainstorming</td><td>Research synthesis</td></tr>
+                    <tr><td class="file-path">.aria/outputs/FOCUS.md</td><td>slide-generation</td><td>Core ideas + synthesis matrix</td></tr>
+                    <tr><td class="file-path">.aria/outputs/slides-*.pdf|pptx</td><td>slide-generation</td><td>Presentation deck</td></tr>
+                    <tr><td class="file-path">.aria/prototypes/*.html</td><td>prototyping</td><td>Interactive prototype</td></tr>
+                </table>
+            </div>
+
+            <!-- BUG FIX WORKFLOW -->
+            <div class="collapsible" onclick="toggleCollapsible(this)">
+                <span><strong>BUG FIX Workflow</strong> - Quick fixes</span>
+            </div>
+            <div class="collapsible-content">
+                <h3>Flow (typically LITE mode)</h3>
+                <div class="flow">
+                    <div class="flow-step">Bug Report</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step skill">debugging</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step skill">planning (lite)</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step skill">executing</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step file">verify.sh</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step">Done</div>
+                </div>
+            </div>
+
+            <!-- END OF WORKFLOW -->
+            <div class="collapsible" onclick="toggleCollapsible(this)">
+                <span><strong>End of Workflow</strong> - Summary + Dashboard (STANDARD+)</span>
+            </div>
+            <div class="collapsible-content">
+                <h3>Flow</h3>
+                <div class="flow">
+                    <div class="flow-step">All tasks complete</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step skill">report-writer</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step">Summary Report</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step hitl">[y/n/s]</div>
+                </div>
+                <div class="branch">
+                    <div class="branch-label">HITL: View dashboard?</div>
+                    <div class="flow">
+                        <div class="flow-step hitl">[y]es</div>
+                        <span class="flow-arrow">→</span>
+                        <div class="flow-step file">serve-dashboard.py</div>
+                        <span class="flow-arrow">→</span>
+                        <div class="flow-step">localhost:8420</div>
+                    </div>
+                    <div class="flow">
+                        <div class="flow-step hitl">[s]ave</div>
+                        <span class="flow-arrow">→</span>
+                        <div class="flow-step file">SESSION-*.md</div>
+                    </div>
+                </div>
+
+                <h3>Data Sources for Report</h3>
+                <table class="file-table">
+                    <tr><th>File</th><th>Data</th></tr>
+                    <tr><td class="file-path">.aria/state/progress.json</td><td>Task completion, timing</td></tr>
+                    <tr><td class="file-path">.aria/state/current-plan.json</td><td>Original estimates</td></tr>
+                    <tr><td class="file-path">.aria/state/decisions.jsonl</td><td>Decision traces</td></tr>
+                    <tr><td class="file-path">.aria/state/signals.jsonl</td><td>Tool calls, file changes</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <!-- SKILLS TAB -->
+        <div id="skills" class="tab-content">
+            <h2>All Skills (12 Total)</h2>
+
+            <h3>Core Skills (All Modes)</h3>
+            <div class="skill-grid">
+                <div class="skill-card">
+                    <h4>planning <span class="mode-badge mode-lite">ALL</span></h4>
+                    <p>Break work into tasks with estimates</p>
+                    <div class="triggers"><strong>Triggers:</strong> "plan this", start of work</div>
+                    <div class="triggers"><strong>Output:</strong> <code>current-plan.json</code></div>
+                </div>
+                <div class="skill-card">
+                    <h4>executing <span class="mode-badge mode-lite">ALL</span></h4>
+                    <p>Implement tasks with verification gates</p>
+                    <div class="triggers"><strong>Triggers:</strong> Approved plan exists</div>
+                    <div class="triggers"><strong>Output:</strong> Code, commits</div>
+                </div>
+                <div class="skill-card">
+                    <h4>debugging <span class="mode-badge mode-lite">ALL</span></h4>
+                    <p>Fix test failures and errors</p>
+                    <div class="triggers"><strong>Triggers:</strong> Test failure, error</div>
+                    <div class="triggers"><strong>Output:</strong> Working code</div>
+                </div>
+                <div class="skill-card">
+                    <h4>discovery <span class="mode-badge mode-lite">ALL</span></h4>
+                    <p>Explore existing codebase</p>
+                    <div class="triggers"><strong>Triggers:</strong> Modify flow, unfamiliar codebase</div>
+                    <div class="triggers"><strong>Output:</strong> <code>project-context.md</code></div>
+                </div>
+                <div class="skill-card">
+                    <h4>tdd <span class="mode-badge mode-lite">ALL</span></h4>
+                    <p>Test-driven development</p>
+                    <div class="triggers"><strong>Triggers:</strong> "write tests first", "tdd"</div>
+                    <div class="triggers"><strong>Output:</strong> Tests → Implementation</div>
+                </div>
+            </div>
+
+            <h3>Extended Skills (STANDARD+)</h3>
+            <div class="skill-grid">
+                <div class="skill-card">
+                    <h4>brainstorming <span class="mode-badge mode-standard">STANDARD+</span></h4>
+                    <p>Explore options before planning</p>
+                    <div class="triggers"><strong>Triggers:</strong> "brainstorm", "explore options"</div>
+                    <div class="triggers"><strong>Output:</strong> <code>IDEA.md</code></div>
+                </div>
+                <div class="skill-card">
+                    <h4>prototyping <span class="mode-badge mode-full">FULL+</span></h4>
+                    <p>Visual/structural mockups</p>
+                    <div class="triggers"><strong>Triggers:</strong> "mockup", "prototype"</div>
+                    <div class="triggers"><strong>Output:</strong> <code>.aria/prototypes/*.html</code></div>
+                </div>
+                <div class="skill-card">
+                    <h4>tracking <span class="mode-badge mode-standard">STANDARD+</span></h4>
+                    <p>Monitor progress and metrics</p>
+                    <div class="triggers"><strong>Triggers:</strong> During/after execution</div>
+                    <div class="triggers"><strong>Output:</strong> <code>progress.json</code>, metrics</div>
+                </div>
+                <div class="skill-card">
+                    <h4>context-refresh <span class="mode-badge mode-standard">STANDARD+</span></h4>
+                    <p>Reset after drift/failures</p>
+                    <div class="triggers"><strong>Triggers:</strong> 3+ failures, between phases</div>
+                    <div class="triggers"><strong>Output:</strong> Handoff summary</div>
+                </div>
+                <div class="skill-card">
+                    <h4>report-writer <span class="mode-badge mode-standard">STANDARD+</span></h4>
+                    <p>End-of-workflow summary</p>
+                    <div class="triggers"><strong>Triggers:</strong> All tasks complete, "summary"</div>
+                    <div class="triggers"><strong>Output:</strong> Summary + dashboard offer</div>
+                </div>
+            </div>
+
+            <h3>Research Skills (Explicit)</h3>
+            <div class="skill-grid">
+                <div class="skill-card">
+                    <h4>researcher <span class="mode-badge" style="background:#f3f0ff;color:#5f3dc4;">EXPLICIT</span></h4>
+                    <p>Extract concepts from papers</p>
+                    <div class="triggers"><strong>Triggers:</strong> "analyze this paper"</div>
+                    <div class="triggers"><strong>Output:</strong> <code>research-output.json</code></div>
+                </div>
+                <div class="skill-card">
+                    <h4>slide-generation <span class="mode-badge" style="background:#f3f0ff;color:#5f3dc4;">EXPLICIT</span></h4>
+                    <p>Create presentations</p>
+                    <div class="triggers"><strong>Triggers:</strong> "generate slides"</div>
+                    <div class="triggers"><strong>Output:</strong> <code>FOCUS.md</code>, slides</div>
+                </div>
+            </div>
+
+            <h2>Skill Dependencies</h2>
+            <div class="flow">
+                <div class="flow-step skill">brainstorming</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step skill">prototyping</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step skill">planning</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step skill">executing</div>
+            </div>
+            <div class="flow" style="margin-left: 340px;">
+                <span class="flow-arrow">↓</span>
+                <div class="flow-step skill">debugging</div>
+                <span style="margin-left: 60px;">on failure</span>
+            </div>
+            <div class="flow" style="margin-left: 280px;">
+                <span class="flow-arrow">→</span>
+                <div class="flow-step skill">tracking</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step skill">report-writer</div>
+            </div>
+        </div>
+
+        <!-- FILES TAB -->
+        <div id="files" class="tab-content">
+            <h2>Complete File Reference</h2>
+
+            <h3>State Files</h3>
+            <table class="file-table">
+                <tr><th>Path</th><th>Created By</th><th>Read By</th><th>Purpose</th></tr>
+                <tr>
+                    <td class="file-path">.aria/state/current-plan.json</td>
+                    <td>planning</td>
+                    <td>executing, tracking, report-writer</td>
+                    <td>Active plan with tasks</td>
+                </tr>
+                <tr>
+                    <td class="file-path">.aria/state/progress.json</td>
+                    <td>tracking</td>
+                    <td>report-writer, dashboard</td>
+                    <td>Task completion status</td>
+                </tr>
+                <tr>
+                    <td class="file-path">.aria/state/decisions.jsonl</td>
+                    <td>executing</td>
+                    <td>report-writer, dashboard</td>
+                    <td>Decision trace log</td>
+                </tr>
+                <tr>
+                    <td class="file-path">.aria/state/signals.jsonl</td>
+                    <td>hooks</td>
+                    <td>dashboard</td>
+                    <td>Tool call signals</td>
+                </tr>
+            </table>
+
+            <h3>Documentation Files</h3>
+            <table class="file-table">
+                <tr><th>Path</th><th>Created By</th><th>Purpose</th></tr>
+                <tr>
+                    <td class="file-path">.aria/docs/IDEA.md</td>
+                    <td>brainstorming</td>
+                    <td>Research synthesis, options, recommendation</td>
+                </tr>
+                <tr>
+                    <td class="file-path">.aria/docs/research-output.json</td>
+                    <td>researcher</td>
+                    <td>Extracted concepts from papers</td>
+                </tr>
+                <tr>
+                    <td class="file-path">.aria/docs/DESIGN.md</td>
+                    <td>FULL+ planning</td>
+                    <td>Architecture design document</td>
+                </tr>
+                <tr>
+                    <td class="file-path">.aria/design-notes.md</td>
+                    <td>executing</td>
+                    <td>Implementation reasoning</td>
+                </tr>
+                <tr>
+                    <td class="file-path">.aria/project-context.md</td>
+                    <td>discovery</td>
+                    <td>Codebase knowledge, don't-touch areas</td>
+                </tr>
+            </table>
+
+            <h3>Output Files</h3>
+            <table class="file-table">
+                <tr><th>Path</th><th>Created By</th><th>Purpose</th></tr>
+                <tr>
+                    <td class="file-path">.aria/outputs/FOCUS.md</td>
+                    <td>slide-generation</td>
+                    <td>Core ideas + synthesis matrix</td>
+                </tr>
+                <tr>
+                    <td class="file-path">.aria/outputs/slides-*.pdf</td>
+                    <td>slide-generation (NotebookLM)</td>
+                    <td>Presentation deck</td>
+                </tr>
+                <tr>
+                    <td class="file-path">.aria/outputs/slides-*.pptx</td>
+                    <td>slide-generation (python-pptx)</td>
+                    <td>Presentation deck</td>
+                </tr>
+                <tr>
+                    <td class="file-path">.aria/prototypes/*.html</td>
+                    <td>prototyping</td>
+                    <td>Visual mockups</td>
+                </tr>
+                <tr>
+                    <td class="file-path">.aria/reports/SESSION-*.md</td>
+                    <td>report-writer</td>
+                    <td>Saved session reports</td>
+                </tr>
+            </table>
+
+            <h3>Scripts</h3>
+            <table class="file-table">
+                <tr><th>Path</th><th>Purpose</th><th>Invocation</th></tr>
+                <tr>
+                    <td class="file-path">.aria/scripts/serve-dashboard.py</td>
+                    <td>Hierarchical lineage dashboard</td>
+                    <td>End of workflow, /aria-dashboard</td>
+                </tr>
+                <tr>
+                    <td class="file-path">.aria/scripts/generate-slides.py</td>
+                    <td>Create presentations</td>
+                    <td>Research flow</td>
+                </tr>
+                <tr>
+                    <td class="file-path">.aria/scripts/setup-project.sh</td>
+                    <td>Create isolated workspace</td>
+                    <td>Manual</td>
+                </tr>
+                <tr>
+                    <td class="file-path">.aria/verify.sh</td>
+                    <td>Verification gate</td>
+                    <td>After every task</td>
+                </tr>
+            </table>
+
+            <h3>Framework Files</h3>
+            <table class="file-table">
+                <tr><th>Path</th><th>Purpose</th></tr>
+                <tr>
+                    <td class="file-path">CLAUDE.md</td>
+                    <td>Entry point, mode definitions, router</td>
+                </tr>
+                <tr>
+                    <td class="file-path">.aria/skills/*.md</td>
+                    <td>Skill definitions (12 skills)</td>
+                </tr>
+                <tr>
+                    <td class="file-path">.aria/skills/REGISTRY.md</td>
+                    <td>Skill index with triggers</td>
+                </tr>
+                <tr>
+                    <td class="file-path">.aria/docs/CHEATSHEET.md</td>
+                    <td>Quick reference</td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- MODES TAB -->
+        <div id="modes" class="tab-content">
+            <h2>Mode Comparison</h2>
+
+            <table class="file-table">
+                <tr>
+                    <th>Feature</th>
+                    <th><span class="mode-badge mode-lite">LITE</span></th>
+                    <th><span class="mode-badge mode-standard">STANDARD</span></th>
+                    <th><span class="mode-badge mode-full">FULL</span></th>
+                    <th><span class="mode-badge mode-fullplus">FULL+</span></th>
+                </tr>
+                <tr>
+                    <td>Task count</td>
+                    <td>1-5</td>
+                    <td>6-15</td>
+                    <td>16-40</td>
+                    <td>40+</td>
+                </tr>
+                <tr>
+                    <td>Hierarchy</td>
+                    <td>Tasks only</td>
+                    <td>Phases → Tasks</td>
+                    <td>Steps → Phases → Tasks</td>
+                    <td>Epics → Steps → Phases → Tasks</td>
+                </tr>
+                <tr>
+                    <td>Planning</td>
+                    <td>Quick (optional)</td>
+                    <td>Yes</td>
+                    <td>Yes + risks</td>
+                    <td>Yes + design doc</td>
+                </tr>
+                <tr>
+                    <td>Brainstorming</td>
+                    <td>Optional</td>
+                    <td>Yes</td>
+                    <td>Yes + research</td>
+                    <td>Yes + prototyping</td>
+                </tr>
+                <tr>
+                    <td>Verification</td>
+                    <td>If tests exist</td>
+                    <td>Every task</td>
+                    <td>Mandatory</td>
+                    <td>Mandatory</td>
+                </tr>
+                <tr>
+                    <td>HITL checkpoints</td>
+                    <td>Destructive only</td>
+                    <td>Risky actions</td>
+                    <td>All risky</td>
+                    <td>Per epic + risky</td>
+                </tr>
+                <tr>
+                    <td>Design notes</td>
+                    <td>No</td>
+                    <td>Key decisions</td>
+                    <td>All reasoning</td>
+                    <td>All + architecture</td>
+                </tr>
+                <tr>
+                    <td>Failure threshold</td>
+                    <td>1 → stop</td>
+                    <td>2 → stop</td>
+                    <td>3 → escalation</td>
+                    <td>3 → escalation</td>
+                </tr>
+                <tr>
+                    <td>Context refresh</td>
+                    <td>No</td>
+                    <td>Between phases</td>
+                    <td>Between major steps</td>
+                    <td>Between epics</td>
+                </tr>
+                <tr>
+                    <td>End-of-workflow report</td>
+                    <td>Minimal</td>
+                    <td>Yes + dashboard offer</td>
+                    <td>Full + dashboard</td>
+                    <td>Full + architecture validation</td>
+                </tr>
+            </table>
+
+            <h2>Mode Selection Criteria</h2>
+            <table class="file-table">
+                <tr><th>Factor</th><th>SMALL</th><th>MEDIUM</th><th>LARGE</th><th>X-LARGE</th></tr>
+                <tr><td>Tasks</td><td>1-5</td><td>6-15</td><td>16-40</td><td>40+</td></tr>
+                <tr><td>Lines of code</td><td>&lt;2,000</td><td>2K-10K</td><td>10K-50K</td><td>50K+</td></tr>
+                <tr><td>Files</td><td>1-5</td><td>6-20</td><td>21-50</td><td>50+</td></tr>
+                <tr><td>New dependencies</td><td>0-1</td><td>2-5</td><td>6-15</td><td>15+</td></tr>
+                <tr><td>Auth/payments/DB</td><td>No</td><td>Read-only</td><td>Yes (one)</td><td>Yes (multiple)</td></tr>
+            </table>
+
+            <p style="margin-top: 16px;"><strong>Rule:</strong> If ANY factor is X-LARGE → X-LARGE mode. Highest factor wins.</p>
+        </div>
+    </div>
+
+    <script>
+        // Tab switching
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById(tab.dataset.tab).classList.add('active');
+            });
+        });
+
+        // Collapsible sections
+        function toggleCollapsible(el) {
+            el.classList.toggle('open');
+            el.nextElementSibling.classList.toggle('open');
+        }
+
+        // Expand all collapsibles by default
+        document.querySelectorAll('.collapsible').forEach(c => {
+            c.classList.add('open');
+            c.nextElementSibling.classList.add('open');
+        });
+    </script>
+</body>
+</html>
