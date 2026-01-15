@@ -89,13 +89,13 @@ ln -s "$ARIA/.aria/scripts" "$PROJECT/.aria/scripts"
 [ -d "$ARIA/.claude" ] && ln -s "$ARIA/.claude" "$PROJECT/.claude"
 
 # ============================================
-# Copy core shell scripts (may need local edits)
+# Symlink core shell scripts
 # ============================================
-echo "Copying core scripts..."
+echo "Linking core scripts..."
 for script in verify.sh common.sh git-ops.sh hitl.sh aria-engine.sh \
               verify-executor.sh rails-executor.sh model-selector.sh \
               agent-runner.sh design-notes.sh discover.sh pause.sh; do
-    [ -f "$ARIA/.aria/$script" ] && cp "$ARIA/.aria/$script" "$PROJECT/.aria/$script"
+    [ -f "$ARIA/.aria/$script" ] && ln -s "$ARIA/.aria/$script" "$PROJECT/.aria/$script"
 done
 
 # ============================================
