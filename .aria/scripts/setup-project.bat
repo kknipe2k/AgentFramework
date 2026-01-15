@@ -1,32 +1,34 @@
 @echo off
 REM ARIA Project Workspace Setup (Windows)
-REM Usage: setup-project.bat <project-name> [aria-path] [eval-path]
-REM Example: setup-project.bat SVM
-REM Example: setup-project.bat SVM c:\aria-test c:\aria\eval
+REM Usage: setup-project.bat <project-path> <aria-path>
+REM Example: setup-project.bat "C:\aria-eval\Projects\SVM" "C:\aria-test"
 
 setlocal enabledelayedexpansion
 
 if "%~1"=="" (
-    echo Usage: setup-project.bat ^<project-name^> [aria-path] [eval-path]
+    echo Usage: setup-project.bat ^<project-path^> ^<aria-path^>
     echo.
     echo Examples:
-    echo   setup-project.bat SVM
-    echo   setup-project.bat SVM c:\aria-test c:\aria\eval
+    echo   setup-project.bat "C:\aria-eval\Projects\SVM" "C:\aria-test"
+    echo   setup-project.bat "C:\my-test" "C:\aria-test"
     echo.
-    echo Defaults:
-    echo   aria-path: c:\aria-test
-    echo   eval-path: c:\aria\eval
+    echo Arguments:
+    echo   project-path: Full path to create workspace
+    echo   aria-path:    Path to cloned ARIA framework
     exit /b 1
 )
 
-set PROJECT_NAME=%~1
+if "%~2"=="" (
+    echo ERROR: aria-path is required
+    echo Usage: setup-project.bat ^<project-path^> ^<aria-path^>
+    exit /b 1
+)
+
+set PROJECT=%~1
 set ARIA=%~2
-set EVAL=%~3
 
-if "%ARIA%"=="" set ARIA=c:\aria-test
-if "%EVAL%"=="" set EVAL=c:\aria\eval
-
-set PROJECT=%EVAL%\%PROJECT_NAME%
+REM Extract project name from path for display
+for %%i in ("%PROJECT%") do set PROJECT_NAME=%%~ni
 
 REM Check ARIA source exists
 if not exist "%ARIA%\CLAUDE.md" (
