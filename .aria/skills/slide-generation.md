@@ -100,27 +100,33 @@ Generate slides via:
 
 ## NotebookLM Path
 
-Requires: `notebooklm-py` installed, Google auth configured
+**Setup (one-time):**
+```bash
+pip install "notebooklm-py[browser]"
+playwright install chromium
+notebooklm login  # Opens browser for Google auth
+```
 
+**API Usage:**
 ```python
-# 1. Create notebook
-notebook = await client.notebooks.create("Research Slides")
+from notebooklm import NotebookLMClient
 
-# 2. Add sources
-await client.sources.add_text(notebook.id, focus_content, "FOCUS")
-await client.sources.add_text(notebook.id, idea_content, "IDEA") 
-await client.sources.add_file(notebook.id, original_paper_path)
+async with await NotebookLMClient.from_storage() as client:
+    # 1. Create notebook
+    notebook = await client.notebooks.create("Research Slides")
 
-# 3. Generate slides with prompt
-await client.chat.send(notebook.id, SLIDES_PROMPT)
-status = await client.artifacts.generate_slides(notebook.id)
-await client.artifacts.wait_for_completion(notebook.id, status.task_id)
+    # 2. Add sources
+    await client.sources.add_file(notebook.id, "FOCUS.md")
+    await client.sources.add_file(notebook.id, "IDEA.md")
+    await client.sources.add_file(notebook.id, "paper.pdf")
 
-# 4. Download
-slides_path = await client.artifacts.download_slides(
-    notebook.id, 
-    output_dir=".aria/outputs/"
-)
+    # 3. Generate slides with prompt
+    await client.chat.ask(notebook.id, SLIDES_PROMPT)
+    status = await client.artifacts.generate_slides(notebook.id)
+    await client.artifacts.wait_for_completion(notebook.id, status.task_id)
+
+    # 4. Download
+    await client.artifacts.download_slides(notebook.id, ".aria/outputs/")
 ```
 
 **Output:** `.aria/outputs/slides-[topic]-[date].pdf`
