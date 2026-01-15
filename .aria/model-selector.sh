@@ -34,6 +34,118 @@ NC="$ARIA_NC"
 mkdir -p "$LOGS_DIR" "$STATE_DIR"
 
 # ============================================
+# SESSION LIFECYCLE TRACKING (Issue #14)
+# ============================================
+
+SIGNALS_FILE="${SIGNALS_FILE:-$STATE_DIR/signals.jsonl}"
+SESSION_ID_FILE="$STATE_DIR/.current_session_id"
+
+# Log session events to signals.jsonl for traceability
+_log_session_signal() {
+    local event_type="$1"       # session_started, session_ended
+    local session_id="$2"
+    local details="${3:-}"
+    local metrics="${4:-}"
+
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local event_id="sess-$(date +%s%N | cut -c1-13)"
+
+    # Build JSON entry
+    local json_entry
+    if [[ -n "$metrics" ]]; then
+        json_entry=$(printf '{"id":"%s","timestamp":"%s","event":"%s","session_id":"%s","details":"%s","metrics":%s,"context_type":"session","context_name":"lifecycle"}' \
+            "$event_id" "$timestamp" "$event_type" "$session_id" "$details" "$metrics")
+    else
+        json_entry=$(printf '{"id":"%s","timestamp":"%s","event":"%s","session_id":"%s","details":"%s","context_type":"session","context_name":"lifecycle"}' \
+            "$event_id" "$timestamp" "$event_type" "$session_id" "$details")
+    fi
+
+    echo "$json_entry" >> "$SIGNALS_FILE"
+}
+
+# Generate a unique session ID
+_generate_session_id() {
+    echo "session-$(date +%Y%m%d-%H%M%S)-$$"
+}
+
+# Start a new session - call at beginning of workflow
+start_session() {
+    local mode="${1:-STANDARD}"
+    local workflow="${2:-unknown}"
+
+    local session_id=$(_generate_session_id)
+    echo "$session_id" > "$SESSION_ID_FILE"
+
+    # Reset usage tracking for new session
+    rm -f "$USAGE_FILE"
+    init_usage
+
+    # Log session start
+    _log_session_signal "session_started" "$session_id" "mode:$mode,workflow:$workflow"
+
+    echo "$session_id"
+}
+
+# Get current session ID
+get_session_id() {
+    if [[ -f "$SESSION_ID_FILE" ]]; then
+        cat "$SESSION_ID_FILE"
+    else
+        echo "no-session"
+    fi
+}
+
+# End session - call at end of workflow
+end_session() {
+    local status="${1:-completed}"  # completed, aborted, failed
+
+    local session_id=$(get_session_id)
+    if [[ "$session_id" == "no-session" ]]; then
+        echo -e "${YELLOW}Warning: No active session to end${NC}"
+        return 1
+    fi
+
+    # Get session metrics
+    init_usage
+    local data=$(cat "$USAGE_FILE")
+    local total_cost=$(echo "$data" | jq -r '.total_cost')
+    local total_input=$(echo "$data" | jq -r '.total_input_tokens')
+    local total_output=$(echo "$data" | jq -r '.total_output_tokens')
+    local session_start=$(echo "$data" | jq -r '.session_start')
+
+    # Calculate duration
+    local start_epoch=$(date -d "$session_start" +%s 2>/dev/null || echo "0")
+    local end_epoch=$(date +%s)
+    local duration_secs=$((end_epoch - start_epoch))
+
+    # Build metrics JSON
+    local metrics
+    metrics=$(printf '{"duration_seconds":%d,"total_cost":%.6f,"total_input_tokens":%d,"total_output_tokens":%d,"status":"%s"}' \
+        "$duration_secs" "$total_cost" "$total_input" "$total_output" "$status")
+
+    # Log session end with metrics
+    _log_session_signal "session_ended" "$session_id" "status:$status" "$metrics"
+
+    # Add session_end to usage file
+    python3 << EOF
+import json
+from datetime import datetime
+with open('$USAGE_FILE', 'r') as f:
+    data = json.load(f)
+data['session_end'] = datetime.now().isoformat()
+data['duration_seconds'] = $duration_secs
+data['final_status'] = '$status'
+with open('$USAGE_FILE', 'w') as f:
+    json.dump(data, f, indent=2)
+EOF
+
+    # Clean up session ID file
+    rm -f "$SESSION_ID_FILE"
+
+    echo -e "${GREEN}Session $session_id ended ($status) - Duration: ${duration_secs}s, Cost: \$$total_cost${NC}"
+}
+
+# ============================================
 # MODEL CONFIGURATION
 # ============================================
 
@@ -752,6 +864,17 @@ main() {
             init_learning
             echo -e "${GREEN}Learning data reset${NC}"
             ;;
+        "session-start")
+            # session-start [mode] [workflow]
+            start_session "${1:-STANDARD}" "${2:-unknown}"
+            ;;
+        "session-end")
+            # session-end [status]
+            end_session "${1:-completed}"
+            ;;
+        "session-id")
+            get_session_id
+            ;;
         "help"|*)
             echo "ARIA Model Selector & Token Tracker"
             echo ""
@@ -779,6 +902,12 @@ main() {
             echo "                          - Record success/fail outcome"
             echo "  stats                   - Show learning statistics"
             echo "  learn-reset             - Reset learning data"
+            echo ""
+            echo "Session Management:"
+            echo "  session-start [mode] [workflow]"
+            echo "                          - Start new session, logs to signals.jsonl"
+            echo "  session-end [status]    - End session (completed|aborted|failed)"
+            echo "  session-id              - Get current session ID"
             echo ""
             echo "Model Selection Logic:"
             echo "  - Complexity 1-3:  haiku (simple tasks)"

@@ -10,7 +10,7 @@
 
 | Category | Total | Fixed | In Progress | Parking Lot | Remaining |
 |----------|-------|-------|-------------|-------------|-----------|
-| **FIX NOW (Critical)** | 18 | 10 | 0 | 1 | 7 |
+| **FIX NOW (Critical)** | 18 | 11 | 0 | 1 | 6 |
 | **FIX LATER** | 24 | 0 | 0 | 0 | 24 |
 | **PARKING LOT** | 12 | - | - | 12 | - |
 
@@ -356,13 +356,56 @@ Added `_log_hitl_signal()` function with full traceability:
 
 ---
 
-### Issue #14: Session Start/End Not Tracked ⏳ PENDING
+### Issue #14: Session Start/End Not Tracked ✅ FIXED
 
 | Field | Value |
 |-------|-------|
-| **Status** | ⏳ PENDING |
+| **Status** | ✅ FIXED |
 | **File** | `.aria/model-selector.sh` |
-| **Impact** | Cannot calculate session duration |
+| **Commit** | (pending - this session) |
+| **Date Fixed** | 2026-01-15 |
+
+**Original Problem:**
+Sessions had a `session_start` timestamp in token_usage.json but:
+- No `session_end` timestamp
+- No logging to signals.jsonl for traceability
+- No way to calculate session duration or query session history
+
+**Solution Implemented:**
+Added session lifecycle tracking with full traceability:
+
+**New Functions:**
+- `_log_session_signal()` - Logs session events to signals.jsonl
+- `_generate_session_id()` - Creates unique session identifiers
+- `start_session()` - Starts session, logs to signals.jsonl
+- `get_session_id()` - Returns current session ID
+- `end_session()` - Ends session with duration/cost metrics
+
+**Events Logged:**
+- `session_started` - When workflow begins (mode, workflow type)
+- `session_ended` - When workflow completes (status, duration, cost)
+
+**Signal Data Captured:**
+- Session ID, timestamp
+- Mode (LITE/STANDARD/FULL/FULL+)
+- Workflow type (build/modify/research)
+- Duration in seconds
+- Total cost, token counts
+- Final status (completed/aborted/failed)
+
+**CLI Commands Added:**
+- `session-start [mode] [workflow]` - Start new session
+- `session-end [status]` - End session with metrics
+- `session-id` - Get current session ID
+
+**Usage - Query sessions:**
+```bash
+grep "session_started" .aria/state/signals.jsonl | jq -r '.session_id'
+grep "session_ended" .aria/state/signals.jsonl | jq '.metrics'
+```
+
+**Tests Added:**
+- `test-session-tracking.sh` with 11 assertions validating session lifecycle
 
 ---
 
@@ -521,8 +564,9 @@ grep "hitl_request_created" .aria/state/signals.jsonl | wc -l
 | - | #12 | Added HITL signal logging to signals.jsonl for traceability | (pending) |
 | - | #15 | Added skill/template/framework touch logging to signals.jsonl | `35190a6` |
 | - | #16 | Resolved by Issue #12 (HITL events now countable) | - |
-| - | #9 | Replaced eval with safe_execute + command validation | (pending) |
-| - | #10 | Added URL validation to block shell metacharacters | (pending) |
+| - | #9 | Replaced eval with safe_execute + command validation | `b9f86af` |
+| - | #10 | Added URL validation to block shell metacharacters | `0e79c0a` |
+| - | #14 | Added session lifecycle tracking with signals.jsonl logging | (pending) |
 
 ---
 
