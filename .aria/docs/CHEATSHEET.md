@@ -106,6 +106,24 @@ bash .aria/verify.sh
 |--------|--------|
 | `python .aria/scripts/serve-dashboard.py` | Open dashboard at :8420 |
 | `python .aria/scripts/generate-slides.py` | Generate slides from IDEA.md |
+| `.aria/scripts/setup-project.sh <name>` | Create isolated project workspace |
+
+## Workspace Setup
+
+Keep ARIA pristine, create isolated test workspaces:
+
+```bash
+# Clone once
+git clone https://github.com/kknipe2k/AgentFramework.git ~/aria-test
+
+# Create project workspace
+~/aria-test/.aria/scripts/setup-project.sh SVM
+
+# Work in project folder
+code ~/aria/eval/SVM
+```
+
+Results stay in project folder. ARIA stays clean.
 
 ---
 

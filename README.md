@@ -28,6 +28,30 @@ vim .aria/ralph/prd.json
 tail -f .aria/ralph/progress.txt
 ```
 
+## Workspace Setup
+
+For testing and evaluation, keep ARIA pristine and create isolated project workspaces:
+
+```bash
+# Windows
+.aria\scripts\setup-project.bat SVM
+
+# Mac/Linux
+.aria/scripts/setup-project.sh SVM
+```
+
+This creates `~/aria/eval/SVM` (or `c:\aria\eval\SVM`) with:
+- Symlinks to ARIA framework files (immutable)
+- Fresh state directories (per-project)
+- Ready for your source materials
+
+**Workflow:**
+1. Clone ARIA once: `git clone ... ~/aria-test`
+2. Create project: `setup-project.sh MyResearch`
+3. Drop papers/docs into `~/aria/eval/MyResearch`
+4. Open VS Code there, run ARIA
+5. Results stay in project folder, ARIA stays clean
+
 ## Architecture
 
 ```
@@ -107,6 +131,9 @@ tail -f .aria/ralph/progress.txt
 # Dashboard & Research
 python .aria/scripts/serve-dashboard.py     # Open dashboard at :8420
 python .aria/scripts/generate-slides.py     # Generate slides from IDEA.md
+
+# Workspace Setup
+.aria/scripts/setup-project.sh <name>       # Create isolated project workspace
 ```
 
 ## IDE Integration
@@ -135,7 +162,9 @@ python .aria/scripts/generate-slides.py     # Generate slides from IDEA.md
 ├── rails/                 # YAML rail definitions
 ├── scripts/               # Utility scripts
 │   ├── serve-dashboard.py # Decision lineage dashboard
-│   └── generate-slides.py # Slide generation
+│   ├── generate-slides.py # Slide generation
+│   ├── setup-project.sh   # Workspace setup (Mac/Linux)
+│   └── setup-project.bat  # Workspace setup (Windows)
 ├── skills/                # Skill definitions
 ├── outputs/               # Generated artifacts (slides, etc.)
 ├── dashboard/             # Dashboard web UI
