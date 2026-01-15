@@ -66,7 +66,7 @@ All operations logged to `signals.jsonl` with event types:
 |-------|-------|
 | **Status** | ✅ FIXED |
 | **Files** | 16 scripts (all updated) |
-| **Commit** | (pending - this session) |
+| **Commit** | `5ac0d16` |
 | **Date Fixed** | 2026-01-15 |
 
 **Original Problem:**
@@ -335,8 +335,8 @@ input_tokens=$(( ${#full_prompt} / 4 ))  # Rough estimate
 |------|-------|--------|--------|
 | - | #8 | Created requirements.txt | `0b7612d` |
 | - | #1 | Fixed Bash 4+ associative arrays with file-based storage + traceability | `f6fc856` |
-| - | #2 | Updated 16 scripts to use `set -euo pipefail` for proper pipeline error handling | (pending) |
-| - | #18 | Resolved by Issue #2 fix | (pending) |
+| - | #2 | Updated 16 scripts to use `set -euo pipefail` for proper pipeline error handling | `5ac0d16` |
+| - | #18 | Resolved by Issue #2 fix | `5ac0d16` |
 
 ---
 
