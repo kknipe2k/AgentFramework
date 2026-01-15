@@ -4,3 +4,7 @@
 .aria/logs/
 .aria/state/
 __pycache__/
+
+# ARIA Ralph runtime files
+.aria/ralph/.story_failures
+.aria/ralph/.story_failures.tmp.*

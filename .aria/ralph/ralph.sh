@@ -38,8 +38,101 @@ PLANNER_SCRIPT="$ARIA_DIR/planner/planner.sh"
 PLAN_FILE="$ARIA_DIR/state/current-plan.json"
 PAUSE_SCRIPT="$ARIA_DIR/pause.sh"
 
-# Track consecutive failures per story
-declare -A story_failures
+# ============================================
+# STORY FAILURE TRACKING (POSIX-Compatible)
+# ============================================
+# Uses file-based storage instead of bash 4+ associative arrays
+# for cross-platform compatibility (Windows Git Bash, older macOS)
+# All operations are logged to signals.jsonl for traceability
+
+STORY_FAILURES_FILE="$SCRIPT_DIR/.story_failures"
+SIGNALS_FILE="$ARIA_DIR/state/signals.jsonl"
+
+# Ensure state directory exists
+mkdir -p "$ARIA_DIR/state"
+
+# Log failure tracking operation to signals.jsonl for traceability
+_log_failure_tracking() {
+    local operation="$1"
+    local story_id="$2"
+    local count="$3"
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local event_id="fail-track-$(date +%s%N | cut -c1-13)"
+
+    # Ensure signals file exists
+    touch "$SIGNALS_FILE" 2>/dev/null || true
+
+    # Append to signals.jsonl (atomic append is safe)
+    echo "{\"id\":\"${event_id}\",\"timestamp\":\"${timestamp}\",\"event\":\"failure_tracking\",\"operation\":\"${operation}\",\"story_id\":\"${story_id}\",\"count\":${count},\"context_type\":\"ralph\",\"context_name\":\"story_failures\"}" >> "$SIGNALS_FILE" 2>/dev/null || true
+}
+
+# Get failure count for a story (returns 0 if not found)
+get_story_failures() {
+    local story_id="$1"
+    local count=0
+
+    if [[ -f "$STORY_FAILURES_FILE" ]]; then
+        # Use grep to find the story, cut to extract count
+        local line=$(grep "^${story_id}:" "$STORY_FAILURES_FILE" 2>/dev/null | tail -1)
+        if [[ -n "$line" ]]; then
+            count=$(echo "$line" | cut -d: -f2)
+            # Validate it's a number
+            if ! [[ "$count" =~ ^[0-9]+$ ]]; then
+                count=0
+            fi
+        fi
+    fi
+
+    echo "$count"
+}
+
+# Set failure count for a story (atomic operation)
+set_story_failures() {
+    local story_id="$1"
+    local count="$2"
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    # Create temp file for atomic write
+    local tmp_file="${STORY_FAILURES_FILE}.tmp.$$"
+
+    # Copy existing entries except for this story
+    if [[ -f "$STORY_FAILURES_FILE" ]]; then
+        grep -v "^${story_id}:" "$STORY_FAILURES_FILE" > "$tmp_file" 2>/dev/null || touch "$tmp_file"
+    else
+        touch "$tmp_file"
+    fi
+
+    # Add new entry with timestamp for debugging
+    echo "${story_id}:${count}:${timestamp}" >> "$tmp_file"
+
+    # Atomic move
+    mv "$tmp_file" "$STORY_FAILURES_FILE"
+
+    # Log to signals for traceability
+    _log_failure_tracking "set" "$story_id" "$count"
+}
+
+# Initialize failure tracking file (call at start of run)
+init_story_failures() {
+    # Create fresh file at start of run
+    echo "# ARIA Story Failure Tracking - $(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "$STORY_FAILURES_FILE"
+    echo "# Format: story_id:failure_count:last_updated" >> "$STORY_FAILURES_FILE"
+
+    _log_failure_tracking "init" "ALL" 0
+}
+
+# Clean up failure tracking file (call at end of run)
+cleanup_story_failures() {
+    if [[ -f "$STORY_FAILURES_FILE" ]]; then
+        # Archive to logs directory for post-mortem analysis
+        local archive_dir="$ARIA_DIR/logs"
+        mkdir -p "$archive_dir"
+        local archive_name="story_failures_$(date +%Y%m%d_%H%M%S).log"
+        cp "$STORY_FAILURES_FILE" "$archive_dir/$archive_name" 2>/dev/null || true
+
+        _log_failure_tracking "cleanup" "ALL" 0
+    fi
+}
 
 # Track model used for current iteration (for learning)
 current_iteration_model=""
@@ -236,9 +329,10 @@ EOF
 # Check if we should request human help (too many failures)
 check_failure_threshold() {
     local story_id="$1"
-    local current_failures=${story_failures[$story_id]:-0}
+    local current_failures=$(get_story_failures "$story_id")
 
     if [[ $current_failures -ge $MAX_CONSECUTIVE_FAILURES ]]; then
+        _log_failure_tracking "threshold_reached" "$story_id" "$current_failures"
         return 0  # Should request help
     fi
     return 1  # Keep trying
@@ -356,14 +450,20 @@ update_plan_task() {
 # Increment failure count for a story
 increment_failures() {
     local story_id="$1"
-    local current=${story_failures[$story_id]:-0}
-    story_failures[$story_id]=$((current + 1))
+    local current=$(get_story_failures "$story_id")
+    local new_count=$((current + 1))
+    set_story_failures "$story_id" "$new_count"
+    _log_failure_tracking "increment" "$story_id" "$new_count"
 }
 
 # Reset failure count (on success)
 reset_failures() {
     local story_id="$1"
-    story_failures[$story_id]=0
+    local previous=$(get_story_failures "$story_id")
+    set_story_failures "$story_id" 0
+    if [[ "$previous" -gt 0 ]]; then
+        _log_failure_tracking "reset" "$story_id" 0
+    fi
 }
 
 # Record learning outcome for model selection
@@ -385,6 +485,9 @@ record_learning_outcome() {
 run_loop() {
     local iteration=0
     local start_time=$(date +%s)
+
+    # Initialize failure tracking for this run (fresh start)
+    init_story_failures
 
     while [[ $iteration -lt $MAX_ITERATIONS ]]; do
         iteration=$((iteration + 1))
@@ -443,7 +546,7 @@ $(tail -100 "$PROGRESS_FILE" 2>/dev/null || echo "No progress yet")
         # Select model for this task
         local selected_model="sonnet"
         local model_flag=""
-        local failures=${story_failures[$next_story]:-0}
+        local failures=$(get_story_failures "$next_story")
 
         if [[ "$AUTO_MODEL_SELECT" == "true" ]] && [[ -x "$MODEL_SELECTOR" ]]; then
             local story_title=$(jq -r ".userStories[] | select(.id == \"$next_story\") | .title" "$PRD_FILE" 2>/dev/null || echo "")
@@ -594,6 +697,10 @@ $(tail -100 "$PROGRESS_FILE" 2>/dev/null || echo "No progress yet")
     echo -e "${BLUE}                    EXECUTION COMPLETE                      ${NC}"
     echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
     echo ""
+
+    # Archive failure tracking for post-mortem analysis
+    cleanup_story_failures
+
     echo "Total iterations: $iteration"
     echo "Total duration:   ${total_duration}s"
     echo "Remaining stories: $(count_remaining)"
