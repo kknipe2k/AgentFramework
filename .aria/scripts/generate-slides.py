@@ -123,6 +123,16 @@ async def generate_nblm(focus_path: Path, idea_path: Path, source_paths: list) -
 
     try:
         async with await NotebookLMClient.from_storage() as client:
+            # Check for existing notebook with same title
+            print(f"Checking for existing notebooks...")
+            existing = await client.notebooks.list()
+            for nb in existing:
+                if title.lower() in str(nb).lower():
+                    print(f"\n⚠️  Found existing notebook that may match: {nb}")
+                    print("To avoid duplicates, please check NotebookLM directly.")
+                    print("URL: https://notebooklm.google.com")
+                    return None
+
             # Create notebook
             print(f"Creating NotebookLM notebook: {title}")
             notebook = await client.notebooks.create(f"Slides: {title}")
@@ -179,10 +189,17 @@ async def generate_nblm(focus_path: Path, idea_path: Path, source_paths: list) -
             return notebook_url
 
     except Exception as e:
-        print(f"NotebookLM error: {e}")
-        print("Run 'notebooklm login' to authenticate, then try again.")
-        print("Falling back to pptx...")
-        return await generate_pptx(focus_path, idea_path, source_paths)
+        print(f"\n❌ NotebookLM error: {e}")
+        print("\n" + "="*60)
+        print("HITL REQUIRED: NotebookLM failed")
+        print("="*60)
+        print("\nOptions:")
+        print("  [1] Check NotebookLM directly: https://notebooklm.google.com")
+        print("  [2] Run 'notebooklm login' to re-authenticate")
+        print("  [3] Use local pptx instead (run with --method pptx)")
+        print("\nDo NOT auto-retry. User must decide next step.")
+        print("="*60)
+        return None
 
 
 # ============================================================
