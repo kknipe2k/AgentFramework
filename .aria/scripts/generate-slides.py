@@ -146,14 +146,14 @@ async def generate_nblm(focus_path: Path, idea_path: Path, source_paths: list) -
                     await client.sources.add_file(notebook.id, str(source_path))
 
             # Generate slides
-            print("Generating slides (this may take a minute)...")
+            print("Generating slide deck (this may take a minute)...")
             await client.chat.ask(notebook.id, SLIDES_PROMPT)
-            status = await client.artifacts.generate_slides(notebook.id)
+            status = await client.artifacts.generate_slide_deck(notebook.id)
             await client.artifacts.wait_for_completion(notebook.id, status.task_id)
 
             # Download
             output_path = OUTPUTS_DIR / f"slides-{timestamp}.pdf"
-            await client.artifacts.download_slides(notebook.id, str(OUTPUTS_DIR))
+            await client.artifacts.download_slide_deck(notebook.id, str(OUTPUTS_DIR))
 
             # Cleanup temp files
             focus_temp.unlink(missing_ok=True)
