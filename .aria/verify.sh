@@ -163,7 +163,22 @@ if [[ -f "$PROJECT_DIR/package.json" ]] && grep -q '"build"' "$PROJECT_DIR/packa
 fi
 
 # ============================================
-# CHECK 6: Don't Touch Areas
+# CHECK 6: ARIA Framework Tests
+# ============================================
+if [[ -x "$SCRIPT_DIR/tests/test-runner.sh" ]]; then
+    echo -n "Running ARIA framework tests... "
+    if "$SCRIPT_DIR/tests/test-runner.sh" >/dev/null 2>&1; then
+        echo -e "${GREEN}PASSED${NC}"
+    else
+        echo -e "${RED}FAILED${NC}"
+        echo "  ARIA framework tests failed"
+        echo "  Run: .aria/tests/test-runner.sh for details"
+        FAILURES=$((FAILURES + 1))
+    fi
+fi
+
+# ============================================
+# CHECK 7: Don't Touch Areas
 # ============================================
 if [[ -f "$SCRIPT_DIR/project-context.md" ]]; then
     echo -n "Checking protected areas... "

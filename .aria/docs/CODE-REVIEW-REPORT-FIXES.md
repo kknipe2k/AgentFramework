@@ -10,7 +10,7 @@
 
 | Category | Total | Fixed | In Progress | Parking Lot | Remaining |
 |----------|-------|-------|-------------|-------------|-----------|
-| **FIX NOW (Critical)** | 18 | 4 | 0 | 0 | 14 |
+| **FIX NOW (Critical)** | 18 | 5 | 0 | 0 | 13 |
 | **FIX LATER** | 24 | 0 | 0 | 0 | 24 |
 | **PARKING LOT** | 12 | - | - | 12 | - |
 
@@ -144,13 +144,45 @@ All invocations logged to `signals.jsonl` with:
 
 ---
 
-### Issue #4: No Test Suite ⏳ PENDING
+### Issue #4: No Test Suite ✅ FIXED
 
 | Field | Value |
 |-------|-------|
-| **Status** | ⏳ PENDING |
+| **Status** | ✅ FIXED |
 | **Scope** | Framework-wide |
-| **Impact** | No automated validation of framework itself |
+| **Commit** | (pending - this session) |
+| **Date Fixed** | 2026-01-15 |
+
+**Solution Implemented:**
+Created comprehensive test framework with full traceability:
+
+**Test Framework Structure:**
+```
+.aria/tests/
+├── test-runner.sh          # Test framework with assertions
+├── test-framework.sh       # Structure & syntax validation (32 assertions)
+├── test-invoke-agent.sh    # Issue #3 fix validation (14 assertions)
+└── test-story-failures.sh  # Issue #1 fix validation (11 assertions)
+```
+
+**Test Runner Features:**
+- Lightweight bash test framework (no external dependencies)
+- 15+ assertion functions (assert_eq, assert_contains, assert_file_exists, etc.)
+- Full traceability - all results logged to signals.jsonl
+- Color-coded output with pass/fail summary
+- CI-ready (proper exit codes)
+
+**Test Categories:**
+1. **Framework Structure Tests** - Validates directories, files, scripts exist
+2. **Syntax Validation Tests** - Confirms all scripts pass `bash -n`
+3. **Pipefail Tests** - Verifies Issue #2 fix (`set -euo pipefail`)
+4. **Story Failures Tests** - Validates Issue #1 fix (file-based storage)
+5. **Invoke Agent Tests** - Validates Issue #3 fix (error handling)
+
+**Integration:**
+- Tests run automatically as part of `verify.sh` (Check 6)
+- Can be run standalone: `.aria/tests/test-runner.sh`
+- Individual test files can be run: `.aria/tests/test-runner.sh test-framework.sh`
 
 ---
 
@@ -364,6 +396,7 @@ input_tokens=$(( ${#full_prompt} / 4 ))  # Rough estimate
 | - | #2 | Updated 16 scripts to use `set -euo pipefail` for proper pipeline error handling | `5ac0d16` |
 | - | #18 | Resolved by Issue #2 fix | `5ac0d16` |
 | - | #3 | Replaced `\|\| true` with proper invoke_agent() error handling + traceability | `2ce7c75` |
+| - | #4 | Created test framework with 57 assertions, integrated with verify.sh | (pending) |
 
 ---
 
