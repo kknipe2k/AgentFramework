@@ -250,10 +250,41 @@ Analyze an article or research paper, create documentation, optionally prototype
 
 ```
 Input article → Researcher skill → Brainstorm → IDEA.md
+         ↓
+HITL: Generate slides?
+  └─ If yes → Focus doc → Slides (NBLM or pptx)
+         ↓
 HITL: [p]rototype / [d]one with docs
   └─ If done → Generate report, stop
   └─ If prototype → Choose variant → Build
 ```
+
+**Slide Generation (optional):**
+
+After IDEA.md is created, offer slide deck generation:
+
+```
+HITL: Generate presentation slides?
+[y]es / [n]o, skip to prototype decision
+
+If yes:
+  Sources for Focus doc:
+  1. .aria/docs/IDEA.md
+  2. [original paper/article]
+  3. [additional sources...]
+
+  Confirm sources? [y]es / [e]dit / [c]ancel
+
+  → Generate FOCUS.md (Core Ideas + Synthesis Matrix)
+
+  Output method:
+  [1] NotebookLM (richer design, requires auth)
+  [2] Local pptx (reliable, no dependency)
+
+  → Generate slides
+```
+
+See `.aria/skills/slide-generation.md` for prompts and details.
 
 **If prototyping, ask about variant:**
 
@@ -272,6 +303,8 @@ HITL: What type of prototype?
 
 **Research outputs:**
 - `.aria/docs/IDEA.md` - Analysis and brainstorm
+- `.aria/outputs/FOCUS.md` - Core ideas + synthesis matrix (if slides requested)
+- `.aria/outputs/slides-*.pdf|pptx` - Presentation deck (if slides requested)
 - `.aria/reports/RESEARCH-[topic].md` - Final report (NotebookLM-ready)
 - `.aria/prototypes/` - Optional prototype if requested
 
