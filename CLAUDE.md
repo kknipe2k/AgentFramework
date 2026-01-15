@@ -254,58 +254,98 @@ Router → Plan → Execute → Report
 
 Analyze an article or research paper, create documentation, optionally prototype.
 
+**MANDATORY SEQUENTIAL STEPS - DO NOT SKIP OR COMBINE:**
+
 ```
-Input article → Researcher skill → Brainstorm → IDEA.md
-         ↓
-HITL: Generate slides?
-  └─ If yes → Focus doc → Slides (NBLM or pptx)
-         ↓
-HITL: [p]rototype / [d]one with docs
-  └─ If done → Generate report, stop
-  └─ If prototype → Choose variant → Build
+STEP 1: Extract concepts
+        → Run researcher skill
+        → Output: .aria/docs/research-output.json
+        → WAIT for completion
+
+STEP 2: Synthesize findings
+        → Run brainstorming skill
+        → Output: .aria/docs/IDEA.md
+        → WAIT for completion
+
+STEP 3: HITL - Slides decision (STOP AND ASK)
+        ┌────────────────────────────────────────┐
+        │ HITL: Generate presentation slides?    │
+        │ [y]es / [n]o                           │
+        └────────────────────────────────────────┘
+        → WAIT for user response before proceeding
+
+STEP 4: If slides = yes (STOP AND ASK)
+        → Generate FOCUS.md first
+        ┌────────────────────────────────────────┐
+        │ HITL: Slide generation method?         │
+        │ [1] NotebookLM (richer, needs auth)    │
+        │ [2] Local pptx (no dependencies)       │
+        └────────────────────────────────────────┘
+        → WAIT for user response
+        → Generate slides with chosen method
+        → Output: .aria/outputs/slides-*.pdf|pptx
+
+STEP 5: HITL - Prototype decision (STOP AND ASK)
+        ┌────────────────────────────────────────┐
+        │ HITL: Create prototype?                │
+        │ [p]rototype / [d]one with docs         │
+        └────────────────────────────────────────┘
+        → WAIT for user response before proceeding
+
+STEP 6: If prototype = yes (STOP AND ASK)
+        ┌────────────────────────────────────────┐
+        │ HITL: What type of prototype?          │
+        │ [1] mockup - minimal demo              │
+        │ [2] learning tool - guided, interactive│
+        │ [3] reference - production-style       │
+        └────────────────────────────────────────┘
+        → WAIT for user response
+        → Build prototype with chosen variant
+        → Output: .aria/prototypes/
+
+STEP 7: Generate final report
+        → Run report-writer skill
+        → HITL: View dashboard? [y/n/s]
 ```
 
-**Slide Generation (optional):**
+**CRITICAL: Each HITL checkpoint is BLOCKING. Do NOT proceed until user responds.**
+
+**Slide Generation Details:**
 
 After IDEA.md is created, offer slide deck generation:
 
 ```
 HITL: Generate presentation slides?
 [y]es / [n]o, skip to prototype decision
+```
 
 If yes:
-  Sources for Focus doc:
-  1. .aria/docs/IDEA.md
-  2. [original paper/article]
-  3. [additional sources...]
+```
+Sources for Focus doc:
+1. .aria/docs/IDEA.md
+2. [original paper/article]
+3. [additional sources...]
 
-  Confirm sources? [y]es / [e]dit / [c]ancel
+Confirm sources? [y]es / [e]dit / [c]ancel
 
-  → Generate FOCUS.md (Core Ideas + Synthesis Matrix)
+→ Generate FOCUS.md (Core Ideas + Synthesis Matrix)
 
-  Output method:
-  [1] NotebookLM (richer design, requires auth)
-  [2] Local pptx (reliable, no dependency)
+HITL: Output method?
+[1] NotebookLM (richer design, requires auth)
+[2] Local pptx (reliable, no dependency)
 
-  → Generate slides
+→ Generate slides
 ```
 
 See `.aria/skills/slide-generation.md` for prompts and details.
 
-**If prototyping, ask about variant:**
+**Prototype Variants:**
 
 | Variant | Description | Best For |
 |---------|-------------|----------|
 | **[1] Working mockup** | Minimal functional demo of core concept, quick and simple | Technical users, quick validation |
 | **[2] Learning tool** | Guided step-by-step workflows, hover tooltips with definitions, verbose explanations, progressive disclosure, animated transitions, visual feedback on interactions, interactive exploration of parameters | New users, education, onboarding |
 | **[3] Reference impl** | Production-style code structure, proper patterns, extensible | Developers building on it |
-
-```
-HITL: What type of prototype?
-[1] mockup - minimal demo
-[2] learning tool - guided, explanatory, interactive
-[3] reference - production-style code
-```
 
 **Research outputs:**
 - `.aria/docs/IDEA.md` - Analysis and brainstorm
