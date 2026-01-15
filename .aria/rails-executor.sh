@@ -15,6 +15,7 @@ aria_check_deps jq || exit 1
 RAILS_DIR="$SCRIPT_DIR/rails"
 STATE_DIR="$SCRIPT_DIR/state"
 LOGS_DIR="$SCRIPT_DIR/logs"
+SIGNALS_FILE="$STATE_DIR/signals.jsonl"
 
 # Colors from common.sh
 RED="$ARIA_RED"
@@ -24,6 +25,80 @@ BLUE="$ARIA_BLUE"
 NC="$ARIA_NC"
 
 mkdir -p "$STATE_DIR" "$LOGS_DIR"
+
+# ============================================
+# SECURITY: Command Validation (Issue #9 fix)
+# ============================================
+
+# Dangerous patterns that should never be in rail commands
+DANGEROUS_PATTERNS=(
+    'rm -rf /'
+    'rm -rf ~'
+    'rm -rf \*'
+    '> /dev/sd'
+    'mkfs\.'
+    'dd if=.* of=/dev'
+    ':(){ :|:& };:'
+    'chmod -R 777 /'
+    '\$\(.*\)'        # Command substitution
+    '\`.*\`'          # Backtick execution
+    'curl.*\|.*sh'    # Pipe curl to shell
+    'wget.*\|.*sh'    # Pipe wget to shell
+    'eval '           # Nested eval
+    'exec '           # Process replacement
+)
+
+# Validate command is safe to execute
+validate_command() {
+    local cmd="$1"
+    local context="$2"
+
+    for pattern in "${DANGEROUS_PATTERNS[@]}"; do
+        if echo "$cmd" | grep -qE "$pattern"; then
+            echo -e "${RED}SECURITY: Dangerous pattern detected in $context${NC}"
+            echo -e "${RED}Pattern: $pattern${NC}"
+            echo -e "${RED}Command blocked for safety${NC}"
+            _log_rail_signal "blocked" "$context" "dangerous_pattern" "$pattern"
+            return 1
+        fi
+    done
+
+    return 0
+}
+
+# Log rail execution to signals.jsonl for traceability
+_log_rail_signal() {
+    local event="$1"      # check_pass, check_fail, autofix_attempt, blocked
+    local rail_id="$2"
+    local status="$3"
+    local details="${4:-}"
+    local timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local event_id="rail-$(date +%s%N | cut -c1-13)"
+
+    mkdir -p "$(dirname "$SIGNALS_FILE")" 2>/dev/null || true
+
+    # Escape quotes
+    details="${details//\"/\\\"}"
+
+    printf '{"id":"%s","timestamp":"%s","event":"rail_%s","rail_id":"%s","status":"%s","details":"%s","context_type":"rail","context_name":"executor"}\n' \
+        "$event_id" "$timestamp" "$event" "$rail_id" "$status" "$details" \
+        >> "$SIGNALS_FILE" 2>/dev/null || true
+}
+
+# Safe command execution (replaces eval)
+safe_execute() {
+    local cmd="$1"
+    local context="$2"
+
+    # Validate first
+    if ! validate_command "$cmd" "$context"; then
+        return 1
+    fi
+
+    # Execute in subshell with bash -c (safer than eval)
+    # This runs in a child process, limiting damage potential
+    bash -c "$cmd" >/dev/null 2>&1
+}
 
 # ============================================
 # RAIL EXECUTION
@@ -42,11 +117,14 @@ execute_rail() {
 
     echo -n "  [$id] $description... "
 
-    # Execute check
-    if eval "$check" >/dev/null 2>&1; then
+    # Execute check using safe_execute (not eval)
+    if safe_execute "$check" "$id"; then
         echo -e "${GREEN}PASS${NC}"
+        _log_rail_signal "check" "$id" "pass" "$description"
         return 0
     else
+        _log_rail_signal "check" "$id" "fail" "$description"
+
         if [[ "$type" == "hard" ]]; then
             echo -e "${RED}BLOCKED${NC}"
             echo "    → $message"
@@ -54,14 +132,18 @@ execute_rail() {
             # Try auto-fix if available
             if [[ -n "$auto_fix" && "$auto_fix" != "null" ]]; then
                 echo -e "    ${YELLOW}Attempting auto-fix...${NC}"
-                if eval "$auto_fix" >/dev/null 2>&1; then
+                _log_rail_signal "autofix" "$id" "attempt" ""
+
+                if safe_execute "$auto_fix" "${id}_autofix"; then
                     # Re-check after fix
-                    if eval "$check" >/dev/null 2>&1; then
+                    if safe_execute "$check" "${id}_recheck"; then
                         echo -e "    ${GREEN}Auto-fix successful${NC}"
+                        _log_rail_signal "autofix" "$id" "success" ""
                         return 0
                     fi
                 fi
                 echo -e "    ${RED}Auto-fix failed${NC}"
+                _log_rail_signal "autofix" "$id" "failed" ""
             fi
 
             return 1

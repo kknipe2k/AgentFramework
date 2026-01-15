@@ -10,7 +10,7 @@
 
 | Category | Total | Fixed | In Progress | Parking Lot | Remaining |
 |----------|-------|-------|-------------|-------------|-----------|
-| **FIX NOW (Critical)** | 18 | 8 | 0 | 1 | 9 |
+| **FIX NOW (Critical)** | 18 | 9 | 0 | 1 | 8 |
 | **FIX LATER** | 24 | 0 | 0 | 0 | 24 |
 | **PARKING LOT** | 12 | - | - | 12 | - |
 
@@ -238,13 +238,37 @@ input_tokens=$(( ${#full_prompt} / 4 ))  # Rough estimate
 
 ---
 
-### Issue #9: `eval` Usage in Rails ⏳ PENDING
+### Issue #9: `eval` Usage in Rails ✅ FIXED
 
 | Field | Value |
 |-------|-------|
-| **Status** | ⏳ PENDING |
-| **File** | `.claude/hooks/aria-rails.sh` |
-| **Impact** | Security risk if safety.json modified |
+| **Status** | ✅ FIXED |
+| **File** | `.aria/rails-executor.sh` |
+| **Commit** | (pending - this session) |
+| **Date Fixed** | 2026-01-15 |
+
+**Original Problem:**
+```bash
+eval "$check" >/dev/null 2>&1
+```
+Commands from JSON rail files were executed via `eval`, allowing arbitrary code execution if JSON files were modified.
+
+**Solution Implemented:**
+1. **Command Validation** - `validate_command()` blocks dangerous patterns:
+   - `rm -rf /`, `mkfs.`, fork bombs, etc.
+   - Command substitution `$(...)` and backticks
+   - Piping curl/wget to shell
+   - Nested eval/exec
+
+2. **Safe Execution** - `safe_execute()` replaces `eval`:
+   - Validates command first
+   - Uses `bash -c` (runs in subshell, limiting damage)
+   - Blocks execution if dangerous pattern detected
+
+3. **Traceability** - `_log_rail_signal()`:
+   - Logs all rail checks to signals.jsonl
+   - Events: check_pass, check_fail, autofix_attempt, blocked
+   - Full audit trail of rail execution
 
 ---
 
@@ -477,8 +501,9 @@ grep "hitl_request_created" .aria/state/signals.jsonl | wc -l
 | - | #4 | Created test framework with 57 assertions, integrated with verify.sh | `4bfa64e` |
 | - | #5 | Moved to parking lot (acceptable limitation for cost estimation) | - |
 | - | #12 | Added HITL signal logging to signals.jsonl for traceability | (pending) |
-| - | #15 | Added skill/template/framework touch logging to signals.jsonl | (pending) |
+| - | #15 | Added skill/template/framework touch logging to signals.jsonl | `35190a6` |
 | - | #16 | Resolved by Issue #12 (HITL events now countable) | - |
+| - | #9 | Replaced eval with safe_execute + command validation | (pending) |
 
 ---
 
