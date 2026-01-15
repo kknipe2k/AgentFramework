@@ -27,6 +27,46 @@ NC="$ARIA_NC"
 
 mkdir -p "$HITL_DIR" "$LOGS_DIR"
 
+# Signals file for traceability
+SIGNALS_FILE="$STATE_DIR/signals.jsonl"
+
+# ============================================
+# TRACEABILITY - Log to signals.jsonl
+# ============================================
+
+# Log HITL events to signals.jsonl for audit trail
+_log_hitl_signal() {
+    local event_type="$1"      # request_created, response_received, timeout
+    local request_id="$2"
+    local request_type="$3"    # help, confirm, choice, input
+    local details="${4:-}"
+    local response="${5:-}"
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local event_id="hitl-$(date +%s%N | cut -c1-13)"
+
+    # Ensure signals file directory exists
+    mkdir -p "$(dirname "$SIGNALS_FILE")" 2>/dev/null || true
+    touch "$SIGNALS_FILE" 2>/dev/null || true
+
+    # Escape quotes in details and response
+    details="${details//\"/\\\"}"
+    response="${response//\"/\\\"}"
+
+    local json="{\"id\":\"${event_id}\",\"timestamp\":\"${timestamp}\",\"event\":\"hitl_${event_type}\",\"request_id\":\"${request_id}\",\"request_type\":\"${request_type}\""
+
+    if [[ -n "$details" ]]; then
+        json="${json},\"details\":\"${details}\""
+    fi
+
+    if [[ -n "$response" ]]; then
+        json="${json},\"response\":\"${response}\""
+    fi
+
+    json="${json},\"context_type\":\"hitl\",\"context_name\":\"human_intervention\"}"
+
+    echo "$json" >> "$SIGNALS_FILE" 2>/dev/null || true
+}
+
 # ============================================
 # CONFIGURATION
 # ============================================
@@ -232,6 +272,9 @@ create_request() {
 }
 EOF
 
+    # Log to signals.jsonl for traceability
+    _log_hitl_signal "request_created" "$request_id" "$request_type" "$reason"
+
     echo "$request_id"
 }
 
@@ -277,6 +320,12 @@ set_response() {
     local request_file="$HITL_DIR/request_${request_id}.json"
     local response_file="$HITL_DIR/response_${request_id}.txt"
 
+    # Get request type for logging
+    local request_type="unknown"
+    if [[ -f "$request_file" ]]; then
+        request_type=$(grep -o '"type": *"[^"]*"' "$request_file" 2>/dev/null | cut -d'"' -f4 || echo "unknown")
+    fi
+
     # Write response file
     echo "$response" > "$response_file"
 
@@ -291,7 +340,10 @@ set_response() {
     # Clean up notice file
     rm -f "$HITL_DIR/HUMAN_NEEDED_${request_id}.txt"
 
-    # Log the intervention
+    # Log to signals.jsonl for traceability
+    _log_hitl_signal "response_received" "$request_id" "$request_type" "responder:$responder" "$response"
+
+    # Log the intervention (legacy logging)
     log_intervention "$request_id" "$response" "$responder"
 }
 
@@ -328,6 +380,8 @@ wait_for_response() {
         if [[ $timeout -gt 0 ]] && [[ $elapsed -ge $timeout ]]; then
             echo ""
             echo -e "${RED}Timeout waiting for human response${NC}"
+            # Log timeout to signals.jsonl
+            _log_hitl_signal "timeout" "$request_id" "unknown" "timeout_seconds:$timeout"
             return 1
         fi
 

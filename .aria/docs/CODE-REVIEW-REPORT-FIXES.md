@@ -10,7 +10,7 @@
 
 | Category | Total | Fixed | In Progress | Parking Lot | Remaining |
 |----------|-------|-------|-------------|-------------|-----------|
-| **FIX NOW (Critical)** | 18 | 5 | 0 | 0 | 13 |
+| **FIX NOW (Critical)** | 18 | 6 | 0 | 1 | 11 |
 | **FIX LATER** | 24 | 0 | 0 | 0 | 24 |
 | **PARKING LOT** | 12 | - | - | 12 | - |
 
@@ -186,18 +186,24 @@ Created comprehensive test framework with full traceability:
 
 ---
 
-### Issue #5: Token Counting is Estimate ⏳ PENDING
+### Issue #5: Token Counting is Estimate 🅿️ PARKED
 
 | Field | Value |
 |-------|-------|
-| **Status** | ⏳ PENDING |
+| **Status** | 🅿️ PARKED |
 | **File** | `.aria/model-selector.sh` |
-| **Impact** | Cost tracking inaccurate |
+| **Reason** | Acceptable limitation - estimate is "good enough" for cost tracking |
 
 **Problem:**
 ```bash
 input_tokens=$(( ${#full_prompt} / 4 ))  # Rough estimate
 ```
+
+**Why Parked:**
+- Token counting is for cost *estimation*, not billing
+- Adding Python dependency (tiktoken) is heavy for bash framework
+- Better heuristics are still just estimates
+- Higher-priority traceability issues take precedence
 
 ---
 
@@ -262,13 +268,39 @@ input_tokens=$(( ${#full_prompt} / 4 ))  # Rough estimate
 
 ---
 
-### Issue #12: HITL Not Writing Decisions ⏳ PENDING
+### Issue #12: HITL Not Writing Decisions ✅ FIXED
 
 | Field | Value |
 |-------|-------|
-| **Status** | ⏳ PENDING |
+| **Status** | ✅ FIXED |
 | **File** | `.aria/hitl.sh` |
-| **Impact** | Decision audit trail incomplete |
+| **Commit** | (pending - this session) |
+| **Date Fixed** | 2026-01-15 |
+
+**Original Problem:**
+HITL events were logged to `hitl.log` and `progress.txt` but NOT to `signals.jsonl`, breaking traceability.
+
+**Solution Implemented:**
+Added `_log_hitl_signal()` function with full traceability:
+
+**Events Logged:**
+- `hitl_request_created` - When HITL checkpoint triggers
+- `hitl_response_received` - When human responds
+- `hitl_timeout` - When response times out
+
+**Signal Data Captured:**
+- Event ID, timestamp
+- Request ID, request type (help/confirm/choice/input)
+- Details, response text
+- Context type: `hitl`, context name: `human_intervention`
+
+**Integration Points:**
+- `create_request()` - logs request creation
+- `set_response()` - logs human response
+- `wait_for_response()` - logs timeout events
+
+**Tests Added:**
+- `test-hitl-signals.sh` with 12 assertions validating signal logging
 
 ---
 
@@ -396,7 +428,9 @@ input_tokens=$(( ${#full_prompt} / 4 ))  # Rough estimate
 | - | #2 | Updated 16 scripts to use `set -euo pipefail` for proper pipeline error handling | `5ac0d16` |
 | - | #18 | Resolved by Issue #2 fix | `5ac0d16` |
 | - | #3 | Replaced `\|\| true` with proper invoke_agent() error handling + traceability | `2ce7c75` |
-| - | #4 | Created test framework with 57 assertions, integrated with verify.sh | (pending) |
+| - | #4 | Created test framework with 57 assertions, integrated with verify.sh | `4bfa64e` |
+| - | #5 | Moved to parking lot (acceptable limitation for cost estimation) | - |
+| - | #12 | Added HITL signal logging to signals.jsonl for traceability | (pending) |
 
 ---
 
