@@ -97,11 +97,11 @@ REM Claude IDE integration (read-only)
 if exist "%ARIA%\.claude" mklink /D "%PROJECT%\.claude" "%ARIA%\.claude" >nul 2>&1
 
 REM ============================================
-REM Copy core shell scripts (may need local edits)
+REM Symlink core shell scripts
 REM ============================================
-echo Copying core scripts...
+echo Linking core scripts...
 for %%s in (verify.sh common.sh git-ops.sh hitl.sh aria-engine.sh verify-executor.sh rails-executor.sh model-selector.sh agent-runner.sh design-notes.sh discover.sh pause.sh) do (
-    if exist "%ARIA%\.aria\%%s" copy "%ARIA%\.aria\%%s" "%PROJECT%\.aria\%%s" >nul 2>&1
+    if exist "%ARIA%\.aria\%%s" mklink "%PROJECT%\.aria\%%s" "%ARIA%\.aria\%%s" >nul 2>&1
 )
 
 REM ============================================
