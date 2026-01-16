@@ -1,0 +1,13 @@
+# Force LF line endings for shell scripts (prevents CRLF issues on Windows)
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Force LF for other script files
+*.py text eol=lf
+
+# Keep these as auto (platform-native)
+*.md text
+*.json text
+*.html text
+*.css text
+*.js text

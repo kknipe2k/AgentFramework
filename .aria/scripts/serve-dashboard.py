@@ -743,6 +743,12 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_api(path)
             return
 
+        # Handle favicon.ico gracefully (return empty 204)
+        if path == '/favicon.ico':
+            self.send_response(204)  # No Content
+            self.end_headers()
+            return
+
         # Serve static files
         if path == '/' or path == '/index.html':
             self.path = '/index.html'
@@ -782,7 +788,8 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
 
     def log_message(self, format, *args):
         """Suppress default logging, use custom."""
-        if '/api/' in args[0]:
+        # args[0] might be HTTPStatus enum on some platforms, not a string
+        if args and isinstance(args[0], str) and '/api/' in args[0]:
             print(f"[API] {args[0]}")
 
 
