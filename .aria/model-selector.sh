@@ -149,10 +149,15 @@ EOF
 }
 
 # ============================================
-# MODEL CONFIGURATION
+# MODEL CONFIGURATION (Issue #23 - externalized)
 # ============================================
+# Costs are loaded from config file for easy updates.
+# Falls back to hardcoded defaults if config unavailable.
 
-# Model costs (per 1M tokens, approximate)
+MODEL_COSTS_FILE="${ARIA_MODEL_COSTS_FILE:-$ARIA_DIR/config/model-costs.json}"
+_COSTS_LOADED=""
+
+# Default costs (fallback if config unavailable)
 declare -A INPUT_COSTS=(
     ["opus"]=15.00
     ["sonnet"]=3.00
@@ -174,6 +179,70 @@ declare -A MODEL_CAPABILITY=(
 
 # Default budget (in dollars)
 DEFAULT_BUDGET=${ARIA_MODEL_BUDGET:-10.00}
+
+# Load costs from config file
+load_model_costs() {
+    if [[ -n "$_COSTS_LOADED" ]]; then
+        return 0  # Already loaded
+    fi
+
+    if [[ ! -f "$MODEL_COSTS_FILE" ]]; then
+        echo -e "${YELLOW}Using default model costs (config not found: $MODEL_COSTS_FILE)${NC}" >&2
+        _COSTS_LOADED="defaults"
+        return 0
+    fi
+
+    # Validate JSON
+    if ! jq empty "$MODEL_COSTS_FILE" 2>/dev/null; then
+        echo -e "${RED}Invalid JSON in $MODEL_COSTS_FILE, using defaults${NC}" >&2
+        _COSTS_LOADED="defaults"
+        return 1
+    fi
+
+    # Load costs from config
+    local config_version
+    config_version=$(jq -r '._meta.version // "unknown"' "$MODEL_COSTS_FILE")
+
+    for model in opus sonnet haiku; do
+        local input_cost output_cost capability
+        input_cost=$(jq -r ".models.$model.input_cost_per_1m // 0" "$MODEL_COSTS_FILE")
+        output_cost=$(jq -r ".models.$model.output_cost_per_1m // 0" "$MODEL_COSTS_FILE")
+        capability=$(jq -r ".models.$model.capability_score // 5" "$MODEL_COSTS_FILE")
+
+        if [[ "$input_cost" != "0" && "$input_cost" != "null" ]]; then
+            INPUT_COSTS[$model]="$input_cost"
+        fi
+        if [[ "$output_cost" != "0" && "$output_cost" != "null" ]]; then
+            OUTPUT_COSTS[$model]="$output_cost"
+        fi
+        if [[ "$capability" != "0" && "$capability" != "null" ]]; then
+            MODEL_CAPABILITY[$model]="$capability"
+        fi
+    done
+
+    # Load default budget from config
+    local config_budget
+    config_budget=$(jq -r '.defaults.budget // 10.00' "$MODEL_COSTS_FILE")
+    DEFAULT_BUDGET=${ARIA_MODEL_BUDGET:-$config_budget}
+
+    _COSTS_LOADED="$config_version"
+
+    # Emit signal for traceability
+    emit_signal "model_costs_loaded" "model_selector" "config" \
+        "config_file=$MODEL_COSTS_FILE" \
+        "config_version=$config_version" 2>/dev/null || true
+
+    return 0
+}
+
+# Get cost config version (for display)
+get_costs_version() {
+    load_model_costs
+    echo "${_COSTS_LOADED:-defaults}"
+}
+
+# Load costs on script initialization
+load_model_costs
 
 # ============================================
 # USAGE TRACKING
@@ -883,6 +952,11 @@ show_status() {
     echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
     echo ""
 
+    # Show config version for traceability (Issue #23)
+    local config_ver=$(get_costs_version)
+    echo -e "${BLUE}Config:${NC} model-costs.json (version: $config_ver)"
+    echo ""
+
     local data=$(cat "$USAGE_FILE")
 
     local total_cost=$(echo "$data" | jq -r '.total_cost')
@@ -1089,7 +1163,13 @@ main() {
             echo "  - Learned data takes priority over heuristics"
             echo ""
             echo "Environment:"
-            echo "  ARIA_MODEL_BUDGET      - Budget in dollars (default: 10.00)"
+            echo "  ARIA_MODEL_BUDGET      - Budget in dollars (default: from config)"
+            echo "  ARIA_MODEL_COSTS_FILE  - Path to costs config (default: .aria/config/model-costs.json)"
+            echo ""
+            echo "Configuration:"
+            echo "  Model costs are externalized to config/model-costs.json"
+            echo "  Update this file when Anthropic changes pricing"
+            echo "  Run 'status' to see current config version"
             ;;
     esac
 }

@@ -121,25 +121,123 @@ aria_log() {
     echo "[$(date '+%H:%M:%S')] $*"
 }
 
-# Error and exit
+# ============================================
+# STANDARDIZED MESSAGE FUNCTIONS (Issue #2)
+# ============================================
+# Use these consistently instead of direct echo with colors.
+# Benefits:
+#   - Consistent formatting across all scripts
+#   - Automatic signal emission for traceability
+#   - Proper stderr handling for errors/warnings
+#
+# Usage Guide:
+#   aria_error "message"     # Fatal error, exits with code 1
+#   aria_fail "message"      # Non-fatal failure, continues execution
+#   aria_warn "message"      # Warning, continues execution
+#   aria_success "message"   # Success feedback
+#   aria_info "message"      # Informational message
+#   aria_debug "message"     # Debug (only if ARIA_DEBUG=1)
+#   aria_status "OK" "msg"   # Status with OK/FAIL indicator
+
+# Fatal error - logs, emits signal, and exits
+# Usage: aria_error "Description of error"
 aria_error() {
-    echo -e "${ARIA_RED}ERROR: $*${ARIA_NC}" >&2
+    local message="$*"
+    echo -e "${ARIA_RED}✗ ERROR: ${message}${ARIA_NC}" >&2
+
+    # Emit signal for traceability (suppress failures)
+    emit_signal "error" "message" "fatal" "message=$message" 2>/dev/null || true
+
     exit 1
 }
 
-# Warning (continues)
+# Non-fatal failure - logs but continues
+# Usage: aria_fail "Description of failure"
+aria_fail() {
+    local message="$*"
+    echo -e "${ARIA_RED}✗ FAILED: ${message}${ARIA_NC}" >&2
+
+    # Emit signal for traceability (suppress failures)
+    emit_signal "failure" "message" "non_fatal" "message=$message" 2>/dev/null || true
+}
+
+# Warning - logs but continues
+# Usage: aria_warn "Description of warning"
 aria_warn() {
-    echo -e "${ARIA_YELLOW}WARNING: $*${ARIA_NC}" >&2
+    local message="$*"
+    echo -e "${ARIA_YELLOW}⚠ WARNING: ${message}${ARIA_NC}" >&2
 }
 
 # Success message
+# Usage: aria_success "Description of success"
 aria_success() {
-    echo -e "${ARIA_GREEN}$*${ARIA_NC}"
+    local message="$*"
+    echo -e "${ARIA_GREEN}✓ ${message}${ARIA_NC}"
 }
 
 # Info message
+# Usage: aria_info "Informational message"
 aria_info() {
-    echo -e "${ARIA_BLUE}$*${ARIA_NC}"
+    local message="$*"
+    echo -e "${ARIA_BLUE}ℹ ${message}${ARIA_NC}"
+}
+
+# Debug message (only shown if ARIA_DEBUG=1)
+# Usage: aria_debug "Debug details"
+aria_debug() {
+    if [[ "${ARIA_DEBUG:-0}" == "1" ]]; then
+        echo -e "${ARIA_MAGENTA}[DEBUG] $*${ARIA_NC}" >&2
+    fi
+}
+
+# Status line with indicator
+# Usage: aria_status "OK" "Component is working"
+#        aria_status "FAIL" "Component failed"
+#        aria_status "WARN" "Component has issues"
+aria_status() {
+    local status="$1"
+    local message="$2"
+
+    case "$status" in
+        "OK"|"PASS"|"SUCCESS")
+            echo -e "  ${ARIA_GREEN}[OK]${ARIA_NC}   $message"
+            ;;
+        "FAIL"|"ERROR")
+            echo -e "  ${ARIA_RED}[FAIL]${ARIA_NC} $message"
+            ;;
+        "WARN"|"WARNING")
+            echo -e "  ${ARIA_YELLOW}[WARN]${ARIA_NC} $message"
+            ;;
+        "SKIP"|"SKIPPED")
+            echo -e "  ${ARIA_YELLOW}[SKIP]${ARIA_NC} $message"
+            ;;
+        "INFO")
+            echo -e "  ${ARIA_BLUE}[INFO]${ARIA_NC} $message"
+            ;;
+        *)
+            echo -e "  [$status] $message"
+            ;;
+    esac
+}
+
+# HITL-style error block for critical failures
+# Usage: aria_hitl_error "Title" "Details" "Options hint"
+aria_hitl_error() {
+    local title="$1"
+    local details="${2:-}"
+    local options="${3:-[r]etry / [s]kip / [a]bort}"
+
+    echo "" >&2
+    echo -e "${ARIA_RED}════════════════════════════════════════════════════════${ARIA_NC}" >&2
+    echo -e "${ARIA_RED}  ${title}${ARIA_NC}" >&2
+    echo -e "${ARIA_RED}════════════════════════════════════════════════════════${ARIA_NC}" >&2
+    if [[ -n "$details" ]]; then
+        echo "" >&2
+        echo -e "  ${details}" >&2
+    fi
+    echo "" >&2
+    echo -e "  Options: ${options}" >&2
+    echo "" >&2
 }
 
 # Get ARIA directory (where scripts live)
@@ -1185,4 +1283,320 @@ aria_run_cleanup() {
     # Clean old signals (by age - keep 30 days worth)
     # Note: signals.jsonl itself is not cleaned, only archived versions
     aria_cleanup_by_age "$state_dir" "signals-*.jsonl.bak" "$ARIA_RETENTION_DAYS"
+}
+
+# ============================================
+# DESIGN DOCUMENT INITIALIZATION (Issue #19)
+# ============================================
+# Helper to create a new DESIGN.md from template for FULL+ mode.
+# Ensures proper initialization and traceability.
+
+ARIA_DESIGN_TEMPLATE="${ARIA_DESIGN_TEMPLATE:-$(dirname "${BASH_SOURCE[0]}")/templates/DESIGN-template.md}"
+ARIA_DOCS_DIR="${ARIA_DOCS_DIR:-$(dirname "${BASH_SOURCE[0]}")/docs}"
+
+# Initialize a new design document
+# Usage: aria_init_design_doc <project_name> [--force]
+aria_init_design_doc() {
+    local project_name="${1:-Unnamed Project}"
+    local force="${2:-}"
+    local design_file="$ARIA_DOCS_DIR/DESIGN.md"
+
+    # Create docs directory if needed
+    mkdir -p "$ARIA_DOCS_DIR"
+
+    # Check if design doc already exists
+    if [[ -f "$design_file" && "$force" != "--force" ]]; then
+        echo -e "${ARIA_YELLOW}Design doc already exists: $design_file${ARIA_NC}" >&2
+        echo -e "${ARIA_YELLOW}Use --force to overwrite${ARIA_NC}" >&2
+        return 1
+    fi
+
+    # Check template exists
+    if [[ ! -f "$ARIA_DESIGN_TEMPLATE" ]]; then
+        echo -e "${ARIA_RED}Design template not found: $ARIA_DESIGN_TEMPLATE${ARIA_NC}" >&2
+        return 1
+    fi
+
+    # Copy template and fill in basic info
+    local today
+    today=$(date +%Y-%m-%d)
+
+    sed -e "s/\[Project Name\]/$project_name/" \
+        -e "s/\[YYYY-MM-DD\]/$today/g" \
+        "$ARIA_DESIGN_TEMPLATE" > "$design_file"
+
+    # Emit signal for traceability
+    emit_signal "design_doc_created" "design" "init" \
+        "project=$project_name" \
+        "file=$design_file" \
+        "template=$ARIA_DESIGN_TEMPLATE"
+
+    echo -e "${ARIA_GREEN}Created design doc: $design_file${ARIA_NC}"
+    echo -e "${ARIA_BLUE}Edit the document to fill in project details${ARIA_NC}"
+    echo -e "${ARIA_BLUE}Then run architecture review before implementation${ARIA_NC}"
+
+    return 0
+}
+
+# Check if design doc exists and is approved (for FULL+ mode)
+# Usage: aria_check_design_approved
+# Returns: 0 if approved, 1 if not
+aria_check_design_approved() {
+    local design_file="$ARIA_DOCS_DIR/DESIGN.md"
+
+    if [[ ! -f "$design_file" ]]; then
+        echo -e "${ARIA_RED}No design document found${ARIA_NC}" >&2
+        echo -e "${ARIA_YELLOW}FULL+ mode requires a design doc. Run:${ARIA_NC}" >&2
+        echo -e "${ARIA_YELLOW}  aria_init_design_doc \"Project Name\"${ARIA_NC}" >&2
+        return 1
+    fi
+
+    # Check if status is approved
+    if grep -q "Status: approved" "$design_file" 2>/dev/null; then
+        return 0
+    fi
+
+    # Not approved yet
+    local current_status
+    current_status=$(grep "^Status:" "$design_file" 2>/dev/null | head -1 | sed 's/Status: *//')
+
+    echo -e "${ARIA_YELLOW}Design doc status: ${current_status:-unknown}${ARIA_NC}" >&2
+    echo -e "${ARIA_YELLOW}FULL+ mode requires approved design doc${ARIA_NC}" >&2
+    echo -e "${ARIA_YELLOW}Complete architecture review to approve${ARIA_NC}" >&2
+
+    return 1
+}
+
+# ============================================
+# PROGRESS BAR DISPLAY (Issue #14)
+# ============================================
+# Visual progress indicators for task tracking.
+# Used by tracking skill and execution announcements.
+
+ARIA_PROGRESS_FILE="${ARIA_PROGRESS_FILE:-$(dirname "${BASH_SOURCE[0]}")/state/progress.json}"
+
+# Draw a progress bar
+# Usage: aria_draw_progress_bar <current> <total> [width] [char_filled] [char_empty]
+# Example: aria_draw_progress_bar 3 10 → "[█████████░░░░░░░░░░░░░░░░░░░░░] 30% (3/10)"
+aria_draw_progress_bar() {
+    local current="${1:-0}"
+    local total="${2:-1}"
+    local width="${3:-30}"
+    local char_filled="${4:-█}"
+    local char_empty="${5:-░}"
+
+    # Avoid division by zero
+    if [[ "$total" -le 0 ]]; then
+        total=1
+    fi
+
+    # Calculate percentage and filled width
+    local pct=$((current * 100 / total))
+    local filled=$((current * width / total))
+    local empty=$((width - filled))
+
+    # Build the bar
+    local bar=""
+    for ((i=0; i<filled; i++)); do
+        bar+="$char_filled"
+    done
+    for ((i=0; i<empty; i++)); do
+        bar+="$char_empty"
+    done
+
+    # Output with percentage
+    printf "[%s] %d%% (%d/%d)" "$bar" "$pct" "$current" "$total"
+}
+
+# Show task progress announcement (mode-aware)
+# Usage: aria_show_task_progress <task_num> <total_tasks> <task_title> [status]
+aria_show_task_progress() {
+    local task_num="$1"
+    local total_tasks="$2"
+    local task_title="$3"
+    local status="${4:-in_progress}"  # in_progress, completed, failed, skipped
+
+    local mode
+    mode=$(aria_get_mode 2>/dev/null || echo "STANDARD")
+
+    local bar
+    bar=$(aria_draw_progress_bar "$task_num" "$total_tasks" 20)
+
+    case "$status" in
+        "completed")
+            echo -e "${ARIA_GREEN}✓${ARIA_NC} Task $task_num/$total_tasks: $task_title"
+            ;;
+        "failed")
+            echo -e "${ARIA_RED}✗${ARIA_NC} Task $task_num/$total_tasks: $task_title (FAILED)"
+            ;;
+        "skipped")
+            echo -e "${ARIA_YELLOW}⏭${ARIA_NC} Task $task_num/$total_tasks: $task_title (skipped)"
+            ;;
+        *)
+            echo -e "${ARIA_BLUE}▶${ARIA_NC} Task $task_num/$total_tasks: $task_title"
+            ;;
+    esac
+
+    # Show progress bar (except LITE mode which is minimal)
+    if [[ "$mode" != "LITE" ]]; then
+        echo -e "  ${ARIA_BLUE}Progress:${ARIA_NC} $bar"
+    fi
+}
+
+# Update progress.json with current state
+# Usage: aria_update_progress <task_id> <status> [notes]
+aria_update_progress() {
+    local task_id="$1"
+    local status="$2"  # pending, in_progress, completed, failed, skipped
+    local notes="${3:-}"
+
+    local state_dir
+    state_dir=$(dirname "$ARIA_PROGRESS_FILE")
+    mkdir -p "$state_dir"
+
+    # Initialize progress file if needed
+    if [[ ! -f "$ARIA_PROGRESS_FILE" ]]; then
+        cat > "$ARIA_PROGRESS_FILE" << 'PROGRESS_INIT'
+{
+  "plan_id": null,
+  "status": "in_progress",
+  "started": null,
+  "last_updated": null,
+  "completion": {
+    "tasks_total": 0,
+    "tasks_done": 0,
+    "tasks_in_progress": 0,
+    "tasks_blocked": 0,
+    "tasks_skipped": 0,
+    "percent_complete": 0
+  },
+  "current": {
+    "task_id": null,
+    "task_name": null
+  },
+  "task_history": []
+}
+PROGRESS_INIT
+    fi
+
+    # Update using Python for reliable JSON handling
+    python3 << EOF
+import json
+from datetime import datetime
+
+try:
+    with open('$ARIA_PROGRESS_FILE', 'r') as f:
+        data = json.load(f)
+except:
+    data = {"completion": {"tasks_total": 0, "tasks_done": 0, "tasks_in_progress": 0, "tasks_skipped": 0}, "task_history": []}
+
+# Update timestamp
+data['last_updated'] = datetime.now().isoformat()
+
+# Update current task
+if '$status' == 'in_progress':
+    data['current'] = {'task_id': '$task_id', 'task_name': '$notes' if '$notes' else None}
+    data['completion']['tasks_in_progress'] = 1
+
+# Track status changes
+if '$status' == 'completed':
+    data['completion']['tasks_done'] = data['completion'].get('tasks_done', 0) + 1
+    data['completion']['tasks_in_progress'] = 0
+elif '$status' == 'skipped':
+    data['completion']['tasks_skipped'] = data['completion'].get('tasks_skipped', 0) + 1
+    data['completion']['tasks_in_progress'] = 0
+
+# Calculate percentage
+total = data['completion'].get('tasks_total', 0)
+done = data['completion'].get('tasks_done', 0)
+if total > 0:
+    data['completion']['percent_complete'] = round(done * 100 / total)
+
+# Add to history
+data.setdefault('task_history', []).append({
+    'task_id': '$task_id',
+    'status': '$status',
+    'timestamp': datetime.now().isoformat(),
+    'notes': '$notes' if '$notes' else None
+})
+
+# Keep history manageable (last 100 entries)
+data['task_history'] = data['task_history'][-100:]
+
+with open('$ARIA_PROGRESS_FILE', 'w') as f:
+    json.dump(data, f, indent=2)
+EOF
+
+    # Emit signal for traceability
+    emit_signal "progress_updated" "tracking" "progress" \
+        "task_id=$task_id" \
+        "status=$status" 2>/dev/null || true
+}
+
+# Show full progress status (for /aria:status command)
+# Usage: aria_show_progress_status
+aria_show_progress_status() {
+    echo ""
+    echo -e "${ARIA_BLUE}═══════════════════════════════════════════════════════════${ARIA_NC}"
+    echo -e "${ARIA_BLUE}                    PROGRESS STATUS                         ${ARIA_NC}"
+    echo -e "${ARIA_BLUE}═══════════════════════════════════════════════════════════${ARIA_NC}"
+    echo ""
+
+    if [[ ! -f "$ARIA_PROGRESS_FILE" ]]; then
+        echo -e "  ${ARIA_YELLOW}No progress tracking active${ARIA_NC}"
+        echo ""
+        return
+    fi
+
+    python3 << EOF
+import json
+from datetime import datetime
+
+try:
+    with open('$ARIA_PROGRESS_FILE', 'r') as f:
+        data = json.load(f)
+except Exception as e:
+    print(f"  Error reading progress: {e}")
+    exit(1)
+
+c = data.get('completion', {})
+total = c.get('tasks_total', 0)
+done = c.get('tasks_done', 0)
+in_prog = c.get('tasks_in_progress', 0)
+skipped = c.get('tasks_skipped', 0)
+pct = c.get('percent_complete', 0)
+
+# Draw progress bar
+width = 30
+filled = int(done * width / total) if total > 0 else 0
+bar = '\u2588' * filled + '\u2591' * (width - filled)
+
+print(f"  Tasks:    {done}/{total} completed")
+print(f"  Progress: [{bar}] {pct}%")
+print()
+
+if in_prog:
+    current = data.get('current', {})
+    task_id = current.get('task_id', 'unknown')
+    task_name = current.get('task_name', '')
+    print(f"  Current:  Task {task_id}" + (f" - {task_name}" if task_name else ""))
+    print()
+
+if skipped:
+    print(f"  Skipped:  {skipped} tasks")
+    print()
+
+# Status
+status = data.get('status', 'unknown')
+started = data.get('started', '')
+updated = data.get('last_updated', '')
+
+print(f"  Status:   {status}")
+if started:
+    print(f"  Started:  {started[:19]}")
+if updated:
+    print(f"  Updated:  {updated[:19]}")
+EOF
+
+    echo ""
 }
