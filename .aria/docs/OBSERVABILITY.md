@@ -406,12 +406,15 @@ Signals are always captured (hooks run regardless). Decision emission is mode-de
 
 ## VS Code vs Terminal
 
-| Environment | Signals | Decisions | Reconciliation |
-|-------------|---------|-----------|----------------|
-| VS Code (Claude Code) | ✓ via hooks | ✓ | ✓ |
-| Terminal (ralph.sh) | ✓ via hooks or wrapper | ✓ | ✓ |
+| Environment | Signals | Decisions | Commits | Dashboard |
+|-------------|---------|-----------|---------|-----------|
+| CLI (`claude` in terminal) | ✓ via hooks | ✓ | ✓ | Full |
+| VS Code extension | ✗ no hooks | ✓ | ✓ | Partial |
+| Terminal (ralph.sh) | ✓ via hooks | ✓ | ✓ | Full |
 
-Both environments get full traceability.
+**Important:** Hooks in `.claude/settings.json` only work with Claude Code CLI, not the VS Code extension. For full signal traceability, use the CLI version.
+
+**VS Code workaround:** The dashboard will still show git commits and decisions (if emitted), but automatic tool call signals won't be captured.
 
 ---
 
