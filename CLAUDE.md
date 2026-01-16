@@ -693,17 +693,33 @@ Emit `<decision>` blocks when:
 </decision>
 ```
 
-### Example
+### Storage (REQUIRED for traceability)
 
-```xml
-<decision>
-  <action>Add retry wrapper to API client</action>
-  <context>Read utils/retry.ts, saw 3 similar uses in codebase</context>
-  <rationale>Consistency with existing patterns</rationale>
-  <alternatives>Custom retry logic, no retry</alternatives>
-  <confidence>0.85</confidence>
-</decision>
+After emitting a `<decision>` block in your response, **also call `emit_decision`** via Bash to persist it to `decisions.jsonl`:
+
+```bash
+source .aria/common.sh && emit_decision \
+  "ACTION: what you're doing" \
+  "CONTEXT: what you looked at" \
+  "RATIONALE: why this approach" \
+  "ALTERNATIVES: what else considered" \
+  "CONFIDENCE: 0.0-1.0"
 ```
+
+**Example:**
+```bash
+source .aria/common.sh && emit_decision \
+  "Add retry wrapper to API client" \
+  "Read utils/retry.ts, saw 3 similar uses" \
+  "Consistency with existing patterns" \
+  "Custom retry logic, no retry" \
+  "0.85"
+```
+
+This ensures decisions are stored in `.aria/state/decisions.jsonl` for:
+- Dashboard visualization
+- Precedent queries
+- Reconciliation with signals
 
 ### Mode Variations
 
@@ -715,7 +731,7 @@ Emit `<decision>` blocks when:
 
 ### Storage & Visualization
 
-Decisions are captured and stored in `.aria/state/decisions.jsonl`. Signals (tool calls) are logged to `.aria/state/signals.jsonl` via hooks.
+Decisions are stored in `.aria/state/decisions.jsonl`. Signals (tool calls) are logged to `.aria/state/signals.jsonl` via hooks.
 
 **View traces:**
 ```bash

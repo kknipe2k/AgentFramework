@@ -6,6 +6,24 @@ This file captures what ARIA learned about this project. Review and edit as need
 
 ---
 
+## Platform Requirements
+
+ARIA requires a Unix-like shell environment:
+
+| Platform | Support | Notes |
+|----------|---------|-------|
+| **macOS** | ✅ Full | Native support |
+| **Linux** | ✅ Full | Native support |
+| **Windows + Git Bash** | ✅ Full | Install Git for Windows |
+| **Windows + WSL/WSL2** | ✅ Full | Run `wsl --install` |
+| **Windows CMD/PowerShell** | ❌ None | Use Git Bash or WSL |
+
+**For VS Code on Windows:**
+Set your integrated terminal to Git Bash:
+1. Open Settings (Ctrl+,)
+2. Search `terminal.integrated.defaultProfile.windows`
+3. Select "Git Bash"
+
 ## Tech Stack
 
 - Bash scripts (core framework)
@@ -29,6 +47,24 @@ This file captures what ARIA learned about this project. Review and edit as need
 - Common utilities in `common.sh`
 - JSON for structured data (not YAML)
 - Color output with ANSI codes
+
+### Silent Error Handling (Issue #3)
+
+Prefer these functions from `common.sh` over raw `2>/dev/null`:
+
+```bash
+# Instead of:  cmd 2>/dev/null
+aria_silent cmd                        # Captures errors to debug log
+
+# For critical operations:
+aria_silent_traced "operation" cmd     # Also emits signal on failure
+```
+
+Enable debug logging: `export ARIA_DEBUG_LOG=.aria/logs/debug.log ARIA_DEBUG_LEVEL=1`
+
+**When raw `2>/dev/null` is acceptable:**
+- Checking if commands exist: `command -v jq >/dev/null 2>&1`
+- Suppressing expected missing files: `cat /optional/file 2>/dev/null || true`
 
 ## Testing
 

@@ -2,7 +2,8 @@
 # ARIA Reconciler - Verify decision claims match actual signals
 # Usage: .aria/scripts/reconcile.sh [OPTIONS]
 
-set -e
+# Exit on error, undefined vars, and pipeline failures
+set -euo pipefail
 
 ARIA_DIR=".aria"
 STATE_DIR="$ARIA_DIR/state"

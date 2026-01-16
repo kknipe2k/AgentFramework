@@ -72,21 +72,37 @@ At the end of your work, append this to Progress:
 - Files changed: [list]
 - Tests: PASS/FAIL
 - **Learnings:**
-  - Pattern: [reusable pattern discovered]
+  - Architecture: [reusable architecture pattern discovered]
+  - Testing: [testing pattern discovered]
   - Gotcha: [thing that tripped you up]
 ```
 
-## Codebase Patterns Section
+## Learnings Structure (MANDATORY CATEGORIES)
 
-If you discover a pattern that future iterations should know, add it to the
-"Codebase Patterns" section at the TOP of progress:
+If you discover patterns that future iterations should know, add them to the
+appropriate category in the "Learnings" section at the TOP of progress:
 
 ```
-## Codebase Patterns
-- Database: Use IF NOT EXISTS for migrations
-- React: Always use useRef<Type | null>(null)
-- API: Errors return { error: string, code: number }
+## Learnings
+
+### Architecture Patterns
+- Services are in /src/services and export default class
+- All database queries go through Prisma client
+- Components follow Container/Presenter pattern
+
+### Testing Patterns
+- Mock Prisma with jest.mock('@prisma/client')
+- Use React Testing Library for component tests
+- E2E tests use data-testid attributes
+
+### Gotchas
+- Must run prisma generate after schema changes
+- TypeScript strict mode requires explicit null checks
+- Build fails silently if env vars are missing
 ```
+
+**IMPORTANT:** Always categorize learnings into these three sections.
+Do NOT use a flat "Codebase Patterns" list - use the structured categories above.
 
 ## Stop Conditions
 

@@ -3,7 +3,8 @@
 # Pauses execution and waits for human intervention
 # Terminal-based notification and response
 
-set -e
+# Exit on error, undefined vars, and pipeline failures
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh" || { echo "Failed to load common.sh"; exit 1; }
@@ -25,6 +26,35 @@ MAGENTA="$ARIA_MAGENTA"
 NC="$ARIA_NC"
 
 mkdir -p "$HITL_DIR" "$LOGS_DIR"
+
+# ============================================
+# TRACEABILITY - Uses emit_signal() from common.sh
+# ============================================
+# HITL events are logged via the centralized emit_signal() function
+# (single-writer pattern for signals.jsonl)
+
+# Wrapper for HITL signal emission (delegates to emit_signal)
+_log_hitl_signal() {
+    local event_type="$1"      # request_created, response_received, timeout
+    local request_id="$2"
+    local request_type="$3"    # help, confirm, choice, input
+    local details="${4:-}"
+    local response="${5:-}"
+
+    # Build optional key=value pairs
+    local -a extra_args=("request_id=${request_id}" "request_type=${request_type}")
+
+    if [[ -n "$details" ]]; then
+        extra_args+=("details=${details}")
+    fi
+
+    if [[ -n "$response" ]]; then
+        extra_args+=("response=${response}")
+    fi
+
+    # Delegate to centralized emit_signal (single owner of signals.jsonl)
+    emit_signal "hitl_${event_type}" "hitl" "human_intervention" "${extra_args[@]}"
+}
 
 # ============================================
 # CONFIGURATION
@@ -231,6 +261,9 @@ create_request() {
 }
 EOF
 
+    # Log to signals.jsonl for traceability
+    _log_hitl_signal "request_created" "$request_id" "$request_type" "$reason"
+
     echo "$request_id"
 }
 
@@ -276,6 +309,12 @@ set_response() {
     local request_file="$HITL_DIR/request_${request_id}.json"
     local response_file="$HITL_DIR/response_${request_id}.txt"
 
+    # Get request type for logging
+    local request_type="unknown"
+    if [[ -f "$request_file" ]]; then
+        request_type=$(grep -o '"type": *"[^"]*"' "$request_file" 2>/dev/null | cut -d'"' -f4 || echo "unknown")
+    fi
+
     # Write response file
     echo "$response" > "$response_file"
 
@@ -290,7 +329,10 @@ set_response() {
     # Clean up notice file
     rm -f "$HITL_DIR/HUMAN_NEEDED_${request_id}.txt"
 
-    # Log the intervention
+    # Log to signals.jsonl for traceability
+    _log_hitl_signal "response_received" "$request_id" "$request_type" "responder:$responder" "$response"
+
+    # Log the intervention (legacy logging)
     log_intervention "$request_id" "$response" "$responder"
 }
 
@@ -327,6 +369,8 @@ wait_for_response() {
         if [[ $timeout -gt 0 ]] && [[ $elapsed -ge $timeout ]]; then
             echo ""
             echo -e "${RED}Timeout waiting for human response${NC}"
+            # Log timeout to signals.jsonl
+            _log_hitl_signal "timeout" "$request_id" "unknown" "timeout_seconds:$timeout"
             return 1
         fi
 

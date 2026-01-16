@@ -3,10 +3,17 @@
 # Run after EVERY task that modifies code
 # AI must stop if this fails
 
-set -e
+# Exit on error, undefined vars, and pipeline failures
+# -e: Exit immediately if a command exits with non-zero status
+# -u: Treat unset variables as an error
+# -o pipefail: Return exit code of first failing command in pipeline
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Source common.sh for emit_signal and other utilities
+source "$SCRIPT_DIR/common.sh" 2>/dev/null || true
 
 # Colors
 RED='\033[0;31m'
@@ -16,6 +23,177 @@ NC='\033[0m'
 
 FAILURES=0
 WARNINGS=0
+
+# ============================================
+# ROLLBACK SUPPORT (Issue #11)
+# ============================================
+# Creates checkpoint before verification for potential rollback.
+# On failure, offers HITL choice to rollback changes.
+
+CHECKPOINT_STASH=""
+CHECKPOINT_ENABLED="${ARIA_VERIFY_CHECKPOINT:-true}"
+
+# Create a checkpoint (git stash) before verification
+create_checkpoint() {
+    if [[ "$CHECKPOINT_ENABLED" != "true" ]]; then
+        return 0
+    fi
+
+    # Only create checkpoint if there are changes
+    if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+        local stash_msg="aria-verify-checkpoint-$(date +%Y%m%d-%H%M%S)"
+
+        # Stash all changes (including untracked)
+        if git stash push -u -m "$stash_msg" 2>/dev/null; then
+            CHECKPOINT_STASH="$stash_msg"
+
+            # Emit signal for traceability
+            if type emit_signal >/dev/null 2>&1; then
+                emit_signal "verify_checkpoint_created" "verify" "rollback" \
+                    "stash_message=$stash_msg"
+            fi
+            return 0
+        fi
+    fi
+    return 0
+}
+
+# Restore checkpoint (rollback changes)
+restore_checkpoint() {
+    if [[ -z "$CHECKPOINT_STASH" ]]; then
+        echo -e "${YELLOW}No checkpoint to restore${NC}"
+        return 1
+    fi
+
+    echo -e "${YELLOW}Restoring checkpoint...${NC}"
+
+    # Find the stash by message
+    local stash_ref
+    stash_ref=$(git stash list | grep "$CHECKPOINT_STASH" | head -1 | cut -d: -f1)
+
+    if [[ -n "$stash_ref" ]]; then
+        if git stash pop "$stash_ref" 2>/dev/null; then
+            echo -e "${GREEN}Checkpoint restored successfully${NC}"
+
+            # Emit signal
+            if type emit_signal >/dev/null 2>&1; then
+                emit_signal "verify_checkpoint_restored" "verify" "rollback" \
+                    "stash_message=$CHECKPOINT_STASH" \
+                    "action=pop"
+            fi
+            return 0
+        fi
+    fi
+
+    echo -e "${RED}Failed to restore checkpoint${NC}"
+    return 1
+}
+
+# Discard checkpoint (keep current state)
+discard_checkpoint() {
+    if [[ -z "$CHECKPOINT_STASH" ]]; then
+        return 0
+    fi
+
+    # Find and drop the stash
+    local stash_ref
+    stash_ref=$(git stash list | grep "$CHECKPOINT_STASH" | head -1 | cut -d: -f1)
+
+    if [[ -n "$stash_ref" ]]; then
+        git stash drop "$stash_ref" 2>/dev/null || true
+
+        # Emit signal
+        if type emit_signal >/dev/null 2>&1; then
+            emit_signal "verify_checkpoint_discarded" "verify" "rollback" \
+                "stash_message=$CHECKPOINT_STASH" \
+                "action=drop"
+        fi
+    fi
+
+    CHECKPOINT_STASH=""
+}
+
+# HITL prompt on verification failure
+handle_verification_failure() {
+    local failure_count="$1"
+
+    echo ""
+    echo -e "${RED}════════════════════════════════════════════════════════${NC}"
+    echo -e "${RED}  VERIFICATION FAILED - HITL CHECKPOINT${NC}"
+    echo -e "${RED}════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "  ${failure_count} verification issue(s) found."
+    echo ""
+
+    if [[ -n "$CHECKPOINT_STASH" ]]; then
+        echo -e "  Options:"
+        echo -e "    [r]ollback  - Restore to pre-change state"
+        echo -e "    [f]ix       - Keep changes, fix issues manually"
+        echo -e "    [c]ontinue  - Proceed anyway (not recommended)"
+        echo ""
+
+        # Non-interactive: default to fix (stop and report)
+        if [[ ! -t 0 ]]; then
+            echo -e "${YELLOW}Non-interactive mode: Stopping for manual review${NC}"
+
+            if type emit_signal >/dev/null 2>&1; then
+                emit_signal "verify_failure_noninteractive" "verify" "failure" \
+                    "failure_count=$failure_count" \
+                    "checkpoint_available=true"
+            fi
+            return 1
+        fi
+
+        read -r -p "Choice [r/f/c]: " choice
+        case "$choice" in
+            r|R)
+                if type emit_signal >/dev/null 2>&1; then
+                    emit_signal "verify_rollback_requested" "verify" "rollback" \
+                        "failure_count=$failure_count" \
+                        "user_choice=rollback"
+                fi
+                restore_checkpoint
+                echo ""
+                echo -e "${YELLOW}Changes rolled back. Please review and try again.${NC}"
+                return 2  # Special exit: rollback performed
+                ;;
+            c|C)
+                if type emit_signal >/dev/null 2>&1; then
+                    emit_signal "verify_failure_override" "verify" "failure" \
+                        "failure_count=$failure_count" \
+                        "user_choice=continue"
+                fi
+                discard_checkpoint
+                echo ""
+                echo -e "${YELLOW}Proceeding despite verification failures.${NC}"
+                return 0  # User chose to continue
+                ;;
+            *)
+                if type emit_signal >/dev/null 2>&1; then
+                    emit_signal "verify_failure_fix" "verify" "failure" \
+                        "failure_count=$failure_count" \
+                        "user_choice=fix"
+                fi
+                discard_checkpoint
+                echo ""
+                echo -e "${YELLOW}Please fix the issues and run verification again.${NC}"
+                return 1
+                ;;
+        esac
+    else
+        echo -e "  No checkpoint available for rollback."
+        echo -e "  Please fix the issues and run verification again."
+
+        if type emit_signal >/dev/null 2>&1; then
+            emit_signal "verify_failure_no_checkpoint" "verify" "failure" \
+                "failure_count=$failure_count"
+        fi
+        return 1
+    fi
+}
+
+# Create checkpoint before verification starts
+create_checkpoint
 
 echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
 echo -e "${YELLOW}              ARIA VERIFICATION GATE                        ${NC}"
@@ -159,7 +337,22 @@ if [[ -f "$PROJECT_DIR/package.json" ]] && grep -q '"build"' "$PROJECT_DIR/packa
 fi
 
 # ============================================
-# CHECK 6: Don't Touch Areas
+# CHECK 6: ARIA Framework Tests
+# ============================================
+if [[ -x "$SCRIPT_DIR/tests/test-runner.sh" ]]; then
+    echo -n "Running ARIA framework tests... "
+    if "$SCRIPT_DIR/tests/test-runner.sh" >/dev/null 2>&1; then
+        echo -e "${GREEN}PASSED${NC}"
+    else
+        echo -e "${RED}FAILED${NC}"
+        echo "  ARIA framework tests failed"
+        echo "  Run: .aria/tests/test-runner.sh for details"
+        FAILURES=$((FAILURES + 1))
+    fi
+fi
+
+# ============================================
+# CHECK 7: Don't Touch Areas
 # ============================================
 if [[ -f "$SCRIPT_DIR/project-context.md" ]]; then
     echo -n "Checking protected areas... "
@@ -198,19 +391,57 @@ echo ""
 echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
 
 if [[ $FAILURES -gt 0 ]]; then
-    echo -e "${RED}VERIFICATION FAILED: $FAILURES issue(s)${NC}"
-    echo ""
-    echo "AI MUST STOP. Do not proceed to next task."
-    echo "Report failures and wait for guidance."
-    exit 1
+    # Handle failure with HITL and rollback option (Issue #11)
+    handle_verification_failure "$FAILURES"
+    exit_code=$?
+
+    case $exit_code in
+        0)
+            # User chose to continue despite failures
+            echo -e "${RED}VERIFICATION FAILED: $FAILURES issue(s) (override approved)${NC}"
+            discard_checkpoint
+            exit 0
+            ;;
+        2)
+            # Rollback was performed
+            echo -e "${YELLOW}VERIFICATION ABORTED: Rollback performed${NC}"
+            exit 2
+            ;;
+        *)
+            # Standard failure
+            echo -e "${RED}VERIFICATION FAILED: $FAILURES issue(s)${NC}"
+            echo ""
+            echo "AI MUST STOP. Do not proceed to next task."
+            echo "Report failures and wait for guidance."
+            discard_checkpoint
+            exit 1
+            ;;
+    esac
 elif [[ $WARNINGS -gt 0 ]]; then
+    # Success with warnings - discard checkpoint
+    discard_checkpoint
     echo -e "${YELLOW}VERIFICATION PASSED WITH WARNINGS: $WARNINGS warning(s)${NC}"
     echo ""
     echo "May proceed, but consider addressing warnings."
+
+    # Emit success signal
+    if type emit_signal >/dev/null 2>&1; then
+        emit_signal "verify_passed_with_warnings" "verify" "result" \
+            "warnings=$WARNINGS"
+    fi
     exit 0
 else
+    # Full success - discard checkpoint
+    discard_checkpoint
     echo -e "${GREEN}VERIFICATION PASSED${NC}"
     echo ""
     echo "Proceed to next task."
+
+    # Emit success signal
+    if type emit_signal >/dev/null 2>&1; then
+        emit_signal "verify_passed" "verify" "result" \
+            "failures=0" \
+            "warnings=0"
+    fi
     exit 0
 fi

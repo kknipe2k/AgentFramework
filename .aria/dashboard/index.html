@@ -74,6 +74,13 @@
             margin-bottom: 2rem;
         }
 
+        /* Metrics grid */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+        }
+
         .card {
             background: var(--bg-card);
             border-radius: 8px;
@@ -656,6 +663,21 @@
                 <div class="card-value" id="tool-count">-</div>
                 <div class="card-detail" id="tools-detail">-</div>
             </div>
+            <div class="card">
+                <div class="card-label">Tokens</div>
+                <div class="card-value" id="token-count">-</div>
+                <div class="card-detail" id="token-detail">-</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Cost</div>
+                <div class="card-value warning" id="cost-total">-</div>
+                <div class="card-detail" id="cost-detail">-</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Duration</div>
+                <div class="card-value" id="duration">-</div>
+                <div class="card-detail" id="duration-detail">Session time</div>
+            </div>
         </div>
 
         <!-- Tabs -->
@@ -664,6 +686,7 @@
             <button class="tab" data-tab="timeline">Timeline</button>
             <button class="tab" data-tab="decisions">Decisions</button>
             <button class="tab" data-tab="commits">Commits</button>
+            <button class="tab" data-tab="metrics">Metrics</button>
         </div>
 
         <!-- Tab Contents -->
@@ -690,6 +713,12 @@
                 <div class="loading">Loading commits</div>
             </div>
         </div>
+
+        <div class="tab-content" id="tab-metrics">
+            <div id="metrics-content">
+                <div class="loading">Loading metrics</div>
+            </div>
+        </div>
     </main>
 
     <script>
@@ -699,6 +728,7 @@
         let timelineData = [];
         let decisionsData = [];
         let commitsData = [];
+        let metricsData = null;
 
         // API calls
         async function fetchApi(endpoint) {
@@ -737,6 +767,171 @@
 
             // Tools detail
             document.getElementById('tools-detail').textContent = data.tools_used?.slice(0, 5).join(', ') || '-';
+        }
+
+        // Update metrics cards
+        function updateMetrics(data) {
+            metricsData = data;
+
+            // Token count
+            const tokenEl = document.getElementById('token-count');
+            const tokenDetail = document.getElementById('token-detail');
+            if (data.token_usage) {
+                const totalTokens = (data.token_usage.total_input || 0) + (data.token_usage.total_output || 0);
+                tokenEl.textContent = totalTokens >= 1000 ? `${(totalTokens / 1000).toFixed(1)}K` : totalTokens;
+                tokenDetail.textContent = `${(data.token_usage.total_input || 0).toLocaleString()} in / ${(data.token_usage.total_output || 0).toLocaleString()} out`;
+            } else {
+                tokenEl.textContent = '-';
+                tokenDetail.textContent = 'No data';
+            }
+
+            // Cost
+            const costEl = document.getElementById('cost-total');
+            const costDetail = document.getElementById('cost-detail');
+            if (data.token_usage) {
+                const cost = data.token_usage.total_cost || 0;
+                const budget = data.token_usage.budget || 10;
+                const remaining = data.token_usage.budget_remaining || budget;
+                costEl.textContent = `$${cost.toFixed(4)}`;
+                costDetail.textContent = `$${remaining.toFixed(2)} remaining of $${budget}`;
+                costEl.className = 'card-value ' + (cost < budget * 0.5 ? 'success' : cost < budget * 0.8 ? 'warning' : 'error');
+            } else {
+                costEl.textContent = '-';
+                costDetail.textContent = 'No data';
+            }
+
+            // Duration
+            const durationEl = document.getElementById('duration');
+            const durationDetail = document.getElementById('duration-detail');
+            if (data.session_duration) {
+                durationEl.textContent = data.session_duration.formatted;
+                durationDetail.textContent = 'Session time';
+            } else {
+                durationEl.textContent = '-';
+                durationDetail.textContent = 'No session data';
+            }
+        }
+
+        // Render metrics tab content
+        function renderMetrics(data) {
+            const container = document.getElementById('metrics-content');
+
+            if (!data || !data.token_usage) {
+                container.innerHTML = `
+                    <div class="empty">
+                        No metrics data available.<br><br>
+                        Metrics are populated from:<br>
+                        - .aria/logs/token_usage.json<br>
+                        - .aria/logs/model_learning.json<br><br>
+                        Run ARIA Ralph to generate metrics.
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '<div class="metrics-grid">';
+
+            // Token usage section
+            html += `
+                <div class="card" style="grid-column: span 2;">
+                    <div class="card-label">Token Usage</div>
+                    <div style="display: flex; gap: 2rem; margin-top: 1rem;">
+                        <div>
+                            <div style="font-size: 2rem; font-weight: bold;">${((data.token_usage.total_input || 0) + (data.token_usage.total_output || 0)).toLocaleString()}</div>
+                            <div style="color: var(--text-secondary);">Total tokens</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 1.5rem;">${(data.token_usage.total_input || 0).toLocaleString()}</div>
+                            <div style="color: var(--text-secondary);">Input</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 1.5rem;">${(data.token_usage.total_output || 0).toLocaleString()}</div>
+                            <div style="color: var(--text-secondary);">Output</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Cost breakdown by model
+            if (data.cost_breakdown) {
+                html += `
+                    <div class="card" style="grid-column: span 2;">
+                        <div class="card-label">Cost Breakdown by Model</div>
+                        <div style="margin-top: 1rem;">
+                `;
+                for (const [model, info] of Object.entries(data.cost_breakdown)) {
+                    if (info.calls > 0) {
+                        html += `
+                            <div style="display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid var(--border);">
+                                <span style="text-transform: capitalize;">${model}</span>
+                                <span>
+                                    <span style="color: var(--warning);">$${info.cost.toFixed(4)}</span>
+                                    <span style="color: var(--text-secondary);"> (${info.percentage}%, ${info.calls} calls)</span>
+                                </span>
+                            </div>
+                        `;
+                    }
+                }
+                html += '</div></div>';
+            }
+
+            // Model learning data
+            if (data.model_learning) {
+                html += `
+                    <div class="card" style="grid-column: span 2;">
+                        <div class="card-label">Model Learning Summary</div>
+                        <div style="margin-top: 1rem;">
+                            <div style="margin-bottom: 0.5rem;">Total samples: ${data.model_learning.total_samples}</div>
+                `;
+                if (data.model_learning.summary) {
+                    for (const [taskType, info] of Object.entries(data.model_learning.summary)) {
+                        html += `
+                            <div style="display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid var(--border);">
+                                <span>${taskType}</span>
+                                <span>
+                                    <span style="color: var(--success);">${info.avg_success}%</span>
+                                    <span style="color: var(--text-secondary);"> success (${info.samples} samples)</span>
+                                </span>
+                            </div>
+                        `;
+                    }
+                }
+                html += '</div></div>';
+            }
+
+            // Recent history
+            if (data.token_usage.recent_history?.length > 0) {
+                html += `
+                    <div class="card" style="grid-column: span 2;">
+                        <div class="card-label">Recent API Calls (last 20)</div>
+                        <div style="margin-top: 1rem; max-height: 300px; overflow-y: auto;">
+                            <table style="width: 100%; font-size: 0.85rem;">
+                                <thead>
+                                    <tr style="color: var(--text-secondary);">
+                                        <th style="text-align: left; padding: 0.5rem;">Time</th>
+                                        <th style="text-align: left; padding: 0.5rem;">Model</th>
+                                        <th style="text-align: right; padding: 0.5rem;">Tokens</th>
+                                        <th style="text-align: right; padding: 0.5rem;">Cost</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                `;
+                for (const entry of data.token_usage.recent_history.slice().reverse()) {
+                    const time = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '-';
+                    html += `
+                        <tr>
+                            <td style="padding: 0.5rem; border-bottom: 1px solid var(--border);">${time}</td>
+                            <td style="padding: 0.5rem; border-bottom: 1px solid var(--border); text-transform: capitalize;">${entry.model || '-'}</td>
+                            <td style="padding: 0.5rem; border-bottom: 1px solid var(--border); text-align: right;">${((entry.input_tokens || 0) + (entry.output_tokens || 0)).toLocaleString()}</td>
+                            <td style="padding: 0.5rem; border-bottom: 1px solid var(--border); text-align: right; color: var(--warning);">$${(entry.cost || 0).toFixed(4)}</td>
+                        </tr>
+                    `;
+                }
+                html += '</tbody></table></div></div>';
+            }
+
+            html += '</div>';
+            container.innerHTML = html;
         }
 
         // Render lineage with hierarchical tree
@@ -808,13 +1003,13 @@
                 switch (type) {
                     case 'skill':
                         icon = 'S';
-                        title = node.name || 'Unnamed skill';
+                        title = escapeHtml(node.name || 'Unnamed skill');
                         meta = `${node.children?.length || 0} events`;
                         break;
 
                     case 'decision':
                         icon = 'D';
-                        title = node.action || 'Decision';
+                        title = escapeHtml(node.action || 'Decision');
                         const conf = node.confidence ? parseFloat(node.confidence) : 0;
                         const confClass = conf >= 0.8 ? 'high' : conf >= 0.5 ? 'medium' : 'low';
                         if (conf > 0) {
@@ -830,7 +1025,7 @@
                                     <strong>${node.signals.length} supporting signals:</strong>
                                     ${node.signals.map(s => `
                                         <div class="signal-entry">
-                                            <span class="tool-name">${s.tool || 'Tool'}</span>
+                                            <span class="tool-name">${escapeHtml(s.tool || 'Tool')}</span>
                                             <span>${escapeHtml(s.file_path || s.command?.substring(0, 40) || '')}</span>
                                         </div>
                                     `).join('')}
@@ -842,13 +1037,13 @@
                     case 'signal':
                         icon = '→';
                         label = node.event === 'pre' ? 'SIGNAL START' : 'SIGNAL END';
-                        title = `<span style="color: var(--accent)">${node.tool || 'Tool'}</span>`;
+                        title = `<span style="color: var(--accent)">${escapeHtml(node.tool || 'Tool')}</span>`;
                         meta = node.file_path || node.command?.substring(0, 50) || '';
                         break;
 
                     case 'commit':
                         icon = 'C';
-                        title = `<code>${node.hash || ''}</code> ${escapeHtml(node.message || '')}`;
+                        title = `<code>${escapeHtml(node.hash || '')}</code> ${escapeHtml(node.message || '')}`;
                         if (node.linked_decisions?.length) {
                             meta = `${node.linked_decisions.length} decisions`;
                         }
@@ -856,34 +1051,34 @@
 
                     case 'hitl':
                         icon = 'H';
-                        title = node.action || 'Checkpoint';
-                        meta = node.response ? `Response: ${node.response}` : 'Pending';
+                        title = escapeHtml(node.action || 'Checkpoint');
+                        meta = node.response ? `Response: ${escapeHtml(node.response)}` : 'Pending';
                         break;
 
                     case 'verify':
                         icon = '✓';
                         title = 'Test run';
-                        meta = node.command?.substring(0, 50) || '';
+                        meta = escapeHtml(node.command?.substring(0, 50) || '');
                         break;
 
                     case 'subagent':
                         icon = 'A';
-                        title = node.name || 'general-purpose';
+                        title = escapeHtml(node.name || 'general-purpose');
                         break;
 
                     case 'template':
                         icon = 'T';
-                        title = node.name || 'Template';
+                        title = escapeHtml(node.name || 'Template');
                         break;
 
                     case 'orphan':
                         icon = '?';
-                        title = node.name || 'Orphan events';
+                        title = escapeHtml(node.name || 'Orphan events');
                         meta = `${node.children?.length || 0} events before skill loaded`;
                         break;
 
                     default:
-                        title = node.name || node.action || type;
+                        title = escapeHtml(node.name || node.action || type);
                 }
 
                 // Build children HTML
@@ -1018,8 +1213,8 @@
                 const signalsHtml = signals.length > 0 ?
                     signals.map(s => `
                         <div class="signal-item">
-                            <span class="tool">${s.tool}</span>
-                            ${s.file_path || s.command?.substring(0, 40) || ''}
+                            <span class="tool">${escapeHtml(s.tool)}</span>
+                            ${escapeHtml(s.file_path || s.command?.substring(0, 40) || '')}
                         </div>
                     `).join('') :
                     '<div class="signal-item">No signals captured</div>';
@@ -1064,7 +1259,7 @@
                 const toolCounts = commit.tool_counts || {};
 
                 const toolsHtml = Object.entries(toolCounts).map(([tool, count]) =>
-                    `<span class="tool-badge">${tool}: ${count}</span>`
+                    `<span class="tool-badge">${escapeHtml(tool)}: ${count}</span>`
                 ).join('');
 
                 const decisionsHtml = decisions.length > 0 ?
@@ -1124,19 +1319,22 @@
         // Load all data
         async function refreshAll() {
             try {
-                const [session, lineage, timeline, decisions, commits] = await Promise.all([
+                const [session, lineage, timeline, decisions, commits, metrics] = await Promise.all([
                     fetchApi('session'),
                     fetchApi('lineage'),
                     fetchApi('timeline'),
                     fetchApi('decisions'),
-                    fetchApi('commits')
+                    fetchApi('commits'),
+                    fetchApi('metrics')
                 ]);
 
                 updateSummary(session);
+                updateMetrics(metrics);
                 renderLineage(lineage);
                 renderTimeline(timeline);
                 renderDecisions(decisions);
                 renderCommits(commits);
+                renderMetrics(metrics);
             } catch (error) {
                 console.error('Failed to load data:', error);
                 document.getElementById('timeline-content').innerHTML =

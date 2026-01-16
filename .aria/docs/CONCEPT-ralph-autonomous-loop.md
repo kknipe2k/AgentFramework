@@ -158,10 +158,19 @@ The `progress.txt` file is an append-only log of all work done:
 Started: 2024-01-15 10:00
 Feature: User Authentication System
 
-## Codebase Patterns
+## Learnings
+
+### Architecture Patterns
 - Auth middleware goes in /src/middleware
 - Use bcrypt for password hashing
 - JWT tokens stored in httpOnly cookies
+
+### Testing Patterns
+- Mock auth middleware in integration tests
+- Use test JWT tokens from /test/fixtures
+
+### Gotchas
+- Must set NODE_ENV=test for test database
 
 ---
 

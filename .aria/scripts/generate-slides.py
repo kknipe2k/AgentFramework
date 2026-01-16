@@ -25,66 +25,44 @@ ARIA_DIR = Path('.aria')
 OUTPUTS_DIR = ARIA_DIR / 'outputs'
 
 FOCUS_PROMPT = """Analyze all sources and provide a structured synthesis:
+1. The Core: Identify the top 3 foundational elements (concepts, entities, or arguments) that are absolutely required to understand this corpus. Define them briefly.
+2. The Synthesis: Coalesce the findings by listing the top 5-10 unifying ideas or themes that connect the "Core Trinity" together. Explain how these ideas turn the separate elements into a cohesive whole."""
 
-a. The Core Ideas: Identify the top 3 foundational elements 
-   (concepts, entities, or arguments) that are absolutely 
-   required to understand this corpus. Define them briefly.
+SLIDES_PROMPT = """Intent: explain in detail the key ideas from these docs - USE THE [FOCUS doc] as the guide to highlight each important aspect we need to bring forth and explain
 
-b. The Synthesis Matrix: Coalesce the findings by listing 
-   the top 5-10 unifying ideas or themes that connect the 
-   "Core Ideas" together. Explain how these ideas turn the 
-   separate elements into a cohesive whole."""
-
-SLIDES_PROMPT = """Intent: Explain in detail the key ideas from these docs.
-USE THE Focus doc as the guide to highlight each important 
-aspect we need to bring forth and explain.
-
-Must DO:
-- Provide detailed learning deck to explain the workflow
-- Be verbose
-- Use unconventional spatial and verbal slide design 
-  techniques rooted in cognitive science for maximum learning
-- Make this a long deck (20+ slides if necessary)
-- Use charts, graphs, flow diagrams, and other visuals 
-  liberally to get the message across
-- Break concepts down for ease of intake for new learners 
-  or people unfamiliar with the content
-- Use diagrams liberally
-- Capture main steps in all workflows
-- Ensure the high level process is clear
-- Provide a clear concise view at the end of complete flow"""
+Must DO: provide detailed learning deck to explain the workflow - be verbose - use unconventional spatial and verbal slide design techniques rooted in cognitive science for maximum learning - make this a long deck 20 plus slides if necessary. Use charts, graphs, flow diagrams, and other visuals liberally to get the message across. Break concepts down for ease of intake for new learners or people unfamiliar with the content - again use diagrams liberally - capture main steps in all workflows - ensure the high level process is clear. Provide a clear concise view at the end of complete flow"""
 
 
 def parse_focus_doc(focus_path: Path) -> dict:
-    """Parse FOCUS.md to extract Core Ideas and Synthesis Matrix."""
+    """Parse FOCUS.md to extract Core and Synthesis sections."""
     content = focus_path.read_text()
-    
+
     result = {
         'core_ideas': [],
         'synthesis_matrix': [],
         'raw': content
     }
-    
-    # Extract Core Ideas section
+
+    # Extract The Core section (matches "The Core", "Core Trinity", "Core Ideas", etc.)
     core_match = re.search(
-        r'(?:Core Ideas?|Foundational Elements?).*?(?=Synthesis|Matrix|$)',
-        content, 
+        r'(?:The Core|Core Trinity|Core Ideas?|Foundational Elements?).*?(?=The Synthesis|Synthesis|$)',
+        content,
         re.IGNORECASE | re.DOTALL
     )
     if core_match:
         ideas = re.findall(r'^\s*[-*\d.]+\s*(.+)$', core_match.group(), re.MULTILINE)
         result['core_ideas'] = [i.strip() for i in ideas[:5]]
-    
-    # Extract Synthesis Matrix section
-    matrix_match = re.search(
-        r'(?:Synthesis Matrix|Unifying (?:Ideas|Themes)).*',
+
+    # Extract The Synthesis section (matches "The Synthesis", "Synthesis Matrix", etc.)
+    synthesis_match = re.search(
+        r'(?:The Synthesis|Synthesis Matrix?|Unifying (?:Ideas|Themes)).*',
         content,
         re.IGNORECASE | re.DOTALL
     )
-    if matrix_match:
-        themes = re.findall(r'^\s*[-*\d.]+\s*(.+)$', matrix_match.group(), re.MULTILINE)
+    if synthesis_match:
+        themes = re.findall(r'^\s*[-*\d.]+\s*(.+)$', synthesis_match.group(), re.MULTILINE)
         result['synthesis_matrix'] = [t.strip() for t in themes[:10]]
-    
+
     return result
 
 

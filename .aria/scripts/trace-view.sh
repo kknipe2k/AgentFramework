@@ -2,7 +2,8 @@
 # ARIA Trace Viewer - Visualize recent decisions and signals
 # Usage: .aria/scripts/trace-view.sh [--last N] [--today] [--session]
 
-set -e
+# Exit on error, undefined vars, and pipeline failures
+set -euo pipefail
 
 ARIA_DIR=".aria"
 STATE_DIR="$ARIA_DIR/state"

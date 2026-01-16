@@ -1,7 +1,8 @@
 #!/bin/bash
 # ARIA Engine - Rail loader, detector, and executor
 
-set -e
+# Exit on error, undefined vars, and pipeline failures
+set -euo pipefail
 
 ARIA_DIR=".aria"
 RAILS_DIR="$ARIA_DIR/rails"

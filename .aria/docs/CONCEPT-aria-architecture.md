@@ -36,19 +36,17 @@ The result is a system that can autonomously develop features while maintaining 
                  ┌──────────────────┴──────────────────┐
                  │                                     │
                  ▼                                     ▼
-┌────────────────────────────┐           ┌────────────────────────────┐
-│      PLANNING AGENT        │           │    EXECUTION AGENT         │
-│    (.aria/planner/)        │           │    (.aria/ralph/)          │
-│                            │           │                            │
-│ - Takes requirements       │           │ - Executes approved plans  │
-│ - Creates structured plans │  approve  │ - Runs PRD stories         │
-│ - Identifies risks/unknowns│ ────────► │ - Tracks progress          │
-│ - HITL approval loop       │           │ - Detects stuck state      │
-│ - Handles re-planning      │ ◄──────── │ - Escalates to planner     │
-│                            │  escalate │                            │
-└────────────┬───────────────┘           └─────────────┬──────────────┘
-             │                                         │
-             └──────────────────┬──────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│                      EXECUTION AGENT                                │
+│                      (.aria/ralph/)                                 │
+│                                                                    │
+│  - Executes PRD stories with fresh context each iteration         │
+│  - Runs safety rails after each task                              │
+│  - Tracks progress and learnings                                  │
+│  - Detects stuck state (3 failures)                               │
+│  - Escalates to HITL for human guidance                           │
+└────────────────────────────────┬───────────────────────────────────┘
+                                 │
                                 │
         ┌───────────────────────┼───────────────────────┐
         │                       │                       │
@@ -73,42 +71,32 @@ The result is a system that can autonomously develop features while maintaining 
 └───────────────┘       └───────────────┘
 ```
 
-### Two-Agent Architecture
+### Execution with HITL Fallback
 
-ARIA uses a **Planning Agent** and **Execution Agent** working together:
+ARIA uses **Ralph execution** with **HITL escalation** when failures occur:
 
 ```
-User provides requirements
+User provides requirements (PRD)
          │
          ▼
 ┌─────────────────────────────────────────────┐
-│              PLANNING AGENT                  │
-│                                             │
-│  1. Analyze requirements                    │
-│  2. Break into atomic tasks                 │
-│  3. Identify risks and unknowns             │
-│  4. Present plan to HITL                    │
-│  5. Loop: approve / revise / edit / cancel  │
-└─────────────────────┬───────────────────────┘
-                      │ approved plan
-                      ▼
-┌─────────────────────────────────────────────┐
 │             EXECUTION AGENT                  │
+│            (.aria/ralph/)                   │
 │                                             │
-│  1. Execute tasks from approved plan        │
+│  1. Execute tasks from PRD stories          │
 │  2. Run safety rails after each task        │
 │  3. Track progress and learnings            │
 │  4. If stuck (3 failures):                  │
-│     → Escalate to Planning Agent            │
-│     → Planner asks: replan/skip/abort       │
+│     → Escalate to HITL                      │
+│     → Human decides: retry/skip/abort       │
 │  5. Continue until complete                 │
 └─────────────────────────────────────────────┘
 ```
 
-This separation ensures:
-- **Plans are reviewed before execution** - No runaway agent
-- **Blockers get proper handling** - Not just retry loops
-- **User stays in control** - Approve, revise, or abort at any point
+This approach ensures:
+- **PRD defines clear goals** - Stories have acceptance criteria
+- **Failures get human review** - HITL brings human judgment
+- **User stays in control** - Approve, skip, or abort at any point
 
 ---
 
@@ -251,8 +239,6 @@ When automation fails, humans are brought in gracefully:
 │     - Terminal bell                                     │
 │     - Desktop notification                              │
 │     - Sound alert                                       │
-│     - Slack message (if configured)                     │
-│     - Email (if configured)                             │
 │  4. Human reviews situation                             │
 │  5. Human provides guidance:                            │
 │     - aria hitl respond "guidance text"                 │
@@ -610,7 +596,6 @@ ARIA_MODEL_BUDGET=10.00       # Budget in dollars
 # HITL
 ARIA_HITL_TIMEOUT=3600        # Wait timeout in seconds
 ARIA_HITL_NOTIFY=terminal,desktop,sound  # Notification methods
-ARIA_HITL_SLACK_WEBHOOK=      # Slack webhook URL
 ```
 
 ---

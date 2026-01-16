@@ -1,0 +1,11 @@
+# ARIA Framework Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# Slide generation
+python-pptx>=0.6.21
+
+# Optional: Better tokenization (for accurate token counting)
+# tiktoken>=0.5.0
+
+# Dashboard server (uses stdlib only, no deps needed)
+# Note: serve-dashboard.py uses only standard library

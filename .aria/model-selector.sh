@@ -6,7 +6,8 @@
 # 3. Budget constraints
 # 4. Failure escalation
 
-set -e
+# Exit on error, undefined vars, and pipeline failures
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh" || { echo "Failed to load common.sh"; exit 1; }
@@ -33,10 +34,130 @@ NC="$ARIA_NC"
 mkdir -p "$LOGS_DIR" "$STATE_DIR"
 
 # ============================================
-# MODEL CONFIGURATION
+# SESSION LIFECYCLE TRACKING (Issue #14)
 # ============================================
+# Uses emit_signal() from common.sh (single-writer pattern)
 
-# Model costs (per 1M tokens, approximate)
+SESSION_ID_FILE="$STATE_DIR/.current_session_id"
+
+# Wrapper for session signal emission (delegates to emit_signal)
+_log_session_signal() {
+    local event_type="$1"       # session_started, session_ended
+    local session_id="$2"
+    local details="${3:-}"
+    local metrics="${4:-}"
+
+    # Build optional key=value pairs
+    local -a extra_args=("session_id=${session_id}")
+
+    if [[ -n "$details" ]]; then
+        extra_args+=("details=${details}")
+    fi
+
+    if [[ -n "$metrics" ]]; then
+        # metrics is JSON - emit as raw JSON string for now
+        extra_args+=("metrics=${metrics}")
+    fi
+
+    # Delegate to centralized emit_signal (single owner of signals.jsonl)
+    emit_signal "$event_type" "session" "lifecycle" "${extra_args[@]}"
+}
+
+# Generate a unique session ID
+_generate_session_id() {
+    echo "session-$(date +%Y%m%d-%H%M%S)-$$"
+}
+
+# Start a new session - call at beginning of workflow
+start_session() {
+    local mode="${1:-STANDARD}"
+    local workflow="${2:-unknown}"
+
+    local session_id=$(_generate_session_id)
+    echo "$session_id" > "$SESSION_ID_FILE"
+
+    # Reset usage tracking for new session
+    rm -f "$USAGE_FILE"
+    init_usage
+
+    # Log session start
+    _log_session_signal "session_started" "$session_id" "mode:$mode,workflow:$workflow"
+
+    echo "$session_id"
+}
+
+# Get current session ID
+get_session_id() {
+    if [[ -f "$SESSION_ID_FILE" ]]; then
+        cat "$SESSION_ID_FILE"
+    else
+        echo "no-session"
+    fi
+}
+
+# End session - call at end of workflow
+end_session() {
+    local status="${1:-completed}"  # completed, aborted, failed
+
+    local session_id=$(get_session_id)
+    if [[ "$session_id" == "no-session" ]]; then
+        echo -e "${YELLOW}Warning: No active session to end${NC}"
+        return 1
+    fi
+
+    # Get session metrics
+    init_usage
+    local data=$(cat "$USAGE_FILE")
+    local total_cost=$(echo "$data" | jq -r '.total_cost')
+    local total_input=$(echo "$data" | jq -r '.total_input_tokens')
+    local total_output=$(echo "$data" | jq -r '.total_output_tokens')
+    local session_start=$(echo "$data" | jq -r '.session_start')
+
+    # Calculate duration
+    local start_epoch=$(date -d "$session_start" +%s 2>/dev/null || echo "0")
+    local end_epoch=$(date +%s)
+    local duration_secs=$((end_epoch - start_epoch))
+
+    # Build metrics JSON
+    local metrics
+    metrics=$(printf '{"duration_seconds":%d,"total_cost":%.6f,"total_input_tokens":%d,"total_output_tokens":%d,"status":"%s"}' \
+        "$duration_secs" "$total_cost" "$total_input" "$total_output" "$status")
+
+    # Log session end with metrics
+    _log_session_signal "session_ended" "$session_id" "status:$status" "$metrics"
+
+    # Add session_end to usage file
+    python3 << EOF
+import json
+from datetime import datetime
+with open('$USAGE_FILE', 'r') as f:
+    data = json.load(f)
+data['session_end'] = datetime.now().isoformat()
+data['duration_seconds'] = $duration_secs
+data['final_status'] = '$status'
+with open('$USAGE_FILE', 'w') as f:
+    json.dump(data, f, indent=2)
+EOF
+
+    # Clean up session ID file
+    rm -f "$SESSION_ID_FILE"
+
+    # Run cleanup of old state files (Issue #17)
+    aria_run_cleanup 2>/dev/null || true
+
+    echo -e "${GREEN}Session $session_id ended ($status) - Duration: ${duration_secs}s, Cost: \$$total_cost${NC}"
+}
+
+# ============================================
+# MODEL CONFIGURATION (Issue #23 - externalized)
+# ============================================
+# Costs are loaded from config file for easy updates.
+# Falls back to hardcoded defaults if config unavailable.
+
+MODEL_COSTS_FILE="${ARIA_MODEL_COSTS_FILE:-$ARIA_DIR/config/model-costs.json}"
+_COSTS_LOADED=""
+
+# Default costs (fallback if config unavailable)
 declare -A INPUT_COSTS=(
     ["opus"]=15.00
     ["sonnet"]=3.00
@@ -58,6 +179,70 @@ declare -A MODEL_CAPABILITY=(
 
 # Default budget (in dollars)
 DEFAULT_BUDGET=${ARIA_MODEL_BUDGET:-10.00}
+
+# Load costs from config file
+load_model_costs() {
+    if [[ -n "$_COSTS_LOADED" ]]; then
+        return 0  # Already loaded
+    fi
+
+    if [[ ! -f "$MODEL_COSTS_FILE" ]]; then
+        echo -e "${YELLOW}Using default model costs (config not found: $MODEL_COSTS_FILE)${NC}" >&2
+        _COSTS_LOADED="defaults"
+        return 0
+    fi
+
+    # Validate JSON
+    if ! jq empty "$MODEL_COSTS_FILE" 2>/dev/null; then
+        echo -e "${RED}Invalid JSON in $MODEL_COSTS_FILE, using defaults${NC}" >&2
+        _COSTS_LOADED="defaults"
+        return 1
+    fi
+
+    # Load costs from config
+    local config_version
+    config_version=$(jq -r '._meta.version // "unknown"' "$MODEL_COSTS_FILE")
+
+    for model in opus sonnet haiku; do
+        local input_cost output_cost capability
+        input_cost=$(jq -r ".models.$model.input_cost_per_1m // 0" "$MODEL_COSTS_FILE")
+        output_cost=$(jq -r ".models.$model.output_cost_per_1m // 0" "$MODEL_COSTS_FILE")
+        capability=$(jq -r ".models.$model.capability_score // 5" "$MODEL_COSTS_FILE")
+
+        if [[ "$input_cost" != "0" && "$input_cost" != "null" ]]; then
+            INPUT_COSTS[$model]="$input_cost"
+        fi
+        if [[ "$output_cost" != "0" && "$output_cost" != "null" ]]; then
+            OUTPUT_COSTS[$model]="$output_cost"
+        fi
+        if [[ "$capability" != "0" && "$capability" != "null" ]]; then
+            MODEL_CAPABILITY[$model]="$capability"
+        fi
+    done
+
+    # Load default budget from config
+    local config_budget
+    config_budget=$(jq -r '.defaults.budget // 10.00' "$MODEL_COSTS_FILE")
+    DEFAULT_BUDGET=${ARIA_MODEL_BUDGET:-$config_budget}
+
+    _COSTS_LOADED="$config_version"
+
+    # Emit signal for traceability
+    emit_signal "model_costs_loaded" "model_selector" "config" \
+        "config_file=$MODEL_COSTS_FILE" \
+        "config_version=$config_version" 2>/dev/null || true
+
+    return 0
+}
+
+# Get cost config version (for display)
+get_costs_version() {
+    load_model_costs
+    echo "${_COSTS_LOADED:-defaults}"
+}
+
+# Load costs on script initialization
+load_model_costs
 
 # ============================================
 # USAGE TRACKING
@@ -133,6 +318,9 @@ with open('$USAGE_FILE', 'w') as f:
     json.dump(data, f, indent=2)
 EOF
 
+    # Check budget thresholds after recording (emits signals if thresholds crossed)
+    check_budget_threshold >/dev/null 2>&1 || true
+
     echo "$total_cost"
 }
 
@@ -159,6 +347,147 @@ is_over_budget() {
     local remaining=$(get_remaining_budget)
     local result=$(echo "$remaining <= 0" | bc)
     [[ "$result" == "1" ]]
+}
+
+# ============================================
+# BUDGET VALIDATION & THRESHOLDS (Issue #9 fix)
+# ============================================
+# Validates budget before operations and emits signals at thresholds.
+# Triggers HITL checkpoint when budget exceeded.
+
+# Budget thresholds (configurable)
+BUDGET_WARNING_PCT="${ARIA_BUDGET_WARNING_PCT:-80}"
+BUDGET_CRITICAL_PCT="${ARIA_BUDGET_CRITICAL_PCT:-100}"
+
+# Track if warnings have been emitted this session (avoid spam)
+_BUDGET_WARNING_EMITTED=""
+_BUDGET_CRITICAL_EMITTED=""
+
+# Get budget percentage used
+get_budget_used_pct() {
+    init_usage
+    python3 << EOF
+import json
+with open('$USAGE_FILE', 'r') as f:
+    data = json.load(f)
+budget = data.get('budget', 1)
+cost = data.get('total_cost', 0)
+if budget > 0:
+    pct = (cost / budget) * 100
+else:
+    pct = 100 if cost > 0 else 0
+print(f"{pct:.1f}")
+EOF
+}
+
+# Check budget and emit appropriate signals
+# Returns: 0 = OK, 1 = warning threshold, 2 = exceeded (needs HITL)
+check_budget_threshold() {
+    local used_pct=$(get_budget_used_pct)
+    local remaining=$(get_remaining_budget)
+    local budget=$(python3 -c "import json; print(json.load(open('$USAGE_FILE')).get('budget', 0))" 2>/dev/null || echo "0")
+
+    # Check if exceeded (100%+)
+    if (( $(echo "$used_pct >= $BUDGET_CRITICAL_PCT" | bc -l) )); then
+        if [[ -z "$_BUDGET_CRITICAL_EMITTED" ]]; then
+            emit_signal "budget_exceeded" "model_selector" "budget" \
+                "used_pct=$used_pct" \
+                "remaining=$remaining" \
+                "budget=$budget" \
+                "threshold=$BUDGET_CRITICAL_PCT"
+            _BUDGET_CRITICAL_EMITTED="true"
+            echo -e "${RED}⚠️  BUDGET EXCEEDED: ${used_pct}% used (\$$remaining remaining)${NC}" >&2
+        fi
+        return 2
+    fi
+
+    # Check if warning threshold (default 80%)
+    if (( $(echo "$used_pct >= $BUDGET_WARNING_PCT" | bc -l) )); then
+        if [[ -z "$_BUDGET_WARNING_EMITTED" ]]; then
+            emit_signal "budget_warning" "model_selector" "budget" \
+                "used_pct=$used_pct" \
+                "remaining=$remaining" \
+                "budget=$budget" \
+                "threshold=$BUDGET_WARNING_PCT"
+            _BUDGET_WARNING_EMITTED="true"
+            echo -e "${YELLOW}⚠️  Budget warning: ${used_pct}% used (\$$remaining remaining)${NC}" >&2
+        fi
+        return 1
+    fi
+
+    return 0
+}
+
+# Validate budget before an operation
+# If exceeded, triggers HITL and returns user's decision
+# Returns: 0 = proceed, 1 = abort
+validate_budget_before_operation() {
+    local estimated_cost="${1:-0}"
+    local operation="${2:-unknown}"
+
+    check_budget_threshold
+    local threshold_status=$?
+
+    if [[ $threshold_status -eq 2 ]]; then
+        # Budget exceeded - require HITL approval
+        local remaining=$(get_remaining_budget)
+        local used_pct=$(get_budget_used_pct)
+
+        echo "" >&2
+        echo -e "${RED}════════════════════════════════════════════════════════${NC}" >&2
+        echo -e "${RED}  BUDGET EXCEEDED - HITL CHECKPOINT${NC}" >&2
+        echo -e "${RED}════════════════════════════════════════════════════════${NC}" >&2
+        echo "" >&2
+        echo -e "  Budget used: ${used_pct}%" >&2
+        echo -e "  Remaining:   \$$remaining" >&2
+        echo -e "  Operation:   $operation" >&2
+        echo "" >&2
+        echo -e "  Options:" >&2
+        echo -e "    [c]ontinue - Proceed anyway (overage approved)" >&2
+        echo -e "    [a]bort    - Stop execution" >&2
+        echo -e "    [b]udget   - Add more budget" >&2
+        echo "" >&2
+
+        # If running non-interactively, abort by default
+        if [[ ! -t 0 ]]; then
+            emit_signal "budget_abort_noninteractive" "model_selector" "budget" \
+                "operation=$operation" \
+                "reason=non_interactive_exceeded"
+            return 1
+        fi
+
+        read -r -p "Choice [c/a/b]: " choice
+        case "$choice" in
+            c|C)
+                emit_signal "budget_override" "model_selector" "budget" \
+                    "operation=$operation" \
+                    "remaining=$remaining" \
+                    "user_approved=true"
+                echo -e "${YELLOW}Proceeding with budget overage...${NC}" >&2
+                return 0
+                ;;
+            b|B)
+                read -r -p "New budget amount: \$" new_budget
+                set_budget "$new_budget"
+                emit_signal "budget_increased" "model_selector" "budget" \
+                    "operation=$operation" \
+                    "new_budget=$new_budget"
+                # Reset warning flags
+                _BUDGET_WARNING_EMITTED=""
+                _BUDGET_CRITICAL_EMITTED=""
+                return 0
+                ;;
+            *)
+                emit_signal "budget_abort" "model_selector" "budget" \
+                    "operation=$operation" \
+                    "reason=user_aborted"
+                echo -e "${RED}Execution aborted due to budget.${NC}" >&2
+                return 1
+                ;;
+        esac
+    fi
+
+    return 0
 }
 
 # ============================================
@@ -222,7 +551,8 @@ record_outcome() {
         complexity_level="high"
     fi
 
-    python3 << EOF
+    local python_output
+    python_output=$(python3 << EOF
 import json
 from datetime import datetime
 
@@ -243,7 +573,8 @@ data['task_types'][task_type]['$model']['$outcome'] += 1
 # Update complexity level stats
 data['complexity_levels']['$complexity_level']['$model']['$outcome'] += 1
 
-# Add to recent outcomes (keep last 50)
+# Add to recent outcomes with configurable limit (Issue #18)
+max_outcomes = int('${ARIA_LEARNING_MAX_OUTCOMES:-100}')
 data['recent_outcomes'].append({
     'timestamp': datetime.now().isoformat(),
     'model': '$model',
@@ -253,13 +584,34 @@ data['recent_outcomes'].append({
     'outcome': '$outcome',
     'story_id': '$story_id'
 })
-data['recent_outcomes'] = data['recent_outcomes'][-50:]
+
+# Prune if over limit and report
+pruned_count = 0
+if len(data['recent_outcomes']) > max_outcomes:
+    pruned_count = len(data['recent_outcomes']) - max_outcomes
+    data['recent_outcomes'] = data['recent_outcomes'][-max_outcomes:]
 
 data['updated_at'] = datetime.now().isoformat()
 
 with open('$LEARNING_FILE', 'w') as f:
     json.dump(data, f, indent=2)
+
+# Print pruned count for bash to capture (traceability)
+print(f"PRUNED:{pruned_count}")
 EOF
+    )
+
+    # Extract pruned count from Python output for traceability (Issue #18)
+    local pruned_count=$(echo "$python_output" | grep "^PRUNED:" | cut -d: -f2)
+
+    # Emit signal if data was pruned (traceability)
+    if [[ -n "$pruned_count" && "$pruned_count" -gt 0 ]]; then
+        emit_signal "learning_data_pruned" "model_selector" "learning" \
+            "pruned_count=$pruned_count" \
+            "max_outcomes=${ARIA_LEARNING_MAX_OUTCOMES:-100}" \
+            "model=$model" \
+            "task_type=$task_type"
+    fi
 
     echo "Recorded: $model on $task_type ($complexity_level) = $outcome"
 }
@@ -600,6 +952,11 @@ show_status() {
     echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
     echo ""
 
+    # Show config version for traceability (Issue #23)
+    local config_ver=$(get_costs_version)
+    echo -e "${BLUE}Config:${NC} model-costs.json (version: $config_ver)"
+    echo ""
+
     local data=$(cat "$USAGE_FILE")
 
     local total_cost=$(echo "$data" | jq -r '.total_cost')
@@ -751,6 +1108,17 @@ main() {
             init_learning
             echo -e "${GREEN}Learning data reset${NC}"
             ;;
+        "session-start")
+            # session-start [mode] [workflow]
+            start_session "${1:-STANDARD}" "${2:-unknown}"
+            ;;
+        "session-end")
+            # session-end [status]
+            end_session "${1:-completed}"
+            ;;
+        "session-id")
+            get_session_id
+            ;;
         "help"|*)
             echo "ARIA Model Selector & Token Tracker"
             echo ""
@@ -779,6 +1147,12 @@ main() {
             echo "  stats                   - Show learning statistics"
             echo "  learn-reset             - Reset learning data"
             echo ""
+            echo "Session Management:"
+            echo "  session-start [mode] [workflow]"
+            echo "                          - Start new session, logs to signals.jsonl"
+            echo "  session-end [status]    - End session (completed|aborted|failed)"
+            echo "  session-id              - Get current session ID"
+            echo ""
             echo "Model Selection Logic:"
             echo "  - Complexity 1-3:  haiku (simple tasks)"
             echo "  - Complexity 4-7:  sonnet (moderate tasks)"
@@ -789,7 +1163,13 @@ main() {
             echo "  - Learned data takes priority over heuristics"
             echo ""
             echo "Environment:"
-            echo "  ARIA_MODEL_BUDGET      - Budget in dollars (default: 10.00)"
+            echo "  ARIA_MODEL_BUDGET      - Budget in dollars (default: from config)"
+            echo "  ARIA_MODEL_COSTS_FILE  - Path to costs config (default: .aria/config/model-costs.json)"
+            echo ""
+            echo "Configuration:"
+            echo "  Model costs are externalized to config/model-costs.json"
+            echo "  Update this file when Anthropic changes pricing"
+            echo "  Run 'status' to see current config version"
             ;;
     esac
 }

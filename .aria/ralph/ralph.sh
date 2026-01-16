@@ -2,7 +2,8 @@
 # ARIA-RALPH: Autonomous loop with safety rails
 # Combines Ralph's fresh-context loop with ARIA's hard blocks
 
-set -e
+# Exit on error, undefined vars, and pipeline failures
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARIA_DIR="$(dirname "$SCRIPT_DIR")"
@@ -38,8 +39,224 @@ PLANNER_SCRIPT="$ARIA_DIR/planner/planner.sh"
 PLAN_FILE="$ARIA_DIR/state/current-plan.json"
 PAUSE_SCRIPT="$ARIA_DIR/pause.sh"
 
-# Track consecutive failures per story
-declare -A story_failures
+# ============================================
+# STORY FAILURE TRACKING (POSIX-Compatible)
+# ============================================
+# Uses file-based storage instead of bash 4+ associative arrays
+# for cross-platform compatibility (Windows Git Bash, older macOS)
+# All operations logged via emit_signal (single-writer pattern)
+
+STORY_FAILURES_FILE="$SCRIPT_DIR/.story_failures"
+
+# Ensure state directory exists
+mkdir -p "$ARIA_DIR/state"
+
+# Log failure tracking operation - delegates to emit_signal
+_log_failure_tracking() {
+    local operation="$1"
+    local story_id="$2"
+    local count="$3"
+
+    # Delegate to centralized emit_signal (single owner of signals.jsonl)
+    emit_signal "failure_tracking" "ralph" "story_failures" \
+        "operation=${operation}" "story_id=${story_id}" "count=${count}"
+}
+
+# Get failure count for a story (returns 0 if not found)
+get_story_failures() {
+    local story_id="$1"
+    local count=0
+
+    if [[ -f "$STORY_FAILURES_FILE" ]]; then
+        # Use grep to find the story, cut to extract count
+        local line=$(grep "^${story_id}:" "$STORY_FAILURES_FILE" 2>/dev/null | tail -1)
+        if [[ -n "$line" ]]; then
+            count=$(echo "$line" | cut -d: -f2)
+            # Validate it's a number
+            if ! [[ "$count" =~ ^[0-9]+$ ]]; then
+                count=0
+            fi
+        fi
+    fi
+
+    echo "$count"
+}
+
+# Set failure count for a story (atomic operation)
+set_story_failures() {
+    local story_id="$1"
+    local count="$2"
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    # Create temp file for atomic write
+    local tmp_file="${STORY_FAILURES_FILE}.tmp.$$"
+
+    # Copy existing entries except for this story
+    if [[ -f "$STORY_FAILURES_FILE" ]]; then
+        grep -v "^${story_id}:" "$STORY_FAILURES_FILE" > "$tmp_file" 2>/dev/null || touch "$tmp_file"
+    else
+        touch "$tmp_file"
+    fi
+
+    # Add new entry with timestamp for debugging
+    echo "${story_id}:${count}:${timestamp}" >> "$tmp_file"
+
+    # Atomic move
+    mv "$tmp_file" "$STORY_FAILURES_FILE"
+
+    # Log to signals for traceability
+    _log_failure_tracking "set" "$story_id" "$count"
+}
+
+# Initialize failure tracking file (call at start of run)
+init_story_failures() {
+    # Create fresh file at start of run
+    echo "# ARIA Story Failure Tracking - $(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "$STORY_FAILURES_FILE"
+    echo "# Format: story_id:failure_count:last_updated" >> "$STORY_FAILURES_FILE"
+
+    _log_failure_tracking "init" "ALL" 0
+}
+
+# Clean up failure tracking file (call at end of run)
+cleanup_story_failures() {
+    if [[ -f "$STORY_FAILURES_FILE" ]]; then
+        # Archive to logs directory for post-mortem analysis
+        local archive_dir="$ARIA_DIR/logs"
+        mkdir -p "$archive_dir"
+        local archive_name="story_failures_$(date +%Y%m%d_%H%M%S).log"
+        cp "$STORY_FAILURES_FILE" "$archive_dir/$archive_name" 2>/dev/null || true
+
+        _log_failure_tracking "cleanup" "ALL" 0
+    fi
+}
+
+# ============================================
+# AGENT INVOCATION WITH TRACEABILITY
+# ============================================
+# Proper error handling for Claude/amp invocations
+# All invocations logged via emit_signal (single-writer pattern)
+
+# Log agent invocation - delegates to emit_signal
+_log_agent_invocation() {
+    local agent="$1"
+    local status="$2"  # start, success, error
+    local exit_code="$3"
+    local model="${4:-unknown}"
+    local error_type="${5:-}"
+
+    # Build optional key=value pairs
+    local -a extra_args=("agent=${agent}" "status=${status}" "exit_code=${exit_code}" "model=${model}")
+
+    if [[ -n "$error_type" ]]; then
+        extra_args+=("error_type=${error_type}")
+    fi
+
+    # Delegate to centralized emit_signal (single owner of signals.jsonl)
+    emit_signal "agent_invocation" "ralph" "main_loop" "${extra_args[@]}"
+}
+
+# Check if output contains known error patterns
+_check_agent_output_for_errors() {
+    local output="$1"
+    local error_type=""
+
+    # Check for API/auth errors
+    if echo "$output" | grep -qi "api.*error\|authentication.*failed\|unauthorized\|invalid.*key\|rate.*limit"; then
+        error_type="api_error"
+    # Check for network errors
+    elif echo "$output" | grep -qi "connection.*refused\|timeout\|network.*error\|could not connect"; then
+        error_type="network_error"
+    # Check for CLI errors
+    elif echo "$output" | grep -qi "command not found\|no such file\|permission denied"; then
+        error_type="cli_error"
+    # Check for model errors
+    elif echo "$output" | grep -qi "model.*not.*found\|invalid.*model\|overloaded"; then
+        error_type="model_error"
+    fi
+
+    echo "$error_type"
+}
+
+# Invoke agent with proper error handling and traceability
+# Returns: 0 on success, 1 on recoverable error, 2 on fatal error
+# Sets: AGENT_OUTPUT, AGENT_EXIT_CODE, AGENT_ERROR_TYPE
+invoke_agent() {
+    local agent="$1"
+    local prompt="$2"
+    local model_flag="${3:-}"
+    local model="${4:-unknown}"
+
+    AGENT_OUTPUT=""
+    AGENT_EXIT_CODE=0
+    AGENT_ERROR_TYPE=""
+
+    # Log invocation start
+    _log_agent_invocation "$agent" "start" 0 "$model"
+
+    # Temporarily disable errexit to capture exit code
+    set +e
+
+    case "$agent" in
+        "claude")
+            AGENT_OUTPUT=$(echo "$prompt" | claude --dangerously-skip-permissions -p $model_flag 2>&1 | tee /dev/stderr)
+            AGENT_EXIT_CODE=$?
+            ;;
+        "amp")
+            AGENT_OUTPUT=$(echo "$prompt" | amp --dangerously-allow-all 2>&1 | tee /dev/stderr)
+            AGENT_EXIT_CODE=$?
+            ;;
+        *)
+            echo -e "${RED}Unknown agent: $agent${NC}"
+            AGENT_EXIT_CODE=2
+            AGENT_ERROR_TYPE="unknown_agent"
+            ;;
+    esac
+
+    # Re-enable errexit
+    set -e
+
+    # Check for error patterns in output even if exit code was 0
+    if [[ -z "$AGENT_ERROR_TYPE" ]]; then
+        AGENT_ERROR_TYPE=$(_check_agent_output_for_errors "$AGENT_OUTPUT")
+    fi
+
+    # Determine final status
+    if [[ $AGENT_EXIT_CODE -eq 0 ]] && [[ -z "$AGENT_ERROR_TYPE" ]]; then
+        _log_agent_invocation "$agent" "success" "$AGENT_EXIT_CODE" "$model"
+        return 0
+    else
+        # Log the error
+        _log_agent_invocation "$agent" "error" "$AGENT_EXIT_CODE" "$model" "${AGENT_ERROR_TYPE:-exit_code_nonzero}"
+
+        # Print warning
+        echo -e "${RED}⚠️  Agent invocation issue detected${NC}"
+        if [[ $AGENT_EXIT_CODE -ne 0 ]]; then
+            echo -e "${RED}   Exit code: $AGENT_EXIT_CODE${NC}"
+        fi
+        if [[ -n "$AGENT_ERROR_TYPE" ]]; then
+            echo -e "${RED}   Error type: $AGENT_ERROR_TYPE${NC}"
+        fi
+
+        # Determine if error is fatal or recoverable
+        case "$AGENT_ERROR_TYPE" in
+            "api_error"|"network_error"|"model_error")
+                # Recoverable - can retry
+                return 1
+                ;;
+            "cli_error"|"unknown_agent")
+                # Fatal - configuration issue
+                return 2
+                ;;
+            *)
+                # Unknown error with non-zero exit - treat as recoverable
+                if [[ $AGENT_EXIT_CODE -ne 0 ]]; then
+                    return 1
+                fi
+                return 0
+                ;;
+        esac
+    fi
+}
 
 # Track model used for current iteration (for learning)
 current_iteration_model=""
@@ -76,6 +293,21 @@ preflight_check() {
         echo -e "${RED}ERROR: prd.json not found${NC}"
         echo "Create it first: aria-ralph init \"Feature description\""
         exit 1
+    fi
+
+    # Validate PRD format (Issue #8)
+    if type aria_validate_prd >/dev/null 2>&1; then
+        if ! aria_validate_prd "$PRD_FILE"; then
+            echo -e "${RED}ERROR: PRD validation failed${NC}"
+            echo "Fix the PRD format issues above before running."
+            exit 1
+        fi
+    else
+        # Fallback: quick JSON check
+        if ! jq -e '.feature and .branchName and .userStories' "$PRD_FILE" >/dev/null 2>&1; then
+            echo -e "${RED}ERROR: PRD missing required fields (feature, branchName, userStories)${NC}"
+            exit 1
+        fi
     fi
 
     # Check prompt exists
@@ -236,9 +468,10 @@ EOF
 # Check if we should request human help (too many failures)
 check_failure_threshold() {
     local story_id="$1"
-    local current_failures=${story_failures[$story_id]:-0}
+    local current_failures=$(get_story_failures "$story_id")
 
     if [[ $current_failures -ge $MAX_CONSECUTIVE_FAILURES ]]; then
+        _log_failure_tracking "threshold_reached" "$story_id" "$current_failures"
         return 0  # Should request help
     fi
     return 1  # Keep trying
@@ -356,14 +589,20 @@ update_plan_task() {
 # Increment failure count for a story
 increment_failures() {
     local story_id="$1"
-    local current=${story_failures[$story_id]:-0}
-    story_failures[$story_id]=$((current + 1))
+    local current=$(get_story_failures "$story_id")
+    local new_count=$((current + 1))
+    set_story_failures "$story_id" "$new_count"
+    _log_failure_tracking "increment" "$story_id" "$new_count"
 }
 
 # Reset failure count (on success)
 reset_failures() {
     local story_id="$1"
-    story_failures[$story_id]=0
+    local previous=$(get_story_failures "$story_id")
+    set_story_failures "$story_id" 0
+    if [[ "$previous" -gt 0 ]]; then
+        _log_failure_tracking "reset" "$story_id" 0
+    fi
 }
 
 # Record learning outcome for model selection
@@ -385,6 +624,9 @@ record_learning_outcome() {
 run_loop() {
     local iteration=0
     local start_time=$(date +%s)
+
+    # Initialize failure tracking for this run (fresh start)
+    init_story_failures
 
     while [[ $iteration -lt $MAX_ITERATIONS ]]; do
         iteration=$((iteration + 1))
@@ -443,7 +685,7 @@ $(tail -100 "$PROGRESS_FILE" 2>/dev/null || echo "No progress yet")
         # Select model for this task
         local selected_model="sonnet"
         local model_flag=""
-        local failures=${story_failures[$next_story]:-0}
+        local failures=$(get_story_failures "$next_story")
 
         if [[ "$AUTO_MODEL_SELECT" == "true" ]] && [[ -x "$MODEL_SELECTOR" ]]; then
             local story_title=$(jq -r ".userStories[] | select(.id == \"$next_story\") | .title" "$PRD_FILE" 2>/dev/null || echo "")
@@ -472,29 +714,52 @@ $(tail -100 "$PROGRESS_FILE" 2>/dev/null || echo "No progress yet")
             echo -e "${BLUE}Model: $selected_model (forced)${NC}"
         fi
 
-        # Run the agent
+        # Run the agent with proper error handling
         echo -e "${YELLOW}Running agent...${NC}"
         local output=""
         local input_tokens=0
         local output_tokens=0
+        local invoke_result=0
 
-        case "$AGENT" in
-            "claude")
-                output=$(echo "$full_prompt" | claude --dangerously-skip-permissions -p $model_flag 2>&1 | tee /dev/stderr) || true
-                # Estimate tokens (rough: 4 chars = 1 token)
-                input_tokens=$(( ${#full_prompt} / 4 ))
-                output_tokens=$(( ${#output} / 4 ))
-                ;;
-            "amp")
-                output=$(echo "$full_prompt" | amp --dangerously-allow-all 2>&1 | tee /dev/stderr) || true
-                input_tokens=$(( ${#full_prompt} / 4 ))
-                output_tokens=$(( ${#output} / 4 ))
-                ;;
-            *)
-                echo -e "${RED}Unknown agent: $AGENT${NC}"
-                exit 1
-                ;;
-        esac
+        # Use invoke_agent for proper error handling and traceability
+        invoke_agent "$AGENT" "$full_prompt" "$model_flag" "$selected_model" || invoke_result=$?
+
+        output="$AGENT_OUTPUT"
+        input_tokens=$(( ${#full_prompt} / 4 ))
+        output_tokens=$(( ${#output} / 4 ))
+
+        # Handle agent invocation errors
+        if [[ $invoke_result -eq 2 ]]; then
+            # Fatal error (CLI error, unknown agent) - cannot continue
+            echo -e "${RED}Fatal agent error. Cannot continue.${NC}"
+            log_iteration $iteration "$next_story" "FATAL_ERROR:$AGENT_ERROR_TYPE" 0
+            exit 1
+        elif [[ $invoke_result -eq 1 ]]; then
+            # Recoverable error - count as failure and potentially retry
+            echo -e "${YELLOW}Agent invocation failed (recoverable)${NC}"
+            log_iteration $iteration "$next_story" "AGENT_ERROR:$AGENT_ERROR_TYPE" 0
+
+            # Record learning outcome: FAIL due to agent error
+            record_learning_outcome "$next_story" "fail"
+
+            # Increment failure count
+            increment_failures "$next_story"
+
+            # Check if we've hit the failure threshold
+            if check_failure_threshold "$next_story"; then
+                echo -e "${MAGENTA}Story $next_story has failed $MAX_CONSECUTIVE_FAILURES times due to agent errors${NC}"
+                if ! escalate_to_planner "Agent invocation keeps failing: $AGENT_ERROR_TYPE" "$next_story" "Error type: $AGENT_ERROR_TYPE"; then
+                    echo "Execution stopped due to repeated agent failures."
+                    break
+                fi
+                reset_failures "$next_story"
+            fi
+
+            # Sleep and retry
+            echo "Sleeping ${SLEEP_BETWEEN}s before retry..."
+            sleep $SLEEP_BETWEEN
+            continue
+        fi
 
         # Record token usage
         if [[ -x "$MODEL_SELECTOR" ]]; then
@@ -594,6 +859,10 @@ $(tail -100 "$PROGRESS_FILE" 2>/dev/null || echo "No progress yet")
     echo -e "${BLUE}                    EXECUTION COMPLETE                      ${NC}"
     echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
     echo ""
+
+    # Archive failure tracking for post-mortem analysis
+    cleanup_story_failures
+
     echo "Total iterations: $iteration"
     echo "Total duration:   ${total_duration}s"
     echo "Remaining stories: $(count_remaining)"
