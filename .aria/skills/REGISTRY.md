@@ -8,6 +8,7 @@
 
 | Skill | Trigger | Modes | Category |
 |-------|---------|-------|----------|
+| [aria-start](./aria-start.md) | Session init, `/aria-start` | ALL | Entry |
 | [planning](./planning.md) | Start of work, "plan this" | ALL | Core |
 | [executing](./executing.md) | Approved plan exists | ALL | Core |
 | [debugging](./debugging.md) | Test failure, error | ALL | Core |
@@ -38,13 +39,20 @@ Essential skills used in every workflow.
 | **context-refresh** | Reset long sessions | Progress state | Handoff summary |
 | **tracking** | Monitor progress | Execution events | `progress.json`, metrics |
 
+### Entry (Session Init)
+Session initialization and workflow routing.
+
+| Skill | Purpose | Inputs | Outputs |
+|-------|---------|--------|---------|
+| **aria-start** | Dashboard + workflow router | Session start | Dashboard, workflow selection |
+
 ### Creative (STANDARD+)
 Ideation and visualization skills.
 
 | Skill | Purpose | Inputs | Outputs |
 |-------|---------|--------|---------|
 | **brainstorming** | Explore options | Problem statement | `IDEA.md` |
-| **prototyping** | Visual mockups | Concept | HTML in `.aria/prototypes/` |
+| **prototyping** | Generate prototype specs | Concept | `SPEC-*.json` (executing.md builds) |
 
 ### Research (Explicit Invocation)
 Article-to-code and documentation skills.
@@ -60,13 +68,13 @@ Article-to-code and documentation skills.
 ## Invocation Patterns
 
 ### Automatic (Mode-Based)
-These skills activate based on the current mode:
+These skills activate based on the current mode (after `/aria-start` router):
 
 ```
-LITE:       planning(lite) → executing
-STANDARD:   brainstorming? → planning → executing → tracking → report
-FULL:       brainstorming → prototyping? → planning → executing → tracking → report
-FULL+:      brainstorming → prototyping → planning → executing → tracking → report
+LITE:       planning(lite) → executing → verify.sh
+STANDARD:   brainstorm? → planning → executing(agents) → verify.sh → tracking → report
+FULL:       brainstorm → prototype(SPEC) → executing(agents) → verify.sh → tracking → report
+FULL+:      brainstorm → prototype(SPEC) → planning → executing(agents) → verify.sh → tracking → report
 ```
 
 ### On-Demand (Trigger-Based)
@@ -103,14 +111,19 @@ These require explicit user request:
 ## Skill Dependencies
 
 ```
-brainstorming ──→ prototyping ──→ planning ──→ executing
-                                      │            │
-                                      │            ├──→ debugging (on failure)
-                                      │            │
-                                      └────────────┴──→ tracking (parallel)
-                                                             │
-                                                             ▼
-                                                       report-writer
+aria-start ──→ HITL Router ──→ [BUILD|MODIFY|RESEARCH]
+                                      │
+                                      ▼
+brainstorming ──→ prototyping ──→ executing
+                   (SPEC only)     (agents: analyzer → implementer → verify-app)
+                                      │
+                         ┌────────────┼────────────┐
+                         ▼            │            ▼
+                    debugging         │       tracking
+                   (on failure)       │       (parallel)
+                                      ▼            │
+                                 verify.sh         ▼
+                                             report-writer
 ```
 
 ### Dependency Rules

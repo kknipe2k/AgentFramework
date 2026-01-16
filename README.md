@@ -96,7 +96,7 @@ This creates `~/aria/eval/SVM` (or `c:\aria\eval\SVM`) with:
 |----------|-------------|
 | **[User Guide](.aria/docs/USER-GUIDE.md)** | Complete usage guide - start here |
 | [Cheatsheet](.aria/docs/CHEATSHEET.md) | Quick reference for all modes/skills |
-| [Skill Registry](.aria/skills/REGISTRY.md) | All 12 skills with triggers |
+| [Skill Registry](.aria/skills/REGISTRY.md) | All 13 skills with triggers |
 | [Observability](.aria/docs/OBSERVABILITY.md) | Decision tracing and dashboard |
 | [Architecture](.aria/docs/CONCEPT-aria-architecture.md) | System design and components |
 | [Boris Cherny Patterns](.aria/docs/CONCEPT-boris-cherny-patterns.md) | Verification and subagent patterns |
@@ -179,11 +179,18 @@ ARIA supports two operational modes:
 | Mode | Entry Point | Use Case |
 |------|-------------|----------|
 | **External** | `ralph.sh` | Terminal-based autonomous loop |
-| **Hybrid** | `CLAUDE.md` | Inside Claude Code / VS Code |
+| **Hybrid** | `/aria-start` | Inside Claude Code / VS Code |
 
 **External Mode** (this README): Shell scripts orchestrate Claude as subprocess. Best for autonomous batch work.
 
-**Hybrid Mode** ([CLAUDE.md](./CLAUDE.md)): Skills-based system with ARIA rules embedded in Claude's context. Best for interactive development. See also:
+**Hybrid Mode** ([CLAUDE.md](./CLAUDE.md)): Skills-based system with ARIA rules embedded in Claude's context. Best for interactive development.
+
+**Hybrid Quick Start:**
+```
+/aria-start → Dashboard launches → Select: [b]uild / [m]odify / [r]esearch
+```
+
+See also:
 - [Cheatsheet](.aria/docs/CHEATSHEET.md) - Quick reference
 - [Skill Registry](.aria/skills/REGISTRY.md) - Available skills
 

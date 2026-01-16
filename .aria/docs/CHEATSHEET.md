@@ -48,13 +48,15 @@ X-LARGE (40+ tasks)   → FULL+     → Epic-level management
 
 ## Workflows
 
-**Build:** brainstorm → prototype? → plan → execute → verify → report → dashboard?
+**Entry Point:** `/aria-start` → Dashboard + HITL Router → [b]uild / [m]odify / [r]esearch
 
-**Bug Fix:** debug → plan(lite) → execute → verify
+**Build:** brainstorm → prototype(SPEC) → executing(agents) → verify.sh → report → dashboard?
 
-**Modify:** discovery → plan → execute → verify → report → dashboard?
+**Bug Fix:** debug → plan(lite) → execute → verify.sh
 
-**Research:** researcher → brainstorm → IDEA.md → slides? → prototype? → report
+**Modify:** discovery → plan → executing(agents) → verify.sh → report → dashboard?
+
+**Research:** researcher → brainstorm → IDEA.md → slides? → prototype(SPEC) → executing(agents) → verify.sh → report
 
 **End of Workflow (STANDARD+):**
 ```
@@ -116,6 +118,7 @@ bash .aria/verify.sh
 
 | Command | Action |
 |---------|--------|
+| `/aria-start` | **Entry point**: Dashboard + workflow router |
 | `/aria:plan` | Start planning |
 | `/aria:status` | Show progress |
 | `/aria:verify` | Run verification |

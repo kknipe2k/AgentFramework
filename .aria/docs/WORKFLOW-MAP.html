@@ -249,11 +249,38 @@
 
         <!-- WORKFLOWS TAB -->
         <div id="workflows" class="tab-content active">
-            <h2>Entry Point: Router</h2>
+            <h2>Entry Point: /aria-start</h2>
             <div class="flow">
-                <div class="flow-step">User Request</div>
+                <div class="flow-step skill">/aria-start</div>
                 <span class="flow-arrow">→</span>
-                <div class="flow-step skill">Router (CLAUDE.md)</div>
+                <div class="flow-step file">Dashboard</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step hitl">Router</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step decision">?</div>
+            </div>
+            <div class="branch">
+                <div class="branch-label">HITL: Select workflow</div>
+                <div class="flow">
+                    <div class="flow-step hitl">[b]uild</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step">BUILD flow</div>
+                </div>
+                <div class="flow">
+                    <div class="flow-step hitl">[m]odify</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step">MODIFY flow</div>
+                </div>
+                <div class="flow">
+                    <div class="flow-step hitl">[r]esearch</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step">RESEARCH flow</div>
+                </div>
+            </div>
+
+            <h2>Size Router (for BUILD/MODIFY)</h2>
+            <div class="flow">
+                <div class="flow-step">Size Assessment</div>
                 <span class="flow-arrow">→</span>
                 <div class="flow-step decision">?</div>
             </div>
@@ -296,9 +323,13 @@
                     <span class="flow-arrow">→</span>
                     <div class="flow-step skill">prototyping</div>
                     <span class="flow-arrow">→</span>
-                    <div class="flow-step file">prototype-*.html</div>
+                    <div class="flow-step file">SPEC-*.json</div>
                     <span class="flow-arrow">→</span>
                     <div class="flow-step hitl">Approve</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step skill">executing (agents)</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step file">prototype-*.html</div>
                 </div>
                 <div class="flow">
                     <span class="flow-arrow">→</span>
@@ -353,7 +384,8 @@
                 <table class="file-table">
                     <tr><th>File</th><th>Skill</th><th>Purpose</th></tr>
                     <tr><td class="file-path">.aria/docs/IDEA.md</td><td>brainstorming</td><td>Research synthesis, options, recommendation</td></tr>
-                    <tr><td class="file-path">.aria/prototypes/*.html</td><td>prototyping</td><td>Visual mockups</td></tr>
+                    <tr><td class="file-path">.aria/prototypes/SPEC-*.json</td><td>prototyping</td><td>Prototype specifications</td></tr>
+                    <tr><td class="file-path">.aria/prototypes/*.html</td><td>executing (agents)</td><td>Built prototypes</td></tr>
                     <tr><td class="file-path">.aria/state/current-plan.json</td><td>planning</td><td>Task breakdown with estimates</td></tr>
                     <tr><td class="file-path">.aria/state/progress.json</td><td>tracking</td><td>Task completion status</td></tr>
                     <tr><td class="file-path">.aria/state/decisions.jsonl</td><td>executing</td><td>Decision trace log</td></tr>
@@ -555,7 +587,17 @@
 
         <!-- SKILLS TAB -->
         <div id="skills" class="tab-content">
-            <h2>All Skills (12 Total)</h2>
+            <h2>All Skills (13 Total)</h2>
+
+            <h3>Entry Skill</h3>
+            <div class="skill-grid">
+                <div class="skill-card">
+                    <h4>aria-start <span class="mode-badge mode-lite">ALL</span></h4>
+                    <p>Session init with dashboard + workflow router</p>
+                    <div class="triggers"><strong>Triggers:</strong> /aria-start, session start</div>
+                    <div class="triggers"><strong>Output:</strong> Dashboard, [b/m/r] selection</div>
+                </div>
+            </div>
 
             <h3>Core Skills (All Modes)</h3>
             <div class="skill-grid">
@@ -601,9 +643,9 @@
                 </div>
                 <div class="skill-card">
                     <h4>prototyping <span class="mode-badge mode-full">FULL+</span></h4>
-                    <p>Visual/structural mockups</p>
+                    <p>Generate prototype specs (executing builds)</p>
                     <div class="triggers"><strong>Triggers:</strong> "mockup", "prototype"</div>
-                    <div class="triggers"><strong>Output:</strong> <code>.aria/prototypes/*.html</code></div>
+                    <div class="triggers"><strong>Output:</strong> <code>SPEC-*.json</code> (spec only)</div>
                 </div>
                 <div class="skill-card">
                     <h4>tracking <span class="mode-badge mode-standard">STANDARD+</span></h4>
@@ -641,26 +683,36 @@
                 </div>
             </div>
 
-            <h2>Skill Dependencies</h2>
+            <h2>Skill Dependencies (Unified Architecture)</h2>
             <div class="flow">
+                <div class="flow-step skill">aria-start</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step hitl">Router</div>
+                <span class="flow-arrow">→</span>
                 <div class="flow-step skill">brainstorming</div>
                 <span class="flow-arrow">→</span>
                 <div class="flow-step skill">prototyping</div>
-                <span class="flow-arrow">→</span>
-                <div class="flow-step skill">planning</div>
+                <span style="font-size: 11px; color: #666;">(SPEC only)</span>
+            </div>
+            <div class="flow" style="margin-left: 100px;">
                 <span class="flow-arrow">→</span>
                 <div class="flow-step skill">executing</div>
+                <span style="font-size: 11px; color: #666;">(agents: analyzer → implementer → verify-app)</span>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step file">verify.sh</div>
             </div>
-            <div class="flow" style="margin-left: 340px;">
+            <div class="flow" style="margin-left: 100px;">
                 <span class="flow-arrow">↓</span>
                 <div class="flow-step skill">debugging</div>
-                <span style="margin-left: 60px;">on failure</span>
+                <span style="margin-left: 40px; font-size: 12px;">on failure</span>
             </div>
-            <div class="flow" style="margin-left: 280px;">
+            <div class="flow" style="margin-left: 100px;">
                 <span class="flow-arrow">→</span>
                 <div class="flow-step skill">tracking</div>
                 <span class="flow-arrow">→</span>
                 <div class="flow-step skill">report-writer</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step file">dashboard</div>
             </div>
         </div>
 
@@ -746,9 +798,14 @@
                     <td>Presentation deck</td>
                 </tr>
                 <tr>
-                    <td class="file-path">.aria/prototypes/*.html</td>
+                    <td class="file-path">.aria/prototypes/SPEC-*.json</td>
                     <td>prototyping</td>
-                    <td>Visual mockups</td>
+                    <td>Prototype specifications</td>
+                </tr>
+                <tr>
+                    <td class="file-path">.aria/prototypes/*.html</td>
+                    <td>executing (agents)</td>
+                    <td>Built prototypes</td>
                 </tr>
                 <tr>
                     <td class="file-path">.aria/reports/SESSION-*.md</td>
@@ -791,7 +848,7 @@
                 </tr>
                 <tr>
                     <td class="file-path">.aria/skills/*.md</td>
-                    <td>Skill definitions (12 skills)</td>
+                    <td>Skill definitions (13 skills)</td>
                 </tr>
                 <tr>
                     <td class="file-path">.aria/skills/REGISTRY.md</td>

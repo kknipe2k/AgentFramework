@@ -4,7 +4,22 @@
 
 ---
 
-## Entry Point: Router
+## Entry Point: /aria-start
+
+```
+/aria-start → Launch Dashboard → HITL Router → Workflow Selection
+                   │                  │
+           localhost:8420             │
+                             ┌────────┼────────┐
+                             ▼        ▼        ▼
+                          [b]uild  [m]odify  [r]esearch
+                             │        │        │
+                             ▼        ▼        ▼
+                          Router   Router   Research
+                          (size)   (size)   Flow
+```
+
+### Size Router (for BUILD/MODIFY)
 
 ```
 User Request → Router (CLAUDE.md) → Size Assessment → Mode Selection
@@ -93,9 +108,21 @@ Article ──→ researcher ──→ research-output.json
                     │          │          │
                     └──────────┴──────────┘
                                │
-                         prototyping
+                         prototyping (SPEC only)
                                │
-                    prototype-*.html
+                         SPEC-*.json
+                               │
+                         executing.md
+                               │
+                    ┌──────────┴──────────┐
+                    │                     │
+              analyzer ─→ implementer ─→ verify-app
+                                          │
+                                     verify.sh
+                                    (HTML/CSS/JS
+                                     Playwright)
+                                          │
+                              prototype-*.html
 ```
 
 ---
@@ -138,12 +165,13 @@ SESSION → SKILL → DECISION → SIGNALS → COMMIT
 
 ---
 
-## All Skills (12)
+## All Skills (13)
 
 ### Core Skills (All Modes)
 
 | Skill | Trigger | Output |
 |-------|---------|--------|
+| **aria-start** | `/aria-start`, session init | Dashboard + workflow selection |
 | **planning** | "plan this", start of work | `current-plan.json` |
 | **executing** | Approved plan exists | Code, commits |
 | **debugging** | Test failure, error | Working code |
@@ -155,7 +183,7 @@ SESSION → SKILL → DECISION → SIGNALS → COMMIT
 | Skill | Trigger | Output |
 |-------|---------|--------|
 | **brainstorming** | "brainstorm", "explore" | `IDEA.md` |
-| **prototyping** | "mockup", "prototype" | `prototypes/*.html` |
+| **prototyping** | "mockup", "prototype" | `prototypes/SPEC-*.json` (spec only) |
 | **tracking** | During/after execution | `progress.json` |
 | **context-refresh** | 3+ failures, between phases | Handoff summary |
 | **report-writer** | All tasks complete, "summary" | Summary + dashboard offer |
@@ -172,15 +200,30 @@ SESSION → SKILL → DECISION → SIGNALS → COMMIT
 ## Skill Dependencies
 
 ```
+aria-start ──→ HITL Router ──→ [BUILD|MODIFY|RESEARCH]
+                                      │
+                                      ▼
 brainstorming ──→ prototyping ──→ planning ──→ executing
-                                      │            │
-                                      │            ├──→ debugging (on failure)
-                                      │            │
-                                      └────────────┴──→ tracking (parallel)
-                                                             │
-                                                             ▼
-                                                       report-writer
+                      │                            │
+                      │ (SPEC only)                │
+                      │                            ├──→ debugging (on failure)
+                      ▼                            │
+                 executing ←─────────────────────────┘
+                 (agents: analyzer → implementer → verify-app)
+                      │
+                      ▼
+                 verify.sh ──→ tracking (parallel)
+                                    │
+                                    ▼
+                              report-writer
 ```
+
+**Unified Agent Pattern:**
+All building tasks (code AND prototypes) use the same agent loop:
+1. `analyzer` - Review spec/requirements
+2. `implementer` - Build component
+3. `verify-app` - Test functionality
+4. `verify.sh` - Lint, test, accessibility
 
 ---
 
@@ -212,7 +255,9 @@ brainstorming ──→ prototyping ──→ planning ──→ executing
 | `.aria/outputs/FOCUS.md` | slide-generation | Core ideas + synthesis |
 | `.aria/outputs/slides-*.pdf` | slide-generation (NBLM) | Presentation |
 | `.aria/outputs/slides-*.pptx` | slide-generation (pptx) | Presentation |
-| `.aria/prototypes/*.html` | prototyping | Visual mockups |
+| `.aria/prototypes/SPEC-*.json` | prototyping | Prototype specifications |
+| `.aria/prototypes/*.html` | executing (from spec) | Built prototypes |
+| `.aria/prototypes/tests/*.spec.js` | executing | Playwright tests |
 | `.aria/reports/SESSION-*.md` | report-writer | Saved reports |
 
 ### Scripts
@@ -262,6 +307,7 @@ brainstorming ──→ prototyping ──→ planning ──→ executing
 
 | Command | Action |
 |---------|--------|
+| `/aria-start` | **Session init**: Dashboard + workflow router |
 | `/aria:plan` | Start planning |
 | `/aria:status` | Show progress |
 | `/aria:verify` | Run verification |

@@ -217,7 +217,20 @@ After brainstorming, you should have:
 4. **Recommendation** with reasoning
 5. **IDEA.md** saved to `.aria/docs/`
 
-Then hand off to Planning skill for detailed task breakdown.
+Then hand off to next step based on workflow:
+- **Build:** → Planning skill for task breakdown
+- **Research:** → Prototyping skill (if prototype requested) → outputs SPEC-*.json
+
+---
+
+## Handoff to Prototyping
+
+When prototype is requested after brainstorming:
+
+1. User selects prototype variant at HITL: `[1] mockup / [2] learning tool / [3] reference`
+2. Prototyping skill creates `SPEC-*.json` with requirements
+3. Executing skill builds prototype via agent loop (analyzer → implementer → verify-app)
+4. verify.sh runs HTML/CSS/JS/Playwright checks
 
 ---
 
