@@ -815,21 +815,21 @@ def main():
     # Start server
     with http.server.HTTPServer(('', args.port), handler) as server:
         print(f'''
-╔═══════════════════════════════════════════════════════════════╗
-║                    ARIA Dashboard                             ║
-╠═══════════════════════════════════════════════════════════════╣
-║  Server running at: http://localhost:{args.port}               ║
-║                                                               ║
-║  API Endpoints:                                               ║
-║    /api/session   - Session summary                           ║
-║    /api/timeline  - Unified event timeline                    ║
-║    /api/decisions - Decisions with signals                    ║
-║    /api/commits   - Commits with decisions                    ║
-║    /api/lineage   - Hierarchical workflow lineage             ║
-║    /api/metrics   - Token usage & cost metrics                ║
-║                                                               ║
-║  Press Ctrl+C to stop                                         ║
-╚═══════════════════════════════════════════════════════════════╝
++---------------------------------------------------------------+
+|                    ARIA Dashboard                             |
++---------------------------------------------------------------+
+|  Server running at: http://localhost:{args.port}               |
+|                                                               |
+|  API Endpoints:                                               |
+|    /api/session   - Session summary                           |
+|    /api/timeline  - Unified event timeline                    |
+|    /api/decisions - Decisions with signals                    |
+|    /api/commits   - Commits with decisions                    |
+|    /api/lineage   - Hierarchical workflow lineage             |
+|    /api/metrics   - Token usage & cost metrics                |
+|                                                               |
+|  Press Ctrl+C to stop                                         |
++---------------------------------------------------------------+
         ''')
         try:
             server.serve_forever()
