@@ -27,6 +27,11 @@ SIGNALS_FILE = STATE_DIR / 'signals.jsonl'
 DECISIONS_FILE = STATE_DIR / 'decisions.jsonl'
 PROGRESS_FILE = STATE_DIR / 'progress.json'
 
+# Metrics files
+LOGS_DIR = ARIA_DIR / 'logs'
+TOKEN_USAGE_FILE = LOGS_DIR / 'token_usage.json'
+MODEL_LEARNING_FILE = LOGS_DIR / 'model_learning.json'
+
 
 def init_db():
     """Initialize sqlite database with schema."""
@@ -642,6 +647,86 @@ def get_lineage(conn) -> dict:
     return lineage
 
 
+def get_metrics() -> dict:
+    """Get token usage and model metrics from logs."""
+    metrics = {
+        'token_usage': None,
+        'model_learning': None,
+        'session_duration': None,
+        'cost_breakdown': None
+    }
+
+    # Read token usage
+    if TOKEN_USAGE_FILE.exists():
+        try:
+            with open(TOKEN_USAGE_FILE) as f:
+                usage = json.load(f)
+                metrics['token_usage'] = {
+                    'total_input': usage.get('total_input_tokens', 0),
+                    'total_output': usage.get('total_output_tokens', 0),
+                    'total_cost': usage.get('total_cost', 0.0),
+                    'budget': usage.get('budget', 10.0),
+                    'budget_remaining': usage.get('budget', 10.0) - usage.get('total_cost', 0.0),
+                    'by_model': usage.get('by_model', {}),
+                    'session_start': usage.get('session_start', None),
+                    'recent_history': usage.get('history', [])[-20:]  # Last 20 calls
+                }
+
+                # Calculate session duration
+                if usage.get('session_start'):
+                    try:
+                        start = datetime.fromisoformat(usage['session_start'].replace('Z', '+00:00'))
+                        duration = datetime.now(start.tzinfo) - start if start.tzinfo else datetime.now() - start
+                        metrics['session_duration'] = {
+                            'seconds': int(duration.total_seconds()),
+                            'formatted': f"{int(duration.total_seconds() // 3600)}h {int((duration.total_seconds() % 3600) // 60)}m"
+                        }
+                    except:
+                        pass
+
+                # Cost breakdown
+                by_model = usage.get('by_model', {})
+                total_cost = usage.get('total_cost', 0.0)
+                if total_cost > 0:
+                    metrics['cost_breakdown'] = {
+                        model: {
+                            'cost': data.get('cost', 0.0),
+                            'percentage': round(data.get('cost', 0.0) / total_cost * 100, 1) if total_cost > 0 else 0,
+                            'calls': data.get('calls', 0)
+                        }
+                        for model, data in by_model.items()
+                    }
+        except Exception as e:
+            metrics['token_usage_error'] = str(e)
+
+    # Read model learning data
+    if MODEL_LEARNING_FILE.exists():
+        try:
+            with open(MODEL_LEARNING_FILE) as f:
+                learning = json.load(f)
+                metrics['model_learning'] = {
+                    'total_samples': sum(
+                        len(data.get('samples', []))
+                        for data in learning.values()
+                    ),
+                    'task_types': list(learning.keys()),
+                    'summary': {
+                        task_type: {
+                            'samples': len(data.get('samples', [])),
+                            'avg_success': round(
+                                sum(s.get('success', 0) for s in data.get('samples', [])) /
+                                max(len(data.get('samples', [])), 1) * 100, 1
+                            )
+                        }
+                        for task_type, data in learning.items()
+                    }
+                }
+        except Exception as e:
+            metrics['model_learning_error'] = str(e)
+
+    return metrics
+
+
 class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     """HTTP handler for dashboard and API."""
 
@@ -680,6 +765,8 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 data = get_commits_with_decisions(self.db_conn)
             elif path == '/api/lineage':
                 data = get_lineage(self.db_conn)
+            elif path == '/api/metrics':
+                data = get_metrics()
             else:
                 self.send_error(404, 'Unknown API endpoint')
                 return
@@ -731,6 +818,8 @@ def main():
 ║    /api/timeline  - Unified event timeline                    ║
 ║    /api/decisions - Decisions with signals                    ║
 ║    /api/commits   - Commits with decisions                    ║
+║    /api/lineage   - Hierarchical workflow lineage             ║
+║    /api/metrics   - Token usage & cost metrics                ║
 ║                                                               ║
 ║  Press Ctrl+C to stop                                         ║
 ╚═══════════════════════════════════════════════════════════════╝
