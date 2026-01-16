@@ -236,6 +236,17 @@ Decompose complex work into specialized subagents, each with:
 - Runs after implementation passes tests
 - Maintains functionality
 
+### ARIA Implementation
+
+All four Boris Pattern 3 agents are implemented in ARIA:
+
+| Agent | File | Status |
+|-------|------|--------|
+| Analyzer | `.claude/agents/analyzer.md` | ✅ Implemented |
+| Implementer | `.claude/agents/implementer.md` | ✅ Implemented |
+| Verifier | `.claude/agents/verify-app.md` | ✅ Implemented |
+| Simplifier | `.claude/agents/code-simplifier.md` | ✅ Implemented |
+
 ### Example: Adding a Feature
 
 ```
