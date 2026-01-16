@@ -208,12 +208,12 @@ verify-app     code-simplifier
 - Must run prisma generate after schema changes
 ```
 
-**Implementation:** `progress.txt` includes a "Codebase Patterns" section, but:
-- ❌ Not structured into Architecture/Testing/Gotchas categories
-- ⚠️ Basic pattern extraction, not comprehensive
-- ❌ No dedicated learnings file
+**Implementation:** `progress.txt` and `prompt.md` now use structured learnings:
+- ✅ Structured into Architecture/Testing/Gotchas categories
+- ✅ Mandatory categorization in prompt.md instructions
+- ⚠️ No dedicated learnings file (patterns live in progress.txt)
 
-**Gap Assessment:** Learnings are tracked but not as richly structured as the concept describes.
+**Gap Assessment:** Learnings structure now matches the concept. (Fixed 2026-01-16)
 
 ---
 
@@ -373,17 +373,17 @@ The ARIA concept document describes a more complete system than what's built.
 
 | # | Issue | Concept Source | Fix |
 |---|-------|----------------|-----|
-| 1 | CLAUDE.md too large | Boris Pattern 1 | Split into core + extended |
-| 2 | Missing Analyzer Agent | Boris Pattern 3 | Create `.claude/agents/analyzer.md` |
-| 3 | Missing Implementer Agent | Boris Pattern 3 | Create `.claude/agents/implementer.md` |
-| 4 | No Planning→Execution integration | ARIA Architecture | Integrate planner.sh with ralph.sh |
-| 5 | Slack/Email HITL not implemented | ARIA Architecture | Implement or remove from docs |
+| 1 | CLAUDE.md too large | Boris Pattern 1 | ✅ ACCEPTED: Documented as design decision (size justified for coherence) |
+| 2 | ~~Missing Analyzer Agent~~ | Boris Pattern 3 | ✅ FIXED: Created `.claude/agents/analyzer.md` |
+| 3 | ~~Missing Implementer Agent~~ | Boris Pattern 3 | ✅ FIXED: Created `.claude/agents/implementer.md` |
+| 4 | No Planning→Execution integration | ARIA Architecture | ⏸️ PARKED: HITL escalation is correct for now |
+| 5 | ~~Slack/Email HITL not implemented~~ | ARIA Architecture | ✅ FIXED: Removed from docs (not implemented) |
 
 ### Medium Priority (Incomplete Implementation)
 
 | # | Issue | Concept Source | Fix |
 |---|-------|----------------|-----|
-| 6 | Learnings not structured | Ralph Concept | Add Architecture/Testing/Gotchas sections |
+| 6 | ~~Learnings not structured~~ | Ralph Concept | ✅ FIXED: Added Architecture/Testing/Gotchas sections |
 | 7 | Skills lack formal templates | Boris Pattern 4 | Add Acceptance Criteria, Examples sections |
 | 8 | Integration tests weak | Boris Pattern 2 | Strengthen Layer 3 detection |
 | 9 | HITL notifications partial | ARIA Architecture | Fix cross-platform notifications |
