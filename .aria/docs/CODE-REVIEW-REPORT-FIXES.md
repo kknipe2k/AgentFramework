@@ -10,11 +10,12 @@
 
 | Category | Total | Fixed | In Progress | Parking Lot | Remaining |
 |----------|-------|-------|-------------|-------------|-----------|
-| **FIX NOW (Critical)** | 18 | 14 | 0 | 1 | 3 |
+| **FIX NOW (Critical)** | 20 | 16 | 0 | 1 | 3 |
+| **CONCEPT GAPS** | 5 | 5 | 0 | 0 | 0 |
 | **FIX LATER** | 24 | 0 | 0 | 0 | 24 |
 | **PARKING LOT** | 12 | - | - | 12 | - |
 
-**Last Updated:** 2026-01-15
+**Last Updated:** 2026-01-16
 
 ---
 
@@ -703,6 +704,70 @@ Report-writer skill can now call this script to generate decision summaries for 
 
 ---
 
+### Issue #19: Windows Dashboard Errors ✅ FIXED
+
+| Field | Value |
+|-------|-------|
+| **Status** | ✅ FIXED |
+| **File** | `.aria/scripts/serve-dashboard.py` |
+| **Commit** | `e5e43ba` |
+| **Date Fixed** | 2026-01-16 |
+
+**Original Problem:**
+Dashboard failed on Windows with two errors:
+1. `FileNotFoundError` for missing `favicon.ico`
+2. `TypeError: argument of type 'HTTPStatus' is not iterable` in `log_message`
+
+**Solution Implemented:**
+1. **favicon.ico handling:** Added handler that returns HTTP 204 (No Content) instead of trying to serve a non-existent file
+2. **log_message fix:** Added type check to verify `args[0]` is a string before using `in` operator
+
+**Code Changes:**
+```python
+# Handle favicon.ico gracefully (return empty 204)
+if path == '/favicon.ico':
+    self.send_response(204)  # No Content
+    self.end_headers()
+    return
+
+# Fixed log_message
+def log_message(self, format, *args):
+    # args[0] might be HTTPStatus enum on some platforms, not a string
+    if args and isinstance(args[0], str) and '/api/' in args[0]:
+        print(f"[API] {args[0]}")
+```
+
+---
+
+### Issue #20: Windows CRLF Line Endings ✅ FIXED
+
+| Field | Value |
+|-------|-------|
+| **Status** | ✅ FIXED |
+| **File** | `.gitattributes` (new) |
+| **Commit** | `4a2caa2` |
+| **Date Fixed** | 2026-01-16 |
+
+**Original Problem:**
+Shell scripts cloned on Windows had CRLF line endings (`\r\n`) instead of LF (`\n`), causing bash to fail with:
+```
+.claude/hooks/aria-rails.sh: line 5: $'\r': command not found
+```
+
+**Solution Implemented:**
+Created `.gitattributes` file to force LF line endings for shell scripts:
+
+```gitattributes
+# Force LF line endings for shell scripts (prevents CRLF issues on Windows)
+*.sh text eol=lf
+*.bash text eol=lf
+*.py text eol=lf
+```
+
+**Note:** Existing clones need to re-checkout files or re-clone for the fix to take effect.
+
+---
+
 ## FIX LATER - Important Issues
 
 | # | Issue | Status | Notes |
@@ -754,6 +819,18 @@ Report-writer skill can now call this script to generate decision summaries for 
 ---
 
 ## Fix Log (Chronological)
+
+### 2026-01-16
+
+| Time | Issue | Action | Commit |
+|------|-------|--------|--------|
+| - | #19 | Fixed Windows dashboard errors (favicon.ico, log_message TypeError) | `e5e43ba` |
+| - | #20 | Added .gitattributes to force LF line endings for shell scripts | `4a2caa2` |
+| - | GAP#1 | Created Boris Pattern 3 agents (analyzer.md, implementer.md) | `87f99c8` |
+| - | GAP#2 | Completed observability system (dashboard, metrics, hierarchical view) | `1d8e13f` |
+| - | GAP#3 | Removed Slack/Email notification references from docs | `87f99c8` |
+| - | GAP#4 | Documented CLAUDE.md size acceptance as design decision | `87f99c8` |
+| - | GAP#5 | Updated learnings structure with Architecture/Testing/Gotchas categories | `288e638` |
 
 ### 2026-01-15
 

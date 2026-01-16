@@ -435,6 +435,98 @@ Load skill: Read .aria/skills/context-refresh.md
 
 ## Agent Documentation
 
+### Quick Reference (Agents)
+
+| Agent | Location | Grade | Boris Pattern |
+|-------|----------|-------|---------------|
+| analyzer | `.claude/agents/analyzer.md` | B+ | Pattern 3: Analyzer |
+| implementer | `.claude/agents/implementer.md` | B+ | Pattern 3: Implementer |
+| verify-app | `.claude/agents/verify-app.md` | B | Pattern 3: Verifier |
+| code-simplifier | `.claude/agents/code-simplifier.md` | B | Pattern 3: Simplifier |
+
+All four Boris Cherny Pattern 3 agents are now implemented.
+
+---
+
+### analyzer Agent
+
+**Location:** `.claude/agents/analyzer.md`
+
+| Attribute | Value |
+|-----------|-------|
+| **Type** | Subagent |
+| **Tools** | Read, Glob, Grep (read-only) |
+| **Grade** | B+ |
+| **Boris Pattern** | Pattern 3: Analyzer |
+
+#### When Called
+- Understanding codebase before changes
+- Analyzing existing patterns
+- Planning modifications
+- Code review tasks
+
+#### Why Called
+To read and understand code without modifying it:
+- Explore codebase structure
+- Find existing patterns
+- Identify dependencies
+- Report findings
+
+#### How Called
+```typescript
+Task({
+  subagent_type: "analyzer",
+  prompt: "Analyze how auth is implemented in this codebase"
+})
+```
+
+#### Assessment
+- Read-only tools (safe)
+- Clear single responsibility
+- Pattern-following emphasis
+- Good for codebase exploration
+
+---
+
+### implementer Agent
+
+**Location:** `.claude/agents/implementer.md`
+
+| Attribute | Value |
+|-----------|-------|
+| **Type** | Subagent |
+| **Tools** | Read, Edit, Write, Glob |
+| **Grade** | B+ |
+| **Boris Pattern** | Pattern 3: Implementer |
+
+#### When Called
+- Implementing specific tasks from plan
+- Making targeted code changes
+- File-level modifications
+
+#### Why Called
+To write code following specifications:
+- Implement single task
+- Follow existing patterns
+- Limited scope changes
+- No architectural decisions
+
+#### How Called
+```typescript
+Task({
+  subagent_type: "implementer",
+  prompt: "Implement retry logic in src/api/client.ts following the pattern in utils/retry.ts"
+})
+```
+
+#### Assessment
+- Focused write access
+- Follows analyzer findings
+- Single-task implementation
+- Pattern compliance emphasis
+
+---
+
 ### code-simplifier Agent
 
 **Location:** `.claude/agents/code-simplifier.md`

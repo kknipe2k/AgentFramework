@@ -223,10 +223,11 @@ SESSION
 
 ```
 GET /api/session    - Session summary (counts, tools, files)
-GET /api/lineage    - Hierarchical tree structure (new!)
+GET /api/lineage    - Hierarchical tree structure
 GET /api/timeline   - Unified event timeline
 GET /api/decisions  - Decisions with supporting signals
 GET /api/commits    - Commits with linked decisions
+GET /api/metrics    - Token usage & cost metrics
 ```
 
 ### Lineage API Response
@@ -411,6 +412,44 @@ Signals are always captured (hooks run regardless). Decision emission is mode-de
 | Terminal (ralph.sh) | ✓ via hooks or wrapper | ✓ | ✓ |
 
 Both environments get full traceability.
+
+---
+
+## Windows Support
+
+The dashboard and hooks work on Windows with the following requirements:
+
+### Prerequisites
+- Git Bash or WSL (for shell scripts)
+- Python 3.x (for dashboard)
+
+### Running the Dashboard on Windows
+
+```powershell
+# From project root
+python .aria\scripts\serve-dashboard.py
+```
+
+### Hook Configuration
+
+Hooks are configured in `.claude/settings.json` and require bash. The `.gitattributes` file ensures shell scripts have LF line endings (not CRLF) when cloned on Windows.
+
+If you see `$'\r': command not found` errors, re-clone the repo or run:
+```powershell
+git rm --cached -r .
+git reset --hard
+```
+
+### Real-Time Monitoring
+
+Run the dashboard in a separate terminal while working in VS Code:
+
+```
+Terminal 1: python .aria\scripts\serve-dashboard.py   (dashboard)
+Terminal 2: VS Code with Claude Code extension        (development)
+```
+
+The dashboard polls `.aria/state/*.jsonl` files and updates automatically.
 
 ---
 
