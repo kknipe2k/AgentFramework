@@ -303,10 +303,6 @@ STEP 6: If prototype = yes (STOP AND ASK)
         → WAIT for user response
         → Build prototype with chosen variant
         → Output: .aria/prototypes/
-        → **MANDATORY**: Run verification:
-          bash .aria/scripts/verify-prototype.sh
-        → If verification FAILS: FIX issues, re-run
-        → For [2] learning tools: ALL tabs, buttons, interactions must work
         → Continue to STEP 7 (MANDATORY)
 
 STEP 7: MANDATORY - Final report & dashboard (ALWAYS EXECUTE)
