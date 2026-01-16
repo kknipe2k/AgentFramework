@@ -237,6 +237,10 @@ Router → Brainstorm → Prototype (optional) → Plan → Execute → Report
 
 - Size determines mode and hierarchy depth
 - All phases apply based on mode
+- **Prototype phase** (if used):
+  - `prototyping.md` generates SPEC-*.json
+  - `executing.md` builds prototype using agent loop
+  - `verify.sh` validates (HTML, CSS, JS, Playwright)
 
 ### 2. Modify (Existing Codebase)
 
@@ -301,8 +305,18 @@ STEP 6: If prototype = yes (STOP AND ASK)
         │ [3] reference - production-style       │
         └────────────────────────────────────────┘
         → WAIT for user response
-        → Build prototype with chosen variant
-        → Output: .aria/prototypes/
+
+        STEP 6a: Generate prototype spec
+        → Run prototyping skill
+        → Output: .aria/prototypes/SPEC-[name].json
+        → Present spec for approval
+
+        STEP 6b: Build prototype (via executing.md)
+        → executing.md receives spec + variant
+        → Agent loop: analyzer → implementer → verify-app
+        → verify.sh runs: linting, Playwright, accessibility
+        → Output: .aria/prototypes/prototype-[name].html
+
         → Continue to STEP 7 (MANDATORY)
 
 STEP 7: MANDATORY - Final report & dashboard (ALWAYS EXECUTE)
@@ -427,6 +441,7 @@ Load and follow these skills:
 
 | Skill | When to Use |
 |-------|-------------|
+| `.aria/skills/aria-start.md` | **Session init**: Dashboard + workflow router |
 | `.aria/skills/planning.md` | Creating implementation plans |
 | `.aria/skills/executing.md` | Implementing tasks from approved plan |
 | `.aria/skills/debugging.md` | Test failures, errors, troubleshooting |
@@ -438,7 +453,7 @@ Load and follow these skills:
 | Skill | When to Use |
 |-------|-------------|
 | `.aria/skills/brainstorming.md` | Exploring options before planning |
-| `.aria/skills/prototyping.md` | Visual mockups, API specs, learning tools |
+| `.aria/skills/prototyping.md` | Generate prototype specs (executing.md builds) |
 | `.aria/skills/tracking.md` | Progress, time, token metrics |
 | `.aria/skills/context-refresh.md` | Between phases, after 3+ failures |
 | `.aria/skills/report-writer.md` | End-of-workflow summary + dashboard |
@@ -648,6 +663,7 @@ Check `.aria/project-context.md` for areas that should NOT be modified without e
 
 | Command | Action |
 |---------|--------|
+| `/aria-start` | **Session init**: Launch dashboard + workflow router |
 | `/aria:plan` | Start planning mode |
 | `/aria:status` | Show current plan and progress |
 | `/aria:verify` | Run verification manually |

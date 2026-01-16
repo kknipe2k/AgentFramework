@@ -385,6 +385,168 @@ if [[ -f "$SCRIPT_DIR/project-context.md" ]]; then
 fi
 
 # ============================================
+# CHECK 8: Prototype Verification (HTML/CSS/JS)
+# ============================================
+PROTOTYPE_DIR="$SCRIPT_DIR/prototypes"
+
+if [[ -d "$PROTOTYPE_DIR" ]] && ls "$PROTOTYPE_DIR"/*.html 1>/dev/null 2>&1; then
+    echo ""
+    echo -e "${YELLOW}--- Prototype Verification ---${NC}"
+
+    # 8a. HTML Linting
+    echo -n "HTML linting... "
+    if command -v npx &>/dev/null; then
+        HTML_ERRORS=0
+        for html_file in "$PROTOTYPE_DIR"/*.html; do
+            if [[ -f "$html_file" ]]; then
+                if ! npx htmlhint "$html_file" --quiet 2>/dev/null; then
+                    HTML_ERRORS=$((HTML_ERRORS + 1))
+                fi
+            fi
+        done
+        if [[ $HTML_ERRORS -eq 0 ]]; then
+            echo -e "${GREEN}PASSED${NC}"
+        else
+            echo -e "${RED}FAILED${NC}"
+            echo "  $HTML_ERRORS HTML file(s) have linting errors"
+            echo "  Run: npx htmlhint .aria/prototypes/*.html"
+            FAILURES=$((FAILURES + 1))
+        fi
+    else
+        echo -e "${YELLOW}SKIPPED${NC} (npx not available)"
+    fi
+
+    # 8b. CSS Linting (inline styles extracted check)
+    echo -n "CSS validation... "
+    CSS_ISSUES=0
+    for html_file in "$PROTOTYPE_DIR"/*.html; do
+        if [[ -f "$html_file" ]]; then
+            # Check for common CSS issues in inline styles
+            if grep -qE "style=\"[^\"]*;[[:space:]]*;|style=\"\"" "$html_file" 2>/dev/null; then
+                CSS_ISSUES=$((CSS_ISSUES + 1))
+            fi
+        fi
+    done
+    if [[ $CSS_ISSUES -eq 0 ]]; then
+        echo -e "${GREEN}PASSED${NC}"
+    else
+        echo -e "${YELLOW}WARNING${NC}"
+        echo "  $CSS_ISSUES file(s) may have CSS issues"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+
+    # 8c. JavaScript Function Verification
+    echo -n "JavaScript handlers... "
+    JS_ISSUES=0
+    for html_file in "$PROTOTYPE_DIR"/*.html; do
+        if [[ -f "$html_file" ]]; then
+            # Extract onclick handlers and check if functions exist
+            ONCLICK_FUNCS=$(grep -oE 'onclick="[^"]*\(' "$html_file" 2>/dev/null | sed 's/onclick="//;s/($//' | sort -u)
+            for func in $ONCLICK_FUNCS; do
+                # Skip inline code (contains operators or is a method call with .)
+                if [[ "$func" == *"."* ]] || [[ "$func" == *"="* ]]; then
+                    continue
+                fi
+                # Check if function is defined
+                if ! grep -qE "(function\s+$func|const\s+$func\s*=|let\s+$func\s*=|var\s+$func\s*=)" "$html_file" 2>/dev/null; then
+                    JS_ISSUES=$((JS_ISSUES + 1))
+                fi
+            done
+        fi
+    done
+    if [[ $JS_ISSUES -eq 0 ]]; then
+        echo -e "${GREEN}PASSED${NC}"
+    else
+        echo -e "${RED}FAILED${NC}"
+        echo "  $JS_ISSUES onclick handler(s) reference undefined functions"
+        FAILURES=$((FAILURES + 1))
+    fi
+
+    # 8d. Interactive Elements Check
+    echo -n "Interactive elements... "
+    INTERACTIVE_ISSUES=0
+    for html_file in "$PROTOTYPE_DIR"/*.html; do
+        if [[ -f "$html_file" ]]; then
+            # Count tabs and tab handlers
+            TAB_COUNT=$(grep -cE 'data-tab|role="tab"' "$html_file" 2>/dev/null || echo "0")
+            TAB_HANDLER=$(grep -cE 'showTab|switchTab|openTab|tabClick' "$html_file" 2>/dev/null || echo "0")
+
+            if [[ $TAB_COUNT -gt 0 ]] && [[ $TAB_HANDLER -eq 0 ]]; then
+                INTERACTIVE_ISSUES=$((INTERACTIVE_ISSUES + 1))
+            fi
+
+            # Count buttons without handlers
+            BUTTON_COUNT=$(grep -c "<button" "$html_file" 2>/dev/null || echo "0")
+            BUTTON_ONCLICK=$(grep -c "<button[^>]*onclick" "$html_file" 2>/dev/null || echo "0")
+            BUTTON_LISTENER=$(grep -c "addEventListener" "$html_file" 2>/dev/null || echo "0")
+
+            if [[ $BUTTON_COUNT -gt 0 ]] && [[ $BUTTON_ONCLICK -eq 0 ]] && [[ $BUTTON_LISTENER -eq 0 ]]; then
+                INTERACTIVE_ISSUES=$((INTERACTIVE_ISSUES + 1))
+            fi
+        fi
+    done
+    if [[ $INTERACTIVE_ISSUES -eq 0 ]]; then
+        echo -e "${GREEN}PASSED${NC}"
+    else
+        echo -e "${YELLOW}WARNING${NC}"
+        echo "  $INTERACTIVE_ISSUES prototype(s) may have non-functional interactive elements"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+
+    # 8e. Accessibility Basics
+    echo -n "Accessibility check... "
+    A11Y_ISSUES=0
+    for html_file in "$PROTOTYPE_DIR"/*.html; do
+        if [[ -f "$html_file" ]]; then
+            # Check images have alt text
+            IMG_COUNT=$(grep -c "<img" "$html_file" 2>/dev/null || echo "0")
+            IMG_ALT=$(grep -c '<img[^>]*alt=' "$html_file" 2>/dev/null || echo "0")
+
+            if [[ $IMG_COUNT -gt 0 ]] && [[ $IMG_ALT -lt $IMG_COUNT ]]; then
+                A11Y_ISSUES=$((A11Y_ISSUES + 1))
+            fi
+
+            # Check for basic ARIA or semantic elements
+            if ! grep -qE 'aria-|role=|<nav|<main|<header|<footer|<article' "$html_file" 2>/dev/null; then
+                # Only warn if it's a substantial file (>100 lines)
+                LINE_COUNT=$(wc -l < "$html_file" 2>/dev/null || echo "0")
+                if [[ $LINE_COUNT -gt 100 ]]; then
+                    A11Y_ISSUES=$((A11Y_ISSUES + 1))
+                fi
+            fi
+        fi
+    done
+    if [[ $A11Y_ISSUES -eq 0 ]]; then
+        echo -e "${GREEN}PASSED${NC}"
+    else
+        echo -e "${YELLOW}WARNING${NC}"
+        echo "  $A11Y_ISSUES prototype(s) may have accessibility issues"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+
+    # 8f. Playwright E2E Tests (if configured)
+    if [[ -f "$PROTOTYPE_DIR/tests/playwright.config.js" ]] || [[ -f "$PROTOTYPE_DIR/tests/playwright.config.ts" ]]; then
+        echo -n "Playwright E2E tests... "
+        if cd "$PROTOTYPE_DIR" && npx playwright test --quiet 2>/dev/null; then
+            echo -e "${GREEN}PASSED${NC}"
+        else
+            echo -e "${RED}FAILED${NC}"
+            echo "  Playwright tests failed"
+            echo "  Run: cd .aria/prototypes && npx playwright test"
+            FAILURES=$((FAILURES + 1))
+        fi
+    fi
+
+    # Emit signal for prototype verification
+    if type emit_signal >/dev/null 2>&1; then
+        emit_signal "verify_prototypes" "verify" "prototypes" \
+            "prototype_count=$(ls "$PROTOTYPE_DIR"/*.html 2>/dev/null | wc -l)" \
+            "failures=$FAILURES" \
+            "warnings=$WARNINGS"
+    fi
+fi
+
+# ============================================
 # SUMMARY
 # ============================================
 echo ""
