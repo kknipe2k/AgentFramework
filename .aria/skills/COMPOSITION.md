@@ -4,6 +4,15 @@
 
 ---
 
+## Entry Point
+
+All workflows begin with `/aria-start`:
+```
+/aria-start → Dashboard + HITL Router → [b]uild / [m]odify / [r]esearch
+```
+
+---
+
 ## Common Workflows
 
 ### 1. New Project (Build)
@@ -11,7 +20,7 @@
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
 │ brainstorm  │ ──▶ │  prototype  │ ──▶ │   planning  │ ──▶ │  executing  │
-│             │     │  (optional) │     │             │     │             │
+│             │     │ (SPEC only) │     │             │     │ (agents)    │
 └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
                                                                    │
                                               ┌────────────────────┤
@@ -57,23 +66,23 @@
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
 │ researcher  │ ──▶ │ brainstorm  │ ──▶ │  prototype  │
-│             │     │             │     │ (optional)  │
+│             │     │             │     │ (SPEC only) │
 └─────────────┘     └─────────────┘     └─────────────┘
                                               │
                            ┌──────────────────┘
                            ▼
                     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-                    │  planning   │ ──▶ │  executing  │ ──▶ │report-writer│
-                    │             │     │             │     │             │
+                    │  executing  │ ──▶ │  verify.sh  │ ──▶ │report-writer│
+                    │  (agents)   │     │             │     │             │
                     └─────────────┘     └─────────────┘     └─────────────┘
 ```
 
 **Outputs at each stage:**
 - researcher → `concepts.json`
 - brainstorm → `IDEA.md`
-- prototype → `.aria/prototypes/*.html`
-- planning → `current-plan.json`
-- executing → Code + commits
+- prototype → `.aria/prototypes/SPEC-*.json` (spec only)
+- executing → `.aria/prototypes/*.html` (built by agents)
+- verify.sh → Linting, Playwright, accessibility
 - report-writer → `REPORT.md`
 
 ---
@@ -236,7 +245,7 @@ executing:
 | discovery | planning | `project-context.md`, don't-touch areas |
 | brainstorming | planning | `IDEA.md`, chosen approach |
 | brainstorming | prototyping | Key screens/concepts |
-| prototyping | planning | Prototype files as reference |
+| prototyping | executing | `SPEC-*.json` (spec for agent loop to build) |
 | researcher | brainstorming | `concepts.json` |
 | planning | executing | `current-plan.json` |
 | planning | tdd | Testable requirements, acceptance criteria |

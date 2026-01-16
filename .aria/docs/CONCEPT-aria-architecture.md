@@ -100,6 +100,38 @@ This approach ensures:
 
 ---
 
+## Two Execution Modes
+
+ARIA supports two operational modes for different use cases:
+
+### External Mode (Ralph Loop)
+
+Shell scripts orchestrate Claude as subprocess. Best for autonomous batch work.
+
+```
+Entry: .aria/ralph/ralph.sh
+Flow: PRD → Ralph iterations → Verification → HITL on failure → Auto-PR
+```
+
+### Hybrid Mode (Skills-based)
+
+Skills system with ARIA rules embedded in Claude's context. Best for interactive development.
+
+```
+Entry: /aria-start
+Flow: Dashboard + HITL Router → [BUILD|MODIFY|RESEARCH] → Skills → Agent Loop → verify.sh
+```
+
+**Hybrid Mode Features:**
+- `/aria-start` launches dashboard and presents workflow selection
+- Unified agent pattern for all building: analyzer → implementer → verify-app → verify.sh
+- Prototyping outputs SPEC-*.json (executing skill builds via agents)
+- Full traceability via hooks and decision logging
+
+See [CLAUDE.md](../../CLAUDE.md) for Hybrid mode details.
+
+---
+
 ## Why ARIA is Complete
 
 ARIA addresses every gap in autonomous AI development:

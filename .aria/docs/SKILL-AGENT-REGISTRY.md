@@ -8,14 +8,15 @@
 
 | Skill | Grade | Category | Trigger Keywords |
 |-------|-------|----------|------------------|
+| aria-start.md | A- | Entry | `/aria-start`, session init |
 | planning.md | A- | Core | "plan", "/plan", mode start |
-| executing.md | B+ | Core | Plan approval |
+| executing.md | B+ | Core | Plan approval, prototype spec |
 | debugging.md | B | Core | Test failure, error |
 | discovery.md | B- | Core | "explore", new codebase |
 | tdd.md | A | Core | "tdd", "test first" |
 | context-refresh.md | C+ | Core | Long session, 3+ failures |
 | brainstorming.md | B+ | Creative | "brainstorm", unclear approach |
-| prototyping.md | B | Creative | Prototype decision |
+| prototyping.md | B+ | Creative | Prototype decision (outputs SPEC-*.json) |
 | researcher.md | C+ | Research | Article/paper URL |
 | slide-generation.md | C | Research | HITL slides decision |
 | report-writer.md | B | Meta | Workflow completion |
@@ -620,10 +621,13 @@ hypothesis  1-3 tasks         fix
 
 ### Research Workflow
 ```
-researcher → brainstorming → slide-generation → prototyping → report-writer
-     ↓            ↓               ↓                 ↓             ↓
-concepts.json  IDEA.md      FOCUS.md, slides   prototype     REPORT.md
+researcher → brainstorming → slide-generation? → prototyping → executing → report-writer
+     ↓            ↓               ↓                  ↓             ↓            ↓
+concepts.json  IDEA.md      FOCUS.md, slides   SPEC-*.json  prototype.html  REPORT.md
+                                                (spec only)   (via agents)
 ```
+
+**Unified Architecture:** prototyping outputs SPEC-*.json, executing builds via agent loop (analyzer → implementer → verify-app), verify.sh runs linting/Playwright/accessibility.
 
 ### TDD Build
 ```

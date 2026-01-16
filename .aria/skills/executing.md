@@ -9,6 +9,48 @@ Before executing:
 2. Plan status must be `approved`
 3. If no approved plan, use planning skill first
 
+---
+
+## Agent Loop (STANDARD+ Mode)
+
+For implementation isolation, use the Boris Cherny Pattern 3 agent loop:
+
+```
+For each task:
+1. analyzer   → Read code, understand patterns (read-only)
+2. implementer → Make targeted changes (single file focus)
+3. verify-app  → Test functionality (E2E)
+4. verify.sh   → Run linting, tests, accessibility
+5. Commit if passed
+```
+
+**Invoking agents via Task tool:**
+```typescript
+// Step 1: Analyze
+Task({ subagent_type: "analyzer", prompt: "Analyze patterns in src/api/ for retry logic" })
+
+// Step 2: Implement
+Task({ subagent_type: "implementer", prompt: "Add retry wrapper to src/api/client.ts using pattern from utils/retry.ts" })
+
+// Step 3: Verify
+Task({ subagent_type: "verify-app", prompt: "Test the API client retry behavior works correctly" })
+
+// Step 4: verify.sh (in main session)
+bash .aria/verify.sh
+```
+
+**Why subagents:**
+- Fresh context per task (no pollution from previous failures)
+- Isolated implementation (can't drift)
+- Main session stays in control (orchestrator role)
+
+**When to use:**
+- LITE mode: Skip subagents (direct implementation)
+- STANDARD mode: Use subagents for implementation
+- FULL/FULL+ mode: Use subagents for all implementation tasks
+
+---
+
 ## Execution Loop
 
 For each task in order:
