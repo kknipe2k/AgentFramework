@@ -74,9 +74,16 @@ log_signal() {
     local context_type=""
     local context_name=""
 
+    # Windows-compatible JSON field extraction (no grep -P)
+    extract_json_field() {
+        local json="$1"
+        local field="$2"
+        echo "$json" | sed -n 's/.*"'"$field"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
+    }
+
     case "$tool_name" in
         "Edit"|"Write"|"MultiEdit"|"Read")
-            file_path=$(echo "$tool_input" | grep -oP '"file_path"\s*:\s*"\K[^"]+' 2>/dev/null || true)
+            file_path=$(extract_json_field "$tool_input" "file_path")
 
             # Detect context type from file path and log explicit events
             if [[ "$file_path" == *".aria/skills/"* ]]; then
@@ -116,7 +123,7 @@ log_signal() {
             fi
             ;;
         "Bash")
-            command=$(echo "$tool_input" | grep -oP '"command"\s*:\s*"\K[^"]+' 2>/dev/null | head -c 200 || true)
+            command=$(extract_json_field "$tool_input" "command" | head -c 200)
 
             # Detect test runs
             if echo "$command" | grep -qE "(npm test|pytest|jest|cargo test|go test|make test)"; then
@@ -130,15 +137,19 @@ log_signal() {
             elif echo "$command" | grep -qE "^git (push|pull|checkout|merge)"; then
                 context_type="git"
                 context_name=$(echo "$command" | awk '{print $2}')
+            # Detect errors (exit code check in command)
+            elif echo "$command" | grep -qE "(exit 1|error|failed|Error:)"; then
+                context_type="error"
+                context_name="command_error"
             fi
             ;;
         "Glob"|"Grep")
-            file_path=$(echo "$tool_input" | grep -oP '"pattern"\s*:\s*"\K[^"]+' 2>/dev/null || true)
+            file_path=$(extract_json_field "$tool_input" "pattern")
             context_type="search"
             ;;
         "Task")
             context_type="subagent"
-            context_name=$(echo "$tool_input" | grep -oP '"subagent_type"\s*:\s*"\K[^"]+' 2>/dev/null || true)
+            context_name=$(extract_json_field "$tool_input" "subagent_type")
             ;;
     esac
 
