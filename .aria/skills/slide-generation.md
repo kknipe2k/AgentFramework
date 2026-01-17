@@ -60,6 +60,42 @@ Analyze all sources and provide a structured synthesis:
 2. The Synthesis: Coalesce the findings by listing the top 5-10 unifying ideas or themes that connect the "Core Trinity" together. Explain how these ideas turn the separate elements into a cohesive whole.
 ```
 
+### FOCUS.md Format Requirements (CRITICAL)
+
+**ASCII-ONLY Characters Required** - NotebookLM upload fails on Windows cp1252 encoding.
+
+| DO NOT USE | USE INSTEAD |
+|------------|-------------|
+| Box drawing (┌─┐└┘│) | Plain text borders (+--+) or none |
+| Arrows (←→↔⇒) | Text arrows (->, <-, <->) |
+| Bullets (•●○) | Dash (-) or asterisk (*) |
+| Em dash (—) | Double dash (--) |
+| Ellipsis (…) | Three dots (...) |
+| Smart quotes ("") | Straight quotes ("") |
+
+**Valid FOCUS.md structure:**
+```markdown
+# FOCUS: [Topic Name]
+
+## The Core (Trinity)
+
+1. **[Concept 1]**: Definition here
+2. **[Concept 2]**: Definition here
+3. **[Concept 3]**: Definition here
+
+## The Synthesis
+
+1. **[Theme 1]**: How it connects core ideas
+2. **[Theme 2]**: How it connects core ideas
+...
+```
+
+**Before generating FOCUS.md, validate:**
+- No Unicode box-drawing characters
+- No special arrows or bullets
+- No smart quotes or em dashes
+- Plain ASCII markdown only
+
 **Input Sources:**
 - IDEA.md (summary)
 - Original paper/whitepaper (depth)
