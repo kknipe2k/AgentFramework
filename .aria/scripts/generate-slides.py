@@ -101,15 +101,8 @@ async def generate_nblm(focus_path: Path, idea_path: Path, source_paths: list) -
 
     try:
         async with await NotebookLMClient.from_storage() as client:
-            # Check for existing notebook with same title
-            print(f"Checking for existing notebooks...")
-            existing = await client.notebooks.list()
-            for nb in existing:
-                if title.lower() in str(nb).lower():
-                    print(f"\n⚠️  Found existing notebook that may match: {nb}")
-                    print("To avoid duplicates, please check NotebookLM directly.")
-                    print("URL: https://notebooklm.google.com")
-                    return None
+            # ALWAYS create a new notebook - never search for existing
+            # Each research session should have its own notebook for traceability
 
             # Create notebook
             print(f"Creating NotebookLM notebook: {title}")
@@ -167,15 +160,76 @@ async def generate_nblm(focus_path: Path, idea_path: Path, source_paths: list) -
             return notebook_url
 
     except Exception as e:
-        print(f"\n❌ NotebookLM error: {e}")
+        error_str = str(e).lower()
         print("\n" + "="*60)
-        print("HITL REQUIRED: NotebookLM failed")
+        print("NOTEBOOKLM FAILURE - DIAGNOSTIC REPORT")
         print("="*60)
-        print("\nOptions:")
-        print("  [1] Check NotebookLM directly: https://notebooklm.google.com")
-        print("  [2] Run 'notebooklm login' to re-authenticate")
-        print("  [3] Use local pptx instead (run with --method pptx)")
-        print("\nDo NOT auto-retry. User must decide next step.")
+        print(f"\nError: {e}")
+
+        # Diagnose specific failure type
+        if 'auth' in error_str or 'login' in error_str or 'credential' in error_str or 'token' in error_str:
+            print("\n" + "-"*40)
+            print("DIAGNOSIS: LOGIN/AUTHENTICATION FAILURE")
+            print("-"*40)
+            print("\nCause: Google authentication expired or invalid")
+            print("\nFix:")
+            print("  1. Run: notebooklm login")
+            print("  2. Complete Google sign-in in browser")
+            print("  3. Re-run slide generation")
+
+        elif 'upload' in error_str or 'file' in error_str or 'source' in error_str or 'add' in error_str:
+            print("\n" + "-"*40)
+            print("DIAGNOSIS: FILE UPLOAD FAILURE")
+            print("-"*40)
+            print("\nCause: Failed to upload sources to NotebookLM")
+            print("\nCheck:")
+            print(f"  - FOCUS.md exists: {focus_path.exists()}")
+            print(f"  - IDEA.md exists: {idea_path.exists()}")
+            print("  - Files contain ASCII-only characters (no Unicode)")
+            print("  - File sizes are under NotebookLM limits")
+            print("\nFix:")
+            print("  1. Verify files exist and are readable")
+            print("  2. Check for Unicode characters (box-drawing, arrows)")
+            print("  3. Regenerate FOCUS.md with ASCII-only format")
+
+        elif 'slide' in error_str or 'deck' in error_str or 'generate' in error_str or 'artifact' in error_str:
+            print("\n" + "-"*40)
+            print("DIAGNOSIS: SLIDE CREATION FAILURE")
+            print("-"*40)
+            print("\nCause: NotebookLM failed to start slide generation")
+            print("\nPossible reasons:")
+            print("  - NotebookLM service temporarily unavailable")
+            print("  - Sources didn't process correctly")
+            print("  - Rate limiting")
+            print("\nFix:")
+            print("  1. Check notebook directly: https://notebooklm.google.com")
+            print("  2. Verify sources appear in the notebook")
+            print("  3. Try manual slide generation from NotebookLM UI")
+
+        elif 'notebook' in error_str or 'create' in error_str:
+            print("\n" + "-"*40)
+            print("DIAGNOSIS: NOTEBOOK CREATION FAILURE")
+            print("-"*40)
+            print("\nCause: Could not create new notebook")
+            print("\nFix:")
+            print("  1. Check NotebookLM is accessible: https://notebooklm.google.com")
+            print("  2. Verify Google account has NotebookLM access")
+            print("  3. Run: notebooklm login")
+
+        else:
+            print("\n" + "-"*40)
+            print("DIAGNOSIS: UNKNOWN ERROR")
+            print("-"*40)
+            print("\nCould not determine specific failure type.")
+
+        print("\n" + "="*60)
+        print("RECOVERY OPTIONS")
+        print("="*60)
+        print("\n  [1] Fix issue and re-run: python .aria/scripts/generate-slides.py --method nblm")
+        print("  [2] Check NotebookLM directly: https://notebooklm.google.com")
+        print("  [3] Re-authenticate: notebooklm login")
+        print("  [4] Use fallback pptx: python .aria/scripts/generate-slides.py --method pptx")
+        print("\nDo NOT auto-retry. User must diagnose and decide next step.")
         print("="*60)
         return None
 
