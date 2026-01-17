@@ -30,6 +30,27 @@ start http://localhost:8420
 echo.
 echo Dashboard: http://localhost:8420
 echo.
+
+:: NotebookLM HITL prompt
+echo ----------------------------------------
+echo Will you be using NotebookLM for slides?
+echo ----------------------------------------
+echo.
+echo NotebookLM requires Google login for slide generation.
+echo.
+choice /c YN /m "Open NotebookLM to verify login? [Y/N]"
+if %errorlevel%==1 (
+    echo.
+    echo Opening NotebookLM...
+    start https://notebooklm.google.com
+    echo.
+    echo Please ensure you are logged into Google.
+    echo Press any key when ready to continue...
+    pause >nul
+)
+
+echo.
+echo ----------------------------------------
 echo Starting Claude CLI...
 echo ----------------------------------------
 echo.
