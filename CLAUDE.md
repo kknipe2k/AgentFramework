@@ -225,7 +225,7 @@ Then proceed with that mode's behavior.
 
 ## Use Cases
 
-ARIA supports three primary use cases:
+ARIA supports four primary use cases:
 
 ### 1. Build (Greenfield)
 
@@ -385,6 +385,103 @@ See `.aria/skills/slide-generation.md` for prompts and details.
 - `.aria/reports/RESEARCH-[topic].md` - Final report (NotebookLM-ready)
 - `.aria/prototypes/` - Optional prototype if requested
 
+### 4. Deep Research (Any Question)
+
+Systematic web research on any topic with iterative refinement and HITL gates.
+
+**Triggers:** "research X", "investigate", "deep dive into", "find out about"
+
+```
+STEP 1: Depth Selection (HITL)
+        +----------------------------------------+
+        | RESEARCH DEPTH SELECTION               |
+        | [1] Quick (5-10 min)                   |
+        | [2] Standard (15-30 min) - RECOMMENDED |
+        | [3] Deep (30-60 min)                   |
+        | [4] Exhaustive (60+ min)               |
+        +----------------------------------------+
+
+STEP 2: Strategy Selection (HITL)
+        +----------------------------------------+
+        | QUERY STRATEGY                         |
+        | [a] Broad Scan - start wide, narrow    |
+        | [b] Focused Drill - specific queries   |
+        | [c] Comparative - X vs Y analysis      |
+        | [d] Temporal - track changes over time |
+        | [e] Custom - define your own           |
+        +----------------------------------------+
+
+STEP 3: Query Approval (HITL)
+        -> Present proposed queries
+        -> [a]pprove / [e]dit / [c]hange strategy
+
+STEP 4: Search Loop
+        -> Execute queries (WebSearch tool)
+        -> Evaluate source quality (A/B/C/D rating)
+        -> Extract findings with confidence scores
+        -> Identify gaps and contradictions
+        -> Formulate follow-up queries
+
+STEP 5: Mid-Research Checkpoint (HITL)
+        +----------------------------------------+
+        | RESEARCH CHECKPOINT                    |
+        | [c]ontinue - proceed with new queries  |
+        | [r]edirect - change focus              |
+        | [d]eepen - more on specific finding    |
+        | [s]ynthesize - enough info gathered    |
+        | [a]bort - stop research                |
+        +----------------------------------------+
+
+STEP 6: Synthesis Approach (HITL)
+        +----------------------------------------+
+        | SYNTHESIS OPTIONS                      |
+        | [1] Executive Summary - brief          |
+        | [2] Structured Analysis - full IDEA.md |
+        | [3] Comparative Matrix - side-by-side  |
+        | [4] Annotated Bibliography             |
+        | [5] All of the above                   |
+        +----------------------------------------+
+
+STEP 7: Output & Continue (HITL)
+        -> Generate research-output.json
+        -> Generate IDEA.md
+        +----------------------------------------+
+        | Continue?                              |
+        | [s]lides - generate presentation       |
+        | [p]rototype - build working demo       |
+        | [b]oth - slides then prototype         |
+        | [d]one - research complete             |
+        +----------------------------------------+
+```
+
+**Confidence Scoring:**
+| Score | Label | Meaning |
+|-------|-------|---------|
+| 0.9+ | VERY HIGH | Multiple authoritative sources agree |
+| 0.7-0.89 | HIGH | Good sources, some corroboration |
+| 0.5-0.69 | MEDIUM | Limited sources or some uncertainty |
+| 0.3-0.49 | LOW | Single source or quality concerns |
+| <0.3 | UNVERIFIED | Treat as hypothesis |
+
+**Deep Research outputs:**
+- `.aria/docs/research-output.json` - Full research trace
+- `.aria/docs/IDEA.md` - Synthesized findings
+- Source quality ratings and confidence scores
+- Contradiction analysis
+- Gap identification
+
+**When to use Deep Research vs Native Claude Search:**
+| Aspect | Native WebSearch | ARIA Deep Research |
+|--------|------------------|-------------------|
+| Speed | Fast (seconds) | Slower (minutes) |
+| Depth | Single query | Iterative refinement |
+| Oversight | None | HITL gates |
+| Traceability | None | Full decision trail |
+| Source tracking | Implicit | Explicit with ratings |
+| Output | Prose response | Structured artifacts |
+
+See `.aria/skills/deep-research.md` for complete workflow details.
+
 ### Input Disambiguation: Repos
 
 When input is a **repository** (not an article/paper), trigger a decision point:
@@ -463,6 +560,7 @@ Load and follow these skills:
 | Skill | When to Use |
 |-------|-------------|
 | `.aria/skills/researcher.md` | Extracting concepts from articles/papers |
+| `.aria/skills/deep-research.md` | Web research with HITL gates on any topic |
 | `.aria/skills/slide-generation.md` | Create presentations from IDEA.md |
 
 ---

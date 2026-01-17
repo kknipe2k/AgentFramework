@@ -19,6 +19,7 @@
 | [brainstorming](./brainstorming.md) | "explore", new project | STANDARD+ | Creative |
 | [prototyping](./prototyping.md) | "mockup", visual needed | STANDARD+ | Creative |
 | [researcher](./researcher.md) | Article/paper input | Explicit | Research |
+| [deep-research](./deep-research.md) | "research", "investigate" | STANDARD+ | Research |
 | [report-writer](./report-writer.md) | Project complete | STANDARD+ | Research |
 | [slide-generation](./slide-generation.md) | After IDEA.md, "slides" | Explicit | Research |
 
@@ -60,6 +61,7 @@ Article-to-code and documentation skills.
 | Skill | Purpose | Inputs | Outputs |
 |-------|---------|--------|---------|
 | **researcher** | Extract concepts | Article/paper | Concept JSON |
+| **deep-research** | Web research with HITL gates | Question | research-output.json, IDEA.md |
 | **report-writer** | End-of-workflow summary | State files | Summary + dashboard offer |
 | **slide-generation** | Create presentations | IDEA.md, sources | FOCUS.md, slides |
 
@@ -99,6 +101,8 @@ These require explicit user request:
 | Request | Skill |
 |---------|-------|
 | "analyze this paper" | researcher |
+| "research X", "investigate" | deep-research |
+| "deep dive into X" | deep-research |
 | "show summary", "metrics" | report-writer |
 | "debug this" | debugging |
 | "generate slides" | slide-generation |
@@ -150,6 +154,7 @@ brainstorming ──→ prototyping ──→ executing
 | brainstorming | optional | ✓ | ✓ | ✓ |
 | prototyping | - | optional | ✓ | ✓ |
 | researcher | explicit | explicit | explicit | explicit |
+| deep-research | - | ✓ | ✓ | ✓ |
 | report-writer | - | ✓ | ✓ | ✓ |
 | slide-generation | explicit | explicit | explicit | explicit |
 
