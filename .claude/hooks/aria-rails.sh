@@ -3,9 +3,18 @@
 # Blocks Claude from bad behavior with comprehensive checks
 # Supports both interactive mode and Ralph's autonomous loop
 
-HOOK_EVENT="$1"
-TOOL_NAME="$2"
-TOOL_INPUT="$3"
+# Get data from environment variables (Claude Code sets these) or fallback to args
+HOOK_EVENT="${1:-PreToolUse}"
+# Claude Code passes tool data via environment variables
+TOOL_NAME_VAR="${TOOL_NAME:-$2}"
+TOOL_INPUT_VAR="${TOOL_INPUT:-$3}"
+
+# Reassign to avoid variable name collision
+TOOL_NAME="$TOOL_NAME_VAR"
+TOOL_INPUT="$TOOL_INPUT_VAR"
+
+# NOTE: Claude Code Cloud environment doesn't pass TOOL_NAME/TOOL_INPUT to hooks
+# Signal logging is disabled until this is fixed
 
 ARIA_DIR=".aria"
 STATE_DIR="$ARIA_DIR/state"
@@ -373,8 +382,10 @@ track_commit() {
 
 case "$HOOK_EVENT" in
     "PreToolUse")
-        # Log signal for all tool calls
-        log_signal "pre" "$TOOL_NAME" "$TOOL_INPUT"
+        # Log signal for all tool calls (only if tool data available)
+        if [[ -n "$TOOL_NAME" ]]; then
+            log_signal "pre" "$TOOL_NAME" "$TOOL_INPUT"
+        fi
 
         case "$TOOL_NAME" in
             "Edit"|"Write"|"MultiEdit")
@@ -414,8 +425,10 @@ case "$HOOK_EVENT" in
         ;;
 
     "PostToolUse")
-        # Log signal completion
-        log_signal "post" "$TOOL_NAME" "$TOOL_INPUT"
+        # Log signal completion (only if tool data available)
+        if [[ -n "$TOOL_NAME" ]]; then
+            log_signal "post" "$TOOL_NAME" "$TOOL_INPUT"
+        fi
 
         case "$TOOL_NAME" in
             "Edit"|"Write"|"MultiEdit")
