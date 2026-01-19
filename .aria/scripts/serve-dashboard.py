@@ -15,7 +15,8 @@ import subprocess
 import urllib.parse
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+import glob as glob_module
 
 # Configuration
 PORT = int(os.environ.get('ARIA_DASHBOARD_PORT', 8420))
@@ -31,6 +32,9 @@ PROGRESS_FILE = STATE_DIR / 'progress.json'
 LOGS_DIR = ARIA_DIR / 'logs'
 TOKEN_USAGE_FILE = LOGS_DIR / 'token_usage.json'
 MODEL_LEARNING_FILE = LOGS_DIR / 'model_learning.json'
+
+# Claude Code native logs (for token/cost data)
+CLAUDE_PROJECTS_DIR = Path.home() / '.claude' / 'projects'
 
 
 def init_db():
@@ -92,6 +96,131 @@ def init_db():
     return conn
 
 
+def get_claude_session_log() -> Optional[Path]:
+    """Find the most recent Claude Code session log for this project."""
+    try:
+        # Get current working directory name for project folder
+        cwd = Path.cwd()
+        # Claude uses c--project-name format
+        project_slug = f"c--{cwd.name}"
+        project_dir = CLAUDE_PROJECTS_DIR / project_slug
+
+        if not project_dir.exists():
+            return None
+
+        # Find most recent JSONL file
+        jsonl_files = list(project_dir.glob('*.jsonl'))
+        if not jsonl_files:
+            return None
+
+        # Sort by modification time, most recent first
+        return max(jsonl_files, key=lambda p: p.stat().st_mtime)
+    except Exception:
+        return None
+
+
+def parse_claude_log_for_metrics(log_path: Path) -> dict:
+    """Parse Claude's native log file for token/cost metrics."""
+    metrics = {
+        'total_input_tokens': 0,
+        'total_output_tokens': 0,
+        'cache_read_tokens': 0,
+        'cache_write_tokens': 0,
+        'total_cost': 0.0,
+        'by_model': {},
+        'tool_calls': [],
+        'session_start': None,
+        'session_end': None
+    }
+
+    # Pricing per 1M tokens (approximate)
+    pricing = {
+        'claude-opus-4-5-20251101': {'input': 15.0, 'output': 75.0, 'cache_read': 1.5, 'cache_write': 18.75},
+        'claude-sonnet-4-20250514': {'input': 3.0, 'output': 15.0, 'cache_read': 0.3, 'cache_write': 3.75},
+        'claude-3-5-haiku-latest': {'input': 0.80, 'output': 4.0, 'cache_read': 0.08, 'cache_write': 1.0}
+    }
+
+    try:
+        with open(log_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+
+                    # Get timestamps
+                    ts = entry.get('timestamp')
+                    if ts:
+                        if not metrics['session_start'] or ts < metrics['session_start']:
+                            metrics['session_start'] = ts
+                        if not metrics['session_end'] or ts > metrics['session_end']:
+                            metrics['session_end'] = ts
+
+                    # Extract token usage from assistant messages
+                    msg = entry.get('message', {})
+                    if entry.get('type') == 'assistant' and msg.get('usage'):
+                        usage = msg['usage']
+                        model = msg.get('model', 'unknown')
+
+                        input_tokens = usage.get('input_tokens', 0)
+                        output_tokens = usage.get('output_tokens', 0)
+                        cache_read = usage.get('cache_read_input_tokens', 0)
+                        cache_write = usage.get('cache_creation_input_tokens', 0)
+
+                        # Also check nested cache_creation
+                        if usage.get('cache_creation'):
+                            cache_write = usage['cache_creation'].get('ephemeral_5m_input_tokens', 0)
+
+                        metrics['total_input_tokens'] += input_tokens
+                        metrics['total_output_tokens'] += output_tokens
+                        metrics['cache_read_tokens'] += cache_read
+                        metrics['cache_write_tokens'] += cache_write
+
+                        # Track by model
+                        if model not in metrics['by_model']:
+                            metrics['by_model'][model] = {
+                                'input_tokens': 0, 'output_tokens': 0,
+                                'cache_read': 0, 'cache_write': 0,
+                                'cost': 0.0, 'calls': 0
+                            }
+
+                        m = metrics['by_model'][model]
+                        m['input_tokens'] += input_tokens
+                        m['output_tokens'] += output_tokens
+                        m['cache_read'] += cache_read
+                        m['cache_write'] += cache_write
+                        m['calls'] += 1
+
+                        # Calculate cost for this call
+                        rates = pricing.get(model, pricing['claude-sonnet-4-20250514'])
+                        cost = (
+                            (input_tokens / 1_000_000) * rates['input'] +
+                            (output_tokens / 1_000_000) * rates['output'] +
+                            (cache_read / 1_000_000) * rates['cache_read'] +
+                            (cache_write / 1_000_000) * rates['cache_write']
+                        )
+                        m['cost'] += cost
+                        metrics['total_cost'] += cost
+
+                    # Extract tool calls
+                    if msg.get('content'):
+                        for content in msg['content']:
+                            if content.get('type') == 'tool_use':
+                                metrics['tool_calls'].append({
+                                    'tool': content.get('name'),
+                                    'timestamp': ts,
+                                    'input_preview': str(content.get('input', {}))[:200]
+                                })
+
+                except json.JSONDecodeError:
+                    continue
+
+    except Exception as e:
+        metrics['error'] = str(e)
+
+    return metrics
+
+
 def sync_jsonl_to_db(conn):
     """Sync JSONL files to sqlite database."""
     c = conn.cursor()
@@ -101,36 +230,64 @@ def sync_jsonl_to_db(conn):
     c.execute('INSERT OR IGNORE INTO sessions (id, start_time) VALUES (?, ?)',
               (session_id, datetime.utcnow().isoformat() + 'Z'))
 
-    # Sync signals
+    # Sync signals (v2 format with nested objects)
     if SIGNALS_FILE.exists():
         existing_ids = set(row[0] for row in c.execute(
-            "SELECT id FROM events WHERE event_type IN ('signal_pre', 'signal_post')"
+            "SELECT id FROM events WHERE event_type LIKE 'signal_%' OR event_type IN ('skill', 'agent', 'error')"
         ).fetchall())
 
-        with open(SIGNALS_FILE) as f:
+        with open(SIGNALS_FILE, encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
                 try:
                     data = json.loads(line)
-                    if data.get('id') in existing_ids:
+                    sig_id = data.get('id')
+                    if sig_id in existing_ids:
                         continue
+
+                    # Handle v2 nested format
+                    sig_type = data.get('type', 'tool')
+                    event = data.get('event', 'unknown')
+
+                    # Extract tool data (may be nested in v2)
+                    tool_data = data.get('tool', {})
+                    tool_name = tool_data.get('name') if isinstance(tool_data, dict) else data.get('tool')
+                    file_path = tool_data.get('file_path', '') if isinstance(tool_data, dict) else data.get('file_path', '')
+                    command = tool_data.get('command', '') if isinstance(tool_data, dict) else data.get('command', '')
+
+                    # Extract context (may be nested in v2)
+                    ctx = data.get('context', {})
+                    context_type = ctx.get('type', '') if isinstance(ctx, dict) else data.get('context_type', '')
+                    context_name = ctx.get('name', '') if isinstance(ctx, dict) else data.get('context_name', '')
+                    context_detail = ctx.get('detail', '') if isinstance(ctx, dict) else ''
+
+                    # Determine event type
+                    if sig_type == 'skill':
+                        event_type = 'skill'
+                    elif sig_type == 'agent':
+                        event_type = 'agent'
+                    elif sig_type == 'error':
+                        event_type = 'error'
+                    else:
+                        event_type = f"signal_{event}"
+
                     c.execute('''
                         INSERT OR IGNORE INTO events
                         (id, session_id, timestamp, event_type, tool, file_path, command,
                          context_type, context_name, raw_data)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
-                        data.get('id'),
+                        sig_id,
                         session_id,
                         data.get('timestamp'),
-                        f"signal_{data.get('event', 'unknown')}",
-                        data.get('tool'),
-                        data.get('file_path'),
-                        data.get('command'),
-                        data.get('context_type'),
-                        data.get('context_name'),
+                        event_type,
+                        tool_name,
+                        file_path,
+                        command,
+                        context_type,
+                        context_name or context_detail,
                         line
                     ))
                 except json.JSONDecodeError:
@@ -173,10 +330,22 @@ def sync_jsonl_to_db(conn):
                 except (json.JSONDecodeError, ValueError):
                     continue
 
-    # Sync git commits
+    # Sync git commits - ONLY commits made during this session
+    # Get session start time to filter commits
+    session_start = None
+    c.execute('SELECT start_time FROM sessions WHERE id = ?', (session_id,))
+    row = c.fetchone()
+    if row and row[0]:
+        session_start = row[0]
+
     try:
+        # Use --since to only get commits from session start
+        git_cmd = ['git', 'log', '--oneline', '-20', '--format=%H|%aI|%s']
+        if session_start:
+            git_cmd.extend(['--since', session_start])
+
         result = subprocess.run(
-            ['git', 'log', '--oneline', '-20', '--format=%H|%aI|%s'],
+            git_cmd,
             capture_output=True, text=True, timeout=5
         )
         if result.returncode == 0:
@@ -648,19 +817,74 @@ def get_lineage(conn) -> dict:
 
 
 def get_metrics() -> dict:
-    """Get token usage and model metrics from logs."""
+    """Get token usage and model metrics from logs.
+
+    Priority:
+    1. Claude's native JSONL logs (most accurate)
+    2. ARIA token_usage.json (fallback)
+    """
     metrics = {
         'token_usage': None,
         'model_learning': None,
         'session_duration': None,
-        'cost_breakdown': None
+        'cost_breakdown': None,
+        'source': None
     }
 
-    # Read token usage
-    if TOKEN_USAGE_FILE.exists():
+    # Try Claude's native logs first
+    claude_log = get_claude_session_log()
+    if claude_log:
+        try:
+            claude_metrics = parse_claude_log_for_metrics(claude_log)
+            if claude_metrics.get('total_input_tokens', 0) > 0:
+                metrics['source'] = 'claude_native'
+                metrics['token_usage'] = {
+                    'total_input': claude_metrics['total_input_tokens'],
+                    'total_output': claude_metrics['total_output_tokens'],
+                    'cache_read': claude_metrics['cache_read_tokens'],
+                    'cache_write': claude_metrics['cache_write_tokens'],
+                    'total_cost': round(claude_metrics['total_cost'], 4),
+                    'budget': 10.0,  # Default budget
+                    'budget_remaining': 10.0 - claude_metrics['total_cost'],
+                    'by_model': claude_metrics['by_model'],
+                    'session_start': claude_metrics['session_start'],
+                    'session_end': claude_metrics['session_end'],
+                    'recent_history': claude_metrics['tool_calls'][-20:]
+                }
+
+                # Calculate session duration
+                if claude_metrics.get('session_start') and claude_metrics.get('session_end'):
+                    try:
+                        start = datetime.fromisoformat(claude_metrics['session_start'].replace('Z', '+00:00'))
+                        end = datetime.fromisoformat(claude_metrics['session_end'].replace('Z', '+00:00'))
+                        duration = end - start
+                        metrics['session_duration'] = {
+                            'seconds': int(duration.total_seconds()),
+                            'formatted': f"{int(duration.total_seconds() // 3600)}h {int((duration.total_seconds() % 3600) // 60)}m {int(duration.total_seconds() % 60)}s"
+                        }
+                    except:
+                        pass
+
+                # Cost breakdown
+                if claude_metrics['total_cost'] > 0:
+                    metrics['cost_breakdown'] = {
+                        model: {
+                            'cost': round(data.get('cost', 0.0), 4),
+                            'percentage': round(data.get('cost', 0.0) / claude_metrics['total_cost'] * 100, 1),
+                            'calls': data.get('calls', 0),
+                            'tokens': data.get('input_tokens', 0) + data.get('output_tokens', 0)
+                        }
+                        for model, data in claude_metrics['by_model'].items()
+                    }
+        except Exception as e:
+            metrics['claude_log_error'] = str(e)
+
+    # Fallback to ARIA token_usage.json
+    if not metrics['token_usage'] and TOKEN_USAGE_FILE.exists():
         try:
             with open(TOKEN_USAGE_FILE) as f:
                 usage = json.load(f)
+                metrics['source'] = 'aria_logs'
                 metrics['token_usage'] = {
                     'total_input': usage.get('total_input_tokens', 0),
                     'total_output': usage.get('total_output_tokens', 0),
@@ -669,7 +893,7 @@ def get_metrics() -> dict:
                     'budget_remaining': usage.get('budget', 10.0) - usage.get('total_cost', 0.0),
                     'by_model': usage.get('by_model', {}),
                     'session_start': usage.get('session_start', None),
-                    'recent_history': usage.get('history', [])[-20:]  # Last 20 calls
+                    'recent_history': usage.get('history', [])[-20:]
                 }
 
                 # Calculate session duration

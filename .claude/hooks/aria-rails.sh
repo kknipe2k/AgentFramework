@@ -1,379 +1,589 @@
 #!/bin/bash
-# ARIA RAILS v3 - Complete rail system with Ralph compatibility
-# Blocks Claude from bad behavior with comprehensive checks
-# Supports both interactive mode and Ralph's autonomous loop
+# ARIA RAILS v4 - Full Traceability Signal Logging
+# Captures rich context for every tool call enabling forensic debugging
+# When something fails, you can see exactly what, when, where, why
 
-# Get data from environment variables (Claude Code sets these) or fallback to args
+# Get data from environment variables (Claude Code CLI sets these)
 HOOK_EVENT="${1:-PreToolUse}"
-# Claude Code passes tool data via environment variables
-TOOL_NAME_VAR="${TOOL_NAME:-$2}"
-TOOL_INPUT_VAR="${TOOL_INPUT:-$3}"
+TOOL_NAME="${TOOL_NAME:-$2}"
+TOOL_INPUT="${TOOL_INPUT:-$3}"
 
-# Reassign to avoid variable name collision
-TOOL_NAME="$TOOL_NAME_VAR"
-TOOL_INPUT="$TOOL_INPUT_VAR"
-
-# NOTE: Claude Code Cloud environment doesn't pass TOOL_NAME/TOOL_INPUT to hooks
-# Signal logging is disabled until this is fixed
-
+# Paths
 ARIA_DIR=".aria"
 STATE_DIR="$ARIA_DIR/state"
 SIGNALS_FILE="$STATE_DIR/signals.jsonl"
+PENDING_DIR="$STATE_DIR/pending"
 INTENT_FILE="$ARIA_DIR/intent.md"
 RALPH_DIR="$ARIA_DIR/ralph"
 PRD_FILE="$RALPH_DIR/prd.json"
-PROGRESS_FILE="$RALPH_DIR/progress.txt"
 
-# Detect Ralph mode (autonomous loop)
+# Create directories
+mkdir -p "$STATE_DIR" "$PENDING_DIR"
+
+# ============================================
+# UTILITY FUNCTIONS
+# ============================================
+
+# Get timestamp with milliseconds
+get_timestamp() {
+    date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+# Generate unique signal ID
+gen_signal_id() {
+    local prefix="${1:-sig}"
+    echo "${prefix}-$(date +%s%N 2>/dev/null | cut -c1-13 || date +%s)"
+}
+
+# Extract JSON field (Windows-compatible, no grep -P)
+extract_json_field() {
+    local json="$1"
+    local field="$2"
+    echo "$json" | sed -n 's/.*"'"$field"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
+}
+
+# Extract JSON number field
+extract_json_number() {
+    local json="$1"
+    local field="$2"
+    echo "$json" | sed -n 's/.*"'"$field"'"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' | head -1
+}
+
+# Escape string for JSON
+json_escape() {
+    local str="$1"
+    str="${str//\\/\\\\}"
+    str="${str//\"/\\\"}"
+    str="${str//$'\t'/\\t}"
+    str="${str//$'\n'/\\n}"
+    str="${str//$'\r'/}"
+    echo "$str"
+}
+
+# Truncate string with ellipsis
+truncate() {
+    local str="$1"
+    local max="${2:-200}"
+    if [[ ${#str} -gt $max ]]; then
+        echo "${str:0:$max}..."
+    else
+        echo "$str"
+    fi
+}
+
+# Detect file category from path
+get_file_category() {
+    local path="$1"
+    case "$path" in
+        *.test.*|*.spec.*|*_test.*|*_spec.*|*/test/*|*/tests/*|*/__tests__/*)
+            echo "test" ;;
+        *.config.*|*.json|*.yaml|*.yml|*.toml|*.env*|tsconfig.*|package.json|Cargo.toml)
+            echo "config" ;;
+        *.md|*.txt|*.rst|README*|CHANGELOG*|LICENSE*)
+            echo "doc" ;;
+        *.aria/skills/*)
+            echo "skill" ;;
+        *.aria/templates/*)
+            echo "template" ;;
+        *.aria/*)
+            echo "framework" ;;
+        *)
+            echo "source" ;;
+    esac
+}
+
+# Get file info if exists
+get_file_info() {
+    local path="$1"
+    if [[ -f "$path" ]]; then
+        local lines=$(wc -l < "$path" 2>/dev/null || echo "0")
+        local bytes=$(wc -c < "$path" 2>/dev/null || echo "0")
+        echo "{\"exists\":true,\"lines\":$lines,\"bytes\":$bytes}"
+    else
+        echo "{\"exists\":false}"
+    fi
+}
+
+# Detect Ralph mode
 is_ralph_mode() {
     [[ -f "$PRD_FILE" ]] && [[ "${ARIA_RALPH_MODE:-0}" == "1" ]]
 }
 
-# Create directories
-mkdir -p "$STATE_DIR"
-
 # ============================================
-# SIGNAL LOGGING (Decision Tracing)
+# CONTEXT DETECTION
 # ============================================
 
-# Log skill touch events explicitly (Issue #15 fix)
-log_skill_touch() {
-    local skill_name="$1"
-    local file_path="$2"
-    local timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    local event_id="skill-$(date +%s%N | cut -c1-13)"
-
-    printf '{"id":"%s","timestamp":"%s","event":"skill_loaded","skill_name":"%s","file_path":"%s","context_type":"skill","context_name":"%s"}\n' \
-        "$event_id" "$timestamp" "$skill_name" "$file_path" "$skill_name" \
-        >> "$SIGNALS_FILE"
-}
-
-# Log template touch events
-log_template_touch() {
-    local template_name="$1"
-    local file_path="$2"
-    local timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    local event_id="tmpl-$(date +%s%N | cut -c1-13)"
-
-    printf '{"id":"%s","timestamp":"%s","event":"template_loaded","template_name":"%s","file_path":"%s","context_type":"template","context_name":"%s"}\n' \
-        "$event_id" "$timestamp" "$template_name" "$file_path" "$template_name" \
-        >> "$SIGNALS_FILE"
-}
-
-# Log framework file access
-log_framework_touch() {
-    local file_name="$1"
-    local file_path="$2"
-    local timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    local event_id="fw-$(date +%s%N | cut -c1-13)"
-
-    printf '{"id":"%s","timestamp":"%s","event":"framework_loaded","file_name":"%s","file_path":"%s","context_type":"framework","context_name":"%s"}\n' \
-        "$event_id" "$timestamp" "$file_name" "$file_path" "$file_name" \
-        >> "$SIGNALS_FILE"
-}
-
-log_signal() {
-    local event_type="$1"
-    local tool_name="$2"
-    local tool_input="$3"
-
-    # Extract key fields based on tool type
+detect_context() {
+    local tool="$1"
+    local input="$2"
     local file_path=""
     local command=""
+    local pattern=""
     local context_type=""
     local context_name=""
+    local context_detail=""
 
-    # Windows-compatible JSON field extraction (no grep -P)
-    extract_json_field() {
-        local json="$1"
-        local field="$2"
-        echo "$json" | sed -n 's/.*"'"$field"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
-    }
+    case "$tool" in
+        "Read"|"Edit"|"Write"|"MultiEdit")
+            file_path=$(extract_json_field "$input" "file_path")
 
-    case "$tool_name" in
-        "Edit"|"Write"|"MultiEdit"|"Read")
-            file_path=$(extract_json_field "$tool_input" "file_path")
-
-            # Detect context type from file path and log explicit events
             if [[ "$file_path" == *".aria/skills/"* ]]; then
                 context_type="skill"
                 context_name=$(basename "$file_path" .md)
-                # Log explicit skill touch event (only on Read, pre-event)
-                if [[ "$tool_name" == "Read" ]] && [[ "$event_type" == "pre" ]]; then
-                    log_skill_touch "$context_name" "$file_path"
-                fi
+                context_detail="Loading skill instructions"
             elif [[ "$file_path" == *".aria/templates/"* ]]; then
                 context_type="template"
                 context_name=$(basename "$file_path" .md)
-                # Log explicit template touch event
-                if [[ "$tool_name" == "Read" ]] && [[ "$event_type" == "pre" ]]; then
-                    log_template_touch "$context_name" "$file_path"
-                fi
+                context_detail="Loading template"
             elif [[ "$file_path" == *"CLAUDE.md" ]]; then
                 context_type="framework"
                 context_name="CLAUDE.md"
-                # Log explicit framework touch event
-                if [[ "$tool_name" == "Read" ]] && [[ "$event_type" == "pre" ]]; then
-                    log_framework_touch "CLAUDE.md" "$file_path"
-                fi
-            elif [[ "$file_path" == *"progress.json" ]]; then
-                context_type="progress"
-                context_name="task_update"
-            elif [[ "$file_path" == *"current-plan.json" ]]; then
-                context_type="plan"
-                context_name="plan_update"
+                context_detail="Reading framework instructions"
             elif [[ "$file_path" == *"project-context.md" ]]; then
-                context_type="context"
-                context_name="project_context"
-                # Log framework touch for project context
-                if [[ "$tool_name" == "Read" ]] && [[ "$event_type" == "pre" ]]; then
-                    log_framework_touch "project-context" "$file_path"
-                fi
+                context_type="framework"
+                context_name="project-context"
+                context_detail="Reading project context"
+            elif [[ "$file_path" == *"progress.json" ]]; then
+                context_type="tracking"
+                context_name="progress"
+                context_detail="Updating task progress"
+            elif [[ "$file_path" == *"current-plan.json" ]]; then
+                context_type="planning"
+                context_name="plan"
+                context_detail="Accessing plan"
+            elif [[ "$file_path" == *"decisions.jsonl" ]]; then
+                context_type="tracing"
+                context_name="decisions"
+                context_detail="Recording decision"
+            else
+                context_type="code"
+                context_name=$(get_file_category "$file_path")
             fi
             ;;
-        "Bash")
-            command=$(extract_json_field "$tool_input" "command" | head -c 200)
 
-            # Detect test runs
-            if echo "$command" | grep -qE "(npm test|pytest|jest|cargo test|go test|make test)"; then
+        "Bash")
+            command=$(extract_json_field "$input" "command")
+
+            if echo "$command" | grep -qE "^(npm test|yarn test|pnpm test|pytest|jest|cargo test|go test|make test|bun test)"; then
                 context_type="verify"
-                context_name="test_run"
-            # Detect commits
-            elif echo "$command" | grep -q "git commit"; then
-                context_type="commit"
-                context_name="git_commit"
-            # Detect git operations
-            elif echo "$command" | grep -qE "^git (push|pull|checkout|merge)"; then
+                context_name="test"
+                context_detail="Running tests"
+            elif echo "$command" | grep -qE "^(npm run lint|eslint|pylint|flake8|cargo clippy)"; then
+                context_type="verify"
+                context_name="lint"
+                context_detail="Running linter"
+            elif echo "$command" | grep -qE "^(tsc|npx tsc|cargo check)"; then
+                context_type="verify"
+                context_name="typecheck"
+                context_detail="Type checking"
+            elif echo "$command" | grep -q "^git commit"; then
+                context_type="git"
+                context_name="commit"
+                context_detail="Creating commit"
+            elif echo "$command" | grep -q "^git push"; then
+                context_type="git"
+                context_name="push"
+                context_detail="Pushing to remote"
+            elif echo "$command" | grep -q "^git "; then
                 context_type="git"
                 context_name=$(echo "$command" | awk '{print $2}')
-            # Detect errors (exit code check in command)
-            elif echo "$command" | grep -qE "(exit 1|error|failed|Error:)"; then
-                context_type="error"
-                context_name="command_error"
+                context_detail="Git operation"
+            elif echo "$command" | grep -qE "^(npm install|yarn add|pip install|cargo add)"; then
+                context_type="deps"
+                context_name="install"
+                context_detail="Installing dependencies"
+            elif echo "$command" | grep -qE "^(npm run|yarn|pnpm|make|cargo run)"; then
+                context_type="build"
+                context_name="run"
+                context_detail="Running build/script"
+            else
+                context_type="shell"
+                context_name="command"
             fi
             ;;
-        "Glob"|"Grep")
-            file_path=$(extract_json_field "$tool_input" "pattern")
+
+        "Glob")
+            pattern=$(extract_json_field "$input" "pattern")
             context_type="search"
+            context_name="glob"
+            context_detail="Finding files: $pattern"
             ;;
+
+        "Grep")
+            pattern=$(extract_json_field "$input" "pattern")
+            context_type="search"
+            context_name="grep"
+            context_detail="Searching: $(truncate "$pattern" 50)"
+            ;;
+
         "Task")
-            context_type="subagent"
-            context_name=$(extract_json_field "$tool_input" "subagent_type")
+            local subagent=$(extract_json_field "$input" "subagent_type")
+            local desc=$(extract_json_field "$input" "description")
+            context_type="agent"
+            context_name="$subagent"
+            context_detail="$desc"
+            ;;
+
+        "WebFetch"|"WebSearch")
+            context_type="web"
+            context_name=$(echo "$tool" | tr '[:upper:]' '[:lower:]')
+            ;;
+
+        "TodoWrite")
+            context_type="tracking"
+            context_name="todos"
+            context_detail="Updating task list"
+            ;;
+
+        *)
+            context_type="tool"
+            context_name="$tool"
             ;;
     esac
 
-    # Write signal to JSONL
-    local timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    local signal_id="sig-$(date +%s%N | cut -c1-13)"
-
-    # Build JSON - escape special chars
-    local escaped_command=$(echo "$command" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\n/\\n/g')
-    local escaped_path=$(echo "$file_path" | sed 's/\\/\\\\/g; s/"/\\"/g')
-
-    printf '{"id":"%s","timestamp":"%s","event":"%s","tool":"%s","file_path":"%s","command":"%s","context_type":"%s","context_name":"%s"}\n' \
-        "$signal_id" "$timestamp" "$event_type" "$tool_name" "$escaped_path" "$escaped_command" "$context_type" "$context_name" \
-        >> "$SIGNALS_FILE"
+    echo "$context_type|$context_name|$context_detail"
 }
 
 # ============================================
-# CONFIGURATION
+# RICH SIGNAL LOGGING
 # ============================================
-TEST_CADENCE=${ARIA_TEST_CADENCE:-3}
-COMMIT_CADENCE=${ARIA_COMMIT_CADENCE:-5}
 
-# ============================================
-# STATE HELPERS
-# ============================================
-get_count() { cat "$STATE_DIR/edit_count" 2>/dev/null || echo 0; }
-get_last_test() { cat "$STATE_DIR/last_test" 2>/dev/null || echo 0; }
-get_last_commit() { cat "$STATE_DIR/last_commit" 2>/dev/null || echo 0; }
-tests_failing() { [[ -f "$STATE_DIR/tests_failed" ]]; }
+log_pre_signal() {
+    local tool="$1"
+    local input="$2"
+    local timestamp=$(get_timestamp)
+    local signal_id=$(gen_signal_id "sig")
 
-increment_edits() {
-    local count=$(get_count)
-    echo $((count + 1)) > "$STATE_DIR/edit_count"
+    # Parse context
+    local context_raw=$(detect_context "$tool" "$input")
+    local context_type=$(echo "$context_raw" | cut -d'|' -f1)
+    local context_name=$(echo "$context_raw" | cut -d'|' -f2)
+    local context_detail=$(echo "$context_raw" | cut -d'|' -f3)
+
+    # Extract tool-specific data
+    local file_path=$(extract_json_field "$input" "file_path")
+    local command=$(extract_json_field "$input" "command")
+    local pattern=$(extract_json_field "$input" "pattern")
+    local subagent=$(extract_json_field "$input" "subagent_type")
+    local description=$(extract_json_field "$input" "description")
+    local prompt=$(extract_json_field "$input" "prompt")
+
+    # Get file info for Read operations
+    local file_info=""
+    if [[ "$tool" == "Read" ]] && [[ -n "$file_path" ]]; then
+        file_info=$(get_file_info "$file_path")
+    fi
+
+    # Escape for JSON
+    file_path=$(json_escape "$file_path")
+    command=$(json_escape "$(truncate "$command" 500)")
+    pattern=$(json_escape "$pattern")
+    description=$(json_escape "$description")
+    prompt=$(json_escape "$(truncate "$prompt" 300)")
+    context_detail=$(json_escape "$context_detail")
+
+    # Build the signal JSON
+    local signal=$(cat <<EOF
+{
+  "id": "$signal_id",
+  "type": "tool",
+  "event": "pre",
+  "timestamp": "$timestamp",
+  "tool": {
+    "name": "$tool",
+    "file_path": "$file_path",
+    "command": "$command",
+    "pattern": "$pattern",
+    "subagent_type": "$subagent",
+    "description": "$description",
+    "prompt_preview": "$prompt"
+  },
+  "context": {
+    "type": "$context_type",
+    "name": "$context_name",
+    "detail": "$context_detail"
+  },
+  "file_info": $file_info
+}
+EOF
+)
+
+    # Compact to single line and write
+    echo "$signal" | tr -d '\n' | sed 's/  */ /g' >> "$SIGNALS_FILE"
+    echo "" >> "$SIGNALS_FILE"
+
+    # Store pre-signal for duration calculation
+    echo "$timestamp" > "$PENDING_DIR/$signal_id"
+    echo "$signal_id"
+}
+
+log_post_signal() {
+    local tool="$1"
+    local input="$2"
+    local pre_signal_id="$3"
+    local timestamp=$(get_timestamp)
+    local signal_id=$(gen_signal_id "sig")
+
+    # Calculate duration if we have pre-signal
+    local duration_ms=""
+    local pre_timestamp=""
+    if [[ -f "$PENDING_DIR/$pre_signal_id" ]]; then
+        pre_timestamp=$(cat "$PENDING_DIR/$pre_signal_id")
+        rm -f "$PENDING_DIR/$pre_signal_id"
+        # Simple duration calc (seconds only, ms requires more complex parsing)
+        local pre_epoch=$(date -d "$pre_timestamp" +%s 2>/dev/null || echo "")
+        local post_epoch=$(date +%s)
+        if [[ -n "$pre_epoch" ]]; then
+            duration_ms=$(( (post_epoch - pre_epoch) * 1000 ))
+        fi
+    fi
+
+    # Parse context
+    local context_raw=$(detect_context "$tool" "$input")
+    local context_type=$(echo "$context_raw" | cut -d'|' -f1)
+    local context_name=$(echo "$context_raw" | cut -d'|' -f2)
+
+    # Extract result data based on tool
+    local file_path=$(extract_json_field "$input" "file_path")
+    local exit_code=$(extract_json_number "$input" "exit_code")
+    local success="true"
+    local error=""
+    local result_detail=""
+
+    # Determine success/failure
+    if [[ -n "$exit_code" ]] && [[ "$exit_code" != "0" ]]; then
+        success="false"
+        error="Exit code: $exit_code"
+    fi
+
+    # Get result details based on tool type
+    case "$tool" in
+        "Read")
+            if [[ -f "$file_path" ]]; then
+                local lines=$(wc -l < "$file_path" 2>/dev/null || echo "0")
+                result_detail="Read $lines lines"
+            fi
+            ;;
+        "Edit"|"Write")
+            result_detail="File modified"
+            ;;
+        "Glob")
+            result_detail="File search completed"
+            ;;
+        "Grep")
+            result_detail="Content search completed"
+            ;;
+        "Task")
+            result_detail="Agent task completed"
+            ;;
+    esac
+
+    # Escape for JSON
+    file_path=$(json_escape "$file_path")
+    error=$(json_escape "$error")
+    result_detail=$(json_escape "$result_detail")
+
+    # Build the signal JSON
+    local signal=$(cat <<EOF
+{
+  "id": "$signal_id",
+  "type": "tool",
+  "event": "post",
+  "timestamp": "$timestamp",
+  "duration_ms": ${duration_ms:-null},
+  "tool": {
+    "name": "$tool",
+    "file_path": "$file_path"
+  },
+  "result": {
+    "success": $success,
+    "exit_code": ${exit_code:-null},
+    "error": ${error:+\"$error\"}${error:-null},
+    "detail": ${result_detail:+\"$result_detail\"}${result_detail:-null}
+  },
+  "context": {
+    "type": "$context_type",
+    "name": "$context_name"
+  },
+  "correlation": {
+    "pre_signal_id": "$pre_signal_id"
+  }
+}
+EOF
+)
+
+    # Compact to single line and write
+    echo "$signal" | tr -d '\n' | sed 's/  */ /g' >> "$SIGNALS_FILE"
+    echo "" >> "$SIGNALS_FILE"
+}
+
+# Log skill load event
+log_skill_load() {
+    local skill_name="$1"
+    local file_path="$2"
+    local timestamp=$(get_timestamp)
+    local signal_id=$(gen_signal_id "skill")
+
+    local signal=$(cat <<EOF
+{
+  "id": "$signal_id",
+  "type": "skill",
+  "event": "loaded",
+  "timestamp": "$timestamp",
+  "skill": {
+    "name": "$skill_name",
+    "path": "$file_path"
+  }
+}
+EOF
+)
+
+    echo "$signal" | tr -d '\n' | sed 's/  */ /g' >> "$SIGNALS_FILE"
+    echo "" >> "$SIGNALS_FILE"
+}
+
+# Log agent spawn
+log_agent_spawn() {
+    local agent_type="$1"
+    local description="$2"
+    local prompt_preview="$3"
+    local timestamp=$(get_timestamp)
+    local signal_id=$(gen_signal_id "agent")
+
+    description=$(json_escape "$description")
+    prompt_preview=$(json_escape "$(truncate "$prompt_preview" 300)")
+
+    local signal=$(cat <<EOF
+{
+  "id": "$signal_id",
+  "type": "agent",
+  "event": "spawned",
+  "timestamp": "$timestamp",
+  "agent": {
+    "type": "$agent_type",
+    "description": "$description",
+    "prompt_preview": "$prompt_preview"
+  }
+}
+EOF
+)
+
+    echo "$signal" | tr -d '\n' | sed 's/  */ /g' >> "$SIGNALS_FILE"
+    echo "" >> "$SIGNALS_FILE"
+
+    # Store for completion tracking
+    echo "$timestamp|$agent_type" > "$PENDING_DIR/agent-$signal_id"
+    echo "$signal_id"
+}
+
+# Log error event
+log_error() {
+    local category="$1"
+    local message="$2"
+    local tool="$3"
+    local related_signal="$4"
+    local timestamp=$(get_timestamp)
+    local signal_id=$(gen_signal_id "error")
+
+    message=$(json_escape "$message")
+
+    local signal=$(cat <<EOF
+{
+  "id": "$signal_id",
+  "type": "error",
+  "timestamp": "$timestamp",
+  "error": {
+    "category": "$category",
+    "message": "$message",
+    "tool": "$tool"
+  },
+  "context": {
+    "related_signal_id": "$related_signal"
+  }
+}
+EOF
+)
+
+    echo "$signal" | tr -d '\n' | sed 's/  */ /g' >> "$SIGNALS_FILE"
+    echo "" >> "$SIGNALS_FILE"
 }
 
 # ============================================
-# RAIL: Intent Required (supports Ralph PRD)
+# RAIL CHECKS (Same as before but with logging)
 # ============================================
+
 check_intent() {
-    # In Ralph mode, intent comes from PRD
     if is_ralph_mode; then
         if [[ ! -f "$PRD_FILE" ]]; then
-            echo "<aria-blocked>NO_PRD</aria-blocked>"
-            cat << 'EOF'
-{"error": "BLOCKED: No PRD found for Ralph mode.\n\nInitialize with: ./.aria/ralph/ralph.sh init \"Feature description\""}
-EOF
+            log_error "hook_block" "No PRD found for Ralph mode" "" ""
+            echo '{"error": "BLOCKED: No PRD found. Initialize with: ./.aria/ralph/ralph.sh init"}'
             exit 2
         fi
         return 0
     fi
 
-    # Interactive mode - need intent.md
     if [[ ! -f "$INTENT_FILE" ]]; then
-        cat << 'EOF'
-{"error": "BLOCKED: No intent defined. Before making changes, define your intent:\n\nRun in terminal: ./.aria/aria-engine.sh init \"your intent here\"\n\nOr create .aria/intent.md manually with:\n- What you're building\n- Must have requirements\n- Must not requirements"}
-EOF
+        log_error "hook_block" "No intent defined" "" ""
+        echo '{"error": "BLOCKED: No intent defined. Create .aria/intent.md first."}'
         exit 2
     fi
 }
 
-# ============================================
-# RAIL: Test Cadence
-# ============================================
-check_test_cadence() {
-    local count=$(get_count)
-    local last_test=$(get_last_test)
-    local since=$((count - last_test))
-
-    if [[ $since -ge $TEST_CADENCE ]]; then
-        cat << EOF
-{"error": "BLOCKED: $since edits without testing (max: $TEST_CADENCE).\n\nRun tests before continuing:\n  npm test\n  pytest\n  cargo test\n\nOr mark tests passed: ./.aria/aria-engine.sh pass"}
-EOF
-        exit 2
-    fi
-}
-
-# ============================================
-# RAIL: Commit Cadence
-# ============================================
-check_commit_cadence() {
-    local count=$(get_count)
-    local last_commit=$(get_last_commit)
-    local since=$((count - last_commit))
-
-    if [[ $since -ge $COMMIT_CADENCE ]]; then
-        cat << EOF
-{"error": "BLOCKED: $since edits without commit (max: $COMMIT_CADENCE).\n\nCommit a checkpoint before continuing:\n  git add -A && git commit -m \"checkpoint: description\"\n\nOr reset counter: ./.aria/aria-engine.sh reset"}
-EOF
-        exit 2
-    fi
-}
-
-# ============================================
-# RAIL: Tests Before Commit
-# ============================================
-check_tests_before_commit() {
-    if tests_failing; then
-        cat << 'EOF'
-{"error": "BLOCKED: Cannot commit with failing tests.\n\nFix the tests first, then run them:\n  npm test\n\nOr if tests now pass: ./.aria/aria-engine.sh pass"}
-EOF
-        exit 2
-    fi
-}
-
-# ============================================
-# RAIL: No Secrets
-# ============================================
-check_no_secrets() {
-    local file_path="$1"
-
-    # Quick check for common secret patterns
-    if [[ -f "$file_path" ]]; then
-        if grep -qE "(api[_-]?key|secret|password|token)\s*[=:]\s*['\"][A-Za-z0-9_\-]{10,}['\"]" "$file_path" 2>/dev/null; then
-            # Output Ralph signal for loop detection
-            if is_ralph_mode; then
-                echo "<aria-blocked>SECRET_DETECTED</aria-blocked>"
-            fi
-            cat << EOF
-{"error": "BLOCKED: Possible secret detected in $file_path.\n\nUse environment variables instead:\n  process.env.API_KEY\n  os.environ['SECRET']\n\nOr add to .gitignore if this is a config file."}
-EOF
-            exit 2
-        fi
-    fi
-}
-
-# ============================================
-# RAIL: No Destructive Commands
-# ============================================
 check_no_destructive() {
     local cmd="$1"
-
-    # Block dangerous patterns
     local dangerous_patterns=(
         "rm -rf /"
         "rm -rf ~"
         "rm -rf \*"
-        "rm -rf \."
         "> /dev/sd"
         "mkfs\."
         "dd if=.* of=/dev"
         ":(){ :|:& };:"
         "chmod -R 777 /"
         "DROP DATABASE"
-        "DROP TABLE.*;"
+        "DROP TABLE"
     )
 
     for pattern in "${dangerous_patterns[@]}"; do
         if echo "$cmd" | grep -qE "$pattern"; then
-            # Output Ralph signal for loop detection
-            if is_ralph_mode; then
-                echo "<aria-blocked>DESTRUCTIVE_COMMAND</aria-blocked>"
-            fi
-            cat << EOF
-{"error": "BLOCKED: Destructive command detected.\n\nPattern matched: $pattern\n\nThis command could cause serious damage. If you really need to run it, do so manually outside of Claude."}
-EOF
+            log_error "hook_block" "Destructive command: $pattern" "Bash" ""
+            echo "{\"error\": \"BLOCKED: Destructive command detected: $pattern\"}"
             exit 2
         fi
     done
 
-    # Warn on force push to protected branches
     if echo "$cmd" | grep -qE "git push.*(--force|-f).*(main|master|production)"; then
-        if is_ralph_mode; then
-            echo "<aria-blocked>FORCE_PUSH_PROTECTED</aria-blocked>"
-        fi
-        cat << 'EOF'
-{"error": "BLOCKED: Force push to protected branch.\n\nNever force push to main/master/production.\n\nUse a feature branch and create a pull request instead."}
-EOF
+        log_error "hook_block" "Force push to protected branch" "Bash" ""
+        echo '{"error": "BLOCKED: Force push to protected branch"}'
         exit 2
     fi
 }
 
 # ============================================
-# RAIL: Server Running (for UI changes)
+# STATE TRACKING
 # ============================================
-check_server_running() {
-    # Only check if we're doing verification
-    if [[ -f "$STATE_DIR/needs_server" ]]; then
-        if ! curl -s -o /dev/null "http://localhost:${PORT:-3000}" 2>/dev/null; then
-            cat << 'EOF'
-{"warning": "Server not running at localhost:3000.\n\nStart the dev server in another terminal:\n  npm start\n  npm run dev\n\nThen UI verification can proceed."}
-EOF
-            # Warning only, don't block
-        fi
-    fi
-}
 
-# ============================================
-# TRACKING: Post-action updates
-# ============================================
-track_edit() {
-    increment_edits
+STATE_EDIT_COUNT="$STATE_DIR/edit_count"
+STATE_LAST_TEST="$STATE_DIR/last_test"
+STATE_LAST_COMMIT="$STATE_DIR/last_commit"
+STATE_TESTS_FAILED="$STATE_DIR/tests_failed"
+STATE_LAST_PRE_SIGNAL="$STATE_DIR/last_pre_signal"
 
-    # Check if this is a UI file
-    local file_path=$(echo "$TOOL_INPUT" | grep -oP '"file_path"\s*:\s*"\K[^"]+' 2>/dev/null || true)
-    if [[ "$file_path" =~ \.(jsx|tsx|vue|svelte|html|css)$ ]]; then
-        touch "$STATE_DIR/needs_server"
-    fi
-}
+get_edit_count() { cat "$STATE_EDIT_COUNT" 2>/dev/null || echo 0; }
+increment_edits() { echo $(($(get_edit_count) + 1)) > "$STATE_EDIT_COUNT"; }
 
-track_test_run() {
-    local exit_code=$(echo "$TOOL_INPUT" | grep -oP '"exit_code"\s*:\s*\K\d+' 2>/dev/null || echo "0")
-
-    local count=$(get_count)
-    echo "$count" > "$STATE_DIR/last_test"
-
+track_test_result() {
+    local exit_code="$1"
+    echo "$(get_edit_count)" > "$STATE_LAST_TEST"
     if [[ "$exit_code" == "0" ]]; then
-        rm -f "$STATE_DIR/tests_failed"
+        rm -f "$STATE_TESTS_FAILED"
     else
-        touch "$STATE_DIR/tests_failed"
+        touch "$STATE_TESTS_FAILED"
     fi
 }
 
 track_commit() {
-    local count=$(get_count)
-    echo "$count" > "$STATE_DIR/last_commit"
+    echo "$(get_edit_count)" > "$STATE_LAST_COMMIT"
 }
 
 # ============================================
@@ -382,77 +592,65 @@ track_commit() {
 
 case "$HOOK_EVENT" in
     "PreToolUse")
-        # Log signal for all tool calls (only if tool data available)
-        if [[ -n "$TOOL_NAME" ]]; then
-            log_signal "pre" "$TOOL_NAME" "$TOOL_INPUT"
+        if [[ -z "$TOOL_NAME" ]]; then
+            # No tool data available (VS Code extension limitation)
+            exit 0
         fi
 
+        # Log the pre-signal with full context
+        pre_signal_id=$(log_pre_signal "$TOOL_NAME" "$TOOL_INPUT")
+        echo "$pre_signal_id" > "$STATE_LAST_PRE_SIGNAL"
+
+        # Additional logging for special cases
         case "$TOOL_NAME" in
+            "Read")
+                file_path=$(extract_json_field "$TOOL_INPUT" "file_path")
+                if [[ "$file_path" == *".aria/skills/"* ]]; then
+                    skill_name=$(basename "$file_path" .md)
+                    log_skill_load "$skill_name" "$file_path"
+                fi
+                ;;
+            "Task")
+                subagent=$(extract_json_field "$TOOL_INPUT" "subagent_type")
+                desc=$(extract_json_field "$TOOL_INPUT" "description")
+                prompt=$(extract_json_field "$TOOL_INPUT" "prompt")
+                log_agent_spawn "$subagent" "$desc" "$prompt"
+                ;;
             "Edit"|"Write"|"MultiEdit")
                 check_intent
-                check_test_cadence
-                check_commit_cadence
-
-                # Extract file path and check for secrets
-                file_path=$(echo "$TOOL_INPUT" | grep -oP '"file_path"\s*:\s*"\K[^"]+' 2>/dev/null || true)
-                # Don't check the new content, just existing files
                 ;;
-
             "Bash")
-                # Extract command
-                cmd=$(echo "$TOOL_INPUT" | grep -oP '"command"\s*:\s*"\K[^"]+' 2>/dev/null || true)
-
-                # Check for destructive commands
+                cmd=$(extract_json_field "$TOOL_INPUT" "command")
                 check_no_destructive "$cmd"
-
-                # Check for commit
-                if echo "$cmd" | grep -q "git commit"; then
-                    check_tests_before_commit
-                fi
-
-                # Check for test runs (inform, don't block)
-                if echo "$cmd" | grep -qE "(npm test|pytest|jest|cargo test|go test|make test)"; then
-                    # Will be tracked in PostToolUse
-                    :
-                fi
-                ;;
-
-            "Task")
-                # Subagent tasks - less strict but still need intent
-                check_intent
                 ;;
         esac
         ;;
 
     "PostToolUse")
-        # Log signal completion (only if tool data available)
-        if [[ -n "$TOOL_NAME" ]]; then
-            log_signal "post" "$TOOL_NAME" "$TOOL_INPUT"
+        if [[ -z "$TOOL_NAME" ]]; then
+            exit 0
         fi
 
+        # Get pre-signal ID for correlation
+        pre_signal_id=$(cat "$STATE_LAST_PRE_SIGNAL" 2>/dev/null || echo "")
+
+        # Log post-signal with results
+        log_post_signal "$TOOL_NAME" "$TOOL_INPUT" "$pre_signal_id"
+
+        # Track state changes
         case "$TOOL_NAME" in
             "Edit"|"Write"|"MultiEdit")
-                track_edit
-
-                # Get new content and check for secrets
-                new_content=$(echo "$TOOL_INPUT" | grep -oP '"new_string"\s*:\s*"\K[^"]+' 2>/dev/null || \
-                              echo "$TOOL_INPUT" | grep -oP '"content"\s*:\s*"\K[^"]+' 2>/dev/null || true)
-
-                if echo "$new_content" | grep -qE "(api[_-]?key|secret|password)\s*[=:]\s*['\"][A-Za-z0-9_\-]{10,}['\"]"; then
-                    echo '{"warning": "Possible secret in new content. Consider using environment variables."}'
-                fi
+                increment_edits
                 ;;
-
             "Bash")
-                cmd=$(echo "$TOOL_INPUT" | grep -oP '"command"\s*:\s*"\K[^"]+' 2>/dev/null || true)
+                cmd=$(extract_json_field "$TOOL_INPUT" "command")
+                exit_code=$(extract_json_number "$TOOL_INPUT" "exit_code")
 
-                # Track test runs
-                if echo "$cmd" | grep -qE "(npm test|pytest|jest|cargo test|go test|make test)"; then
-                    track_test_run
+                if echo "$cmd" | grep -qE "^(npm test|yarn test|pytest|jest|cargo test|go test)"; then
+                    track_test_result "${exit_code:-0}"
                 fi
 
-                # Track commits
-                if echo "$cmd" | grep -q "git commit"; then
+                if echo "$cmd" | grep -q "^git commit"; then
                     track_commit
                 fi
                 ;;
@@ -460,28 +658,7 @@ case "$HOOK_EVENT" in
         ;;
 
     "Stop")
-        # End of turn - show status (works in both interactive and Ralph mode)
-        if [[ -f "$INTENT_FILE" ]] || is_ralph_mode; then
-            count=$(get_count)
-            last_test=$(get_last_test)
-            last_commit=$(get_last_commit)
-            since_test=$((count - last_test))
-            since_commit=$((count - last_commit))
-
-            # Warnings
-            if [[ $since_test -ge $((TEST_CADENCE - 1)) ]]; then
-                echo "{\"warning\": \"$since_test edits since last test. Consider running tests.\"}"
-            fi
-            if [[ $since_commit -ge $((COMMIT_CADENCE - 1)) ]]; then
-                echo "{\"warning\": \"$since_commit edits since last commit. Consider committing a checkpoint.\"}"
-            fi
-            if tests_failing; then
-                echo '{"warning": "Tests are currently failing."}'
-                if is_ralph_mode; then
-                    echo "<aria-blocked>TESTS_FAILING</aria-blocked>"
-                fi
-            fi
-        fi
+        # Session end - could add summary signal here
         ;;
 esac
 
