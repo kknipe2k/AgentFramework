@@ -458,6 +458,12 @@ Load and follow these skills:
 | `.aria/skills/context-refresh.md` | Between phases, after 3+ failures |
 | `.aria/skills/report-writer.md` | End-of-workflow summary + dashboard |
 
+### Meta Skills (STANDARD+)
+
+| Skill | When to Use |
+|-------|-------------|
+| `.aria/skills/meta-reasoning.md` | **Systematic decision-making with offline RL** |
+
 ### Research Skills (Explicit)
 
 | Skill | When to Use |
@@ -573,6 +579,89 @@ Proceed? [y]es / [n]o / [e]xplain
 | `.aria/design-notes.md` | AI reasoning log |
 | `.aria/project-context.md` | Project knowledge (if exists) |
 | `.aria/docs/DESIGN.md` | Design doc (FULL+ only) |
+
+### Learning Files (Offline RL)
+
+| File | Purpose |
+|------|---------|
+| `.aria/learned/policy.json` | Current learned policy (loaded at session start) |
+| `.aria/learned/priors/model-selection.json` | Beta priors for model × context |
+| `.aria/learned/priors/strategy-selection.json` | Beta priors for strategy × context |
+| `.aria/learned/priors/confidence-calibration.json` | Confidence adjustment factors |
+| `.aria/learned/history/episodes.jsonl` | Historical (state, action, reward) tuples |
+| `.aria/logs/model_learning.json` | Model performance tracking |
+
+---
+
+## Offline Reinforcement Learning
+
+ARIA learns from past sessions to improve decision-making over time.
+
+### How It Works
+
+```
+SESSION N                         BETWEEN SESSIONS
+┌──────────────┐                  ┌──────────────────────┐
+│ Execute with │                  │ Learning Pipeline    │
+│ current      │──────────────────▶│                      │
+│ policy       │   signals.jsonl  │ 1. Extract episodes  │
+│              │   decisions.jsonl│ 2. Calculate rewards │
+│              │   outcomes       │ 3. Update priors     │
+└──────────────┘                  │ 4. Export policy     │
+       ▲                          └──────────┬───────────┘
+       │                                     │
+       └─────────────────────────────────────┘
+                  SESSION N+1 uses improved policy
+```
+
+### What Gets Learned
+
+| Decision Point | What's Learned | Data Source |
+|----------------|----------------|-------------|
+| Model selection | Which models succeed for task types | `model_learning.json` |
+| Strategy selection | Which approaches work when | `decisions.jsonl` |
+| Confidence calibration | Agent over/under-confidence | `decisions.jsonl` |
+| Dead-end detection | Patterns that precede failures | `signals.jsonl` |
+
+### Triggering Learning
+
+```bash
+# After session ends (or manually)
+python .aria/lib/offline-learner.py learn
+
+# View current policy
+python .aria/lib/offline-learner.py export-policy
+
+# Query for specific recommendation
+python .aria/lib/offline-learner.py query feature 7 auth
+
+# View statistics
+python .aria/lib/offline-learner.py stats
+```
+
+### Using Learned Policy
+
+The meta-reasoning skill automatically uses learned priors:
+
+```bash
+source .aria/lib/meta-reasoning.sh
+
+# Get model recommendation (uses Thompson Sampling)
+meta_select_model "feature" 6 "api"
+# Output: sonnet|0.78|Learned from 15 past observations
+
+# Full meta-reasoning cycle
+meta_reason "Implement retry logic" "feature" 6
+```
+
+### Recording Outcomes
+
+Outcomes are recorded automatically via hooks. Manual recording:
+
+```bash
+source .aria/lib/meta-reasoning.sh
+meta_record_outcome "sonnet" "feature" 6 "success" "US-001"
+```
 
 ---
 
