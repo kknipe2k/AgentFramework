@@ -1,0 +1,6 @@
+{"id":"sig-001","timestamp":"2024-01-14T10:00:00Z","event":"session_start","context_type":"session","context_name":"new_session"}
+{"id":"sig-002","timestamp":"2024-01-14T10:00:10Z","event":"skill_load","context_type":"skill","context_name":"planning"}
+{"id":"sig-003","timestamp":"2024-01-14T10:00:20Z","event":"tool_call","context_type":"tool","context_name":"Read","file_path":"src/index.ts"}
+{"id":"sig-004","timestamp":"2024-01-14T10:00:30Z","event":"tool_call","context_type":"tool","context_name":"Edit","file_path":"src/index.ts"}
+{"id":"sig-005","timestamp":"2024-01-14T10:01:00Z","event":"verify_start","context_type":"verification","context_name":"test_run"}
+{"id":"sig-006","timestamp":"2024-01-14T10:01:30Z","event":"verify_pass","context_type":"verification","context_name":"test_run","duration":30.5,"tests_passed":42}

@@ -143,11 +143,9 @@ test_end
 
 test_start "invoke_agent handles unknown agent"
 setup
-# Must capture the return value properly since set -e is disabled within invoke_agent
-set +e
-invoke_agent "unknown-agent" "test" "" "" >/dev/null 2>&1
-exit_code=$?
-set -e
+# Must capture the return value properly - use subshell to isolate set -e effects
+exit_code=0
+invoke_agent "unknown-agent" "test" "" "" >/dev/null 2>&1 || exit_code=$?
 assert_eq "2" "$exit_code" "Should return fatal error code for unknown agent"
 teardown
 test_end

@@ -1,0 +1,32 @@
+{
+  "plan_id": "plan-20240114-101500",
+  "status": "in_progress",
+  "started": "2024-01-14T10:15:00Z",
+  "last_updated": "2024-01-14T10:16:20Z",
+  "completion": {
+    "tasks_total": 5,
+    "tasks_done": 2,
+    "tasks_in_progress": 1,
+    "tasks_blocked": 0,
+    "tasks_skipped": 0,
+    "percent_complete": 40
+  },
+  "current": {
+    "task_id": "3",
+    "task_name": "Add input validation"
+  },
+  "task_history": [
+    {
+      "task_id": "1",
+      "status": "completed",
+      "timestamp": "2024-01-14T10:15:30Z",
+      "notes": "Analyzed existing code structure"
+    },
+    {
+      "task_id": "2",
+      "status": "completed",
+      "timestamp": "2024-01-14T10:16:00Z",
+      "notes": "Implemented retry logic using existing pattern"
+    }
+  ]
+}

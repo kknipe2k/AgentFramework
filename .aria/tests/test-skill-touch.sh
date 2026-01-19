@@ -125,8 +125,9 @@ setup
 log_skill_touch "planning" ".aria/skills/planning.md"
 sleep 0.01  # Small delay to ensure different timestamp
 log_skill_touch "executing" ".aria/skills/executing.md"
-id1=$(grep "planning" "$TEST_SIGNALS_FILE" | grep -oP '"id":"skill-\K[^"]+')
-id2=$(grep "executing" "$TEST_SIGNALS_FILE" | grep -oP '"id":"skill-\K[^"]+')
+# Use sed instead of grep -P for Windows compatibility
+id1=$(grep "planning" "$TEST_SIGNALS_FILE" | sed 's/.*"id":"skill-\([^"]*\)".*/\1/')
+id2=$(grep "executing" "$TEST_SIGNALS_FILE" | sed 's/.*"id":"skill-\([^"]*\)".*/\1/')
 assert_neq "$id1" "$id2" "Event IDs should be unique"
 teardown
 test_end
