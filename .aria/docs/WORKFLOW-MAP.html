@@ -211,7 +211,7 @@
 <body>
     <div class="container">
         <h1>ARIA Workflow Map</h1>
-        <p class="subtitle">Complete E2E reference showing all workflows, skills, files, and decision points</p>
+        <p class="subtitle">Complete E2E reference showing all workflows, skills, files, and decision points | Updated: 2026-01-19</p>
 
         <!-- Legend -->
         <div class="legend">
@@ -242,9 +242,10 @@
         <!-- Main Tabs -->
         <div class="tabs">
             <div class="tab active" data-tab="workflows">Workflows</div>
-            <div class="tab" data-tab="skills">Skills</div>
+            <div class="tab" data-tab="skills">Skills (14)</div>
             <div class="tab" data-tab="files">Files</div>
             <div class="tab" data-tab="modes">Modes</div>
+            <div class="tab" data-tab="learning">Learning</div>
         </div>
 
         <!-- WORKFLOWS TAB -->
@@ -275,6 +276,11 @@
                     <div class="flow-step hitl">[r]esearch</div>
                     <span class="flow-arrow">→</span>
                     <div class="flow-step">RESEARCH flow</div>
+                </div>
+                <div class="flow">
+                    <div class="flow-step hitl">[d]eep-research</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step">DEEP RESEARCH flow</div>
                 </div>
             </div>
 
@@ -585,9 +591,67 @@
             </div>
         </div>
 
+        <!-- DEEP RESEARCH WORKFLOW -->
+            <div class="collapsible" onclick="toggleCollapsible(this)">
+                <span><strong>DEEP RESEARCH Workflow</strong> - Web research with HITL gates (NEW)</span>
+            </div>
+            <div class="collapsible-content">
+                <h3>Full Flow</h3>
+                <div class="flow">
+                    <div class="flow-step">Question</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step skill">deep-research</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step hitl">HITL: Depth</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step hitl">HITL: Strategy</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step hitl">HITL: Queries</div>
+                </div>
+                <div class="flow">
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step skill">WebSearch</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step">Quality Rating</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step hitl">HITL: Checkpoint</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step hitl">HITL: Synthesis</div>
+                </div>
+                <div class="flow">
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step file">research-output.json</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step file">IDEA.md</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step hitl">HITL: Continue?</div>
+                </div>
+
+                <h3>HITL Checkpoints (5 Gates)</h3>
+                <table class="file-table">
+                    <tr><th>Gate</th><th>Options</th><th>Purpose</th></tr>
+                    <tr><td>Depth</td><td>[1] Quick / [2] Standard / [3] Deep / [4] Exhaustive</td><td>Research thoroughness</td></tr>
+                    <tr><td>Strategy</td><td>[a] Broad / [b] Focused / [c] Comparative / [d] Temporal</td><td>Query approach</td></tr>
+                    <tr><td>Queries</td><td>[a]pprove / [e]dit / [c]hange</td><td>Review proposed queries</td></tr>
+                    <tr><td>Checkpoint</td><td>[c]ontinue / [r]edirect / [d]eepen / [s]ynthesize / [a]bort</td><td>Mid-research control</td></tr>
+                    <tr><td>Synthesis</td><td>[1] Executive / [2] Structured / [3] Comparative / [4] Bibliography / [5] All</td><td>Output format</td></tr>
+                </table>
+
+                <h3>Confidence Scoring</h3>
+                <table class="file-table">
+                    <tr><th>Score</th><th>Label</th><th>Meaning</th></tr>
+                    <tr><td>0.9+</td><td>VERY HIGH</td><td>Multiple authoritative sources agree</td></tr>
+                    <tr><td>0.7-0.89</td><td>HIGH</td><td>Good sources, some corroboration</td></tr>
+                    <tr><td>0.5-0.69</td><td>MEDIUM</td><td>Limited sources or uncertainty</td></tr>
+                    <tr><td>0.3-0.49</td><td>LOW</td><td>Single source or quality concerns</td></tr>
+                    <tr><td>&lt;0.3</td><td>UNVERIFIED</td><td>Treat as hypothesis</td></tr>
+                </table>
+            </div>
+        </div>
+
         <!-- SKILLS TAB -->
         <div id="skills" class="tab-content">
-            <h2>All Skills (13 Total)</h2>
+            <h2>All Skills (14 Total)</h2>
 
             <h3>Entry Skill</h3>
             <div class="skill-grid">
@@ -676,10 +740,26 @@
                     <div class="triggers"><strong>Output:</strong> <code>research-output.json</code></div>
                 </div>
                 <div class="skill-card">
+                    <h4>deep-research <span class="mode-badge mode-standard">STANDARD+</span></h4>
+                    <p>Web research with HITL gates (NEW)</p>
+                    <div class="triggers"><strong>Triggers:</strong> "research X", "investigate", "deep dive"</div>
+                    <div class="triggers"><strong>Output:</strong> <code>research-output.json</code>, <code>IDEA.md</code></div>
+                </div>
+                <div class="skill-card">
                     <h4>slide-generation <span class="mode-badge" style="background:#f3f0ff;color:#5f3dc4;">EXPLICIT</span></h4>
                     <p>Create presentations</p>
                     <div class="triggers"><strong>Triggers:</strong> "generate slides"</div>
                     <div class="triggers"><strong>Output:</strong> <code>FOCUS.md</code>, slides</div>
+                </div>
+            </div>
+
+            <h3>Meta Skills (STANDARD+)</h3>
+            <div class="skill-grid">
+                <div class="skill-card">
+                    <h4>meta-reasoning <span class="mode-badge mode-standard">STANDARD+</span></h4>
+                    <p>Systematic decision-making with offline RL (NEW)</p>
+                    <div class="triggers"><strong>Triggers:</strong> Complex decisions, model selection</div>
+                    <div class="triggers"><strong>Output:</strong> Recommendation, <code>policy.json</code> update</div>
                 </div>
             </div>
 
@@ -837,6 +917,11 @@
                     <td>Verification gate</td>
                     <td>After every task</td>
                 </tr>
+                <tr>
+                    <td class="file-path">.aria/tests/run-tests.py</td>
+                    <td>Cross-platform test runner (20 tests)</td>
+                    <td>python .aria/tests/run-tests.py</td>
+                </tr>
             </table>
 
             <h3>Framework Files</h3>
@@ -956,6 +1041,88 @@
             </table>
 
             <p style="margin-top: 16px;"><strong>Rule:</strong> If ANY factor is X-LARGE → X-LARGE mode. Highest factor wins.</p>
+        </div>
+
+        <!-- LEARNING TAB -->
+        <div id="learning" class="tab-content">
+            <h2>Offline Reinforcement Learning (NEW)</h2>
+
+            <h3>Learning Pipeline</h3>
+            <div class="flow">
+                <div class="flow-step">Session Ends</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step file">signals.jsonl</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step skill">offline-learner.py</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step file">policy.json</div>
+            </div>
+            <div class="flow">
+                <div class="flow-step file">decisions.jsonl</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step skill">offline-learner.py</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step file">priors/*.json</div>
+            </div>
+
+            <h3>What Gets Learned</h3>
+            <table class="file-table">
+                <tr><th>Decision Point</th><th>Data Source</th><th>Learning Method</th></tr>
+                <tr><td>Model selection</td><td>model_learning.json</td><td>Beta-Bernoulli updates</td></tr>
+                <tr><td>Strategy selection</td><td>decisions.jsonl</td><td>Success/failure tracking</td></tr>
+                <tr><td>Confidence calibration</td><td>decisions.jsonl</td><td>Bias correction</td></tr>
+                <tr><td>Dead-end detection</td><td>signals.jsonl</td><td>Pattern recognition</td></tr>
+            </table>
+
+            <h3>Meta-Reasoning Flow</h3>
+            <div class="flow">
+                <div class="flow-step">Task Input</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step skill">meta_reason()</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step">Solution Space</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step decision">?</div>
+            </div>
+            <div class="branch">
+                <div class="branch-label">Confidence check</div>
+                <div class="flow">
+                    <div class="flow-step">High confidence</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step skill">Thompson Sampling</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step">Model recommendation</div>
+                </div>
+                <div class="flow">
+                    <div class="flow-step">Low confidence</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step hitl">HITL</div>
+                    <span class="flow-arrow">→</span>
+                    <div class="flow-step">User decides</div>
+                </div>
+            </div>
+
+            <h3>Learning Files</h3>
+            <table class="file-table">
+                <tr><th>Path</th><th>Purpose</th><th>Updated</th></tr>
+                <tr><td class="file-path">.aria/learned/policy.json</td><td>Current learned policy</td><td>After learning</td></tr>
+                <tr><td class="file-path">.aria/learned/priors/model-selection.json</td><td>Beta priors for model × context</td><td>After learning</td></tr>
+                <tr><td class="file-path">.aria/learned/priors/strategy-selection.json</td><td>Beta priors for strategy × context</td><td>After learning</td></tr>
+                <tr><td class="file-path">.aria/learned/history/episodes.jsonl</td><td>Historical (state, action, reward) tuples</td><td>Append-only</td></tr>
+                <tr><td class="file-path">.aria/logs/model_learning.json</td><td>Model performance tracking</td><td>Each session</td></tr>
+            </table>
+
+            <h3>Commands</h3>
+            <table class="file-table">
+                <tr><th>Command</th><th>Action</th></tr>
+                <tr><td><code>python .aria/lib/offline-learner.py learn</code></td><td>Run learning pipeline</td></tr>
+                <tr><td><code>python .aria/lib/offline-learner.py stats</code></td><td>View learning statistics</td></tr>
+                <tr><td><code>python .aria/lib/offline-learner.py export-policy</code></td><td>Export current policy</td></tr>
+                <tr><td><code>python .aria/lib/offline-learner.py query TYPE COMPLEXITY DOMAIN</code></td><td>Get recommendation</td></tr>
+                <tr><td><code>source .aria/lib/meta-reasoning.sh</code></td><td>Load meta-reasoning functions</td></tr>
+                <tr><td><code>meta_select_model "feature" 6 "api"</code></td><td>Get model recommendation</td></tr>
+                <tr><td><code>meta_reason "task" "type" complexity</code></td><td>Full meta-reasoning cycle</td></tr>
+            </table>
         </div>
     </div>
 

@@ -5,8 +5,11 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARIA_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
-# Source test runner
+# Source test runner (provides to_win_path function)
 source "$(dirname "$SCRIPT_DIR")/test-runner.sh"
+
+# Get Windows-compatible path for Python
+ARIA_DIR_PY="$(to_win_path "$ARIA_DIR")"
 
 # ============================================
 # TESTS: Stack Detection Library
@@ -72,9 +75,9 @@ test_start "generate-tests.py has required functions"
 # Check that the module can be imported and has key functions
 result=$(python -c "
 import sys
-sys.path.insert(0, '$ARIA_DIR/lib')
+sys.path.insert(0, '$ARIA_DIR_PY/lib')
 import importlib.util
-spec = importlib.util.spec_from_file_location('gen', '$ARIA_DIR/lib/generate-tests.py')
+spec = importlib.util.spec_from_file_location('gen', '$ARIA_DIR_PY/lib/generate-tests.py')
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 assert hasattr(mod, 'generate_tests'), 'Missing generate_tests'

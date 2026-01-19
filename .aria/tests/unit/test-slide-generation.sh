@@ -5,8 +5,11 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARIA_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
-# Source test runner
+# Source test runner (provides to_win_path function)
 source "$(dirname "$SCRIPT_DIR")/test-runner.sh"
+
+# Get Windows-compatible path for Python
+ARIA_DIR_PY="$(to_win_path "$ARIA_DIR")"
 
 # ============================================
 # TESTS: Script Exists
@@ -55,9 +58,9 @@ test_end
 test_start "generate-slides.py has generate_nblm function"
 result=$(python -c "
 import sys
-sys.path.insert(0, '$ARIA_DIR/scripts')
+sys.path.insert(0, '$ARIA_DIR_PY/scripts')
 import importlib.util
-spec = importlib.util.spec_from_file_location('slides', '$ARIA_DIR/scripts/generate-slides.py')
+spec = importlib.util.spec_from_file_location('slides', '$ARIA_DIR_PY/scripts/generate-slides.py')
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 assert hasattr(mod, 'generate_nblm'), 'Missing generate_nblm'
@@ -73,9 +76,9 @@ test_end
 test_start "generate-slides.py has generate_pptx function"
 result=$(python -c "
 import sys
-sys.path.insert(0, '$ARIA_DIR/scripts')
+sys.path.insert(0, '$ARIA_DIR_PY/scripts')
 import importlib.util
-spec = importlib.util.spec_from_file_location('slides', '$ARIA_DIR/scripts/generate-slides.py')
+spec = importlib.util.spec_from_file_location('slides', '$ARIA_DIR_PY/scripts/generate-slides.py')
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 assert hasattr(mod, 'generate_pptx'), 'Missing generate_pptx'
@@ -91,9 +94,9 @@ test_end
 test_start "generate-slides.py has parse_focus_doc function"
 result=$(python -c "
 import sys
-sys.path.insert(0, '$ARIA_DIR/scripts')
+sys.path.insert(0, '$ARIA_DIR_PY/scripts')
 import importlib.util
-spec = importlib.util.spec_from_file_location('slides', '$ARIA_DIR/scripts/generate-slides.py')
+spec = importlib.util.spec_from_file_location('slides', '$ARIA_DIR_PY/scripts/generate-slides.py')
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 assert hasattr(mod, 'parse_focus_doc'), 'Missing parse_focus_doc'
@@ -109,9 +112,9 @@ test_end
 test_start "generate-slides.py has extract_title_from_idea function"
 result=$(python -c "
 import sys
-sys.path.insert(0, '$ARIA_DIR/scripts')
+sys.path.insert(0, '$ARIA_DIR_PY/scripts')
 import importlib.util
-spec = importlib.util.spec_from_file_location('slides', '$ARIA_DIR/scripts/generate-slides.py')
+spec = importlib.util.spec_from_file_location('slides', '$ARIA_DIR_PY/scripts/generate-slides.py')
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 assert hasattr(mod, 'extract_title_from_idea'), 'Missing extract_title_from_idea'
@@ -131,9 +134,9 @@ test_end
 test_start "parse_focus_doc extracts core ideas"
 result=$(python -c "
 import sys, tempfile
-sys.path.insert(0, '$ARIA_DIR/scripts')
+sys.path.insert(0, '$ARIA_DIR_PY/scripts')
 import importlib.util
-spec = importlib.util.spec_from_file_location('slides', '$ARIA_DIR/scripts/generate-slides.py')
+spec = importlib.util.spec_from_file_location('slides', '$ARIA_DIR_PY/scripts/generate-slides.py')
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
@@ -177,9 +180,9 @@ test_end
 test_start "extract_title_from_idea extracts title"
 result=$(python -c "
 import sys, tempfile
-sys.path.insert(0, '$ARIA_DIR/scripts')
+sys.path.insert(0, '$ARIA_DIR_PY/scripts')
 import importlib.util
-spec = importlib.util.spec_from_file_location('slides', '$ARIA_DIR/scripts/generate-slides.py')
+spec = importlib.util.spec_from_file_location('slides', '$ARIA_DIR_PY/scripts/generate-slides.py')
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 

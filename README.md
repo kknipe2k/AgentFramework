@@ -85,10 +85,14 @@ This creates `~/aria/eval/SVM` (or `c:\aria\eval\SVM`) with:
 | **Checkpoints** | Rollback to any point |
 | **HITL** | Human help when needed |
 | **Model Selection** | Opus/Sonnet/Haiku based on task |
-| **Learning** | Improves model selection over time |
+| **Meta-Reasoning** | Systematic decision-making with Thompson Sampling |
+| **Offline RL** | Learns from past sessions to improve over time |
+| **Deep Research** | Web research with HITL gates and source quality scoring |
 | **Auto-PR** | Creates PR when feature complete |
-| **Dashboard** | Web UI for decision lineage tracking |
+| **Dashboard** | Web UI with Claude native log integration |
+| **Signal Schema v2** | Full traceability with 8 signal types |
 | **Slide Generation** | Create presentations from research |
+| **Test Suite** | 20 tests (15 unit, 3 integration, 2 validation) |
 
 ## Documentation
 
@@ -96,11 +100,12 @@ This creates `~/aria/eval/SVM` (or `c:\aria\eval\SVM`) with:
 |----------|-------------|
 | **[User Guide](.aria/docs/USER-GUIDE.md)** | Complete usage guide - start here |
 | [Cheatsheet](.aria/docs/CHEATSHEET.md) | Quick reference for all modes/skills |
-| [Skill Registry](.aria/skills/REGISTRY.md) | All 13 skills with triggers |
-| [Observability](.aria/docs/OBSERVABILITY.md) | Decision tracing and dashboard |
+| [Skill Registry](.aria/skills/REGISTRY.md) | All 14 skills with triggers |
+| [Meta-Reasoning](.aria/skills/meta-reasoning.md) | Systematic decision-making with offline RL |
+| [Deep Research](.aria/skills/deep-research.md) | Web research with HITL gates |
+| [Observability](.aria/docs/OBSERVABILITY.md) | Decision tracing, signals, and dashboard |
+| [Signal Schema v2](.aria/docs/SIGNAL-SCHEMA-V2.md) | Full traceability with 8 signal types |
 | [Architecture](.aria/docs/CONCEPT-aria-architecture.md) | System design and components |
-| [Boris Cherny Patterns](.aria/docs/CONCEPT-boris-cherny-patterns.md) | Verification and subagent patterns |
-| [Ralph Autonomous Loop](.aria/docs/CONCEPT-ralph-autonomous-loop.md) | PRD-driven iteration pattern |
 | [Parking Lot](.aria/docs/PARKING-LOT.md) | Future ideas (whisper, metrics) |
 
 ## Commands
@@ -121,9 +126,22 @@ This creates `~/aria/eval/SVM` (or `c:\aria\eval\SVM`) with:
 ./.aria/git-ops.sh rollback checkpoint X    # Rollback
 ./.aria/git-ops.sh pr create                # Create PR
 
-# Model Selection
+# Model Selection & Meta-Reasoning
 ./.aria/model-selector.sh status            # Show budget/usage
 ./.aria/model-selector.sh stats             # Show learning data
+source .aria/lib/meta-reasoning.sh          # Load meta-reasoning functions
+meta_select_model "feature" 6 "api"         # Get model recommendation
+meta_reason "Implement retry logic" "feature" 6  # Full meta-reasoning
+
+# Offline Learning
+python .aria/lib/offline-learner.py learn   # Run learning pipeline
+python .aria/lib/offline-learner.py stats   # View learning statistics
+python .aria/lib/offline-learner.py export-policy  # Export current policy
+
+# Test Suite
+python .aria/tests/run-tests.py             # Run all tests
+python .aria/tests/run-tests.py unit        # Run unit tests only
+python .aria/tests/run-tests.py --offline   # Run offline tests (no API)
 
 # Human-in-the-Loop
 ./.aria/hitl.sh status                      # Show pending requests
@@ -139,7 +157,7 @@ python .aria/scripts/generate-slides.py     # Generate slides from IDEA.md
 
 ## IDE Integration
 
-**Claude Code:** `/aria`, `/aria-verify`, `/aria-start`, `/aria-status`
+**Claude Code:** `/aria`, `/aria-verify`, `/aria-start`, `/aria-status`, `/aria-summary`
 
 **VS Code:** `Cmd+Shift+P` → "Tasks: Run Task" → ARIA tasks
 
@@ -161,14 +179,26 @@ python .aria/scripts/generate-slides.py     # Generate slides from IDEA.md
 ├── hitl.sh                # Human-in-the-loop
 ├── hooks/                 # Git hooks
 ├── rails/                 # YAML rail definitions
+├── lib/                   # Core libraries
+│   ├── meta-reasoning.sh  # Thompson Sampling, model selection
+│   └── offline-learner.py # Offline RL learning pipeline
+├── learned/               # Learning artifacts
+│   ├── policy.json        # Current learned policy
+│   └── priors/            # Beta distribution priors
 ├── scripts/               # Utility scripts
 │   ├── serve-dashboard.py # Decision lineage dashboard
 │   ├── generate-slides.py # Slide generation
 │   ├── setup-project.sh   # Workspace setup (Mac/Linux)
 │   └── setup-project.bat  # Workspace setup (Windows)
-├── skills/                # Skill definitions
+├── skills/                # Skill definitions (14 skills)
 ├── outputs/               # Generated artifacts (slides, etc.)
 ├── dashboard/             # Dashboard web UI
+├── tests/                 # Test suite (20 tests)
+│   ├── run-tests.py       # Cross-platform Python runner
+│   ├── test-runner.sh     # Bash test framework
+│   ├── unit/              # 15 unit tests
+│   ├── integration/       # 3 integration tests
+│   └── validation/        # 2 validation tests
 └── docs/                  # Documentation
 ```
 
@@ -187,8 +217,17 @@ ARIA supports two operational modes:
 
 **Hybrid Quick Start:**
 ```
-/aria-start → Dashboard launches → Select: [b]uild / [m]odify / [r]esearch
+/aria-start → Dashboard launches → Select: [b]uild / [m]odify / [r]esearch / [d]eep-research
 ```
+
+## Four Use Cases
+
+| Use Case | Trigger | Flow |
+|----------|---------|------|
+| **Build** | New project | brainstorm → plan → execute → verify |
+| **Modify** | Existing codebase | discovery → plan → execute → verify |
+| **Research** | Article/paper | researcher → brainstorm → slides? → prototype? |
+| **Deep Research** | Any question | Web search with HITL gates → synthesis → IDEA.md |
 
 See also:
 - [Cheatsheet](.aria/docs/CHEATSHEET.md) - Quick reference

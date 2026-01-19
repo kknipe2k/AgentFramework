@@ -3,11 +3,31 @@
 # Lightweight bash test framework with full traceability
 # Usage: .aria/tests/test-runner.sh [test-file.sh]
 
-# Exit on error, undefined vars, and pipeline failures
-set -euo pipefail
+# When sourced by test files, disable errexit so tests can capture command failures.
+# When run directly, use strict mode for the runner itself.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    # Running directly - use strict mode
+    set -euo pipefail
+else
+    # Being sourced - disable errexit so test commands can fail without exiting
+    set -uo pipefail
+    set +e
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARIA_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Convert Git Bash paths to Windows paths for Python compatibility
+# /c/foo/bar -> C:/foo/bar
+to_win_path() {
+    local path="$1"
+    if [[ "$path" =~ ^/([a-zA-Z])/ ]]; then
+        # Git Bash style path /c/... -> C:/...
+        echo "${BASH_REMATCH[1]^^}:${path:2}"
+    else
+        echo "$path"
+    fi
+}
 
 # Source common.sh for emit_signal (single-writer pattern)
 source "$ARIA_DIR/common.sh" || { echo "Failed to load common.sh"; exit 1; }
@@ -283,8 +303,14 @@ run_test_file() {
 
     _log_test_event "file_start" "$CURRENT_FILE" "running"
 
-    # Source the test file (it will call test functions)
-    if source "$test_file"; then
+    # Disable errexit while sourcing test file - tests should capture and report failures,
+    # not exit on them. Individual assertions handle success/failure tracking.
+    set +e
+    source "$test_file"
+    local source_result=$?
+    set -e
+
+    if [[ $source_result -eq 0 ]]; then
         _log_test_event "file_end" "$CURRENT_FILE" "complete"
     else
         echo -e "${RED}Error sourcing test file: $test_file${NC}"

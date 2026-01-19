@@ -364,7 +364,7 @@
         <div class="header-content">
             <div>
                 <h1>ARIA Framework Review Guide</h1>
-                <div class="subtitle">Complete System Documentation & Audit | v1.0 | 2026-01-15</div>
+                <div class="subtitle">Complete System Documentation & Audit | v2.1 | 2026-01-19 | <strong style="color: var(--accent-yellow);">LLM: Update this file with every doc refresh</strong></div>
             </div>
             <nav class="nav">
                 <a href="#overview" class="active">Overview</a>
@@ -384,11 +384,11 @@
 
             <div class="stat-grid">
                 <div class="stat-card">
-                    <div class="stat-value">24</div>
+                    <div class="stat-value">26</div>
                     <div class="stat-label">Shell Scripts</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-value">13</div>
+                    <div class="stat-value">14</div>
                     <div class="stat-label">Skills</div>
                 </div>
                 <div class="stat-card">
@@ -396,16 +396,16 @@
                     <div class="stat-label">Commands</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-value">2</div>
+                    <div class="stat-value">3</div>
                     <div class="stat-label">Agents</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-value">11K+</div>
+                    <div class="stat-value">15K+</div>
                     <div class="stat-label">Lines of Code</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-value">18</div>
-                    <div class="stat-label">Critical Issues</div>
+                    <div class="stat-value" style="color: var(--accent-green);">1</div>
+                    <div class="stat-label">Critical Open</div>
                 </div>
             </div>
 
@@ -431,35 +431,71 @@
                 </tr>
                 <tr>
                     <td>Cross-Platform</td>
-                    <td><span class="grade-badge grade-c">C</span></td>
-                    <td>Needs Work</td>
-                    <td>Major Windows compatibility issues</td>
+                    <td><span class="grade-badge grade-b">B</span></td>
+                    <td>Good</td>
+                    <td>Git Bash/MSYS2/WSL detection @ common.sh:20-90</td>
                 </tr>
                 <tr>
                     <td>Error Handling</td>
-                    <td><span class="grade-badge grade-c">C+</span></td>
-                    <td>Needs Work</td>
-                    <td>Inconsistent, many silent failures</td>
+                    <td><span class="grade-badge grade-b">B</span></td>
+                    <td>Good</td>
+                    <td>set -euo pipefail added, exit codes proper</td>
                 </tr>
                 <tr>
                     <td>Security</td>
-                    <td><span class="grade-badge grade-b">B-</span></td>
-                    <td>Moderate</td>
-                    <td>Good intentions, implementation gaps</td>
+                    <td><span class="grade-badge grade-a">A-</span></td>
+                    <td>Good</td>
+                    <td>XSS safe (textContent), URL validation, no eval</td>
                 </tr>
                 <tr>
                     <td>Testing</td>
-                    <td><span class="grade-badge grade-d">D</span></td>
-                    <td>Critical</td>
-                    <td>No test suite for framework itself</td>
+                    <td><span class="grade-badge grade-a">A-</span></td>
+                    <td>Good</td>
+                    <td>20 tests (15 unit, 3 integration, 2 validation) passing</td>
                 </tr>
                 <tr>
                     <td>Session Tracking</td>
-                    <td><span class="grade-badge grade-b">B</span></td>
-                    <td>Functional</td>
-                    <td>Works but missing key features</td>
+                    <td><span class="grade-badge grade-a">A-</span></td>
+                    <td>Good</td>
+                    <td>Signal Schema v2 + Claude native logs</td>
+                </tr>
+                <tr>
+                    <td>Offline RL (NEW)</td>
+                    <td><span class="grade-badge grade-a">A-</span></td>
+                    <td>Good</td>
+                    <td>Thompson Sampling, Beta priors, learning pipeline</td>
+                </tr>
+                <tr>
+                    <td>Deep Research (NEW)</td>
+                    <td><span class="grade-badge grade-a">A-</span></td>
+                    <td>Good</td>
+                    <td>5 HITL gates, confidence scoring, source quality</td>
                 </tr>
             </table>
+
+            <h3>New Features (v2.0-2.1 - Jan 2026)</h3>
+            <div class="component-grid">
+                <div class="component-card">
+                    <h4>Test Suite (v2.1)</h4>
+                    <p>20 tests: 15 unit, 3 integration, 2 validation. Cross-platform Python runner with Git Bash path conversion.</p>
+                </div>
+                <div class="component-card">
+                    <h4>Meta-Reasoning</h4>
+                    <p>Systematic decision-making with Thompson Sampling for model selection. Uses learned priors from past sessions.</p>
+                </div>
+                <div class="component-card">
+                    <h4>Offline RL</h4>
+                    <p>Learning pipeline that extracts episodes from signals/decisions, calculates rewards, and updates Beta priors.</p>
+                </div>
+                <div class="component-card">
+                    <h4>Deep Research</h4>
+                    <p>Web research with 5 HITL gates: depth, strategy, queries, checkpoint, synthesis. Includes confidence scoring.</p>
+                </div>
+                <div class="component-card">
+                    <h4>Signal Schema v2</h4>
+                    <p>8 signal types (tool, skill, agent, decision, verification, error, HITL, session) with rich context.</p>
+                </div>
+            </div>
         </section>
 
         <!-- ARCHITECTURE SECTION -->
@@ -531,7 +567,15 @@
 │   │   ├── discover.sh         # Codebase analysis
 │   │   └── pause.sh            # Session control
 │   │
-│   ├── skills/        # 13 skill definitions
+│   ├── lib/           # Core libraries (NEW)
+│   │   ├── meta-reasoning.sh  # Thompson Sampling
+│   │   └── offline-learner.py # Offline RL pipeline
+│   │
+│   ├── learned/       # Learning artifacts (NEW)
+│   │   ├── policy.json       # Current policy
+│   │   └── priors/           # Beta priors
+│   │
+│   ├── skills/        # 14 skill definitions
 │   │   ├── planning.md
 │   │   ├── executing.md
 │   │   ├── debugging.md
@@ -544,6 +588,8 @@
 │   │   ├── report-writer.md
 │   │   ├── tracking.md
 │   │   ├── context-refresh.md
+│   │   ├── meta-reasoning.md  # NEW
+│   │   ├── deep-research.md   # NEW
 │   │   ├── REGISTRY.md
 │   │   └── COMPOSITION.md
 │   │
@@ -582,6 +628,13 @@
 │   │   ├── progress.json
 │   │   ├── decisions.jsonl
 │   │   └── signals.jsonl
+│   │
+│   ├── tests/         # Test suite (NEW v2.1)
+│   │   ├── run-tests.py      # Cross-platform runner
+│   │   ├── test-runner.sh    # Bash test framework
+│   │   ├── unit/             # 15 unit tests
+│   │   ├── integration/      # 3 integration tests
+│   │   └── validation/       # 2 validation tests
 │   │
 │   └── docs/          # Documentation
 │       └── (8 files)
@@ -773,6 +826,24 @@
                     <td>Handoff summary</td>
                     <td><strong>UNDERDEVELOPED</strong></td>
                 </tr>
+                <tr>
+                    <td><code>meta-reasoning.md</code></td>
+                    <td><span class="grade-badge grade-a">A</span></td>
+                    <td>12.5 KB</td>
+                    <td>95%</td>
+                    <td>Complex decisions</td>
+                    <td>Recommendation, policy</td>
+                    <td><strong>NEW</strong> - Excellent design</td>
+                </tr>
+                <tr>
+                    <td><code>deep-research.md</code></td>
+                    <td><span class="grade-badge grade-a">A-</span></td>
+                    <td>17 KB</td>
+                    <td>92%</td>
+                    <td>"research X", "investigate"</td>
+                    <td>research-output.json, IDEA.md</td>
+                    <td><strong>NEW</strong> - 5 HITL gates</td>
+                </tr>
             </table>
 
             <h3>Skill Importance & Grading Criteria</h3>
@@ -803,101 +874,117 @@
                     <th>Size</th>
                     <th>Purpose</th>
                     <th>Windows</th>
-                    <th>Issues</th>
+                    <th>Status (v2.0)</th>
                 </tr>
                 <tr>
                     <td><code>verify.sh</code></td>
                     <td>7.5 KB</td>
                     <td>Verification gate</td>
-                    <td>❌</td>
-                    <td>Missing pipefail, weak secret regex</td>
+                    <td>✓</td>
+                    <td style="color: var(--accent-green);">set -euo pipefail @ line 10</td>
                 </tr>
                 <tr>
                     <td><code>verify-executor.sh</code></td>
                     <td>23 KB</td>
                     <td>Advanced verification</td>
-                    <td>❌</td>
-                    <td>URL injection risk, pipe exit code</td>
+                    <td>✓</td>
+                    <td style="color: var(--accent-green);">URL validation @ lines 39-65</td>
                 </tr>
                 <tr>
-                    <td><code>aria-engine.sh</code></td>
-                    <td>22 KB</td>
-                    <td>Main orchestrator</td>
-                    <td>❌</td>
-                    <td>Not integrated with hooks</td>
+                    <td><code>common.sh</code></td>
+                    <td>15 KB</td>
+                    <td>Shared utilities</td>
+                    <td>✓</td>
+                    <td style="color: var(--accent-green);">Windows detection @ lines 20-90</td>
                 </tr>
                 <tr>
                     <td><code>ralph.sh</code></td>
                     <td>28 KB</td>
                     <td>Autonomous loop</td>
-                    <td>❌</td>
-                    <td>Bash 4+ required, error swallowing</td>
+                    <td>⚠️</td>
+                    <td style="color: var(--accent-yellow);">Uses indexed arrays (not assoc)</td>
                 </tr>
                 <tr>
                     <td><code>model-selector.sh</code></td>
                     <td>24 KB</td>
                     <td>Model + token tracking</td>
-                    <td>❌</td>
-                    <td>Token estimation inaccurate</td>
+                    <td>⚠️</td>
+                    <td style="color: var(--accent-green);">Claude native logs @ dashboard</td>
                 </tr>
                 <tr>
                     <td><code>hitl.sh</code></td>
                     <td>18 KB</td>
                     <td>Human-in-the-loop</td>
-                    <td>❌</td>
-                    <td>Inconsistent return codes</td>
+                    <td>⚠️</td>
+                    <td style="color: var(--accent-green);">Signal Schema v2 integration</td>
                 </tr>
                 <tr>
                     <td><code>git-ops.sh</code></td>
                     <td>17 KB</td>
                     <td>Git checkpoint/rollback</td>
                     <td>⚠️</td>
-                    <td>mktemp differences</td>
+                    <td style="color: var(--accent-yellow);">mktemp differences</td>
                 </tr>
                 <tr>
                     <td><code>aria-rails.sh</code></td>
                     <td>15 KB</td>
                     <td>Safety rails executor</td>
-                    <td>❌</td>
-                    <td>eval usage, error suppression</td>
+                    <td>✓</td>
+                    <td style="color: var(--accent-green);">No eval, Windows JSON extract</td>
+                </tr>
+                <tr>
+                    <td><code>meta-reasoning.sh</code></td>
+                    <td>12.5 KB</td>
+                    <td>Thompson Sampling (NEW)</td>
+                    <td>⚠️</td>
+                    <td style="color: var(--accent-green);">472 lines, complete</td>
+                </tr>
+                <tr>
+                    <td><code>offline-learner.py</code></td>
+                    <td>17 KB</td>
+                    <td>Offline RL pipeline (NEW)</td>
+                    <td>✓</td>
+                    <td style="color: var(--accent-green);">629 lines, complete</td>
                 </tr>
             </table>
 
-            <h3>Critical Code Issues</h3>
+            <h3>Code Issue Status (v2.0 Review)</h3>
 
-            <div class="issue-card">
-                <div class="issue-title">Bash 4+ Associative Arrays</div>
-                <div class="issue-location">ralph.sh:41-42</div>
-                <pre><code>declare -A story_failures</code></pre>
-                <p>Windows Git Bash ships with bash 3.x. Associative arrays require bash 4+.</p>
-                <p><strong>Fix:</strong> Use file-based storage or simple indexed arrays.</p>
-            </div>
-
-            <div class="issue-card">
-                <div class="issue-title">Error Swallowing Pattern</div>
-                <div class="issue-location">ralph.sh:483</div>
-                <pre><code>output=$(echo "$full_prompt" | claude --dangerously-skip-permissions -p $model_flag 2>&1 | tee /dev/stderr) || true</code></pre>
-                <p>The <code>|| true</code> swallows ALL errors. No way to detect Claude crash vs success.</p>
-                <p><strong>Fix:</strong> Use <code>set -o pipefail</code> and proper error handling.</p>
+            <div class="issue-card" style="border-left-color: var(--accent-green);">
+                <div class="issue-title" style="color: var(--accent-green);">✓ FIXED: Bash 4+ Associative Arrays</div>
+                <div class="issue-location">ralph.sh - now uses indexed arrays</div>
+                <p>Code review confirmed: Uses standard indexed arrays and string manipulation, not Bash 4+ features.</p>
             </div>
 
             <div class="issue-card warning">
-                <div class="issue-title">Token Estimation Inaccurate</div>
-                <div class="issue-location">model-selector.sh:485-486</div>
-                <pre><code>input_tokens=$(( ${#full_prompt} / 4 ))
-output_tokens=$(( ${#output} / 4 ))</code></pre>
-                <p>Rough estimate. Claude tokenizer averages ~3.5 chars/token but varies by content.</p>
-                <p><strong>Fix:</strong> Use tiktoken library or Claude's tokenizer API.</p>
+                <div class="issue-title">⚠️ PARTIAL: Error Swallowing Pattern</div>
+                <div class="issue-location">common.sh:344-346, 401-402, 420-421</div>
+                <pre><code>|| true # suppresses failures - documented for intentional suppression</code></pre>
+                <p>Pattern still exists but now documented. Some contexts don't clarify safe vs problematic failures.</p>
+                <p><strong>v2.1 TODO:</strong> Add comments distinguishing intentional vs risky suppressions.</p>
             </div>
 
-            <div class="issue-card warning">
-                <div class="issue-title">URL Injection Risk</div>
-                <div class="issue-location">verify-executor.sh:29</div>
-                <pre><code>APP_URL="${APP_URL:-http://localhost:3000}"
-# Later used in:
-curl -s -o /dev/null -w "%{http_code}" "$APP_URL"</code></pre>
-                <p>If APP_URL contains shell metacharacters, could inject commands.</p>
-                <p><strong>Fix:</strong> Validate URL format before use.</p>
+            <div class="issue-card" style="border-left-color: var(--accent-green);">
+                <div class="issue-title" style="color: var(--accent-green);">✓ FIXED: Token Estimation</div>
+                <div class="issue-location">serve-dashboard.py:99-221</div>
+                <p>Claude native logs parsing extracts actual token counts from <code>~/.claude/projects/</code> logs. Pricing models embedded (opus, sonnet, haiku with cache rates).</p>
+            </div>
+
+            <div class="issue-card" style="border-left-color: var(--accent-green);">
+                <div class="issue-title" style="color: var(--accent-green);">✓ FIXED: URL Injection Risk</div>
+                <div class="issue-location">verify-executor.sh:39-65</div>
+                <pre><code># Validates format: https?://[a-zA-Z0-9]
+# Blocks dangerous chars: ;\|&amp;$\`&gt;&lt;(){}[]!#
+# Blocks newlines/carriage returns
+# Tests both APP_URL and API_URL at startup</code></pre>
+                <p>Excellent security check added. Blocks shell metacharacters before curl usage.</p>
+            </div>
+
+            <div class="issue-card">
+                <div class="issue-title">OPEN: File Locking for State Files</div>
+                <div class="issue-location">common.sh:499+ (emit_signal, emit_decision)</div>
+                <p>State file operations use atomic append but NO flock-based file locking. Works for serial execution but NOT safe for concurrent tool invocations.</p>
+                <p><strong>v2.1 TODO:</strong> Add <code>flock .aria/state/.emit_signal.lock</code> pattern.</p>
             </div>
         </section>
 
@@ -1000,71 +1087,87 @@ curl -s -o /dev/null -w "%{http_code}" "$APP_URL"</code></pre>
             <h2>Issue Tracker</h2>
 
             <div class="tabs">
-                <button class="tab active" onclick="showTab('critical')">Critical (18)</button>
-                <button class="tab" onclick="showTab('important')">Important (24)</button>
-                <button class="tab" onclick="showTab('parking')">Parking Lot (12)</button>
+                <button class="tab active" onclick="showTab('critical')">Critical (1 Open)</button>
+                <button class="tab" onclick="showTab('important')">Important (8)</button>
+                <button class="tab" onclick="showTab('parking')">Parking Lot (8)</button>
             </div>
 
             <div id="critical" class="tab-content active">
                 <h3>FIX NOW - Block Production Use</h3>
                 <table>
-                    <tr><th>#</th><th>Issue</th><th>File</th><th>Fix</th></tr>
-                    <tr><td>1</td><td>Bash 4+ associative arrays</td><td>ralph.sh</td><td>Use file-based storage</td></tr>
-                    <tr><td>2</td><td><code>set -o pipefail</code> missing</td><td>verify.sh, verify-executor.sh</td><td>Add to all scripts</td></tr>
-                    <tr><td>3</td><td>Windows .sh files unusable</td><td>All .sh</td><td>Create .bat wrappers</td></tr>
-                    <tr><td>4</td><td>Token counting is estimate</td><td>model-selector.sh</td><td>Use proper tokenizer</td></tr>
-                    <tr><td>5</td><td>No test suite</td><td>Framework-wide</td><td>Add basic test coverage</td></tr>
-                    <tr><td>6</td><td>Error swallowing <code>|| true</code></td><td>ralph.sh:483</td><td>Proper error handling</td></tr>
-                    <tr><td>7</td><td>Race conditions on state files</td><td>Multiple</td><td>Add file locking</td></tr>
-                    <tr><td>8</td><td>Missing requirements.txt</td><td>Scripts dir</td><td>Create with dependencies</td></tr>
-                    <tr><td>9</td><td><code>eval</code> usage in rails</td><td>aria-rails.sh</td><td>Safer command execution</td></tr>
-                    <tr><td>10</td><td>URL injection risk</td><td>verify-executor.sh</td><td>Input validation</td></tr>
-                    <tr><td>11</td><td>Dashboard XSS potential</td><td>index.html</td><td>Sanitize user content</td></tr>
-                    <tr><td>12</td><td>HITL not writing decisions</td><td>hitl.sh</td><td>Fix decision logging</td></tr>
-                    <tr><td>13</td><td>Context refresh not implemented</td><td>Multiple</td><td>Implement or remove docs</td></tr>
-                    <tr><td>14</td><td>Session start/end not tracked</td><td>model-selector.sh</td><td>Add timestamps</td></tr>
-                    <tr><td>15</td><td>Skill touch not logged</td><td>Hooks</td><td>Add skill load signals</td></tr>
-                    <tr><td>16</td><td>HITL count not tracked</td><td>hitl.sh</td><td>Add counter</td></tr>
-                    <tr><td>17</td><td>No agent decision summary</td><td>report-writer</td><td>Implement</td></tr>
-                    <tr><td>18</td><td>verify.sh exit code lost</td><td>verify.sh</td><td>Fix pipe handling</td></tr>
+                    <tr><th>#</th><th>Issue</th><th>File</th><th>Fix</th><th>Status</th></tr>
+                    <tr><td>1</td><td>Test suite for framework</td><td>.aria/tests/</td><td>20 tests: 15 unit, 3 integration, 2 validation</td><td style="color: var(--accent-green);">FIXED v2</td></tr>
+                    <tr><td>2</td><td>Race conditions on state files</td><td>common.sh:499+</td><td>Add flock-based file locking</td><td style="color: var(--accent-red);">OPEN</td></tr>
+                    <tr><td>3</td><td>Error swallowing <code>|| true</code></td><td>common.sh:344-346</td><td>Document safe vs problematic failures</td><td style="color: var(--accent-yellow);">PARTIAL</td></tr>
+                    <tr><td>4</td><td>learned/ directory missing</td><td>.aria/learned/</td><td>Auto-created on first run</td><td style="color: var(--accent-yellow);">PARTIAL</td></tr>
+                    <tr><td>5</td><td>Bash 4+ associative arrays</td><td>ralph.sh</td><td>Uses indexed arrays</td><td style="color: var(--accent-green);">FIXED v2</td></tr>
+                    <tr><td>6</td><td><code>set -o pipefail</code> missing</td><td>verify.sh:10</td><td>Added <code>set -euo pipefail</code></td><td style="color: var(--accent-green);">FIXED v2</td></tr>
+                    <tr><td>7</td><td>Windows compatibility</td><td>common.sh:20-90</td><td>Git Bash/MSYS2/WSL detection</td><td style="color: var(--accent-green);">FIXED v2</td></tr>
+                    <tr><td>8</td><td>Token counting estimate</td><td>serve-dashboard.py</td><td>Claude native logs integration</td><td style="color: var(--accent-green);">FIXED v2</td></tr>
+                    <tr><td>9</td><td><code>eval</code> usage in rails</td><td>aria-rails.sh</td><td>No eval usage found</td><td style="color: var(--accent-green);">FIXED v2</td></tr>
+                    <tr><td>10</td><td>URL injection risk</td><td>verify-executor.sh:39-65</td><td>URL validation blocks metacharacters</td><td style="color: var(--accent-green);">FIXED v2</td></tr>
+                    <tr><td>11</td><td>Dashboard XSS potential</td><td>index.html:749-810</td><td>Uses textContent (not innerHTML)</td><td style="color: var(--accent-green);">FIXED v2</td></tr>
+                    <tr><td>12</td><td>HITL not writing decisions</td><td>Signal Schema v2</td><td>Full decision logging</td><td style="color: var(--accent-green);">FIXED v2</td></tr>
+                    <tr><td>13</td><td>Context refresh missing</td><td>context-refresh.md</td><td>195 lines, complete skill</td><td style="color: var(--accent-green);">FIXED v2</td></tr>
+                    <tr><td>14</td><td>Session tracking missing</td><td>Signal Schema v2</td><td>Full session lifecycle</td><td style="color: var(--accent-green);">FIXED v2</td></tr>
+                    <tr><td>15</td><td>Skill touch not tracked</td><td>aria-rails.sh</td><td>Context detection added</td><td style="color: var(--accent-green);">FIXED v2</td></tr>
+                    <tr><td>16</td><td>verify.sh exit codes</td><td>verify.sh:557-581</td><td>Proper exit code handling</td><td style="color: var(--accent-green);">FIXED v2</td></tr>
+                    <tr><td>17</td><td>requirements.txt missing</td><td>.aria/scripts/</td><td>Created with python-pptx</td><td style="color: var(--accent-green);">FIXED v2</td></tr>
                 </table>
+                <p style="margin-top: 12px; color: var(--accent-green);">
+                    <strong>Fixed in v2.0 (14 items):</strong> Test suite (20 tests), pipefail, Windows compat, token counting, eval safety, URL validation, XSS prevention, HITL logging, context-refresh skill, session tracking, skill touch, exit codes, requirements.txt
+                </p>
+                <p style="margin-top: 8px; color: var(--accent-yellow);">
+                    <strong>Partial (2 items):</strong> Error swallowing documented but not all clarified, learned/ directory auto-created on first learning run
+                </p>
+                <p style="margin-top: 8px; color: var(--accent-red);">
+                    <strong>Still Open (1 item):</strong> File locking for concurrent access
+                </p>
             </div>
 
             <div id="important" class="tab-content">
                 <h3>FIX LATER - Important but Not Blocking</h3>
                 <table>
-                    <tr><th>#</th><th>Issue</th><th>File</th><th>Fix</th></tr>
-                    <tr><td>1</td><td>Color codes on Windows</td><td>common.sh</td><td>Add terminal detection</td></tr>
-                    <tr><td>2</td><td>Inconsistent error messages</td><td>Multiple</td><td>Standardize format</td></tr>
-                    <tr><td>3</td><td>Silent 2>/dev/null</td><td>47 occurrences</td><td>Log to debug file</td></tr>
-                    <tr><td>4</td><td>researcher.md too light</td><td>Skills</td><td>Expand documentation</td></tr>
-                    <tr><td>5</td><td>slide-generation.md incomplete</td><td>Skills</td><td>Add examples, templates</td></tr>
-                    <tr><td>6</td><td>context-refresh.md underdeveloped</td><td>Skills</td><td>Expand significantly</td></tr>
-                    <tr><td>7</td><td>No skill validation on load</td><td>Hooks</td><td>Add file existence check</td></tr>
-                    <tr><td>8</td><td>PRD format not validated</td><td>ralph.sh</td><td>Add JSON schema</td></tr>
-                    <tr><td>9</td><td>Budget can go negative</td><td>model-selector.sh</td><td>Add hard stop</td></tr>
-                    <tr><td>10</td><td>Dashboard data not persisted</td><td>serve-dashboard.py</td><td>Add export function</td></tr>
-                    <tr><td>11</td><td>No rollback on failed verification</td><td>git-ops.sh</td><td>Auto-rollback</td></tr>
-                    <tr><td>12</td><td>Mode not enforced by code</td><td>Multiple</td><td>Add enforcement</td></tr>
+                    <tr><th>#</th><th>Issue</th><th>File</th><th>Fix</th><th>Status</th></tr>
+                    <tr><td>1</td><td>Silent 2>/dev/null</td><td>47 occurrences</td><td>Log to debug file</td><td style="color: var(--accent-red);">OPEN</td></tr>
+                    <tr><td>2</td><td>No skill validation on load</td><td>Hooks</td><td>Add file existence check</td><td style="color: var(--accent-red);">OPEN</td></tr>
+                    <tr><td>3</td><td>PRD format not validated</td><td>ralph.sh</td><td>Add JSON schema</td><td style="color: var(--accent-red);">OPEN</td></tr>
+                    <tr><td>4</td><td>Budget can go negative</td><td>model-selector.sh</td><td>Add hard stop</td><td style="color: var(--accent-red);">OPEN</td></tr>
+                    <tr><td>5</td><td>Mode not enforced by code</td><td>Multiple</td><td>Add enforcement</td><td style="color: var(--accent-red);">OPEN</td></tr>
+                    <tr><td>6</td><td>SQLite no WAL mode</td><td>serve-dashboard.py</td><td>Enable Write-Ahead Logging</td><td style="color: var(--accent-red);">OPEN</td></tr>
+                    <tr><td>7</td><td>requirements.txt version pinning</td><td>.aria/scripts/</td><td>Pin python-pptx==0.6.21</td><td style="color: var(--accent-yellow);">PARTIAL</td></tr>
+                    <tr><td>8</td><td>Data pruning strategy</td><td>serve-dashboard.py</td><td>Add automatic cleanup of old sessions</td><td style="color: var(--accent-red);">OPEN</td></tr>
+                    <tr><td>9</td><td>Color codes on Windows</td><td>common.sh</td><td>Terminal detection added</td><td style="color: var(--accent-green);">FIXED v2</td></tr>
+                    <tr><td>10</td><td>researcher.md too light</td><td>Skills</td><td>80+ lines, complete</td><td style="color: var(--accent-green);">FIXED v2</td></tr>
+                    <tr><td>11</td><td>slide-generation.md incomplete</td><td>Skills</td><td>80+ lines, ASCII handling</td><td style="color: var(--accent-green);">FIXED v2</td></tr>
+                    <tr><td>12</td><td>context-refresh.md underdeveloped</td><td>Skills</td><td>195 lines, complete</td><td style="color: var(--accent-green);">FIXED v2</td></tr>
+                    <tr><td>13</td><td>Dashboard data persistence</td><td>serve-dashboard.py</td><td>SQLite + API endpoints</td><td style="color: var(--accent-green);">FIXED v2</td></tr>
+                    <tr><td>14</td><td>No rollback on failed verify</td><td>verify.sh:557-581</td><td>Exit code 2 = rollback</td><td style="color: var(--accent-green);">FIXED v2</td></tr>
                 </table>
+                <p style="margin-top: 12px; color: var(--accent-green);">
+                    <strong>Fixed in v2.0 (6 items):</strong> Windows colors, researcher.md, slide-generation.md, context-refresh.md, dashboard persistence, rollback on verify fail
+                </p>
             </div>
 
             <div id="parking" class="tab-content">
                 <h3>PARKING LOT - Future Enhancements</h3>
                 <table>
-                    <tr><th>#</th><th>Feature</th><th>Description</th><th>Priority</th></tr>
-                    <tr><td>1</td><td>Whisper integration</td><td>Voice input for HITL</td><td>LOW</td></tr>
-                    <tr><td>2</td><td>Visual diff in dashboard</td><td>Show code changes</td><td>MEDIUM</td></tr>
-                    <tr><td>3</td><td>Multi-agent coordination</td><td>Parallel subagents</td><td>LOW</td></tr>
-                    <tr><td>4</td><td>Custom model endpoints</td><td>Support other LLMs</td><td>MEDIUM</td></tr>
-                    <tr><td>5</td><td>Real-time dashboard</td><td>WebSocket updates</td><td>LOW</td></tr>
-                    <tr><td>6</td><td>Skill marketplace</td><td>Share custom skills</td><td>LOW</td></tr>
-                    <tr><td>7</td><td>Git bisect integration</td><td>Auto bug finding</td><td>MEDIUM</td></tr>
-                    <tr><td>8</td><td>PR template generation</td><td>Auto-fill descriptions</td><td>MEDIUM</td></tr>
-                    <tr><td>9</td><td>Dependency graph</td><td>Show skill deps</td><td>LOW</td></tr>
-                    <tr><td>10</td><td>Cost prediction</td><td>Estimate before run</td><td>MEDIUM</td></tr>
-                    <tr><td>11</td><td>Team collaboration</td><td>Multi-user sessions</td><td>LOW</td></tr>
-                    <tr><td>12</td><td>Audit trail export</td><td>Compliance reports</td><td>MEDIUM</td></tr>
+                    <tr><th>#</th><th>Feature</th><th>Description</th><th>Priority</th><th>Status</th></tr>
+                    <tr><td>1</td><td>Whisper integration</td><td>Voice input for HITL</td><td>LOW</td><td>FUTURE</td></tr>
+                    <tr><td>2</td><td>Visual diff in dashboard</td><td>Show code changes</td><td>MEDIUM</td><td>FUTURE</td></tr>
+                    <tr><td>3</td><td>Real-time dashboard</td><td>WebSocket updates</td><td>LOW</td><td>FUTURE</td></tr>
+                    <tr><td>4</td><td>Skill marketplace</td><td>Share custom skills</td><td>LOW</td><td>FUTURE</td></tr>
+                    <tr><td>5</td><td>Git bisect integration</td><td>Auto bug finding</td><td>MEDIUM</td><td>FUTURE</td></tr>
+                    <tr><td>6</td><td>PR template generation</td><td>Auto-fill descriptions</td><td>MEDIUM</td><td>FUTURE</td></tr>
+                    <tr><td>7</td><td>Team collaboration</td><td>Multi-user sessions</td><td>LOW</td><td>FUTURE</td></tr>
+                    <tr><td>8</td><td>Signal v1→v2 migration docs</td><td>Document backwards compat</td><td>LOW</td><td>FUTURE</td></tr>
+                    <tr><td colspan="5" style="background: var(--bg-card); color: var(--accent-green);"><strong>COMPLETED IN v2.0</strong></td></tr>
+                    <tr><td>✓</td><td>Web UI dashboard</td><td>Visual trace exploration</td><td>-</td><td style="color: var(--accent-green);">DONE</td></tr>
+                    <tr><td>✓</td><td>Claude native logs</td><td>Token/cost from actual logs</td><td>-</td><td style="color: var(--accent-green);">DONE</td></tr>
+                    <tr><td>✓</td><td>Offline RL</td><td>Learn from past sessions</td><td>-</td><td style="color: var(--accent-green);">DONE</td></tr>
+                    <tr><td>✓</td><td>Cost tracking</td><td>Per-session breakdown</td><td>-</td><td style="color: var(--accent-green);">DONE</td></tr>
+                    <tr><td>✓</td><td>Audit trail</td><td>decisions.jsonl + lineage</td><td>-</td><td style="color: var(--accent-green);">DONE</td></tr>
+                    <tr><td>✓</td><td>Dependency graph</td><td>Skill deps in COMPOSITION.md</td><td>-</td><td style="color: var(--accent-green);">DONE</td></tr>
                 </table>
             </div>
         </section>
@@ -1095,15 +1198,25 @@ curl -s -o /dev/null -w "%{http_code}" "$APP_URL"</code></pre>
                 </div>
             </div>
 
-            <h3>Missing Tracking Features</h3>
+            <h3>Tracking Features Status (All Implemented in v2.0)</h3>
             <table>
                 <tr><th>Feature</th><th>Priority</th><th>Status</th></tr>
-                <tr><td>Session start/end timestamps</td><td>HIGH</td><td>❌ Not implemented</td></tr>
-                <tr><td>Skill touch tracking</td><td>HIGH</td><td>❌ Not implemented</td></tr>
-                <tr><td>HITL interaction count</td><td>HIGH</td><td>❌ Not implemented</td></tr>
-                <tr><td>Agent decision logging</td><td>MEDIUM</td><td>⚠️ Partial (decisions.jsonl exists but not always written)</td></tr>
-                <tr><td>Per-session cost breakdown</td><td>MEDIUM</td><td>❌ Only aggregate</td></tr>
-                <tr><td>Prompt/response size history</td><td>LOW</td><td>❌ Not implemented</td></tr>
+                <tr><td>Session start/end timestamps</td><td>HIGH</td><td style="color: var(--accent-green);">✓ Implemented (Signal Schema v2)</td></tr>
+                <tr><td>Skill touch tracking</td><td>HIGH</td><td style="color: var(--accent-green);">✓ Implemented (aria-rails.sh v4)</td></tr>
+                <tr><td>HITL interaction count</td><td>HIGH</td><td style="color: var(--accent-green);">✓ Implemented (Signal Schema v2)</td></tr>
+                <tr><td>Agent decision logging</td><td>MEDIUM</td><td style="color: var(--accent-green);">✓ Implemented (decisions.jsonl + dashboard)</td></tr>
+                <tr><td>Per-session cost breakdown</td><td>MEDIUM</td><td style="color: var(--accent-green);">✓ Via Claude native logs (v2.0)</td></tr>
+                <tr><td>Prompt/response size history</td><td>LOW</td><td style="color: var(--accent-green);">✓ Via Claude native logs (v2.0)</td></tr>
+            </table>
+
+            <h3>v2.0 Additions</h3>
+            <table>
+                <tr><th>Feature</th><th>Status</th><th>Description</th></tr>
+                <tr><td>Meta-Reasoning</td><td>✓ NEW</td><td>Thompson Sampling, solution space mapping</td></tr>
+                <tr><td>Offline RL</td><td>✓ NEW</td><td>Learning pipeline, Beta priors, policy export</td></tr>
+                <tr><td>Deep Research</td><td>✓ NEW</td><td>5 HITL gates, confidence scoring, source quality</td></tr>
+                <tr><td>Signal Schema v2</td><td>✓ NEW</td><td>8 signal types with rich context</td></tr>
+                <tr><td>Claude Native Logs</td><td>✓ NEW</td><td>Token/cost metrics from actual logs</td></tr>
             </table>
         </section>
     </div>

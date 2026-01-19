@@ -5,8 +5,11 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARIA_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
-# Source test runner
+# Source test runner (provides to_win_path function)
 source "$(dirname "$SCRIPT_DIR")/test-runner.sh"
+
+# Get Windows-compatible path for Python
+ARIA_DIR_PY="$(to_win_path "$ARIA_DIR")"
 
 # ============================================
 # TESTS: Dashboard Script Exists
@@ -31,9 +34,9 @@ test_end
 test_start "serve-dashboard.py has init_db function"
 result=$(python -c "
 import sys
-sys.path.insert(0, '$ARIA_DIR/scripts')
+sys.path.insert(0, '$ARIA_DIR_PY/scripts')
 import importlib.util
-spec = importlib.util.spec_from_file_location('dashboard', '$ARIA_DIR/scripts/serve-dashboard.py')
+spec = importlib.util.spec_from_file_location('dashboard', '$ARIA_DIR_PY/scripts/serve-dashboard.py')
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 assert hasattr(mod, 'init_db'), 'Missing init_db'
@@ -49,9 +52,9 @@ test_end
 test_start "serve-dashboard.py has get_session_summary function"
 result=$(python -c "
 import sys
-sys.path.insert(0, '$ARIA_DIR/scripts')
+sys.path.insert(0, '$ARIA_DIR_PY/scripts')
 import importlib.util
-spec = importlib.util.spec_from_file_location('dashboard', '$ARIA_DIR/scripts/serve-dashboard.py')
+spec = importlib.util.spec_from_file_location('dashboard', '$ARIA_DIR_PY/scripts/serve-dashboard.py')
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 assert hasattr(mod, 'get_session_summary'), 'Missing get_session_summary'
@@ -67,9 +70,9 @@ test_end
 test_start "serve-dashboard.py has get_lineage function"
 result=$(python -c "
 import sys
-sys.path.insert(0, '$ARIA_DIR/scripts')
+sys.path.insert(0, '$ARIA_DIR_PY/scripts')
 import importlib.util
-spec = importlib.util.spec_from_file_location('dashboard', '$ARIA_DIR/scripts/serve-dashboard.py')
+spec = importlib.util.spec_from_file_location('dashboard', '$ARIA_DIR_PY/scripts/serve-dashboard.py')
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 assert hasattr(mod, 'get_lineage'), 'Missing get_lineage'
@@ -85,9 +88,9 @@ test_end
 test_start "serve-dashboard.py has get_metrics function"
 result=$(python -c "
 import sys
-sys.path.insert(0, '$ARIA_DIR/scripts')
+sys.path.insert(0, '$ARIA_DIR_PY/scripts')
 import importlib.util
-spec = importlib.util.spec_from_file_location('dashboard', '$ARIA_DIR/scripts/serve-dashboard.py')
+spec = importlib.util.spec_from_file_location('dashboard', '$ARIA_DIR_PY/scripts/serve-dashboard.py')
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 assert hasattr(mod, 'get_metrics'), 'Missing get_metrics'
@@ -110,9 +113,9 @@ rm -f "$TEST_DB" 2>/dev/null
 
 result=$(python -c "
 import sys, sqlite3
-sys.path.insert(0, '$ARIA_DIR/scripts')
+sys.path.insert(0, '$ARIA_DIR_PY/scripts')
 import importlib.util
-spec = importlib.util.spec_from_file_location('dashboard', '$ARIA_DIR/scripts/serve-dashboard.py')
+spec = importlib.util.spec_from_file_location('dashboard', '$ARIA_DIR_PY/scripts/serve-dashboard.py')
 mod = importlib.util.module_from_spec(spec)
 
 # Override DB_PATH before exec
@@ -210,9 +213,9 @@ test_end
 test_start "parse_claude_log_for_metrics handles empty input"
 result=$(python -c "
 import sys, tempfile
-sys.path.insert(0, '$ARIA_DIR/scripts')
+sys.path.insert(0, '$ARIA_DIR_PY/scripts')
 import importlib.util
-spec = importlib.util.spec_from_file_location('dashboard', '$ARIA_DIR/scripts/serve-dashboard.py')
+spec = importlib.util.spec_from_file_location('dashboard', '$ARIA_DIR_PY/scripts/serve-dashboard.py')
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
@@ -243,9 +246,9 @@ test_end
 test_start "parse_claude_log_for_metrics parses valid JSONL"
 result=$(python -c "
 import sys, tempfile, json
-sys.path.insert(0, '$ARIA_DIR/scripts')
+sys.path.insert(0, '$ARIA_DIR_PY/scripts')
 import importlib.util
-spec = importlib.util.spec_from_file_location('dashboard', '$ARIA_DIR/scripts/serve-dashboard.py')
+spec = importlib.util.spec_from_file_location('dashboard', '$ARIA_DIR_PY/scripts/serve-dashboard.py')
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
