@@ -135,6 +135,48 @@ Bug Report → debugging → plan (lite) → execute → verify → done
 
 ---
 
+### DEEP RESEARCH (Web Research)
+
+```
+Question ──→ deep-research ──→ [HITL: depth] ──→ [HITL: strategy]
+                                    │                    │
+                             Quick/Deep          Broad/Focused/
+                                                 Comparative
+                                    │                    │
+                                    ▼                    ▼
+                         ┌──────────────────────────────────┐
+                         │         SEARCH LOOP              │
+                         │                                  │
+                         │  WebSearch → quality rating      │
+                         │      ↓                           │
+                         │  findings with confidence        │
+                         │      ↓                           │
+                         │  [HITL: checkpoint]              │
+                         │  continue/redirect/synthesize    │
+                         └──────────────────────────────────┘
+                                    │
+                                    ▼
+                         [HITL: synthesis approach]
+                                    │
+                    ┌───────────────┼───────────────┐
+                    ▼               ▼               ▼
+             Executive       Structured       Comparative
+              Summary         Analysis          Matrix
+                    │               │               │
+                    └───────────────┴───────────────┘
+                                    │
+                                    ▼
+                    research-output.json + IDEA.md
+                                    │
+                         [HITL: continue?]
+                                    │
+                    ┌───────────────┼───────────────┐
+                    ▼               ▼               ▼
+                slides         prototype         done
+```
+
+---
+
 ### END OF WORKFLOW (STANDARD+)
 
 ```
@@ -165,7 +207,7 @@ SESSION → SKILL → DECISION → SIGNALS → COMMIT
 
 ---
 
-## All Skills (13)
+## All Skills (14)
 
 ### Core Skills (All Modes)
 
@@ -193,7 +235,14 @@ SESSION → SKILL → DECISION → SIGNALS → COMMIT
 | Skill | Trigger | Output |
 |-------|---------|--------|
 | **researcher** | "analyze this paper" | `research-output.json` |
+| **deep-research** | "research X", "investigate" | `research-output.json`, `IDEA.md` |
 | **slide-generation** | "generate slides" | `FOCUS.md`, slides |
+
+### Meta Skills (STANDARD+)
+
+| Skill | Trigger | Output |
+|-------|---------|--------|
+| **meta-reasoning** | Complex decisions, model selection | Recommendation, policy update |
 
 ---
 
@@ -238,6 +287,15 @@ All building tasks (code AND prototypes) use the same agent loop:
 | `.aria/state/decisions.jsonl` | executing | report-writer, dashboard |
 | `.aria/state/signals.jsonl` | hooks | dashboard |
 
+### Learning Files (NEW)
+
+| Path | Created By | Read By |
+|------|------------|---------|
+| `.aria/learned/policy.json` | offline-learner | meta-reasoning |
+| `.aria/learned/priors/*.json` | offline-learner | meta-reasoning |
+| `.aria/learned/history/episodes.jsonl` | offline-learner | reporting |
+| `.aria/logs/model_learning.json` | model-selector | offline-learner |
+
 ### Documentation Files
 
 | Path | Created By | Purpose |
@@ -268,6 +326,13 @@ All building tasks (code AND prototypes) use the same agent loop:
 | `.aria/scripts/generate-slides.py` | Create presentations | Research flow |
 | `.aria/scripts/setup-project.sh` | Create workspace | Manual |
 | `.aria/verify.sh` | Verification gate | After every task |
+
+### Library Files (NEW)
+
+| Path | Purpose | Invoked |
+|------|---------|---------|
+| `.aria/lib/meta-reasoning.sh` | Thompson Sampling, model selection | Complex decisions |
+| `.aria/lib/offline-learner.py` | Offline RL learning pipeline | Post-session |
 
 ---
 
@@ -300,6 +365,9 @@ All building tasks (code AND prototypes) use the same agent loop:
 | Prototype variant | If prototype=yes | [1] mockup / [2] learning / [3] reference |
 | Dashboard offer | End of workflow | [y]es / [n]o / [s]ave |
 | Failure escalation | 3 failures | [r]etry / [f]resh / [s]kip / [a]bort |
+| Deep research depth | After trigger | [1] Quick / [2] Standard / [3] Deep / [4] Exhaustive |
+| Deep research strategy | After depth | [a] Broad / [b] Focused / [c] Comparative / [d] Temporal |
+| Deep research checkpoint | Mid-research | [c]ontinue / [r]edirect / [d]eepen / [s]ynthesize / [a]bort |
 
 ---
 
@@ -316,4 +384,30 @@ All building tasks (code AND prototypes) use the same agent loop:
 
 ---
 
+## Offline Learning Pipeline
+
+```
+SESSION N                         BETWEEN SESSIONS
+┌──────────────┐                  ┌──────────────────────┐
+│ Execute with │                  │ Learning Pipeline    │
+│ current      │──────────────────▶│                      │
+│ policy       │   signals.jsonl  │ 1. Extract episodes  │
+│              │   decisions.jsonl│ 2. Calculate rewards │
+│              │   outcomes       │ 3. Update priors     │
+└──────────────┘                  │ 4. Export policy     │
+       ▲                          └──────────┬───────────┘
+       │                                     │
+       └─────────────────────────────────────┘
+                  SESSION N+1 uses improved policy
+```
+
+**Run learning:**
+```bash
+python .aria/lib/offline-learner.py learn
+python .aria/lib/offline-learner.py stats
+```
+
+---
+
 *Interactive version: `.aria/docs/WORKFLOW-MAP.html`*
+*Last updated: 2026-01-18*

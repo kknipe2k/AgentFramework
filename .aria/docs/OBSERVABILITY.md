@@ -1,8 +1,14 @@
 # ARIA Observability Architecture
 
-> Decision tracing + Signal capture + Reconciliation
+> Decision tracing + Signal capture + Reconciliation + Offline Learning
 
 This document describes how ARIA captures, stores, and verifies agent decisions for traceability and precedent lookup.
+
+**New in v2 (Jan 2026):**
+- Signal Schema v2 with 8 signal types
+- Claude native log integration
+- Offline RL learning pipeline
+- Meta-reasoning with Thompson Sampling
 
 ---
 
@@ -143,6 +149,9 @@ Match:    ✓ VERIFIED
 |------|---------|--------|
 | `.aria/state/signals.jsonl` | Tool call log | JSONL, append-only |
 | `.aria/state/decisions.jsonl` | Decision trace | JSONL, append-only |
+| `.aria/learned/policy.json` | Learned policy | JSON, versioned |
+| `.aria/learned/priors/*.json` | Beta priors | JSON, updated after learning |
+| `.aria/logs/model_learning.json` | Model performance | JSON, append |
 
 **Why JSONL:**
 - Append-only (no corruption on crash)
@@ -155,6 +164,12 @@ Match:    ✓ VERIFIED
 ## Web Dashboard
 
 Interactive dashboard for exploring session traces with hierarchical drill-down.
+
+**v2 Features (Jan 2026):**
+- Claude native log integration (`~/.claude/projects/`)
+- Token/cost metrics from actual Claude logs
+- Session-scoped git commits
+- 8 signal types from Signal Schema v2
 
 ### Start the Dashboard
 
@@ -488,14 +503,70 @@ The trace is emitted once per decision, not per tool call. Minimal impact.
 
 ---
 
+## Signal Schema v2
+
+The dashboard now supports Signal Schema v2 with 8 signal types:
+
+| Type | Description | Source |
+|------|-------------|--------|
+| `tool` | Tool calls (Read, Edit, Bash, etc.) | Hooks |
+| `skill` | Skill loads and activations | Context detection |
+| `agent` | Subagent spawns and results | Task tool |
+| `decision` | Decision blocks with rationale | Agent output |
+| `verification` | Test runs and results | verify.sh |
+| `error` | Errors and failures | All sources |
+| `hitl` | Human-in-the-loop checkpoints | HITL system |
+| `session` | Session start/end | Lifecycle |
+
+See [SIGNAL-SCHEMA-V2.md](./SIGNAL-SCHEMA-V2.md) for full schema details.
+
+---
+
+## Offline Learning Integration
+
+The observability system feeds the offline RL pipeline:
+
+```
+signals.jsonl  ─┐
+                ├──→ offline-learner.py ──→ policy.json
+decisions.jsonl┘                          priors/*.json
+```
+
+### Learning Pipeline
+
+```bash
+# After session ends (or manually)
+python .aria/lib/offline-learner.py learn
+
+# View current policy
+python .aria/lib/offline-learner.py export-policy
+
+# Query for specific recommendation
+python .aria/lib/offline-learner.py query feature 7 auth
+```
+
+### What Gets Learned
+
+| Decision Point | Data Source | Learning Method |
+|----------------|-------------|-----------------|
+| Model selection | model_learning.json | Beta-Bernoulli |
+| Strategy selection | decisions.jsonl | Success/failure |
+| Confidence calibration | decisions.jsonl | Bias correction |
+| Dead-end detection | signals.jsonl | Pattern recognition |
+
+---
+
 ## Future Enhancements
 
 1. **--fix flag:** Update decisions.jsonl with verification status
 2. **Time-window matching:** Match decisions to signals within N seconds
 3. **Cross-session queries:** Search across all sessions
 4. **Export to sqlite:** For complex queries
-5. **Web UI:** Visual trace exploration
+5. ~~**Web UI:** Visual trace exploration~~ ✓ DONE (v2)
+6. ~~**Claude native logs:** Token/cost from actual logs~~ ✓ DONE (v2)
+7. ~~**Offline RL:** Learn from past sessions~~ ✓ DONE (v2)
 
 ---
 
 *ARIA Observability - Decisions you can audit*
+*Last updated: 2026-01-18*

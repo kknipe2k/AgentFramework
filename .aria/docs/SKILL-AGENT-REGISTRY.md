@@ -21,8 +21,10 @@
 | slide-generation.md | C | Research | HITL slides decision |
 | report-writer.md | B | Meta | Workflow completion |
 | tracking.md | B+ | Meta | Every task (parallel) |
+| meta-reasoning.md | A | Meta | Model selection, Thompson Sampling |
 | REGISTRY.md | A- | Meta | Skill lookup |
 | COMPOSITION.md | A | Meta | Workflow understanding |
+| deep-research.md | A- | Research | "research", "investigate", web search |
 
 ---
 
@@ -434,6 +436,111 @@ Load skill: Read .aria/skills/context-refresh.md
 
 ---
 
+### meta-reasoning.md
+
+**Grade:** A (NEW - JAN 2026)
+
+| Attribute | Value |
+|-----------|-------|
+| **Category** | Meta |
+| **File Size** | 12.5 KB |
+| **Completeness** | 95% |
+| **Professional Standard** | Excellent |
+
+#### When Called
+- Before complex decisions requiring model selection
+- When confidence calibration is needed
+- Solution space exploration needed
+- Task complexity assessment required
+
+#### Why Called
+To make systematic, traceable decisions using learned priors:
+- Thompson Sampling for model selection
+- Solution space mapping before commitment
+- Dead-end signal detection
+- Confidence-based routing
+
+#### How Called
+```bash
+source .aria/lib/meta-reasoning.sh
+meta_reason "task description" "task_type" complexity
+meta_select_model "feature" 6 "auth"
+```
+
+#### Outputs
+- Model recommendation with confidence
+- Solution space analysis
+- Decision recorded to `decisions.jsonl`
+- Policy updates via offline learner
+
+#### Grading Breakdown
+
+| Criterion | Score | Notes |
+|-----------|-------|-------|
+| Clarity | 10/10 | Excellent explanations with examples |
+| Completeness | 9/10 | Covers Thompson Sampling, priors, outcomes |
+| Mode Variations | 9/10 | All modes documented |
+| Error Handling | 9/10 | Fallback to defaults when no data |
+| Integration | 10/10 | Integrates with offline-learner.py |
+
+---
+
+### deep-research.md
+
+**Grade:** A- (NEW - JAN 2026)
+
+| Attribute | Value |
+|-----------|-------|
+| **Category** | Research |
+| **File Size** | 17 KB |
+| **Completeness** | 92% |
+| **Professional Standard** | Excellent |
+
+#### When Called
+- User requests "research X", "investigate", "deep dive"
+- Complex questions requiring web research
+- Multi-source synthesis needed
+
+#### Why Called
+Systematic web research with HITL oversight:
+- Iterative query refinement
+- Source quality scoring (A-F tier)
+- Confidence scoring (0.0-1.0)
+- Contradiction detection
+
+#### How Called
+```markdown
+User: "Research the latest trends in vector databases"
+→ deep-research skill activated
+→ 5 HITL gates guide the research
+```
+
+#### Outputs
+- `.aria/docs/research-output.json` - Full research trace
+- `.aria/docs/IDEA.md` - Synthesized findings
+- Source quality ratings
+- Confidence scores per finding
+
+#### Grading Breakdown
+
+| Criterion | Score | Notes |
+|-----------|-------|-------|
+| Clarity | 9/10 | Clear workflow with 7 steps |
+| Completeness | 9/10 | All HITL gates documented |
+| Mode Variations | 8/10 | STANDARD+ modes supported |
+| Error Handling | 8/10 | Handles search failures |
+| Integration | 9/10 | Integrates with brainstorming, prototyping |
+
+#### What Makes This Well-Designed
+- 5 HITL gates prevent runaway research
+- Depth selection (Quick/Standard/Deep/Exhaustive)
+- Query strategy options (Broad/Focused/Comparative/Temporal)
+- Source quality tier system (A-F)
+- Confidence scoring (0.0-1.0)
+- Contradiction resolution
+
+---
+
 ## Agent Documentation
 
 ### Quick Reference (Agents)
@@ -629,6 +736,28 @@ concepts.json  IDEA.md      FOCUS.md, slides   SPEC-*.json  prototype.html  REPO
 
 **Unified Architecture:** prototyping outputs SPEC-*.json, executing builds via agent loop (analyzer → implementer → verify-app), verify.sh runs linting/Playwright/accessibility.
 
+### Deep Research Workflow (NEW)
+```
+deep-research → [HITL depth] → [HITL strategy] → search loop → [HITL checkpoint]
+     ↓              ↓               ↓                 ↓              ↓
+ WebSearch      Quick/Deep     Broad/Focused   findings.json   continue/redirect
+                                                     ↓
+                                              [HITL synthesis]
+                                                     ↓
+                                        research-output.json + IDEA.md
+```
+
+### Meta-Reasoning Workflow (NEW)
+```
+task → meta_reason() → solution space mapping → [confidence check] → model selection
+                              ↓                       ↓                   ↓
+                       explore options         high/low routing    Thompson Sampling
+                              ↓                       ↓                   ↓
+                       priors lookup            HITL if low         recommendation
+                              ↓                                           ↓
+                       offline learner                            record outcome
+```
+
 ### TDD Build
 ```
 planning → tdd → executing → verify
@@ -693,9 +822,49 @@ planning → tdd → executing → verify
 - tdd.md (A)
 - brainstorming.md (B+)
 - tracking.md (B+)
+- meta-reasoning.md (A) - NEW
+- deep-research.md (A-) - NEW
 - COMPOSITION.md (A)
 - REGISTRY.md (A-)
 
 ---
 
+## Offline Reinforcement Learning (NEW)
+
+ARIA now includes an offline RL system for improving decision-making over time.
+
+### Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Meta-Reasoning | `.aria/lib/meta-reasoning.sh` | Thompson Sampling, model selection |
+| Offline Learner | `.aria/lib/offline-learner.py` | Learning pipeline, Beta distributions |
+| Learned Policy | `.aria/learned/policy.json` | Current policy state |
+| Priors | `.aria/learned/priors/*.json` | Beta priors by context |
+
+### What Gets Learned
+
+| Decision Point | Data Source | Learning Method |
+|----------------|-------------|-----------------|
+| Model selection | `model_learning.json` | Beta-Bernoulli updates |
+| Strategy selection | `decisions.jsonl` | Success/failure tracking |
+| Confidence calibration | `decisions.jsonl` | Bias correction |
+| Dead-end detection | `signals.jsonl` | Pattern recognition |
+
+### Usage
+
+```bash
+# Run learning pipeline after session
+python .aria/lib/offline-learner.py learn
+
+# Query for recommendation
+python .aria/lib/offline-learner.py query feature 7 auth
+
+# View statistics
+python .aria/lib/offline-learner.py stats
+```
+
+---
+
 *This registry should be updated whenever skills are modified or new skills are added.*
+*Last updated: 2026-01-18*

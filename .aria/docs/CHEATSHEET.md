@@ -41,14 +41,22 @@ X-LARGE (40+ tasks)   → FULL+     → Epic-level management
 | Say This | Skill Invoked |
 |----------|---------------|
 | "analyze this paper" | researcher |
+| "research X", "investigate" | deep-research |
+| "deep dive into X" | deep-research |
 | "generate slides", "presentation" | slide-generation |
 | "show summary", "metrics" | report-writer |
+
+### Meta Skills
+| Say This | Skill Invoked |
+|----------|---------------|
+| (complex decisions) | meta-reasoning |
+| (model selection needed) | meta-reasoning |
 
 ---
 
 ## Workflows
 
-**Entry Point:** `/aria-start` → Dashboard + HITL Router → [b]uild / [m]odify / [r]esearch
+**Entry Point:** `/aria-start` → Dashboard + HITL Router → [b]uild / [m]odify / [r]esearch / [d]eep-research
 
 **Build:** brainstorm → prototype(SPEC) → executing(agents) → verify.sh → report → dashboard?
 
@@ -57,6 +65,8 @@ X-LARGE (40+ tasks)   → FULL+     → Epic-level management
 **Modify:** discovery → plan → executing(agents) → verify.sh → report → dashboard?
 
 **Research:** researcher → brainstorm → IDEA.md → slides? → prototype(SPEC) → executing(agents) → verify.sh → report
+
+**Deep Research:** question → [HITL depth] → [HITL strategy] → search loop → [HITL checkpoint] → synthesis → IDEA.md
 
 **End of Workflow (STANDARD+):**
 ```
@@ -111,6 +121,9 @@ bash .aria/verify.sh
 | `.aria/docs/IDEA.md` | Research synthesis |
 | `.aria/outputs/FOCUS.md` | Slide outline |
 | `.aria/outputs/slides-*.pptx` | Generated slides |
+| `.aria/learned/policy.json` | Learned policy (offline RL) |
+| `.aria/lib/meta-reasoning.sh` | Meta-reasoning functions |
+| `.aria/lib/offline-learner.py` | Offline RL pipeline |
 
 ---
 
@@ -132,6 +145,9 @@ bash .aria/verify.sh
 | `python .aria/scripts/serve-dashboard.py` | Open dashboard at :8420 |
 | `python .aria/scripts/generate-slides.py` | Generate slides from IDEA.md |
 | `.aria/scripts/setup-project.sh <name>` | Create isolated project workspace |
+| `python .aria/lib/offline-learner.py learn` | Run offline learning pipeline |
+| `python .aria/lib/offline-learner.py stats` | View learning statistics |
+| `source .aria/lib/meta-reasoning.sh` | Load meta-reasoning functions |
 
 ## Workspace Setup
 
@@ -164,6 +180,31 @@ Results stay in project folder. ARIA stays clean.
 
 **How to change mode?** → Say "switch to FULL mode"
 
+**How to run learning?** → `python .aria/lib/offline-learner.py learn`
+
+**How to use meta-reasoning?** → `source .aria/lib/meta-reasoning.sh && meta_reason "task" "type" complexity`
+
+**How to do deep research?** → Say "research X" or "investigate Y"
+
+---
+
+## Deep Research Quick Reference
+
+| Depth | Time | Use Case |
+|-------|------|----------|
+| Quick | 5-10 min | Simple factual questions |
+| Standard | 15-30 min | Most research tasks |
+| Deep | 30-60 min | Complex multi-faceted topics |
+| Exhaustive | 60+ min | Comprehensive analysis |
+
+| Strategy | Best For |
+|----------|----------|
+| Broad Scan | Unknown territory, start wide |
+| Focused Drill | Specific questions |
+| Comparative | X vs Y analysis |
+| Temporal | Track changes over time |
+
 ---
 
 *Full docs: See `CLAUDE.md` and `.aria/skills/REGISTRY.md`*
+*Last updated: 2026-01-18*

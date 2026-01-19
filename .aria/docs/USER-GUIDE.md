@@ -982,7 +982,30 @@ Periodically check what ARIA has learned:
 cat .aria/logs/model_learning.json | jq .
 ```
 
-### 7. Custom Notifications
+### 7. Use Meta-Reasoning for Complex Decisions
+When facing complex tasks, use the meta-reasoning system:
+```bash
+source .aria/lib/meta-reasoning.sh
+meta_reason "Implement authentication system" "feature" 8
+# Output: Model recommendation, confidence score, solution space analysis
+```
+
+### 8. Run Offline Learning After Sessions
+After completing significant work, run the learning pipeline:
+```bash
+python .aria/lib/offline-learner.py learn
+python .aria/lib/offline-learner.py stats
+```
+
+### 9. Use Deep Research for Complex Questions
+For thorough web research with oversight:
+```bash
+# In Claude Code session:
+"Research the best practices for implementing rate limiting in Node.js"
+# ARIA will use deep-research skill with HITL gates
+```
+
+### 10. Custom Notifications
 Configure Slack for team visibility:
 ```bash
 export ARIA_HITL_SLACK_WEBHOOK="https://hooks.slack.com/services/xxx"
@@ -999,6 +1022,141 @@ export ARIA_HITL_SLACK_WEBHOOK="https://hooks.slack.com/services/xxx"
 
 ---
 
+---
+
+## Offline Reinforcement Learning
+
+ARIA learns from past sessions to improve decision-making over time.
+
+### How It Works
+
+```
+SESSION N                         BETWEEN SESSIONS
+┌──────────────┐                  ┌──────────────────────┐
+│ Execute with │                  │ Learning Pipeline    │
+│ current      │──────────────────▶│                      │
+│ policy       │   signals.jsonl  │ 1. Extract episodes  │
+│              │   decisions.jsonl│ 2. Calculate rewards │
+│              │   outcomes       │ 3. Update priors     │
+└──────────────┘                  │ 4. Export policy     │
+       ▲                          └──────────┬───────────┘
+       │                                     │
+       └─────────────────────────────────────┘
+                  SESSION N+1 uses improved policy
+```
+
+### Offline Learner Commands
+
+```bash
+# Run learning pipeline
+python .aria/lib/offline-learner.py learn
+
+# View current policy
+python .aria/lib/offline-learner.py export-policy
+
+# Query for specific recommendation
+python .aria/lib/offline-learner.py query feature 7 auth
+
+# View statistics
+python .aria/lib/offline-learner.py stats
+```
+
+### Meta-Reasoning Functions
+
+```bash
+source .aria/lib/meta-reasoning.sh
+
+# Get model recommendation (uses Thompson Sampling)
+meta_select_model "feature" 6 "api"
+# Output: sonnet|0.78|Learned from 15 past observations
+
+# Full meta-reasoning cycle
+meta_reason "Implement retry logic" "feature" 6
+
+# Record outcome for learning
+meta_record_outcome "sonnet" "feature" 6 "success" "US-001"
+```
+
+### What Gets Learned
+
+| Decision Point | What's Learned | Data Source |
+|----------------|----------------|-------------|
+| Model selection | Which models succeed for task types | `model_learning.json` |
+| Strategy selection | Which approaches work when | `decisions.jsonl` |
+| Confidence calibration | Agent over/under-confidence | `decisions.jsonl` |
+| Dead-end detection | Patterns that precede failures | `signals.jsonl` |
+
+### Learning Files
+
+| File | Purpose |
+|------|---------|
+| `.aria/learned/policy.json` | Current learned policy |
+| `.aria/learned/priors/model-selection.json` | Beta priors for model × context |
+| `.aria/learned/priors/strategy-selection.json` | Beta priors for strategy × context |
+| `.aria/learned/history/episodes.jsonl` | Historical (state, action, reward) tuples |
+
+---
+
+## Deep Research
+
+ARIA includes a deep research skill for systematic web research with HITL oversight.
+
+### When to Use
+
+- Complex questions requiring multiple sources
+- Need source quality tracking and confidence scores
+- Want iterative refinement with human checkpoints
+
+### Workflow
+
+```
+STEP 1: Depth Selection (HITL)
+        [1] Quick (5-10 min)
+        [2] Standard (15-30 min) - RECOMMENDED
+        [3] Deep (30-60 min)
+        [4] Exhaustive (60+ min)
+
+STEP 2: Strategy Selection (HITL)
+        [a] Broad Scan - start wide, narrow
+        [b] Focused Drill - specific queries
+        [c] Comparative - X vs Y analysis
+        [d] Temporal - track changes over time
+
+STEP 3: Query Approval (HITL)
+        → Present proposed queries
+        → [a]pprove / [e]dit / [c]hange strategy
+
+STEP 4: Search Loop
+        → Execute queries (WebSearch tool)
+        → Evaluate source quality (A/B/C/D rating)
+        → Extract findings with confidence scores
+
+STEP 5: Mid-Research Checkpoint (HITL)
+        [c]ontinue / [r]edirect / [d]eepen / [s]ynthesize / [a]bort
+
+STEP 6: Synthesis
+        → Generate research-output.json
+        → Generate IDEA.md with findings
+```
+
+### Confidence Scoring
+
+| Score | Label | Meaning |
+|-------|-------|---------|
+| 0.9+ | VERY HIGH | Multiple authoritative sources agree |
+| 0.7-0.89 | HIGH | Good sources, some corroboration |
+| 0.5-0.69 | MEDIUM | Limited sources or some uncertainty |
+| 0.3-0.49 | LOW | Single source or quality concerns |
+| <0.3 | UNVERIFIED | Treat as hypothesis |
+
+### Outputs
+
+- `.aria/docs/research-output.json` - Full research trace
+- `.aria/docs/IDEA.md` - Synthesized findings
+- Source quality ratings and confidence scores
+
+---
+
 ## Next Steps
 
 1. Try the Quick Start above
@@ -1006,5 +1164,7 @@ export ARIA_HITL_SLACK_WEBHOOK="https://hooks.slack.com/services/xxx"
 3. Customize configuration for your project
 4. Create project-specific agents and rails
 5. Iterate and improve your PRD writing skills
+6. Run offline learning after sessions to improve over time
+7. Use deep research for complex questions requiring oversight
 
 Happy autonomous coding!
