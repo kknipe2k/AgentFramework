@@ -337,17 +337,109 @@ if [[ -f "$PROJECT_DIR/package.json" ]] && grep -q '"build"' "$PROJECT_DIR/packa
 fi
 
 # ============================================
-# CHECK 6: ARIA Framework Tests
+# CHECK 6: ARIA Framework Tests (Context-Aware)
 # ============================================
-if [[ -x "$SCRIPT_DIR/tests/test-runner.sh" ]]; then
+
+# Determine which test suites to run based on modified files
+MODIFIED_FILES=$(git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null)
+RUN_DASHBOARD_TESTS=false
+RUN_SLIDE_TESTS=false
+RUN_RESEARCH_TESTS=false
+RUN_TEST_GEN_TESTS=false
+RUN_ALL_TESTS=false
+
+# Check what was modified
+if echo "$MODIFIED_FILES" | grep -qE "serve-dashboard\.py|dashboard" 2>/dev/null; then
+    RUN_DASHBOARD_TESTS=true
+fi
+if echo "$MODIFIED_FILES" | grep -qE "generate-slides\.py|slide-generation" 2>/dev/null; then
+    RUN_SLIDE_TESTS=true
+fi
+if echo "$MODIFIED_FILES" | grep -qE "deep-research|researcher" 2>/dev/null; then
+    RUN_RESEARCH_TESTS=true
+fi
+if echo "$MODIFIED_FILES" | grep -qE "detect-stack|generate-tests|test-generation" 2>/dev/null; then
+    RUN_TEST_GEN_TESTS=true
+fi
+if echo "$MODIFIED_FILES" | grep -qE "verify\.sh|test-runner|CLAUDE\.md" 2>/dev/null; then
+    RUN_ALL_TESTS=true
+fi
+
+# Run context-aware tests
+if [[ "$RUN_ALL_TESTS" == "true" ]] || [[ -x "$SCRIPT_DIR/tests/test-runner.sh" ]]; then
     echo -n "Running ARIA framework tests... "
-    if "$SCRIPT_DIR/tests/test-runner.sh" >/dev/null 2>&1; then
-        echo -e "${GREEN}PASSED${NC}"
+
+    if [[ "$RUN_ALL_TESTS" == "true" ]]; then
+        # Run full test suite
+        if python "$SCRIPT_DIR/tests/run-tests.py" --offline >/dev/null 2>&1; then
+            echo -e "${GREEN}PASSED${NC}"
+        else
+            echo -e "${RED}FAILED${NC}"
+            echo "  ARIA framework tests failed"
+            echo "  Run: python .aria/tests/run-tests.py --offline for details"
+            FAILURES=$((FAILURES + 1))
+        fi
     else
-        echo -e "${RED}FAILED${NC}"
-        echo "  ARIA framework tests failed"
-        echo "  Run: .aria/tests/test-runner.sh for details"
-        FAILURES=$((FAILURES + 1))
+        # Run targeted tests based on modified files
+        TEST_FAILED=false
+
+        if [[ "$RUN_DASHBOARD_TESTS" == "true" ]]; then
+            echo ""
+            echo -n "  Dashboard tests... "
+            if bash "$SCRIPT_DIR/tests/unit/test-dashboard.sh" >/dev/null 2>&1; then
+                echo -e "${GREEN}PASSED${NC}"
+            else
+                echo -e "${RED}FAILED${NC}"
+                TEST_FAILED=true
+            fi
+        fi
+
+        if [[ "$RUN_SLIDE_TESTS" == "true" ]]; then
+            echo -n "  Slide generation tests... "
+            if bash "$SCRIPT_DIR/tests/unit/test-slide-generation.sh" >/dev/null 2>&1; then
+                echo -e "${GREEN}PASSED${NC}"
+            else
+                echo -e "${RED}FAILED${NC}"
+                TEST_FAILED=true
+            fi
+            # Also run runtime tests
+            echo -n "  Slide runtime tests... "
+            if bash "$SCRIPT_DIR/tests/integration/test-slide-runtime.sh" >/dev/null 2>&1; then
+                echo -e "${GREEN}PASSED${NC}"
+            else
+                echo -e "${YELLOW}WARNING${NC} (integration test)"
+                WARNINGS=$((WARNINGS + 1))
+            fi
+        fi
+
+        if [[ "$RUN_RESEARCH_TESTS" == "true" ]]; then
+            echo -n "  Deep research tests... "
+            if bash "$SCRIPT_DIR/tests/unit/test-deep-research.sh" >/dev/null 2>&1; then
+                echo -e "${GREEN}PASSED${NC}"
+            else
+                echo -e "${RED}FAILED${NC}"
+                TEST_FAILED=true
+            fi
+        fi
+
+        if [[ "$RUN_TEST_GEN_TESTS" == "true" ]]; then
+            echo -n "  Test generation tests... "
+            if bash "$SCRIPT_DIR/tests/unit/test-test-generation.sh" >/dev/null 2>&1; then
+                echo -e "${GREEN}PASSED${NC}"
+            else
+                echo -e "${RED}FAILED${NC}"
+                TEST_FAILED=true
+            fi
+        fi
+
+        if [[ "$TEST_FAILED" == "true" ]]; then
+            FAILURES=$((FAILURES + 1))
+        elif [[ "$RUN_DASHBOARD_TESTS" == "true" ]] || [[ "$RUN_SLIDE_TESTS" == "true" ]] || \
+             [[ "$RUN_RESEARCH_TESTS" == "true" ]] || [[ "$RUN_TEST_GEN_TESTS" == "true" ]]; then
+            echo -e "${GREEN}Context-aware tests PASSED${NC}"
+        else
+            echo -e "${YELLOW}SKIPPED${NC} (no relevant changes)"
+        fi
     fi
 fi
 

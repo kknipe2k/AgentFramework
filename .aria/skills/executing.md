@@ -109,6 +109,18 @@ After implementation, ALWAYS run:
 bash .aria/verify.sh
 ```
 
+**For prototype builds, also run:**
+```bash
+# After HTML/CSS/JS prototype is created
+python .aria/tests/run-tests.py unit --offline
+```
+
+**For slide generation:**
+```bash
+# Verify signals were emitted during slide generation
+python .aria/scripts/verify-slide-signals.py
+```
+
 **If verification PASSES:**
 - Continue to commit step
 

@@ -15,6 +15,7 @@ Usage:
 
 import argparse
 import asyncio
+import json
 import os
 import re
 from datetime import datetime
@@ -23,6 +24,25 @@ from pathlib import Path
 # Constants
 ARIA_DIR = Path('.aria')
 OUTPUTS_DIR = ARIA_DIR / 'outputs'
+STATE_DIR = ARIA_DIR / 'state'
+SIGNALS_FILE = STATE_DIR / 'signals.jsonl'
+
+def emit_slide_signal(event: str, details: dict):
+    """Emit a signal for slide generation traceability."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+    signal = {
+        'timestamp': datetime.now().isoformat() + 'Z',
+        'event': event,
+        'context_type': 'slide_generation',
+        'context_name': 'generate-slides.py',
+        **details
+    }
+
+    with open(SIGNALS_FILE, 'a') as f:
+        f.write(json.dumps(signal) + '\n')
+
+    return signal
 
 FOCUS_PROMPT = """Analyze all sources and provide a structured synthesis:
 1. The Core: Identify the top 3 foundational elements (concepts, entities, or arguments) that are absolutely required to understand this corpus. Define them briefly.
@@ -86,9 +106,21 @@ def extract_title_from_idea(idea_path: Path) -> str:
 
 async def generate_nblm(focus_path: Path, idea_path: Path, source_paths: list) -> Path:
     """Generate slides via NotebookLM."""
+    # Emit start signal
+    emit_slide_signal('nblm_generation_start', {
+        'method': 'nblm',
+        'focus_path': str(focus_path),
+        'idea_path': str(idea_path),
+        'source_count': len(source_paths)
+    })
+
     try:
         from notebooklm import NotebookLMClient
     except ImportError:
+        emit_slide_signal('nblm_import_failed', {
+            'error': 'notebooklm-py not installed',
+            'fallback': 'pptx'
+        })
         print("ERROR: notebooklm-py not installed")
         print("Install with: pip install \"notebooklm-py[browser]\"")
         print("Then run: playwright install chromium")
@@ -108,6 +140,11 @@ async def generate_nblm(focus_path: Path, idea_path: Path, source_paths: list) -
             print(f"Creating NotebookLM notebook: {title}")
             notebook = await client.notebooks.create(f"Slides: {title}")
             print(f"  Notebook ID: {notebook.id}")
+
+            emit_slide_signal('nblm_notebook_created', {
+                'notebook_id': notebook.id,
+                'title': f"Slides: {title}"
+            })
 
             # Add sources - use add_url for text content or add_file for files
             print("Adding FOCUS.md content...")
@@ -130,8 +167,26 @@ async def generate_nblm(focus_path: Path, idea_path: Path, source_paths: list) -
             # Send slide generation prompt
             print("\nSending slide generation prompt...")
             print(f"  Prompt: {SLIDES_PROMPT[:100]}...")
+
+            # CRITICAL: Log the prompt BEFORE sending for verification
+            emit_slide_signal('nblm_prompt_sending', {
+                'notebook_id': notebook.id,
+                'prompt_type': 'slides',
+                'prompt_preview': SLIDES_PROMPT[:200],
+                'prompt_full': SLIDES_PROMPT,
+                'prompt_length': len(SLIDES_PROMPT)
+            })
+
             response = await client.chat.ask(notebook.id, SLIDES_PROMPT)
             print(f"  Prompt sent successfully")
+
+            # Log successful prompt delivery
+            emit_slide_signal('nblm_prompt_sent', {
+                'notebook_id': notebook.id,
+                'prompt_type': 'slides',
+                'response_received': True,
+                'prompt_hash': hash(SLIDES_PROMPT)
+            })
 
             # Start slide deck generation (don't wait - takes 5-10 min)
             print("\nStarting slide deck generation...")
@@ -139,6 +194,12 @@ async def generate_nblm(focus_path: Path, idea_path: Path, source_paths: list) -
             status = await client.artifacts.generate_slide_deck(notebook.id)
             print(f"  Task started: {status.task_id}")
             print(f"  Status: {status.status}")
+
+            emit_slide_signal('nblm_deck_generation_started', {
+                'notebook_id': notebook.id,
+                'task_id': status.task_id,
+                'status': status.status
+            })
 
             # Get notebook URL
             notebook_url = f"https://notebooklm.google.com/notebook/{notebook.id}"
@@ -157,10 +218,30 @@ async def generate_nblm(focus_path: Path, idea_path: Path, source_paths: list) -
             print("  3. Download from NotebookLM when ready")
             print("="*60)
 
+            # Final success signal with full details for verification
+            emit_slide_signal('nblm_generation_complete', {
+                'notebook_id': notebook.id,
+                'notebook_url': notebook_url,
+                'task_id': status.task_id,
+                'status': 'initiated',
+                'sources_added': 2 + len(source_paths),
+                'prompt_sent': True,
+                'deck_generation_started': True
+            })
+
             return notebook_url
 
     except Exception as e:
         error_str = str(e).lower()
+
+        # Log failure for traceability
+        emit_slide_signal('nblm_generation_failed', {
+            'error': str(e),
+            'error_type': type(e).__name__,
+            'focus_path': str(focus_path),
+            'idea_path': str(idea_path)
+        })
+
         print("\n" + "="*60)
         print("NOTEBOOKLM FAILURE - DIAGNOSTIC REPORT")
         print("="*60)
@@ -240,12 +321,23 @@ async def generate_nblm(focus_path: Path, idea_path: Path, source_paths: list) -
 
 async def generate_pptx(focus_path: Path, idea_path: Path, source_paths: list) -> Path:
     """Generate slides via python-pptx."""
+    # Emit start signal
+    emit_slide_signal('pptx_generation_start', {
+        'method': 'pptx',
+        'focus_path': str(focus_path),
+        'idea_path': str(idea_path),
+        'source_count': len(source_paths)
+    })
+
     try:
         from pptx import Presentation
         from pptx.util import Inches, Pt
         from pptx.enum.text import PP_ALIGN
         from pptx.dml.color import RgbColor
     except ImportError:
+        emit_slide_signal('pptx_import_failed', {
+            'error': 'python-pptx not installed'
+        })
         print("ERROR: python-pptx not installed")
         print("Install with: pip install python-pptx")
         raise SystemExit(1)
@@ -424,12 +516,20 @@ async def generate_pptx(focus_path: Path, idea_path: Path, source_paths: list) -
     output_path = OUTPUTS_DIR / f"slides-{timestamp}.pptx"
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     prs.save(str(output_path))
-    
+
+    # Emit completion signal
+    emit_slide_signal('pptx_generation_complete', {
+        'output_path': str(output_path),
+        'slide_count': len(prs.slides),
+        'core_ideas_count': len(focus_data['core_ideas']),
+        'synthesis_count': len(focus_data['synthesis_matrix'])
+    })
+
     print(f"Slides saved to: {output_path}")
     print(f"Total slides: {len(prs.slides)}")
     print("\nNOTE: pptx contains placeholder diagrams.")
     print("For richer visuals, use NotebookLM path.")
-    
+
     return output_path
 
 

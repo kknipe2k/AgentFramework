@@ -509,6 +509,54 @@ EOF
 }
 
 # ============================================
+# SIGNAL-BASED TEST TRIGGERING
+# ============================================
+
+# Trigger relevant tests based on file modified
+trigger_tests_for_file() {
+    local file_path="$1"
+    local test_dir="$ARIA_DIR/tests"
+
+    # Silently skip if no test directory
+    [[ ! -d "$test_dir" ]] && return 0
+
+    # Map file patterns to tests (run in background, don't block)
+    case "$file_path" in
+        *serve-dashboard.py*|*dashboard*)
+            bash "$test_dir/unit/test-dashboard.sh" > /dev/null 2>&1 || true
+            ;;
+        *generate-slides.py*|*slide-generation*)
+            bash "$test_dir/unit/test-slide-generation.sh" > /dev/null 2>&1 || true
+            ;;
+        *deep-research*|*researcher*)
+            bash "$test_dir/unit/test-deep-research.sh" > /dev/null 2>&1 || true
+            ;;
+        *detect-stack*|*generate-tests*|*test-generation*)
+            bash "$test_dir/unit/test-test-generation.sh" > /dev/null 2>&1 || true
+            ;;
+        *cc-usage*|*token_usage*|*metrics*)
+            bash "$test_dir/unit/test-cc-usage.sh" > /dev/null 2>&1 || true
+            ;;
+    esac
+}
+
+# Verify slide generation signals were emitted
+verify_slide_signals() {
+    local verify_script="$ARIA_DIR/scripts/verify-slide-signals.py"
+
+    # Skip if verification script doesn't exist
+    [[ ! -f "$verify_script" ]] && return 0
+
+    # Wait a moment for signals to be written
+    sleep 1
+
+    # Run verification (silently, don't block the hook)
+    python "$verify_script" --since 5 > /dev/null 2>&1 || {
+        log_error "slide_verification" "Slide signals verification failed" "Bash" ""
+    }
+}
+
+# ============================================
 # RAIL CHECKS (Same as before but with logging)
 # ============================================
 
@@ -641,6 +689,12 @@ case "$HOOK_EVENT" in
         case "$TOOL_NAME" in
             "Edit"|"Write"|"MultiEdit")
                 increment_edits
+
+                # Trigger relevant tests based on file modified
+                file_path=$(extract_json_field "$TOOL_INPUT" "file_path")
+                if [[ -n "$file_path" ]]; then
+                    trigger_tests_for_file "$file_path" &
+                fi
                 ;;
             "Bash")
                 cmd=$(extract_json_field "$TOOL_INPUT" "command")
@@ -652,6 +706,11 @@ case "$HOOK_EVENT" in
 
                 if echo "$cmd" | grep -q "^git commit"; then
                     track_commit
+                fi
+
+                # Trigger test verification after slide generation
+                if echo "$cmd" | grep -q "generate-slides.py"; then
+                    verify_slide_signals &
                 fi
                 ;;
         esac

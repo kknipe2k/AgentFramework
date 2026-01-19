@@ -252,19 +252,77 @@ If yes:
 
 ---
 
-## Traceability
+## Traceability & Runtime Verification
 
-Emit signals at key points:
+The `generate-slides.py` script automatically emits signals to `.aria/state/signals.jsonl` for full traceability.
+
+### Signals Emitted (NotebookLM Path)
+
+| Signal | When | Verifies |
+|--------|------|----------|
+| `nblm_generation_start` | Script starts | Method selection |
+| `nblm_notebook_created` | Notebook created | Notebook ID assigned |
+| `nblm_prompt_sending` | Before prompt sent | Full prompt content logged |
+| `nblm_prompt_sent` | After prompt delivered | Prompt reached NotebookLM |
+| `nblm_deck_generation_started` | Deck task started | Generation initiated |
+| `nblm_generation_complete` | All steps done | Full success with details |
+| `nblm_generation_failed` | On error | Error type and details |
+
+### Signals Emitted (pptx Path)
+
+| Signal | When | Verifies |
+|--------|------|----------|
+| `pptx_generation_start` | Script starts | Method selection |
+| `pptx_generation_complete` | File saved | Output path, slide count |
+| `pptx_import_failed` | Library missing | Expected when not installed |
+
+### Runtime Verification
+
+After slide generation, verify signals were emitted:
 
 ```bash
-emit_signal "focus_doc_created" "slide_generation" "phase1" \
-    "sources_count=N" \
-    "output=.aria/outputs/FOCUS.md"
-
-emit_signal "slides_started" "slide_generation" "phase2" \
-    "method=nblm|pptx" \
-    "notebook_url=URL"
+python .aria/scripts/verify-slide-signals.py --verbose
 ```
+
+**What it checks:**
+- All required signals present
+- Prompt was actually sent to NotebookLM
+- Notebook ID and URL captured
+- Generation task started successfully
+
+**Example output:**
+```
+============================================================
+  SLIDE GENERATION SIGNAL VERIFICATION
+============================================================
+
+Found 6 slide generation signal(s)
+
+NotebookLM Signal Verification:
+----------------------------------------
+  [✓] nblm_generation_start
+  [✓] nblm_notebook_created
+  [✓] nblm_prompt_sending
+  [✓] nblm_prompt_sent
+  [✓] nblm_deck_generation_started
+  [✓] nblm_generation_complete
+
+Prompt Details:
+  Length: 423 chars
+  Preview: Intent: explain in detail the key ideas from these docs...
+
+============================================================
+  VERIFICATION PASSED
+  Slide generation signals verified successfully.
+============================================================
+```
+
+### Why This Matters
+
+- **Audit trail**: Proves prompts were sent, not just claimed
+- **Debugging**: Identify exactly where failures occur
+- **Testing**: Integration tests can verify runtime behavior
+- **Compliance**: Full traceability for research workflows
 
 ---
 
