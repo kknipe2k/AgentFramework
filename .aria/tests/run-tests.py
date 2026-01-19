@@ -29,6 +29,7 @@ TEST_DIRS = {
     "unit": SCRIPT_DIR / "unit",
     "integration": SCRIPT_DIR / "integration",
     "validation": SCRIPT_DIR / "validation",
+    "offline": SCRIPT_DIR / "offline",
 }
 
 # Colors for terminal output
@@ -311,11 +312,13 @@ def main():
         "category",
         nargs="?",
         default="all",
-        choices=["unit", "integration", "validation", "all"],
+        choices=["unit", "integration", "validation", "offline", "all"],
         help="Test category to run"
     )
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     parser.add_argument("--output", "-o", type=str, help="Save results to JSON file")
+    parser.add_argument("--offline", action="store_true", help="Run only offline tests (no API/network)")
+    parser.add_argument("--integration", action="store_true", help="Run only integration tests (may need API)")
 
     args = parser.parse_args()
 
@@ -334,7 +337,15 @@ def main():
     print_info(f"  Claude CLI: {'Yes' if platform_info['has_claude_cli'] else 'No'}")
 
     # Determine categories to run
-    if args.category == "all":
+    if args.offline:
+        # Offline mode: unit tests + offline tests (no API/network needed)
+        categories = ["unit", "offline", "validation"]
+        print_info(f"  Mode: OFFLINE (no API/network)")
+    elif args.integration:
+        # Integration only mode
+        categories = ["integration"]
+        print_info(f"  Mode: INTEGRATION")
+    elif args.category == "all":
         categories = ["unit", "integration", "validation"]
     else:
         categories = [args.category]

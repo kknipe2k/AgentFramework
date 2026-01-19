@@ -22,6 +22,7 @@
 | [deep-research](./deep-research.md) | "research", "investigate" | STANDARD+ | Research |
 | [report-writer](./report-writer.md) | Project complete | STANDARD+ | Research |
 | [slide-generation](./slide-generation.md) | After IDEA.md, "slides" | Explicit | Research |
+| [test-generation](./test-generation.md) | "generate tests", prototype done | ALL | Core |
 
 ---
 
@@ -39,6 +40,7 @@ Essential skills used in every workflow.
 | **tdd** | Test-driven development | Requirements | Tests, implementation |
 | **context-refresh** | Reset long sessions | Progress state | Handoff summary |
 | **tracking** | Monitor progress | Execution events | `progress.json`, metrics |
+| **test-generation** | Auto-generate test suite | Source code | Tests, CI workflow, verify.sh |
 
 ### Entry (Session Init)
 Session initialization and workflow routing.
@@ -94,6 +96,8 @@ These skills activate when conditions are met:
 | "write tests first" | tdd | Test-driven approach |
 | 3+ consecutive failures | context-refresh | Context drift recovery |
 | Between phases/epics | context-refresh | FULL/FULL+ mode |
+| Prototype built | test-generation | After Research flow prototype |
+| No verify.sh | test-generation | Auto when missing |
 
 ### Explicit (User Request)
 These require explicit user request:
@@ -105,6 +109,7 @@ These require explicit user request:
 | "deep dive into X" | deep-research |
 | "show summary", "metrics" | report-writer |
 | "debug this" | debugging |
+| "generate tests", `/aria:generate-tests` | test-generation |
 | "generate slides" | slide-generation |
 | "create presentation" | slide-generation |
 | `/aria-summary` | report-writer |
@@ -157,6 +162,7 @@ brainstorming ──→ prototyping ──→ executing
 | deep-research | - | ✓ | ✓ | ✓ |
 | report-writer | - | ✓ | ✓ | ✓ |
 | slide-generation | explicit | explicit | explicit | explicit |
+| test-generation | ✓ (lite) | ✓ | ✓ (full) | ✓ (full) |
 
 ---
 
