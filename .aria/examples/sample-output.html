@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attention Is All You Need</title>
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-yellow: #d29922;
+            --accent-red: #f85149;
+            --accent-purple: #a371f7;
+            --border-color: #30363d;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            padding: 3rem 0;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1.2rem;
+        }
+
+        nav {
+            display: flex;
+            justify-content: center;
+            gap: 0.75rem;
+            margin: 2rem 0;
+            flex-wrap: wrap;
+        }
+
+        .nav-btn {
+            padding: 0.6rem 1.2rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.9rem;
+        }
+
+        .nav-btn:hover {
+            background: var(--bg-tertiary);
+            border-color: var(--accent-blue);
+        }
+
+        .nav-btn.active {
+            background: var(--accent-blue);
+            border-color: var(--accent-blue);
+            color: #fff;
+        }
+
+        section {
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+
+        section.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        h2 {
+            font-size: 1.8rem;
+            margin-bottom: 1.5rem;
+            color: var(--accent-blue);
+        }
+
+        h3 {
+            font-size: 1.3rem;
+            margin: 1.5rem 0 1rem;
+            color: var(--text-primary);
+        }
+
+        p {
+            margin-bottom: 1rem;
+            color: var(--text-secondary);
+        }
+
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .card-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1rem;
+        }
+
+        .card-icon.blue { background: rgba(88, 166, 255, 0.2); color: var(--accent-blue); }
+        .card-icon.green { background: rgba(63, 185, 80, 0.2); color: var(--accent-green); }
+        .card-icon.yellow { background: rgba(210, 153, 34, 0.2); color: var(--accent-yellow); }
+        .card-icon.red { background: rgba(248, 81, 73, 0.2); color: var(--accent-red); }
+        .card-icon.purple { background: rgba(163, 113, 247, 0.2); color: var(--accent-purple); }
+
+        ul, ol {
+            margin: 1rem 0 1rem 1.5rem;
+            color: var(--text-secondary);
+        }
+
+        li {
+            margin-bottom: 0.5rem;
+        }
+
+        pre {
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+            padding: 1rem;
+            overflow-x: auto;
+            margin: 1rem 0;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.85rem;
+        }
+
+        code {
+            font-family: 'Monaco', 'Menlo', monospace;
+            background: var(--bg-tertiary);
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            font-size: 0.9em;
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+        }
+
+        .table-container {
+            overflow-x: auto;
+            margin: 1.5rem 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        th, td {
+            padding: 0.75rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        td {
+            color: var(--text-secondary);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .takeaways-list {
+            list-style: none;
+            margin-left: 0;
+        }
+
+        .takeaways-list li {
+            padding: 1rem;
+            background: var(--bg-secondary);
+            border-left: 3px solid var(--accent-green);
+            margin-bottom: 0.75rem;
+            border-radius: 0 6px 6px 0;
+        }
+
+        .sources {
+            margin-top: 2rem;
+            padding-top: 2rem;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .sources h3 {
+            color: var(--text-secondary);
+            font-size: 1rem;
+        }
+
+        .sources ul {
+            font-size: 0.9rem;
+        }
+
+        footer {
+            text-align: center;
+            padding: 2rem;
+            margin-top: 2rem;
+            border-top: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        a {
+            color: var(--accent-blue);
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        strong {
+            color: var(--text-primary);
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            h1 {
+                font-size: 1.8rem;
+            }
+
+            nav {
+                gap: 0.5rem;
+            }
+
+            .nav-btn {
+                padding: 0.5rem 0.8rem;
+                font-size: 0.8rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Attention Is All You Need</h1>
+            <p class="subtitle">The Transformer architecture that revolutionized NLP</p>
+        </header>
+
+        <nav>
+            <button class="nav-btn active" data-section="overview">Overview</button>
+            <button class="nav-btn" data-section="concepts">Concepts</button>
+            <button class="nav-btn" data-section="section-0">0</button>
+            <button class="nav-btn" data-section="section-1">1</button>
+            <button class="nav-btn" data-section="synthesis">Synthesis</button>
+            <button class="nav-btn" data-section="takeaways">Takeaways</button>
+        </nav>
+
+        <section id="overview" class="active">
+            <h2>Overview</h2>
+            <p>The Transformer is a neural network architecture that relies entirely on self-attention mechanisms, dispensing with recurrence and convolutions. It achieves state-of-the-art results on machine translation while being more parallelizable and requiring significantly less time to train.</p>
+        </section>
+
+        <section id="concepts"><h2>Key Concepts</h2>
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon blue">1</div>
+                        <h3>Self-Attention</h3>
+                    </div>
+                    <p>A mechanism that relates different positions of a single sequence to compute a representation. Each position attends to all positions in the previous layer.</p>
+                </div>
+            
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon green">2</div>
+                        <h3>Multi-Head Attention</h3>
+                    </div>
+                    <p>Running multiple attention functions in parallel, allowing the model to jointly attend to information from different representation subspaces.</p>
+                </div>
+            
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon yellow">3</div>
+                        <h3>Positional Encoding</h3>
+                    </div>
+                    <p>Since the model contains no recurrence, positional encodings are added to give the model information about token order.</p>
+                </div>
+            
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon purple">4</div>
+                        <h3>Encoder-Decoder Structure</h3>
+                    </div>
+                    <p>The encoder maps input sequences to continuous representations. The decoder generates output sequences one token at a time.</p>
+                </div>
+            
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon red">5</div>
+                        <h3>Scaled Dot-Product Attention</h3>
+                    </div>
+                    <p>Attention computed as softmax(QK^T / sqrt(d_k))V, where Q, K, V are query, key, value matrices.</p>
+                </div>
+            </section>
+
+
+        <section id="section-0">
+            <h2>How It Works</h2>
+            <p>The Transformer processes input through stacked encoder layers. Each layer has two sub-layers:</p>
+<p>1. <strong>Multi-head self-attention</strong> - Allows each position to attend to all positions
+2. <strong>Feed-forward network</strong> - Applied to each position independently</p>
+<p>Residual connections and layer normalization wrap each sub-layer.</p>
+<p>The decoder is similar but adds a third sub-layer for attending to encoder output. Masking ensures positions can only attend to earlier positions during generation.</p>
+        </section>
+        
+        <section id="section-1">
+            <h2>Why It Matters</h2>
+            <p>Before Transformers, sequence models relied on recurrence (RNNs, LSTMs) which limited parallelization. The Transformer's attention mechanism:</p>
+<ul><li>Enables full parallelization during training</li><li>Reduces path length between distant positions (O(1) vs O(n))</li><li>Achieves better performance with less training time</li></ul>
+<p>This architecture became the foundation for BERT, GPT, and modern LLMs.</p>
+        </section>
+        
+
+        <section id="synthesis"><h2>Synthesis</h2>
+            <div class="table-container">
+                <table>
+                    <thead><tr><th>Component</th><th>Problem Solved</th><th>Mechanism</th><th>Benefit</th></tr></thead>
+                    <tbody><tr><td>Self-Attention</td><td>Long-range dependencies</td><td>Attend to all positions</td><td>O(1) path length</td></tr><tr><td>Multi-Head</td><td>Limited representation</td><td>Parallel attention heads</td><td>Richer features</td></tr><tr><td>Positional Encoding</td><td>No sequence order</td><td>Sinusoidal functions</td><td>Order awareness</td></tr><tr><td>Residual Connections</td><td>Vanishing gradients</td><td>Skip connections</td><td>Deeper networks</td></tr></tbody>
+                </table>
+            </div>
+            </section>
+
+        <section id="takeaways"><h2>Key Takeaways</h2><ul class="takeaways-list"><li>Attention can replace recurrence entirely for sequence modeling</li><li>Parallelization dramatically reduces training time</li><li>Multi-head attention captures different types of relationships</li><li>The architecture scales well to very long sequences</li><li>Foundation for all modern large language models</li></ul>
+        <div class="sources">
+            <h3>Sources</h3>
+            <ul><li>Vaswani et al., "Attention Is All You Need", NeurIPS 2017</li><li>https://arxiv.org/abs/1706.03762</li></ul>
+        </div>
+        </section>
+
+        <footer>
+            <p>Generated by ARIA &middot; 2026-02-03</p>
+        </footer>
+    </div>
+
+    <script>
+        document.querySelectorAll('.nav-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('section').forEach(s => s.classList.remove('active'));
+                btn.classList.add('active');
+                const section = document.getElementById(btn.dataset.section);
+                if (section) section.classList.add('active');
+            });
+        });
+    </script>
+</body>
+</html>
