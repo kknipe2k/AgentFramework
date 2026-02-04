@@ -1,0 +1,39 @@
+{
+  "name": "ARIA Development",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.11"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
+    }
+  },
+
+  "postCreateCommand": "pip install -r .aria/scripts/requirements.txt 2>/dev/null || true && chmod +x .aria/*.sh .aria/**/*.sh 2>/dev/null || true",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  },
+
+  "forwardPorts": [8080, 8420],
+
+  "portsAttributes": {
+    "8080": {
+      "label": "Preview Server",
+      "onAutoForward": "notify"
+    },
+    "8420": {
+      "label": "ARIA Dashboard",
+      "onAutoForward": "notify"
+    }
+  }
+}
