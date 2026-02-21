@@ -1,0 +1,559 @@
+{
+  "id": "prototype-20260221-000000",
+  "name": "2026 AI Engineer Roadmap - Interactive Learning Tool",
+  "type": "html-mockup",
+  "variant": "learning-tool",
+  "created": "2026-02-21T00:00:00Z",
+  "source": ".aria/docs/IDEA.md - The 2026 AI Engineer Roadmap",
+
+  "design": {
+    "theme": "light",
+    "colorPalette": {
+      "background": "#ffffff",
+      "surface": "#f8fafc",
+      "primary": "#2563eb",
+      "primaryLight": "#dbeafe",
+      "secondary": "#7c3aed",
+      "secondaryLight": "#ede9fe",
+      "accent": "#059669",
+      "accentLight": "#d1fae5",
+      "warning": "#d97706",
+      "warningLight": "#fef3c7",
+      "danger": "#dc2626",
+      "dangerLight": "#fee2e2",
+      "text": "#1e293b",
+      "textMuted": "#64748b",
+      "border": "#e2e8f0",
+      "cardShadow": "0 1px 3px rgba(0,0,0,0.08)"
+    },
+    "typography": {
+      "fontFamily": "'Inter', system-ui, -apple-system, sans-serif",
+      "monoFont": "'JetBrains Mono', 'Fira Code', monospace",
+      "lineHeight": 1.6,
+      "headingWeight": 700
+    },
+    "spacing": {
+      "containerMaxWidth": "1200px",
+      "containerPadding": "32px 24px",
+      "sectionGap": "48px",
+      "cardPadding": "24px"
+    }
+  },
+
+  "screens": [
+    {
+      "id": "screen-main",
+      "name": "Roadmap Explorer",
+      "route": "/",
+      "layout": "single-column",
+      "components": [
+        {
+          "id": "comp-hero",
+          "type": "header",
+          "name": "Hero Section",
+          "content": {
+            "title": "The 2026 AI Engineer Roadmap",
+            "subtitle": "5 production-grade projects that bridge the $150K gap between prompt engineer and systems architect",
+            "attribution": "Based on Rohit @rohit4verse's blueprint"
+          },
+          "interactions": [],
+          "states": {
+            "default": "Hero with gradient accent bar at top"
+          }
+        },
+        {
+          "id": "comp-salary-viz",
+          "type": "card",
+          "name": "Career Gap Visualizer",
+          "content": {
+            "title": "The $150K Gap",
+            "description": "Interactive slider showing salary progression as skills increase from wrapper builder to systems architect",
+            "data": {
+              "levels": [
+                {"label": "Prompt Engineer", "salary": "$80K", "skills": "API wrappers, basic prompts", "risk": "HIGH - easily automated"},
+                {"label": "AI Developer", "salary": "$120K", "skills": "Edge AI, quantization, memory", "risk": "MEDIUM - some differentiation"},
+                {"label": "AI Engineer", "salary": "$170K", "skills": "Agentic loops, multimodal, orchestration", "risk": "LOW - hard to replace"},
+                {"label": "Systems Architect", "salary": "$230K+", "skills": "Enterprise orchestration, observability, HITL", "risk": "VERY LOW - indispensable"}
+              ]
+            }
+          },
+          "interactions": [
+            {
+              "trigger": "click",
+              "element": ".level-card",
+              "action": "display",
+              "target": ".level-detail",
+              "details": "Clicking a level card highlights it and shows detailed skills breakdown + which projects teach those skills"
+            }
+          ],
+          "states": {
+            "default": "All 4 levels shown as horizontal progression bar with salary labels",
+            "active": "Selected level is highlighted, detail panel shows below"
+          }
+        },
+        {
+          "id": "comp-roadmap-nav",
+          "type": "nav",
+          "name": "Project Navigator",
+          "content": {
+            "title": "5 Projects, 5 Levels",
+            "description": "Click any project to explore its architecture"
+          },
+          "interactions": [
+            {
+              "trigger": "click",
+              "element": ".project-tab",
+              "action": "display",
+              "target": "#project-detail-panel",
+              "details": "Switches the detail panel to show that project's architecture"
+            }
+          ],
+          "states": {
+            "default": "5 horizontal tabs showing project icons + names with difficulty badges"
+          }
+        },
+        {
+          "id": "comp-project-detail",
+          "type": "card",
+          "name": "Project Detail Panel",
+          "content": {
+            "title": "Dynamic - shows selected project",
+            "description": "Each project has: overview, architecture diagram, key decisions, interactive simulation",
+            "projects": [
+              {
+                "id": "p1",
+                "tab": "SLM Mobile App",
+                "level": "Beginner",
+                "levelColor": "#059669",
+                "proves": "Edge AI + Resource Optimization",
+                "overview": "Build an offline-first mobile app using small language models. Zero API costs. Complete privacy.",
+                "architecturePoints": [
+                  {"name": "Model Management", "detail": "Lazy loading, on-demand unload, preload during idle"},
+                  {"name": "Context Window", "detail": "Sliding window with semantic chunking via embedding similarity"},
+                  {"name": "Quantization", "detail": "Dynamic 4-bit (old devices) vs 8-bit (new) based on RAM detection"},
+                  {"name": "Battery", "detail": "Batch inference, throttle on low battery, defer until charging"},
+                  {"name": "Offline Sync", "detail": "Encrypted local storage, sync only on connection, local-first conflict resolution"}
+                ],
+                "simulation": "memory-pressure"
+              },
+              {
+                "id": "p2",
+                "tab": "Coding Agent",
+                "level": "Intermediate",
+                "levelColor": "#2563eb",
+                "proves": "Agentic Loops + Production Debugging",
+                "overview": "An autonomous agent that writes code, runs tests, and learns from failures. It doesn't stop until the code is functional.",
+                "architecturePoints": [
+                  {"name": "Execution Loop", "detail": "Plan → Execute → Test → Reflect with max iteration limit + circuit breaker"},
+                  {"name": "Sandboxing", "detail": "Isolated environment per task with CPU/memory/time limits"},
+                  {"name": "Memory Hierarchy", "detail": "Short-term (last 5 iterations) → Long-term (indexed patterns) → Failure memory (error signatures)"},
+                  {"name": "Reflection", "detail": "Extract error pattern + root cause, compare via vector similarity, generate fix hypothesis"},
+                  {"name": "Learning", "detail": "Store failed attempts with full context, retrieve on similar future tasks"},
+                  {"name": "Safety", "detail": "Static analysis before execution, approval for filesystem/network ops"}
+                ],
+                "simulation": "agentic-loop"
+              },
+              {
+                "id": "p3",
+                "tab": "Video Editor AI",
+                "level": "Advanced",
+                "levelColor": "#7c3aed",
+                "proves": "Multimodal AI + Tool Integration",
+                "overview": "AI agent for video editing. User says 'make this cinematic' and the agent handles cuts, transitions, and color grading.",
+                "architecturePoints": [
+                  {"name": "Multimodal Understanding", "detail": "Vision model (composition, lighting) + Audio model (dialogue, music) → narrative flow"},
+                  {"name": "Intent Translation", "detail": "'Cinematic' → slow pacing 80%, desaturated LUT, shallow focus sim, dramatic music cues"},
+                  {"name": "Scene Detection", "detail": "Frame differences for hard cuts, embedding similarity for scene boundaries, story beats from visual+audio"},
+                  {"name": "Edit Decision List", "detail": "Plan entire edit before execution, validate narrative sense, then apply"},
+                  {"name": "Incremental Preview", "detail": "Re-render only affected sections, cache unchanged segments"},
+                  {"name": "Undo with Reasoning", "detail": "Every edit stores what changed AND why — user can ask 'why did you cut here?'"}
+                ],
+                "simulation": "intent-translation"
+              },
+              {
+                "id": "p4",
+                "tab": "Life OS Agent",
+                "level": "Expert",
+                "levelColor": "#d97706",
+                "proves": "Deep Context + Privacy-First Architecture",
+                "overview": "A deeply personal agent that manages calendar, finances, and health. Plans months ahead. Detects burnout patterns.",
+                "architecturePoints": [
+                  {"name": "Continuous Context", "detail": "Ingest calendar/finance/health in real-time, build personal knowledge graph with entity mapping"},
+                  {"name": "Proactive Monitoring", "detail": "6-hour analysis cycles — detect meeting density + sleep quality anomalies before problems"},
+                  {"name": "Value Alignment", "detail": "User states priorities (family > work) — every recommendation validated against values"},
+                  {"name": "Privacy Architecture", "detail": "Encrypted at rest, user-controlled keys, no data leaves device without permission"},
+                  {"name": "Predictive Planning", "detail": "Historical pattern analysis — 'Based on Q4, you'll be overcommitted in March'"},
+                  {"name": "Memory Consolidation", "detail": "Nightly summarization, compress with meaning preserved, decay unless reinforced"}
+                ],
+                "simulation": "burnout-detector"
+              },
+              {
+                "id": "p5",
+                "tab": "Enterprise Agent",
+                "level": "Master",
+                "levelColor": "#dc2626",
+                "proves": "Production-Grade Orchestration",
+                "overview": "An agent that runs business workflows end-to-end: monitors Slack/Jira, plans, delegates, reports with complete audit logs.",
+                "architecturePoints": [
+                  {"name": "Event-Driven", "detail": "Listen Slack/Jira/email/monitoring → pattern recognition → workflow triggers"},
+                  {"name": "Workflow Orchestration", "detail": "Steps with dependencies, parallel execution where possible, durable state for long-running ops"},
+                  {"name": "Multi-Agent Delegation", "detail": "Orchestrator spawns: communication agent, data agent, analysis agent, documentation agent"},
+                  {"name": "Self-Healing", "detail": "Monitor every step, retry vs escalate decision, exponential backoff, circuit breaker"},
+                  {"name": "Audit Trail", "detail": "Immutable log: what was decided, why, who authorized, outcome — queryable for compliance"},
+                  {"name": "RBAC + HITL", "detail": "Actions limited by invoker permissions, high-risk ops require human approval, confidence-based escalation"},
+                  {"name": "Observability", "detail": "Trace every LLM call (input/output/latency), workflow success rate, cost per workflow, alerts"},
+                  {"name": "Cost Management", "detail": "Token usage per workflow, budget limits, prompt optimization"}
+                ],
+                "simulation": "workflow-orchestrator"
+              }
+            ]
+          },
+          "interactions": [
+            {
+              "trigger": "click",
+              "element": ".arch-point",
+              "action": "toggle",
+              "target": ".arch-detail",
+              "details": "Each architecture point expands/collapses to show detailed explanation with tooltip definitions"
+            },
+            {
+              "trigger": "hover",
+              "element": ".term",
+              "action": "display",
+              "target": ".tooltip",
+              "details": "Technical terms show tooltip definitions on hover"
+            }
+          ],
+          "states": {
+            "default": "Project 1 (SLM) shown, architecture points collapsed",
+            "expanded": "Architecture points expanded with details visible"
+          }
+        },
+        {
+          "id": "comp-simulation",
+          "type": "card",
+          "name": "Interactive Simulation Panel",
+          "content": {
+            "title": "Try It: Interactive Simulations",
+            "description": "Hands-on simulations for each project's core concept",
+            "simulations": [
+              {
+                "id": "sim-memory-pressure",
+                "forProject": "p1",
+                "name": "Memory Pressure Simulator",
+                "description": "See how SLM model management works under resource constraints",
+                "inputs": [
+                  {"id": "device-ram", "label": "Device RAM (GB)", "type": "slider", "min": 2, "max": 16, "default": 4, "step": 1},
+                  {"id": "active-models", "label": "Active Models", "type": "slider", "min": 1, "max": 5, "default": 1, "step": 1},
+                  {"id": "battery-level", "label": "Battery %", "type": "slider", "min": 5, "max": 100, "default": 80, "step": 5}
+                ],
+                "outputs": [
+                  {"id": "quant-strategy", "label": "Quantization", "calculation": "If RAM ≤ 4GB → 4-bit, else → 8-bit"},
+                  {"id": "memory-used", "label": "Memory Used", "calculation": "models × (4-bit: 0.5GB, 8-bit: 1GB)"},
+                  {"id": "memory-status", "label": "Status", "calculation": "If used > 80% RAM → PRESSURE (unload idle models)"},
+                  {"id": "inference-mode", "label": "Inference Mode", "calculation": "If battery < 20% → THROTTLED, else → NORMAL"}
+                ]
+              },
+              {
+                "id": "sim-agentic-loop",
+                "forProject": "p2",
+                "name": "Agentic Loop Visualizer",
+                "description": "Watch a coding agent iterate through plan → execute → test → reflect",
+                "inputs": [
+                  {"id": "task-difficulty", "label": "Task Difficulty", "type": "select", "options": ["Easy - FizzBuzz", "Medium - Sort Algorithm", "Hard - API Client"]},
+                  {"id": "max-iterations", "label": "Max Iterations", "type": "slider", "min": 1, "max": 10, "default": 5, "step": 1}
+                ],
+                "outputs": [
+                  {"id": "loop-viz", "label": "Loop Visualization", "calculation": "Animated sequence showing Plan → Code → Test → Reflect steps with pass/fail indicators"},
+                  {"id": "memory-state", "label": "Memory State", "calculation": "Show short-term, long-term, and failure memory contents at each iteration"},
+                  {"id": "circuit-breaker", "label": "Circuit Breaker", "calculation": "Show status: CLOSED (ok) → OPEN (too many failures) → HALF-OPEN (retry)"}
+                ]
+              },
+              {
+                "id": "sim-intent",
+                "forProject": "p3",
+                "name": "Intent Translator",
+                "description": "See how natural language maps to concrete editing parameters",
+                "inputs": [
+                  {"id": "intent-input", "label": "Editing Intent", "type": "select", "options": ["Make it cinematic", "Speed it up", "Make it dreamy", "Corporate/professional"]}
+                ],
+                "outputs": [
+                  {"id": "pacing", "label": "Pacing", "calculation": "cinematic: 80% speed, speed: 120%, dreamy: 70%, corporate: 100%"},
+                  {"id": "color", "label": "Color Grade", "calculation": "cinematic: desaturated LUT, speed: high contrast, dreamy: warm pastel, corporate: neutral"},
+                  {"id": "transitions", "label": "Transitions", "calculation": "cinematic: slow dissolves, speed: hard cuts, dreamy: cross-fade, corporate: clean cuts"},
+                  {"id": "audio", "label": "Audio Cues", "calculation": "cinematic: dramatic swells, speed: upbeat, dreamy: ambient, corporate: subtle background"}
+                ]
+              },
+              {
+                "id": "sim-burnout",
+                "forProject": "p4",
+                "name": "Burnout Pattern Detector",
+                "description": "Simulate how the Life OS detects burnout risk from calendar + sleep data",
+                "inputs": [
+                  {"id": "meetings-per-day", "label": "Meetings/Day", "type": "slider", "min": 0, "max": 12, "default": 4, "step": 1},
+                  {"id": "sleep-hours", "label": "Sleep Hours", "type": "slider", "min": 3, "max": 10, "default": 7, "step": 0.5},
+                  {"id": "exercise-days", "label": "Exercise Days/Week", "type": "slider", "min": 0, "max": 7, "default": 3, "step": 1},
+                  {"id": "deep-work-hours", "label": "Deep Work Hours/Day", "type": "slider", "min": 0, "max": 8, "default": 3, "step": 0.5}
+                ],
+                "outputs": [
+                  {"id": "burnout-score", "label": "Burnout Risk Score", "calculation": "Weighted: meetings(0.3) + sleep_deficit(0.3) + exercise_deficit(0.2) + low_deep_work(0.2)"},
+                  {"id": "risk-level", "label": "Risk Level", "calculation": "0-30: LOW (green), 31-60: MODERATE (yellow), 61-80: HIGH (orange), 81+: CRITICAL (red)"},
+                  {"id": "recommendation", "label": "Agent Recommendation", "calculation": "Context-specific suggestion based on highest-weight risk factor"},
+                  {"id": "value-check", "label": "Value Alignment", "calculation": "Check against stated priority (e.g., health > work) and flag conflicts"}
+                ]
+              },
+              {
+                "id": "sim-workflow",
+                "forProject": "p5",
+                "name": "Workflow Orchestrator",
+                "description": "Watch multi-agent delegation in action for a sample enterprise workflow",
+                "inputs": [
+                  {"id": "workflow-type", "label": "Workflow", "type": "select", "options": ["Incident Response", "Feature Request Triage", "Weekly Report Generation", "Customer Escalation"]}
+                ],
+                "outputs": [
+                  {"id": "workflow-steps", "label": "Orchestration Plan", "calculation": "Show steps with dependencies and which specialist agent handles each"},
+                  {"id": "agent-delegation", "label": "Agent Delegation", "calculation": "Visual: orchestrator → communication/data/analysis/docs agents"},
+                  {"id": "hitl-gates", "label": "HITL Gates", "calculation": "Highlight which steps require human approval"},
+                  {"id": "audit-log", "label": "Audit Trail", "calculation": "Show immutable log entries: decision, rationale, authorization, outcome"}
+                ]
+              }
+            ]
+          },
+          "interactions": [
+            {
+              "trigger": "change",
+              "element": ".sim-input",
+              "action": "calculate",
+              "target": ".sim-output",
+              "details": "Changing any input immediately recalculates and updates all outputs with animated transitions"
+            }
+          ],
+          "states": {
+            "default": "Simulation matching currently selected project is shown",
+            "calculating": "Brief animation on output values during recalculation"
+          }
+        },
+        {
+          "id": "comp-themes",
+          "type": "card",
+          "name": "Cross-Cutting Themes",
+          "content": {
+            "title": "5 Themes That Connect Everything",
+            "description": "Patterns that appear across all 5 projects",
+            "themes": [
+              {"name": "Memory is the Moat", "icon": "brain", "projects": ["P1", "P2", "P4"], "insight": "An agent without memory is a chatbot. From sliding windows to knowledge graphs with decay."},
+              {"name": "The Agentic Loop", "icon": "loop", "projects": ["P2", "P3", "P4", "P5"], "insight": "Plan → Execute → Test → Reflect. Master this primitive — everything else is specialization."},
+              {"name": "HITL is Non-Negotiable", "icon": "shield", "projects": ["P2", "P4", "P5"], "insight": "Production isn't removing humans — it's knowing exactly when to involve them."},
+              {"name": "Explainability as Architecture", "icon": "lightbulb", "projects": ["P3", "P4", "P5"], "insight": "If your agent can't explain its reasoning, it's not production-ready."},
+              {"name": "Resource Awareness", "icon": "gauge", "projects": ["P1", "P5"], "insight": "Production AI has a cost per inference. Ignoring it is how startups die."}
+            ]
+          },
+          "interactions": [
+            {
+              "trigger": "click",
+              "element": ".theme-card",
+              "action": "display",
+              "target": ".theme-detail",
+              "details": "Clicking a theme highlights which projects use it (with connecting lines) and shows the progression of that pattern across levels"
+            }
+          ],
+          "states": {
+            "default": "5 theme cards in a row, compact",
+            "selected": "Selected theme expanded, project badges highlighted, connection lines shown"
+          }
+        },
+        {
+          "id": "comp-your-path",
+          "type": "card",
+          "name": "Your Learning Path",
+          "content": {
+            "title": "Choose Your Starting Point",
+            "description": "Based on your current level, here's the recommended path",
+            "paths": [
+              {"start": "New to AI", "recommended": "P1 → P2 → P3", "timeline": "3-6 months", "focus": "Foundation + agentic patterns"},
+              {"start": "Building wrappers", "recommended": "C7 → C6 → P2", "timeline": "1-3 months", "focus": "Production patterns first"},
+              {"start": "Shipping code", "recommended": "P4 or P5", "timeline": "2-4 months", "focus": "Enterprise-grade systems"},
+              {"start": "Already senior", "recommended": "P5 → audit existing systems", "timeline": "1-2 months", "focus": "Orchestration mastery"}
+            ]
+          },
+          "interactions": [
+            {
+              "trigger": "click",
+              "element": ".path-option",
+              "action": "display",
+              "target": ".path-detail",
+              "details": "Selecting a path highlights the recommended projects in the roadmap above and shows a timeline view"
+            }
+          ],
+          "states": {
+            "default": "4 path options as cards",
+            "selected": "Selected path highlighted with timeline and linked project tabs"
+          }
+        }
+      ]
+    }
+  ],
+
+  "educationalContent": {
+    "concepts": [
+      {
+        "id": "concept-quantization",
+        "name": "Model Quantization",
+        "explanation": "Reducing the precision of model weights (e.g., from 32-bit to 4-bit) to run on smaller devices. Less precision = less RAM, slightly less accuracy.",
+        "examples": [
+          {"input": "7B parameter model at 32-bit", "output": "~28 GB RAM needed", "explanation": "7B × 4 bytes = 28 GB"},
+          {"input": "Same model at 4-bit", "output": "~3.5 GB RAM needed", "explanation": "7B × 0.5 bytes = 3.5 GB — fits on a phone"}
+        ]
+      },
+      {
+        "id": "concept-circuit-breaker",
+        "name": "Circuit Breaker Pattern",
+        "explanation": "Like an electrical circuit breaker: if too many failures happen, stop trying and escalate. Prevents infinite loops in agentic systems.",
+        "examples": [
+          {"input": "3 consecutive test failures", "output": "Circuit OPEN — stop retrying", "explanation": "Likely a deeper issue, not transient"},
+          {"input": "After cooldown, 1 success", "output": "Circuit HALF-OPEN → CLOSED", "explanation": "Gradually resume normal operation"}
+        ]
+      },
+      {
+        "id": "concept-semantic-chunking",
+        "name": "Semantic Chunking",
+        "explanation": "Breaking text into chunks based on meaning (not just character count). Uses embedding similarity to keep related content together.",
+        "examples": [
+          {"input": "A paragraph about cooking, then one about sports", "output": "Two semantic chunks", "explanation": "Embedding similarity between sentences drops at the topic boundary"}
+        ]
+      },
+      {
+        "id": "concept-hitl",
+        "name": "Human-in-the-Loop (HITL)",
+        "explanation": "Design pattern where an AI system pauses at critical decision points and asks a human to approve before proceeding. Balances autonomy with safety.",
+        "examples": [
+          {"input": "Agent wants to delete a production database table", "output": "HITL GATE: Requires human approval", "explanation": "Destructive, irreversible action — agent should never do this alone"},
+          {"input": "Agent wants to format a log message", "output": "No HITL needed", "explanation": "Low risk, easily reversible"}
+        ]
+      },
+      {
+        "id": "concept-knowledge-graph",
+        "name": "Personal Knowledge Graph",
+        "explanation": "A network of entities (people, places, events) and relationships between them, built from your personal data. Enables contextual reasoning about your life.",
+        "examples": [
+          {"input": "'Meeting with Sarah about Project X at 3pm'", "output": "Entities: Sarah (person), Project X (project), 3pm (time). Relations: Sarah → works_on → Project X", "explanation": "Structured representation enables queries like 'What does Sarah work on?'"}
+        ]
+      }
+    ],
+    "progressiveDisclosure": [
+      {"level": 1, "shows": "Project overview + level badge + what it proves"},
+      {"level": 2, "shows": "Architecture points with expandable details"},
+      {"level": 3, "shows": "Interactive simulation with adjustable parameters"},
+      {"level": 4, "shows": "Cross-cutting themes with connection visualization"}
+    ]
+  },
+
+  "interactiveElements": {
+    "tabs": [
+      {"id": "tab-p1", "label": "SLM Mobile App", "contentId": "project-p1"},
+      {"id": "tab-p2", "label": "Coding Agent", "contentId": "project-p2"},
+      {"id": "tab-p3", "label": "Video Editor AI", "contentId": "project-p3"},
+      {"id": "tab-p4", "label": "Life OS Agent", "contentId": "project-p4"},
+      {"id": "tab-p5", "label": "Enterprise Agent", "contentId": "project-p5"}
+    ],
+    "tooltips": [
+      {"target": ".term-quantization", "content": "Reducing model precision (32-bit → 4-bit) to fit on smaller devices"},
+      {"target": ".term-circuit-breaker", "content": "Stops retrying after N consecutive failures to prevent infinite loops"},
+      {"target": ".term-semantic-chunking", "content": "Breaking text by meaning, not character count, using embedding similarity"},
+      {"target": ".term-hitl", "content": "Human-in-the-Loop: AI pauses for human approval at critical decision points"},
+      {"target": ".term-knowledge-graph", "content": "Network of entities and relationships enabling contextual reasoning"},
+      {"target": ".term-lut", "content": "Look-Up Table: predefined color transformation for video color grading"},
+      {"target": ".term-rbac", "content": "Role-Based Access Control: permissions tied to user roles, not individuals"},
+      {"target": ".term-durable-state", "content": "State that survives process restarts — stored on disk, not just in memory"},
+      {"target": ".term-vector-similarity", "content": "Measuring how similar two pieces of text are by comparing their numerical embeddings"},
+      {"target": ".term-edl", "content": "Edit Decision List: planned sequence of video edits (cuts, transitions, effects) before execution"}
+    ],
+    "sliders": [
+      {"id": "slider-ram", "min": 2, "max": 16, "default": 4, "unit": "GB", "affects": "quant-strategy"},
+      {"id": "slider-models", "min": 1, "max": 5, "default": 1, "unit": "models", "affects": "memory-used"},
+      {"id": "slider-battery", "min": 5, "max": 100, "default": 80, "unit": "%", "affects": "inference-mode"},
+      {"id": "slider-meetings", "min": 0, "max": 12, "default": 4, "unit": "/day", "affects": "burnout-score"},
+      {"id": "slider-sleep", "min": 3, "max": 10, "default": 7, "unit": "hrs", "affects": "burnout-score"},
+      {"id": "slider-exercise", "min": 0, "max": 7, "default": 3, "unit": "days/wk", "affects": "burnout-score"},
+      {"id": "slider-iterations", "min": 1, "max": 10, "default": 5, "unit": "max", "affects": "loop-viz"}
+    ],
+    "simulations": [
+      {
+        "id": "sim-memory",
+        "inputs": ["slider-ram", "slider-models", "slider-battery"],
+        "calculation": "quant = ram <= 4 ? '4-bit (0.5GB/model)' : '8-bit (1GB/model)'; memUsed = models * (ram <= 4 ? 0.5 : 1); status = memUsed/ram > 0.8 ? 'PRESSURE' : 'OK'; inference = battery < 20 ? 'THROTTLED' : 'NORMAL'",
+        "output": "sim-memory-results"
+      },
+      {
+        "id": "sim-burnout-calc",
+        "inputs": ["slider-meetings", "slider-sleep", "slider-exercise"],
+        "calculation": "meetingScore = meetings/12 * 30; sleepScore = Math.max(0, (8 - sleep)/5) * 30; exerciseScore = Math.max(0, (3 - exercise)/3) * 20; score = meetingScore + sleepScore + exerciseScore",
+        "output": "burnout-results"
+      }
+    ]
+  },
+
+  "testRequirements": {
+    "playwright": [
+      {
+        "name": "All project tabs navigate correctly",
+        "steps": ["Click each of the 5 project tabs"],
+        "assertions": ["Each tab shows correct project content", "Active tab is visually highlighted"]
+      },
+      {
+        "name": "Memory pressure simulation calculates correctly",
+        "steps": ["Set RAM to 4GB", "Set models to 3", "Set battery to 15%"],
+        "assertions": ["Quantization shows 4-bit", "Memory shows 1.5GB", "Status shows PRESSURE", "Inference shows THROTTLED"]
+      },
+      {
+        "name": "Burnout detector responds to inputs",
+        "steps": ["Set meetings to 10", "Set sleep to 4", "Set exercise to 0"],
+        "assertions": ["Risk score > 80", "Risk level shows CRITICAL in red"]
+      },
+      {
+        "name": "Architecture points expand/collapse",
+        "steps": ["Click an architecture point heading"],
+        "assertions": ["Detail text appears below heading", "Click again collapses it"]
+      },
+      {
+        "name": "Tooltips show on hover",
+        "steps": ["Hover over a term with tooltip class"],
+        "assertions": ["Tooltip appears with definition text"]
+      },
+      {
+        "name": "Theme cards highlight connected projects",
+        "steps": ["Click 'Memory is the Moat' theme card"],
+        "assertions": ["P1, P2, P4 badges are highlighted", "Theme detail panel shows"]
+      },
+      {
+        "name": "Learning path selection works",
+        "steps": ["Click 'Building wrappers' path"],
+        "assertions": ["Path detail shows C7 → C6 → P2 recommendation"]
+      }
+    ],
+    "accessibility": [
+      "All interactive elements are keyboard-navigable",
+      "ARIA labels on tabs, sliders, and tooltips",
+      "Color contrast meets WCAG AA (4.5:1 for text)",
+      "Focus indicators visible on all interactive elements",
+      "Screen reader can navigate all content"
+    ],
+    "responsive": [
+      "Desktop (1200px+): full layout",
+      "Tablet (768px-1199px): stacked cards, tabs scroll horizontally",
+      "Mobile (320px-767px): single column, simulation sliders full width"
+    ]
+  },
+
+  "qualityGates": {
+    "allTabsWork": true,
+    "allDropdownsWork": true,
+    "allButtonsWork": true,
+    "allSimulationsCalculate": true,
+    "allTooltipsShow": true,
+    "progressiveDisclosureWorks": true,
+    "noConsoleErrors": true,
+    "accessibilityPasses": true,
+    "playwrightTestsPass": true
+  }
+}
