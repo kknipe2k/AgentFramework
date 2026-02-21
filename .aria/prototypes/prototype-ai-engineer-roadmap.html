@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>2026 AI Engineer Roadmap - Interactive Learning Tool</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#ffffff;--surface:#f8fafc;--primary:#2563eb;--primary-light:#dbeafe;
+  --secondary:#7c3aed;--secondary-light:#ede9fe;--accent:#059669;--accent-light:#d1fae5;
+  --warning:#d97706;--warning-light:#fef3c7;--danger:#dc2626;--danger-light:#fee2e2;
+  --text:#1e293b;--text-muted:#64748b;--border:#e2e8f0;
+  --shadow:0 1px 3px rgba(0,0,0,0.08);--shadow-md:0 4px 12px rgba(0,0,0,0.1);
+  --radius:8px;--transition:0.25s ease;
+}
+body{font-family:'Inter',system-ui,-apple-system,sans-serif;color:var(--text);background:var(--bg);line-height:1.6}
+.container{max-width:1200px;margin:0 auto;padding:32px 24px}
+h1{font-size:2.2rem;font-weight:700;letter-spacing:-0.02em}
+h2{font-size:1.5rem;font-weight:700;margin-bottom:8px}
+h3{font-size:1.1rem;font-weight:600}
+.section{margin-bottom:48px}
+/* Hero */
+.hero-bar{height:4px;background:linear-gradient(90deg,var(--accent),var(--primary),var(--secondary),var(--warning),var(--danger))}
+.hero{text-align:center;padding:48px 24px 32px}
+.hero h1{margin-bottom:12px}
+.hero p{color:var(--text-muted);font-size:1.1rem;max-width:700px;margin:0 auto 8px}
+.hero .attr{font-size:0.85rem;color:var(--text-muted);font-style:italic}
+/* Career Gap */
+.levels{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:16px}
+@media(max-width:768px){.levels{grid-template-columns:1fr 1fr}}
+@media(max-width:480px){.levels{grid-template-columns:1fr}}
+.level-card{background:var(--surface);border:2px solid var(--border);border-radius:var(--radius);padding:16px;cursor:pointer;transition:var(--transition);text-align:center;position:relative}
+.level-card:hover{box-shadow:var(--shadow-md);transform:translateY(-2px)}
+.level-card.active{border-color:var(--primary);background:var(--primary-light)}
+.level-card .salary{font-size:1.5rem;font-weight:700;color:var(--primary)}
+.level-card .title{font-weight:600;margin:4px 0}
+.level-card .risk{font-size:0.75rem;padding:2px 8px;border-radius:12px;display:inline-block;margin-top:4px}
+.risk-high{background:var(--danger-light);color:var(--danger)}
+.risk-medium{background:var(--warning-light);color:var(--warning)}
+.risk-low{background:var(--accent-light);color:var(--accent)}
+.level-detail{margin-top:16px;padding:20px;background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);display:none;animation:fadeIn 0.3s ease}
+.level-detail.show{display:block}
+.level-detail h3{margin-bottom:8px}
+.level-detail .skills{color:var(--text-muted);margin-bottom:8px}
+.level-detail .projects-link{font-size:0.9rem;color:var(--primary)}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+/* Tabs */
+.tab-bar{display:flex;gap:4px;border-bottom:2px solid var(--border);overflow-x:auto;padding-bottom:0}
+.tab-btn{padding:10px 16px;border:none;background:none;cursor:pointer;font-size:0.9rem;font-weight:500;color:var(--text-muted);border-bottom:3px solid transparent;transition:var(--transition);white-space:nowrap;display:flex;align-items:center;gap:6px}
+.tab-btn:hover{color:var(--text);background:var(--surface)}
+.tab-btn.active{color:var(--text);border-bottom-color:var(--primary);font-weight:600}
+.badge{font-size:0.65rem;padding:2px 6px;border-radius:10px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.03em}
+.badge-beginner{background:var(--accent)}
+.badge-intermediate{background:var(--primary)}
+.badge-advanced{background:var(--secondary)}
+.badge-expert{background:var(--warning)}
+.badge-master{background:var(--danger)}
+.tab-content{display:none;padding:24px 0;animation:fadeIn 0.3s ease}
+.tab-content.active{display:block}
+.project-header{margin-bottom:16px}
+.project-header .proves{color:var(--text-muted);font-size:0.95rem;margin-top:4px}
+.project-overview{color:var(--text);margin-bottom:20px;font-size:1.05rem;line-height:1.7}
+/* Accordion */
+.accordion-item{border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;overflow:hidden}
+.accordion-btn{width:100%;padding:14px 16px;background:var(--surface);border:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center;font-size:0.95rem;font-weight:600;color:var(--text);transition:var(--transition)}
+.accordion-btn:hover{background:var(--primary-light)}
+.accordion-btn .arrow{transition:transform 0.25s ease;font-size:0.8rem;color:var(--text-muted)}
+.accordion-btn.open .arrow{transform:rotate(90deg)}
+.accordion-body{padding:0 16px;max-height:0;overflow:hidden;transition:max-height 0.3s ease,padding 0.3s ease;background:#fff}
+.accordion-body.open{max-height:200px;padding:12px 16px}
+.accordion-body p{color:var(--text-muted);font-size:0.9rem;line-height:1.6}
+/* Simulations */
+.sim-panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:24px;margin-top:24px}
+.sim-panel h3{margin-bottom:4px}
+.sim-desc{color:var(--text-muted);font-size:0.9rem;margin-bottom:20px}
+.sim-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+@media(max-width:768px){.sim-grid{grid-template-columns:1fr}}
+.sim-inputs label{display:block;font-weight:600;font-size:0.85rem;margin-bottom:4px;color:var(--text)}
+.sim-inputs .input-group{margin-bottom:16px}
+.sim-inputs input[type=range]{width:100%;accent-color:var(--primary);margin:4px 0}
+.sim-inputs select{width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:0.9rem;background:#fff}
+.range-val{font-size:0.85rem;color:var(--primary);font-weight:600}
+.sim-outputs .output-row{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#fff;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;transition:var(--transition)}
+.output-label{font-size:0.85rem;color:var(--text-muted);font-weight:500}
+.output-value{font-weight:700;font-size:0.95rem}
+.output-value.ok{color:var(--accent)}
+.output-value.warn{color:var(--warning)}
+.output-value.danger{color:var(--danger)}
+.output-value.info{color:var(--primary)}
+/* Agentic loop viz */
+.loop-viz{margin-top:12px}
+.loop-step{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:var(--radius);margin-bottom:4px;font-size:0.85rem;font-weight:500;background:#fff;border:1px solid var(--border);transition:var(--transition)}
+.loop-step.active-step{background:var(--primary-light);border-color:var(--primary)}
+.loop-step.pass{background:var(--accent-light);border-color:var(--accent)}
+.loop-step.fail{background:var(--danger-light);border-color:var(--danger)}
+.loop-step .step-icon{width:20px;text-align:center}
+.sim-btn{padding:10px 20px;background:var(--primary);color:#fff;border:none;border-radius:var(--radius);cursor:pointer;font-weight:600;font-size:0.9rem;transition:var(--transition)}
+.sim-btn:hover{background:#1d4ed8}
+.sim-btn:disabled{background:var(--text-muted);cursor:not-allowed}
+/* Intent table */
+.intent-table{width:100%;border-collapse:collapse;font-size:0.9rem}
+.intent-table th{text-align:left;padding:10px 12px;background:var(--surface);border-bottom:2px solid var(--border);font-weight:600}
+.intent-table td{padding:10px 12px;border-bottom:1px solid var(--border)}
+/* Workflow viz */
+.workflow-step{display:flex;align-items:center;gap:12px;padding:10px;margin-bottom:6px;background:#fff;border:1px solid var(--border);border-radius:var(--radius);font-size:0.85rem}
+.workflow-step .agent-badge{font-size:0.7rem;padding:2px 8px;border-radius:10px;background:var(--primary-light);color:var(--primary);font-weight:600}
+.workflow-step .hitl-badge{font-size:0.7rem;padding:2px 8px;border-radius:10px;background:var(--warning-light);color:var(--warning);font-weight:600}
+.audit-entry{font-family:'JetBrains Mono','Fira Code',monospace;font-size:0.75rem;padding:6px 10px;background:var(--surface);border-left:3px solid var(--primary);margin-bottom:4px;color:var(--text-muted)}
+/* Themes */
+.themes-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:16px}
+@media(max-width:768px){.themes-grid{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:480px){.themes-grid{grid-template-columns:1fr 1fr}}
+.theme-card{background:var(--surface);border:2px solid var(--border);border-radius:var(--radius);padding:16px;cursor:pointer;transition:var(--transition);text-align:center}
+.theme-card:hover{box-shadow:var(--shadow-md);transform:translateY(-2px)}
+.theme-card.active{border-color:var(--primary);background:var(--primary-light)}
+.theme-icon{font-size:1.5rem;margin-bottom:8px}
+.theme-card h4{font-size:0.85rem;line-height:1.3}
+.theme-detail{margin-top:16px;padding:20px;background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);display:none;animation:fadeIn 0.3s ease}
+.theme-detail.show{display:block}
+.theme-detail .project-badges{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.theme-detail .p-badge{font-size:0.75rem;padding:3px 10px;border-radius:12px;font-weight:600}
+/* Paths */
+.paths-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:16px}
+@media(max-width:600px){.paths-grid{grid-template-columns:1fr}}
+.path-card{background:var(--surface);border:2px solid var(--border);border-radius:var(--radius);padding:20px;cursor:pointer;transition:var(--transition)}
+.path-card:hover{box-shadow:var(--shadow-md);transform:translateY(-2px)}
+.path-card.active{border-color:var(--primary);background:var(--primary-light)}
+.path-card .path-label{font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);font-weight:600}
+.path-card h4{margin:6px 0}
+.path-card .path-info{font-size:0.85rem;color:var(--text-muted)}
+.path-detail{margin-top:16px;padding:20px;background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);display:none;animation:fadeIn 0.3s ease}
+.path-detail.show{display:block}
+/* Tooltips */
+.term{border-bottom:1px dashed var(--primary);cursor:help;position:relative;color:var(--primary);font-weight:500}
+.term .tip{position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);background:var(--text);color:#fff;padding:8px 12px;border-radius:6px;font-size:0.78rem;font-weight:400;white-space:nowrap;max-width:320px;white-space:normal;opacity:0;pointer-events:none;transition:opacity 0.2s ease;z-index:100;line-height:1.4;box-shadow:var(--shadow-md)}
+.term:hover .tip{opacity:1}
+.term .tip::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);border:6px solid transparent;border-top-color:var(--text)}
+</style>
+</head>
+<body>
+<div class="hero-bar"></div>
+<div class="hero">
+  <h1>The 2026 AI Engineer Roadmap</h1>
+  <p>5 production-grade projects that bridge the <strong>$150K gap</strong> between prompt engineer and systems architect</p>
+  <span class="attr">Based on Rohit @rohit4verse's blueprint</span>
+</div>
+
+<div class="container">
+
+<!-- Career Gap Visualizer -->
+<div class="section">
+  <h2>The $150K Gap</h2>
+  <p style="color:var(--text-muted);margin-bottom:12px">Click a level to see what skills differentiate each tier.</p>
+  <div class="levels" id="levels">
+    <div class="level-card" data-level="0" onclick="selectLevel(0)">
+      <div class="salary">$80K</div>
+      <div class="title">Prompt Engineer</div>
+      <span class="risk risk-high">HIGH RISK</span>
+    </div>
+    <div class="level-card" data-level="1" onclick="selectLevel(1)">
+      <div class="salary">$120K</div>
+      <div class="title">AI Developer</div>
+      <span class="risk risk-medium">MEDIUM RISK</span>
+    </div>
+    <div class="level-card" data-level="2" onclick="selectLevel(2)">
+      <div class="salary">$170K</div>
+      <div class="title">AI Engineer</div>
+      <span class="risk risk-low">LOW RISK</span>
+    </div>
+    <div class="level-card" data-level="3" onclick="selectLevel(3)">
+      <div class="salary">$230K+</div>
+      <div class="title">Systems Architect</div>
+      <span class="risk risk-low">VERY LOW RISK</span>
+    </div>
+  </div>
+  <div class="level-detail" id="level-detail"></div>
+</div>
+
+<!-- Project Navigator -->
+<div class="section">
+  <h2>5 Projects, 5 Levels</h2>
+  <p style="color:var(--text-muted);margin-bottom:16px">Click any project to explore its architecture and try the interactive simulation.</p>
+  <div class="tab-bar" role="tablist">
+    <button class="tab-btn active" role="tab" aria-selected="true" onclick="selectProject(0)"><span class="badge badge-beginner">Beginner</span> SLM Mobile App</button>
+    <button class="tab-btn" role="tab" aria-selected="false" onclick="selectProject(1)"><span class="badge badge-intermediate">Intermediate</span> Coding Agent</button>
+    <button class="tab-btn" role="tab" aria-selected="false" onclick="selectProject(2)"><span class="badge badge-advanced">Advanced</span> Video Editor AI</button>
+    <button class="tab-btn" role="tab" aria-selected="false" onclick="selectProject(3)"><span class="badge badge-expert">Expert</span> Life OS Agent</button>
+    <button class="tab-btn" role="tab" aria-selected="false" onclick="selectProject(4)"><span class="badge badge-master">Master</span> Enterprise Agent</button>
+  </div>
+
+  <!-- P1: SLM Mobile App -->
+  <div class="tab-content active" id="project-0" role="tabpanel">
+    <div class="project-header">
+      <h3>AI-Powered Mobile App with Small Language Models</h3>
+      <div class="proves">Proves: Edge AI + Resource Optimization</div>
+    </div>
+    <p class="project-overview">Build an offline-first mobile app using small language models. Zero API costs. Complete privacy. This teaches you how to optimize models for restricted hardware.</p>
+    <div class="accordion" id="acc-0">
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Model Management <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Lazy loading models on-demand to preserve memory. Unload inactive models when memory pressure is detected. Preload frequently used models during idle time.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Context Window <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Implement sliding window with <span class="term">semantic chunking<span class="tip">Breaking text by meaning, not character count, using embedding similarity</span></span>. Keep the most relevant context, drop the oldest. Use <span class="term">vector similarity<span class="tip">Measuring text similarity by comparing numerical embeddings</span></span> to determine what stays.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Quantization Strategy <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Dynamic <span class="term">quantization<span class="tip">Reducing model precision (32-bit &rarr; 4-bit) to fit on smaller devices</span></span> based on device capabilities. 4-bit for older devices (pre-2020), 8-bit for newer. Detect available RAM and adjust accordingly.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Battery Optimization <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Batch inference requests to reduce wake cycles. Throttle model calls during low battery mode. Defer non-critical processing until charging.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Offline-First Sync <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Store user data locally in encrypted format. Sync to cloud only when connected and with user permission. Conflict resolution prioritizes local changes.</p></div></div>
+    </div>
+    <!-- Simulation: Memory Pressure -->
+    <div class="sim-panel">
+      <h3>Try It: Memory Pressure Simulator</h3>
+      <p class="sim-desc">See how SLM model management works under resource constraints.</p>
+      <div class="sim-grid">
+        <div class="sim-inputs">
+          <div class="input-group">
+            <label>Device RAM: <span class="range-val" id="ram-val">4 GB</span></label>
+            <input type="range" min="2" max="16" value="4" step="1" id="slider-ram" oninput="calcMemory()" aria-label="Device RAM in GB">
+          </div>
+          <div class="input-group">
+            <label>Active Models: <span class="range-val" id="models-val">1</span></label>
+            <input type="range" min="1" max="5" value="1" step="1" id="slider-models" oninput="calcMemory()" aria-label="Number of active models">
+          </div>
+          <div class="input-group">
+            <label>Battery: <span class="range-val" id="battery-val">80%</span></label>
+            <input type="range" min="5" max="100" value="80" step="5" id="slider-battery" oninput="calcMemory()" aria-label="Battery percentage">
+          </div>
+        </div>
+        <div class="sim-outputs" id="mem-outputs">
+          <div class="output-row"><span class="output-label">Quantization</span><span class="output-value info" id="out-quant">8-bit (1 GB/model)</span></div>
+          <div class="output-row"><span class="output-label">Memory Used</span><span class="output-value info" id="out-mem-used">1.0 GB / 4 GB</span></div>
+          <div class="output-row"><span class="output-label">Status</span><span class="output-value ok" id="out-mem-status">OK</span></div>
+          <div class="output-row"><span class="output-label">Inference Mode</span><span class="output-value ok" id="out-inference">NORMAL</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- P2: Coding Agent -->
+  <div class="tab-content" id="project-1" role="tabpanel">
+    <div class="project-header">
+      <h3>Self-Improving Coding Agent</h3>
+      <div class="proves">Proves: Agentic Loops + Production Debugging</div>
+    </div>
+    <p class="project-overview">An autonomous agent that writes code, runs tests, and learns from failures. It doesn't stop until the code is functional. The difference between a chatbot and an agent is the loop.</p>
+    <div class="accordion" id="acc-1">
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Execution Loop <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Plan &rarr; Execute &rarr; Test &rarr; Reflect cycle with max iteration limit. Each loop stores state to resume after interruption. <span class="term">Circuit breaker<span class="tip">Stops retrying after N consecutive failures to prevent infinite loops</span></span> pattern stops infinite loops.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Sandboxing Strategy <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Isolated execution environment per task. Resource limits on CPU, memory, and execution time. Filesystem access restricted to project directory only.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Memory Hierarchy <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Short-term memory holds current task context (last 5 iterations). Long-term memory indexes successful patterns by problem type. Failure memory stores error signatures with solutions.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Reflection Mechanism <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>After each failure, extract the error pattern and root cause. Compare against past failures using <span class="term">vector similarity<span class="tip">Measuring text similarity by comparing numerical embeddings</span></span>. Generate hypothesis for fix.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Learning from Mistakes <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Store failed attempts with full context &mdash; what was tried, why it failed, what fixed it. On similar future tasks, retrieve relevant failures before attempting.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Code Safety <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Static analysis before execution. Detect potentially dangerous operations. Require explicit approval for filesystem or network operations.</p></div></div>
+    </div>
+    <!-- Simulation: Agentic Loop -->
+    <div class="sim-panel">
+      <h3>Try It: Agentic Loop Visualizer</h3>
+      <p class="sim-desc">Watch a coding agent iterate through plan &rarr; execute &rarr; test &rarr; reflect.</p>
+      <div class="sim-grid">
+        <div class="sim-inputs">
+          <div class="input-group">
+            <label>Task Difficulty</label>
+            <select id="task-diff" aria-label="Task difficulty">
+              <option value="easy">Easy - FizzBuzz</option>
+              <option value="medium" selected>Medium - Sort Algorithm</option>
+              <option value="hard">Hard - API Client</option>
+            </select>
+          </div>
+          <div class="input-group">
+            <label>Max Iterations: <span class="range-val" id="iter-val">5</span></label>
+            <input type="range" min="1" max="10" value="5" step="1" id="slider-iter" oninput="document.getElementById('iter-val').textContent=this.value" aria-label="Maximum iterations">
+          </div>
+          <div class="input-group">
+            <button class="sim-btn" id="run-loop-btn" onclick="runAgenticLoop()">Run Simulation</button>
+          </div>
+        </div>
+        <div class="sim-outputs">
+          <div id="loop-container">
+            <div class="loop-step"><span class="step-icon">&#9679;</span> Plan &mdash; Analyze task requirements</div>
+            <div class="loop-step"><span class="step-icon">&#9679;</span> Code &mdash; Generate solution</div>
+            <div class="loop-step"><span class="step-icon">&#9679;</span> Test &mdash; Run test suite</div>
+            <div class="loop-step"><span class="step-icon">&#9679;</span> Reflect &mdash; Analyze results</div>
+          </div>
+          <div style="margin-top:12px">
+            <div class="output-row"><span class="output-label">Iteration</span><span class="output-value info" id="out-iter">0 / 5</span></div>
+            <div class="output-row"><span class="output-label">Circuit Breaker</span><span class="output-value ok" id="out-cb">CLOSED</span></div>
+            <div class="output-row"><span class="output-label">Result</span><span class="output-value info" id="out-result">Waiting...</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- P3: Video Editor AI -->
+  <div class="tab-content" id="project-2" role="tabpanel">
+    <div class="project-header">
+      <h3>Cursor but for Video Editors</h3>
+      <div class="proves">Proves: Multimodal AI + Complex Tool Integration</div>
+    </div>
+    <p class="project-overview">An AI agent that understands editing intent. User says "make this cinematic" and the agent handles cuts, transitions, and color grading. Text is the past; vision and video are the present.</p>
+    <div class="accordion" id="acc-2">
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Multimodal Understanding <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Vision model analyzes every frame for composition, lighting, and subject. Audio model analyzes dialogue, music, and ambient sound. Combine both streams to understand narrative flow.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Intent Translation <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>"Cinematic" translates to: slow pacing (80% speed), desaturated colors (apply <span class="term">LUT<span class="tip">Look-Up Table: predefined color transformation for video color grading</span></span>), shallow focus simulation, dramatic music cues.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Scene Detection <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Analyze frame differences for hard cuts. Detect scene boundaries using embedding similarity. Identify story beats based on visual and audio changes.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Edit Decision List <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Plan the entire edit before execution. Generate an <span class="term">EDL<span class="tip">Edit Decision List: planned sequence of video edits before execution</span></span> with timestamps for cuts, transitions, effects. Validate narrative sense before applying.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Incremental Preview <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Don't re-render entire video after each change. Generate preview of affected sections only. Cache unchanged segments for faster iteration.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Undo with Reasoning <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Every edit stores not just what changed, but <em>why</em> it was changed. User can ask "why did you cut here?" and get an explanation based on detected story beat.</p></div></div>
+    </div>
+    <!-- Simulation: Intent Translator -->
+    <div class="sim-panel">
+      <h3>Try It: Intent Translator</h3>
+      <p class="sim-desc">See how natural language maps to concrete editing parameters.</p>
+      <div class="input-group" style="margin-bottom:16px">
+        <label>Editing Intent</label>
+        <select id="intent-select" onchange="updateIntent()" aria-label="Select editing intent">
+          <option value="cinematic">Make it cinematic</option>
+          <option value="speed">Speed it up</option>
+          <option value="dreamy">Make it dreamy</option>
+          <option value="corporate">Corporate / professional</option>
+        </select>
+      </div>
+      <table class="intent-table">
+        <thead><tr><th>Parameter</th><th>Value</th></tr></thead>
+        <tbody id="intent-body">
+          <tr><td>Pacing</td><td id="int-pace">80% speed (slow, deliberate)</td></tr>
+          <tr><td>Color Grade</td><td id="int-color">Desaturated LUT, cool tones</td></tr>
+          <tr><td>Transitions</td><td id="int-trans">Slow dissolves (1.5s)</td></tr>
+          <tr><td>Audio Cues</td><td id="int-audio">Dramatic orchestral swells</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- P4: Life OS Agent -->
+  <div class="tab-content" id="project-3" role="tabpanel">
+    <div class="project-header">
+      <h3>Personal Life OS Agent</h3>
+      <div class="proves">Proves: Deep Context + Privacy-First Architecture</div>
+    </div>
+    <p class="project-overview">A deeply personal agent that manages your calendar, finances, and health. It plans months ahead and detects burnout by analyzing sleep patterns and meeting density. An agent that knows your life is a partner.</p>
+    <div class="accordion" id="acc-3">
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Continuous Context Building <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Ingest events from calendar, finance, health, and communications in real-time. Extract entities (people, places, projects) and build a personal <span class="term">knowledge graph<span class="tip">Network of entities and relationships enabling contextual reasoning</span></span>.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Proactive Monitoring <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Background thread runs every 6 hours analyzing patterns. Detect anomalies like meeting density increasing while sleep quality decreasing. Flag risks before they become problems.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Value Alignment <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>User explicitly states priorities (family > work, health > income). Every recommendation is validated against these values. Surface conflicts between actions and stated priorities.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Privacy Architecture <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>All data encrypted at rest with user-controlled keys. No data leaves device without explicit permission. Agent can function entirely offline for sensitive operations.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Predictive Planning <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Analyze historical patterns to predict future bottlenecks. "Based on your Q4 pattern, you'll be overcommitted in March." Suggest preventive scheduling adjustments now.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Memory Consolidation <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Nightly process summarizes daily events into long-term memory. Compress details while preserving meaning. Old memories decay unless reinforced by repeated access.</p></div></div>
+    </div>
+    <!-- Simulation: Burnout Detector -->
+    <div class="sim-panel">
+      <h3>Try It: Burnout Pattern Detector</h3>
+      <p class="sim-desc">Simulate how the Life OS detects burnout risk from calendar + sleep data.</p>
+      <div class="sim-grid">
+        <div class="sim-inputs">
+          <div class="input-group">
+            <label>Meetings/Day: <span class="range-val" id="meet-val">4</span></label>
+            <input type="range" min="0" max="12" value="4" step="1" id="slider-meet" oninput="calcBurnout()" aria-label="Meetings per day">
+          </div>
+          <div class="input-group">
+            <label>Sleep Hours: <span class="range-val" id="sleep-val">7</span></label>
+            <input type="range" min="3" max="10" value="7" step="0.5" id="slider-sleep" oninput="calcBurnout()" aria-label="Sleep hours">
+          </div>
+          <div class="input-group">
+            <label>Exercise Days/Week: <span class="range-val" id="exercise-val">3</span></label>
+            <input type="range" min="0" max="7" value="3" step="1" id="slider-exercise" oninput="calcBurnout()" aria-label="Exercise days per week">
+          </div>
+          <div class="input-group">
+            <label>Deep Work Hours/Day: <span class="range-val" id="dw-val">3</span></label>
+            <input type="range" min="0" max="8" value="3" step="0.5" id="slider-dw" oninput="calcBurnout()" aria-label="Deep work hours per day">
+          </div>
+        </div>
+        <div class="sim-outputs">
+          <div class="output-row"><span class="output-label">Burnout Risk Score</span><span class="output-value info" id="out-burnout">28 / 100</span></div>
+          <div class="output-row"><span class="output-label">Risk Level</span><span class="output-value ok" id="out-risk-level">LOW</span></div>
+          <div class="output-row"><span class="output-label">Recommendation</span><span class="output-value info" id="out-rec" style="font-size:0.8rem;font-weight:500;text-align:right;max-width:260px">Looking good. Maintain current balance.</span></div>
+          <div class="output-row"><span class="output-label">Value Alignment</span><span class="output-value ok" id="out-values">No conflicts detected</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- P5: Enterprise Agent -->
+  <div class="tab-content" id="project-4" role="tabpanel">
+    <div class="project-header">
+      <h3>Autonomous Enterprise Workflow Agent</h3>
+      <div class="proves">Proves: Production-Grade Orchestration</div>
+    </div>
+    <p class="project-overview">The final boss of AI engineering. An agent that runs business workflows end-to-end: monitors Slack/Jira, plans execution, delegates tasks, and reports outcomes with complete audit logs.</p>
+    <div class="accordion" id="acc-4">
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Event-Driven Architecture <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Listen to events from Slack, Jira, email, monitoring systems. Pattern recognition identifies workflow triggers. Each event type maps to a workflow template.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Workflow Orchestration <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Break complex workflows into steps with dependencies. Execute steps in parallel where possible. Handle long-running operations with <span class="term">durable state<span class="tip">State that survives process restarts &mdash; stored on disk, not just in memory</span></span>.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Multi-Agent Delegation <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Orchestrator agent spawns specialist agents: communication agent (messaging), data agent (queries), analysis agent (root cause), documentation agent (reports).</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Self-Healing Mechanisms <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Every step monitored for success/failure. <span class="term">Circuit breaker<span class="tip">Stops retrying after N consecutive failures to prevent infinite loops</span></span> stops repeated failures. Exponential backoff for transient issues.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Audit Trail <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Immutable log of every action taken. Stores what was decided, why, who authorized it, and what was the outcome. Queryable for compliance and debugging.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">RBAC + HITL <span class="arrow">&#9654;</span></button><div class="accordion-body"><p><span class="term">RBAC<span class="tip">Role-Based Access Control: permissions tied to user roles, not individuals</span></span> limits agent actions by invoker permissions. <span class="term">HITL<span class="tip">Human-in-the-Loop: AI pauses for human approval at critical decision points</span></span> gates for sensitive operations. Confidence-based escalation.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Observability <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Trace every LLM call with inputs, outputs, and latency. Metrics on workflow success rate, execution time, cost per workflow. Alerts when workflows fail repeatedly.</p></div></div>
+      <div class="accordion-item"><button class="accordion-btn" onclick="toggleAcc(this)">Cost Management <span class="arrow">&#9654;</span></button><div class="accordion-body"><p>Track token usage per workflow. Implement budget limits. Optimize prompts to reduce cost without sacrificing quality.</p></div></div>
+    </div>
+    <!-- Simulation: Workflow Orchestrator -->
+    <div class="sim-panel">
+      <h3>Try It: Workflow Orchestrator</h3>
+      <p class="sim-desc">Watch multi-agent delegation in action for a sample enterprise workflow.</p>
+      <div class="input-group" style="margin-bottom:16px">
+        <label>Workflow Type</label>
+        <select id="workflow-select" onchange="updateWorkflow()" aria-label="Select workflow type">
+          <option value="incident">Incident Response</option>
+          <option value="feature">Feature Request Triage</option>
+          <option value="report">Weekly Report Generation</option>
+          <option value="escalation">Customer Escalation</option>
+        </select>
+      </div>
+      <div id="workflow-viz"></div>
+      <h4 style="margin-top:16px;margin-bottom:8px;font-size:0.9rem">Audit Trail Preview</h4>
+      <div id="audit-viz"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Cross-Cutting Themes -->
+<div class="section">
+  <h2>5 Themes That Connect Everything</h2>
+  <p style="color:var(--text-muted);margin-bottom:8px">Patterns that recur across all 5 projects. Click to explore.</p>
+  <div class="themes-grid" id="themes-grid">
+    <div class="theme-card" onclick="selectTheme(0)"><div class="theme-icon">&#129504;</div><h4>Memory is the Moat</h4></div>
+    <div class="theme-card" onclick="selectTheme(1)"><div class="theme-icon">&#128260;</div><h4>The Agentic Loop</h4></div>
+    <div class="theme-card" onclick="selectTheme(2)"><div class="theme-icon">&#128737;</div><h4>HITL is Non-Negotiable</h4></div>
+    <div class="theme-card" onclick="selectTheme(3)"><div class="theme-icon">&#128161;</div><h4>Explainability as Architecture</h4></div>
+    <div class="theme-card" onclick="selectTheme(4)"><div class="theme-icon">&#9881;</div><h4>Resource Awareness</h4></div>
+  </div>
+  <div class="theme-detail" id="theme-detail"></div>
+</div>
+
+<!-- Your Learning Path -->
+<div class="section">
+  <h2>Choose Your Starting Point</h2>
+  <p style="color:var(--text-muted);margin-bottom:8px">Based on where you are today, here's the recommended path.</p>
+  <div class="paths-grid" id="paths-grid">
+    <div class="path-card" onclick="selectPath(0)"><div class="path-label">Starting from</div><h4>New to AI</h4><div class="path-info">P1 &rarr; P2 &rarr; P3 &bull; 3-6 months</div></div>
+    <div class="path-card" onclick="selectPath(1)"><div class="path-label">Starting from</div><h4>Building Wrappers</h4><div class="path-info">C7 &rarr; C6 &rarr; P2 &bull; 1-3 months</div></div>
+    <div class="path-card" onclick="selectPath(2)"><div class="path-label">Starting from</div><h4>Shipping Code</h4><div class="path-info">P4 or P5 &bull; 2-4 months</div></div>
+    <div class="path-card" onclick="selectPath(3)"><div class="path-label">Starting from</div><h4>Already Senior</h4><div class="path-info">P5 &rarr; Audit systems &bull; 1-2 months</div></div>
+  </div>
+  <div class="path-detail" id="path-detail"></div>
+</div>
+
+<div style="text-align:center;padding:32px 0;color:var(--text-muted);font-size:0.85rem;border-top:1px solid var(--border)">
+  Built with ARIA Research Flow &bull; Source: Rohit @rohit4verse &bull; 2026
+</div>
+
+</div><!-- /container -->
+
+<script>
+// === Level data ===
+const levels = [
+  {title:'Prompt Engineer',salary:'$80K',skills:'API wrappers, basic prompts, thin layers over GPT',risk:'HIGH - easily automated or absorbed by platform features',projects:'Start with Project 1 to move beyond this level'},
+  {title:'AI Developer',salary:'$120K',skills:'Edge AI, quantization, memory management, offline-first',risk:'MEDIUM - some differentiation but still replaceable',projects:'Projects 1-2 build these skills'},
+  {title:'AI Engineer',salary:'$170K',skills:'Agentic loops, multimodal AI, orchestration, reflection',risk:'LOW - hard to replace, deep technical expertise',projects:'Projects 2-4 build these skills'},
+  {title:'Systems Architect',salary:'$230K+',skills:'Enterprise orchestration, observability, HITL, audit trails, RBAC, cost management',risk:'VERY LOW - indispensable, designs entire systems',projects:'Project 5 proves this level'}
+];
+
+function selectLevel(i){
+  document.querySelectorAll('.level-card').forEach((c,j)=>c.classList.toggle('active',j===i));
+  const d=document.getElementById('level-detail');
+  const l=levels[i];
+  d.innerHTML=`<h3>${l.title} &mdash; ${l.salary}</h3><div class="skills"><strong>Skills:</strong> ${l.skills}</div><div style="margin-bottom:6px"><strong>Replacement Risk:</strong> ${l.risk}</div><div class="projects-link">${l.projects}</div>`;
+  d.classList.add('show');
+}
+
+// === Project tabs ===
+function selectProject(i){
+  document.querySelectorAll('.tab-btn').forEach((b,j)=>{b.classList.toggle('active',j===i);b.setAttribute('aria-selected',j===i)});
+  document.querySelectorAll('.tab-content').forEach((c,j)=>c.classList.toggle('active',j===i));
+}
+
+// === Accordion ===
+function toggleAcc(btn){
+  const body=btn.nextElementSibling;
+  const isOpen=body.classList.contains('open');
+  btn.classList.toggle('open',!isOpen);
+  body.classList.toggle('open',!isOpen);
+}
+
+// === Simulation: Memory Pressure ===
+function calcMemory(){
+  const ram=+document.getElementById('slider-ram').value;
+  const models=+document.getElementById('slider-models').value;
+  const battery=+document.getElementById('slider-battery').value;
+  document.getElementById('ram-val').textContent=ram+' GB';
+  document.getElementById('models-val').textContent=models;
+  document.getElementById('battery-val').textContent=battery+'%';
+  const is4bit=ram<=4;
+  const perModel=is4bit?0.5:1.0;
+  const used=models*perModel;
+  const pct=used/ram;
+  document.getElementById('out-quant').textContent=is4bit?'4-bit (0.5 GB/model)':'8-bit (1 GB/model)';
+  document.getElementById('out-quant').className='output-value '+(is4bit?'warn':'info');
+  document.getElementById('out-mem-used').textContent=used.toFixed(1)+' GB / '+ram+' GB';
+  const memEl=document.getElementById('out-mem-status');
+  if(pct>0.8){memEl.textContent='PRESSURE - Unload idle models!';memEl.className='output-value danger'}
+  else if(pct>0.6){memEl.textContent='ELEVATED';memEl.className='output-value warn'}
+  else{memEl.textContent='OK';memEl.className='output-value ok'}
+  document.getElementById('out-mem-used').className='output-value '+(pct>0.8?'danger':pct>0.6?'warn':'info');
+  const infEl=document.getElementById('out-inference');
+  if(battery<20){infEl.textContent='THROTTLED - Low battery';infEl.className='output-value danger'}
+  else if(battery<40){infEl.textContent='CONSERVATIVE';infEl.className='output-value warn'}
+  else{infEl.textContent='NORMAL';infEl.className='output-value ok'}
+}
+
+// === Simulation: Agentic Loop ===
+let loopRunning=false;
+async function runAgenticLoop(){
+  if(loopRunning)return;
+  loopRunning=true;
+  const btn=document.getElementById('run-loop-btn');
+  btn.disabled=true;btn.textContent='Running...';
+  const diff=document.getElementById('task-diff').value;
+  const maxIter=+document.getElementById('slider-iter').value;
+  const failChance=diff==='easy'?0.15:diff==='medium'?0.4:0.65;
+  const steps=document.querySelectorAll('#loop-container .loop-step');
+  const stepNames=['Plan','Code','Test','Reflect'];
+  let consecFail=0;let solved=false;
+  for(let iter=1;iter<=maxIter&&!solved;iter++){
+    document.getElementById('out-iter').textContent=iter+' / '+maxIter;
+    for(let s=0;s<4;s++){
+      steps.forEach(st=>{st.className='loop-step'});
+      steps[s].classList.add('active-step');
+      await sleep(400);
+      if(s===2){
+        const pass=Math.random()>failChance/(1+iter*0.15);
+        if(pass){steps[s].classList.remove('active-step');steps[s].classList.add('pass');consecFail=0;
+          if(iter>=2||diff==='easy'){solved=true;break}
+        }else{steps[s].classList.remove('active-step');steps[s].classList.add('fail');consecFail++}
+        if(consecFail>=3){document.getElementById('out-cb').textContent='OPEN - Escalate!';document.getElementById('out-cb').className='output-value danger';break}
+        await sleep(300);
+      }
+    }
+    if(consecFail>=3)break;
+    if(!solved)await sleep(200);
+  }
+  const resEl=document.getElementById('out-result');
+  if(solved){resEl.textContent='SOLVED';resEl.className='output-value ok'}
+  else if(consecFail>=3){resEl.textContent='CIRCUIT BREAKER TRIPPED';resEl.className='output-value danger'}
+  else{resEl.textContent='MAX ITERATIONS REACHED';resEl.className='output-value warn'}
+  if(consecFail<3){document.getElementById('out-cb').textContent='CLOSED';document.getElementById('out-cb').className='output-value ok'}
+  btn.disabled=false;btn.textContent='Run Simulation';loopRunning=false;
+}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+
+// === Simulation: Intent Translator ===
+const intents={
+  cinematic:{pace:'80% speed (slow, deliberate)',color:'Desaturated LUT, cool tones',trans:'Slow dissolves (1.5s)',audio:'Dramatic orchestral swells'},
+  speed:{pace:'120% speed (fast, energetic)',color:'High contrast, vivid saturation',trans:'Hard cuts (0.1s)',audio:'Upbeat electronic rhythm'},
+  dreamy:{pace:'70% speed (ethereal, floating)',color:'Warm pastel overlay, soft focus',trans:'Cross-fade (2s)',audio:'Ambient pads, reverb'},
+  corporate:{pace:'100% speed (standard)',color:'Neutral, clean white balance',trans:'Clean cuts with subtle fade (0.3s)',audio:'Subtle background music, low volume'}
+};
+function updateIntent(){
+  const v=document.getElementById('intent-select').value;
+  const d=intents[v];
+  document.getElementById('int-pace').textContent=d.pace;
+  document.getElementById('int-color').textContent=d.color;
+  document.getElementById('int-trans').textContent=d.trans;
+  document.getElementById('int-audio').textContent=d.audio;
+}
+
+// === Simulation: Burnout Detector ===
+function calcBurnout(){
+  const meetings=+document.getElementById('slider-meet').value;
+  const sleep=+document.getElementById('slider-sleep').value;
+  const exercise=+document.getElementById('slider-exercise').value;
+  const dw=+document.getElementById('slider-dw').value;
+  document.getElementById('meet-val').textContent=meetings;
+  document.getElementById('sleep-val').textContent=sleep;
+  document.getElementById('exercise-val').textContent=exercise;
+  document.getElementById('dw-val').textContent=dw;
+  const meetScore=Math.min((meetings/12)*30,30);
+  const sleepScore=Math.min(Math.max(0,(8-sleep)/5)*30,30);
+  const exScore=Math.min(Math.max(0,(3-exercise)/3)*20,20);
+  const dwScore=Math.min(Math.max(0,(4-dw)/4)*20,20);
+  const score=Math.round(meetScore+sleepScore+exScore+dwScore);
+  document.getElementById('out-burnout').textContent=score+' / 100';
+  const rl=document.getElementById('out-risk-level');
+  const rec=document.getElementById('out-rec');
+  const val=document.getElementById('out-values');
+  if(score<=30){rl.textContent='LOW';rl.className='output-value ok';rec.textContent='Looking good. Maintain current balance.'}
+  else if(score<=60){rl.textContent='MODERATE';rl.className='output-value warn';rec.textContent=meetings>6?'Consider reducing meeting load. Block focus time.':sleep<6?'Sleep deficit detected. Prioritize rest.':'Exercise more or protect deep work time.'}
+  else if(score<=80){rl.textContent='HIGH';rl.className='output-value danger';rec.textContent=meetings>8?'Meeting overload! Decline non-essential meetings this week.':'Multiple risk factors elevated. Take a recovery day.'}
+  else{rl.textContent='CRITICAL';rl.className='output-value danger';rec.textContent='Burnout imminent. Cancel discretionary commitments. Rest is productive.'}
+  document.getElementById('out-burnout').className='output-value '+(score<=30?'ok':score<=60?'warn':'danger');
+  if(meetings>8&&sleep<6){val.textContent='CONFLICT: Health priority violated by schedule';val.className='output-value danger'}
+  else if(meetings>6&&dw<2){val.textContent='WARNING: Work quality may suffer without deep work';val.className='output-value warn'}
+  else{val.textContent='No conflicts detected';val.className='output-value ok'}
+}
+
+// === Simulation: Workflow Orchestrator ===
+const workflows={
+  incident:[
+    {step:'1. Detect alert from monitoring',agent:'Data Agent',hitl:false},
+    {step:'2. Query logs for root cause',agent:'Analysis Agent',hitl:false},
+    {step:'3. Draft incident summary',agent:'Documentation Agent',hitl:false},
+    {step:'4. Notify on-call engineer',agent:'Communication Agent',hitl:true},
+    {step:'5. Apply remediation',agent:'Orchestrator',hitl:true},
+    {step:'6. Verify fix + close incident',agent:'Data Agent',hitl:false}
+  ],
+  feature:[
+    {step:'1. Parse Jira ticket details',agent:'Data Agent',hitl:false},
+    {step:'2. Assess complexity + priority',agent:'Analysis Agent',hitl:false},
+    {step:'3. Check team capacity',agent:'Data Agent',hitl:false},
+    {step:'4. Assign to sprint + engineer',agent:'Orchestrator',hitl:true},
+    {step:'5. Notify assignee with context',agent:'Communication Agent',hitl:false}
+  ],
+  report:[
+    {step:'1. Query metrics from dashboards',agent:'Data Agent',hitl:false},
+    {step:'2. Analyze trends + anomalies',agent:'Analysis Agent',hitl:false},
+    {step:'3. Generate report draft',agent:'Documentation Agent',hitl:false},
+    {step:'4. Review before distribution',agent:'Orchestrator',hitl:true},
+    {step:'5. Distribute via Slack + email',agent:'Communication Agent',hitl:false}
+  ],
+  escalation:[
+    {step:'1. Receive escalation from support',agent:'Data Agent',hitl:false},
+    {step:'2. Pull customer history + context',agent:'Data Agent',hitl:false},
+    {step:'3. Root cause analysis',agent:'Analysis Agent',hitl:false},
+    {step:'4. Draft resolution plan',agent:'Documentation Agent',hitl:true},
+    {step:'5. Get manager approval',agent:'Orchestrator',hitl:true},
+    {step:'6. Communicate resolution to customer',agent:'Communication Agent',hitl:true},
+    {step:'7. Follow-up + close ticket',agent:'Communication Agent',hitl:false}
+  ]
+};
+const auditEntries={
+  incident:['[10:03:12] DECISION: Alert severity=P1, triggering incident workflow | AUTH: auto | CONFIDENCE: 0.92','[10:03:15] ACTION: Querying CloudWatch logs for service-api errors | AGENT: data','[10:04:01] DECISION: Root cause = OOM in pod-3. Recommending restart | CONFIDENCE: 0.78','[10:04:05] HITL: Notifying on-call @sarah. Awaiting approval...','[10:04:22] HITL: Approved by @manager. Applying pod restart.'],
+  feature:['[09:00:01] ACTION: Parsed JIRA-4521 "Add dark mode" | AGENT: data','[09:00:05] DECISION: Complexity=MEDIUM, Priority=P2 | CONFIDENCE: 0.85','[09:00:08] HITL: Assigning to Sprint 14, @dev-team. Approve?'],
+  report:['[08:00:00] ACTION: Pulling metrics from Datadog, JIRA, GitHub | AGENT: data','[08:01:12] DECISION: Anomaly detected: deploy frequency down 40% | CONFIDENCE: 0.71','[08:02:00] HITL: Report ready for review before distribution'],
+  escalation:['[14:00:03] ACTION: Customer #4892 escalation received via Zendesk | AGENT: data','[14:00:15] DECISION: Customer is Enterprise tier, SLA breach in 2h | CONFIDENCE: 0.95','[14:01:00] HITL: Resolution plan requires manager approval','[14:05:22] HITL: Approved. Sending resolution email to customer.']
+};
+function updateWorkflow(){
+  const v=document.getElementById('workflow-select').value;
+  const steps=workflows[v];
+  const wViz=document.getElementById('workflow-viz');
+  wViz.innerHTML=steps.map(s=>`<div class="workflow-step"><span>${s.step}</span><span class="agent-badge">${s.agent}</span>${s.hitl?'<span class="hitl-badge">HITL</span>':''}</div>`).join('');
+  const aViz=document.getElementById('audit-viz');
+  aViz.innerHTML=(auditEntries[v]||[]).map(e=>`<div class="audit-entry">${e}</div>`).join('');
+}
+updateWorkflow();
+
+// === Themes ===
+const themes=[
+  {name:'Memory is the Moat',projects:['P1','P2','P4'],colors:['var(--accent)','var(--primary)','var(--warning)'],insight:'An agent without memory is a chatbot. The progression from "sliding window" (P1) to "three-tier memory" (P2) to "knowledge graph with decay" (P4) maps directly to the career progression from beginner to expert. Memory is what makes agents useful over time.'},
+  {name:'The Agentic Loop',projects:['P2','P3','P4','P5'],colors:['var(--primary)','var(--secondary)','var(--warning)','var(--danger)'],insight:'Plan \u2192 Execute \u2192 Test \u2192 Reflect. This is THE core primitive. P2 makes it explicit. P3 uses it for edit-preview-refine. P4 runs it on 6-hour monitoring cycles. P5 orchestrates it across multiple agents. Master this loop first \u2014 everything else is specialization.'},
+  {name:'HITL is Non-Negotiable',projects:['P2','P4','P5'],colors:['var(--primary)','var(--warning)','var(--danger)'],insight:'No project suggests fully autonomous operation. P2 requires approval for filesystem/network ops. P4 validates recommendations against user-stated values. P5 gates critical workflows for human review. The mark of production isn\'t removing humans \u2014 it\'s knowing exactly when to involve them.'},
+  {name:'Explainability as Architecture',projects:['P3','P4','P5'],colors:['var(--secondary)','var(--warning)','var(--danger)'],insight:'P3: every edit stores WHY it was made (undo with reasoning). P4: every suggestion includes citations to specific data points. P5: immutable audit trail with decision rationale. If your agent can\'t explain its reasoning, it\'s not production-ready.'},
+  {name:'Resource Awareness',projects:['P1','P5'],colors:['var(--accent)','var(--danger)'],insight:'P1: dynamic quantization based on RAM, battery-aware batching, lazy model loading. P5: token usage per workflow, budget limits, prompt optimization. Production AI has a cost per inference. Ignoring it is how startups die.'}
+];
+function selectTheme(i){
+  document.querySelectorAll('.theme-card').forEach((c,j)=>c.classList.toggle('active',j===i));
+  const d=document.getElementById('theme-detail');
+  const t=themes[i];
+  d.innerHTML=`<h3>${t.name}</h3><p style="margin:8px 0;color:var(--text-muted)">${t.insight}</p><div class="project-badges">${t.projects.map((p,j)=>`<span class="p-badge" style="background:${t.colors[j]}22;color:${t.colors[j]};border:1px solid ${t.colors[j]}">${p}</span>`).join('')}</div>`;
+  d.classList.add('show');
+}
+
+// === Paths ===
+const paths=[
+  {title:'New to AI',rec:'P1 \u2192 P2 \u2192 P3',timeline:'3-6 months',focus:'Build foundation with edge AI (P1), then learn agentic patterns (P2), then tackle multimodal (P3). Each project builds on the previous. Skip P4/P5 until you\'ve shipped P2.'},
+  {title:'Building Wrappers',rec:'C7 (Circuit Breaker) \u2192 C6 (Memory) \u2192 P2 (Coding Agent)',timeline:'1-3 months',focus:'Start with reusable production patterns first. Circuit breaker takes ~1 hour. Three-tier memory takes ~2 hours. Then wire both into the coding agent. You\'ll have 2 reusable modules + 1 portfolio project.'},
+  {title:'Shipping Code',rec:'P4 (Life OS) or P5 (Enterprise Agent)',timeline:'2-4 months',focus:'You already know how to build. Now prove you can build systems with deep context, privacy architecture, or enterprise-grade orchestration. Pick whichever aligns with your target role.'},
+  {title:'Already Senior',rec:'P5 \u2192 Audit existing systems against this roadmap',timeline:'1-2 months',focus:'Build the enterprise workflow agent to prove orchestration mastery. Then use this roadmap to audit your company\'s AI systems: where are the HITL gaps? Missing audit trails? Cost management blind spots?'}
+];
+function selectPath(i){
+  document.querySelectorAll('.path-card').forEach((c,j)=>c.classList.toggle('active',j===i));
+  const d=document.getElementById('path-detail');
+  const p=paths[i];
+  d.innerHTML=`<h3>${p.title}: ${p.rec}</h3><p style="margin:8px 0;color:var(--text-muted)"><strong>Timeline:</strong> ${p.timeline}</p><p style="color:var(--text-muted)">${p.focus}</p>`;
+  d.classList.add('show');
+}
+
+// Init
+calcMemory();
+calcBurnout();
+</script>
+</body>
+</html>
