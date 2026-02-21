@@ -133,9 +133,25 @@ h3{font-size:1.1rem;font-weight:600}
 .path-detail.show{display:block}
 /* Tooltips */
 .term{border-bottom:1px dashed var(--primary);cursor:help;position:relative;color:var(--primary);font-weight:500}
-.term .tip{position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);background:var(--text);color:#fff;padding:8px 12px;border-radius:6px;font-size:0.78rem;font-weight:400;white-space:nowrap;max-width:320px;white-space:normal;opacity:0;pointer-events:none;transition:opacity 0.2s ease;z-index:100;line-height:1.4;box-shadow:var(--shadow-md)}
-.term:hover .tip{opacity:1}
+.term .tip{position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);background:var(--text);color:#fff;padding:8px 12px;border-radius:6px;font-size:0.78rem;font-weight:400;white-space:nowrap;max-width:280px;white-space:normal;opacity:0;pointer-events:none;transition:opacity 0.2s ease;z-index:100;line-height:1.4;box-shadow:var(--shadow-md);min-width:180px}
+.term:hover .tip,.term:focus .tip{opacity:1}
 .term .tip::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);border:6px solid transparent;border-top-color:var(--text)}
+/* Focus styles */
+:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+button:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.level-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.theme-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.path-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+/* Salary progress bar */
+.salary-bar-wrap{margin-top:20px;background:var(--surface);border-radius:var(--radius);padding:12px 16px;border:1px solid var(--border)}
+.salary-bar-track{height:8px;background:var(--border);border-radius:4px;margin:8px 0;position:relative}
+.salary-bar-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--accent),var(--primary),var(--secondary),var(--danger));transition:width 0.4s ease}
+.salary-bar-labels{display:flex;justify-content:space-between;font-size:0.72rem;color:var(--text-muted)}
+/* Status dot */
+.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
+.dot-ok{background:var(--accent)}
+.dot-warn{background:var(--warning)}
+.dot-danger{background:var(--danger)}
 </style>
 </head>
 <body>
@@ -153,26 +169,31 @@ h3{font-size:1.1rem;font-weight:600}
   <h2>The $150K Gap</h2>
   <p style="color:var(--text-muted);margin-bottom:12px">Click a level to see what skills differentiate each tier.</p>
   <div class="levels" id="levels">
-    <div class="level-card" data-level="0" onclick="selectLevel(0)">
+    <div class="level-card" data-level="0" onclick="selectLevel(0)" onkeydown="if(event.key==='Enter'||event.key===' ')selectLevel(0)" tabindex="0" role="button" aria-label="Prompt Engineer, $80K, High Risk">
       <div class="salary">$80K</div>
       <div class="title">Prompt Engineer</div>
       <span class="risk risk-high">HIGH RISK</span>
     </div>
-    <div class="level-card" data-level="1" onclick="selectLevel(1)">
+    <div class="level-card" data-level="1" onclick="selectLevel(1)" onkeydown="if(event.key==='Enter'||event.key===' ')selectLevel(1)" tabindex="0" role="button" aria-label="AI Developer, $120K, Medium Risk">
       <div class="salary">$120K</div>
       <div class="title">AI Developer</div>
       <span class="risk risk-medium">MEDIUM RISK</span>
     </div>
-    <div class="level-card" data-level="2" onclick="selectLevel(2)">
+    <div class="level-card" data-level="2" onclick="selectLevel(2)" onkeydown="if(event.key==='Enter'||event.key===' ')selectLevel(2)" tabindex="0" role="button" aria-label="AI Engineer, $170K, Low Risk">
       <div class="salary">$170K</div>
       <div class="title">AI Engineer</div>
       <span class="risk risk-low">LOW RISK</span>
     </div>
-    <div class="level-card" data-level="3" onclick="selectLevel(3)">
+    <div class="level-card" data-level="3" onclick="selectLevel(3)" onkeydown="if(event.key==='Enter'||event.key===' ')selectLevel(3)" tabindex="0" role="button" aria-label="Systems Architect, $230K+, Very Low Risk">
       <div class="salary">$230K+</div>
       <div class="title">Systems Architect</div>
       <span class="risk risk-low">VERY LOW RISK</span>
     </div>
+  </div>
+  <div class="salary-bar-wrap">
+    <div class="salary-bar-labels"><span>$80K</span><span>$120K</span><span>$170K</span><span>$230K+</span></div>
+    <div class="salary-bar-track"><div class="salary-bar-fill" id="salary-bar" style="width:0%"></div></div>
+    <div style="font-size:0.8rem;color:var(--text-muted);text-align:center">Salary Progression — Click a level above to highlight</div>
   </div>
   <div class="level-detail" id="level-detail"></div>
 </div>
@@ -181,16 +202,16 @@ h3{font-size:1.1rem;font-weight:600}
 <div class="section">
   <h2>5 Projects, 5 Levels</h2>
   <p style="color:var(--text-muted);margin-bottom:16px">Click any project to explore its architecture and try the interactive simulation.</p>
-  <div class="tab-bar" role="tablist">
-    <button class="tab-btn active" role="tab" aria-selected="true" onclick="selectProject(0)"><span class="badge badge-beginner">Beginner</span> SLM Mobile App</button>
-    <button class="tab-btn" role="tab" aria-selected="false" onclick="selectProject(1)"><span class="badge badge-intermediate">Intermediate</span> Coding Agent</button>
-    <button class="tab-btn" role="tab" aria-selected="false" onclick="selectProject(2)"><span class="badge badge-advanced">Advanced</span> Video Editor AI</button>
-    <button class="tab-btn" role="tab" aria-selected="false" onclick="selectProject(3)"><span class="badge badge-expert">Expert</span> Life OS Agent</button>
-    <button class="tab-btn" role="tab" aria-selected="false" onclick="selectProject(4)"><span class="badge badge-master">Master</span> Enterprise Agent</button>
+  <div class="tab-bar" role="tablist" aria-label="Project Navigator">
+    <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="project-0" id="tab-0" onclick="selectProject(0)"><span class="badge badge-beginner">Beginner</span> SLM Mobile App</button>
+    <button class="tab-btn" role="tab" aria-selected="false" aria-controls="project-1" id="tab-1" onclick="selectProject(1)"><span class="badge badge-intermediate">Intermediate</span> Coding Agent</button>
+    <button class="tab-btn" role="tab" aria-selected="false" aria-controls="project-2" id="tab-2" onclick="selectProject(2)"><span class="badge badge-advanced">Advanced</span> Video Editor AI</button>
+    <button class="tab-btn" role="tab" aria-selected="false" aria-controls="project-3" id="tab-3" onclick="selectProject(3)"><span class="badge badge-expert">Expert</span> Life OS Agent</button>
+    <button class="tab-btn" role="tab" aria-selected="false" aria-controls="project-4" id="tab-4" onclick="selectProject(4)"><span class="badge badge-master">Master</span> Enterprise Agent</button>
   </div>
 
   <!-- P1: SLM Mobile App -->
-  <div class="tab-content active" id="project-0" role="tabpanel">
+  <div class="tab-content active" id="project-0" role="tabpanel" aria-labelledby="tab-0">
     <div class="project-header">
       <h3>AI-Powered Mobile App with Small Language Models</h3>
       <div class="proves">Proves: Edge AI + Resource Optimization</div>
@@ -233,7 +254,7 @@ h3{font-size:1.1rem;font-weight:600}
   </div>
 
   <!-- P2: Coding Agent -->
-  <div class="tab-content" id="project-1" role="tabpanel">
+  <div class="tab-content" id="project-1" role="tabpanel" aria-labelledby="tab-1">
     <div class="project-header">
       <h3>Self-Improving Coding Agent</h3>
       <div class="proves">Proves: Agentic Loops + Production Debugging</div>
@@ -271,15 +292,15 @@ h3{font-size:1.1rem;font-weight:600}
         </div>
         <div class="sim-outputs">
           <div id="loop-container">
-            <div class="loop-step"><span class="step-icon">&#9679;</span> Plan &mdash; Analyze task requirements</div>
-            <div class="loop-step"><span class="step-icon">&#9679;</span> Code &mdash; Generate solution</div>
-            <div class="loop-step"><span class="step-icon">&#9679;</span> Test &mdash; Run test suite</div>
-            <div class="loop-step"><span class="step-icon">&#9679;</span> Reflect &mdash; Analyze results</div>
+            <div class="loop-step" id="ls-plan"><span class="step-icon">&#128196;</span> Plan &mdash; Analyze task requirements</div>
+            <div class="loop-step" id="ls-code"><span class="step-icon">&#128187;</span> Code &mdash; Generate solution</div>
+            <div class="loop-step" id="ls-test"><span class="step-icon">&#128269;</span> Test &mdash; Run test suite</div>
+            <div class="loop-step" id="ls-reflect"><span class="step-icon">&#129504;</span> Reflect &mdash; Analyze results</div>
           </div>
           <div style="margin-top:12px">
             <div class="output-row"><span class="output-label">Iteration</span><span class="output-value info" id="out-iter">0 / 5</span></div>
-            <div class="output-row"><span class="output-label">Circuit Breaker</span><span class="output-value ok" id="out-cb">CLOSED</span></div>
-            <div class="output-row"><span class="output-label">Result</span><span class="output-value info" id="out-result">Waiting...</span></div>
+            <div class="output-row"><span class="output-label">Circuit Breaker</span><span class="output-value ok" id="out-cb"><span class="status-dot dot-ok"></span>CLOSED</span></div>
+            <div class="output-row"><span class="output-label">Result</span><span class="output-value info" id="out-result">Press Run to start</span></div>
           </div>
         </div>
       </div>
@@ -287,7 +308,7 @@ h3{font-size:1.1rem;font-weight:600}
   </div>
 
   <!-- P3: Video Editor AI -->
-  <div class="tab-content" id="project-2" role="tabpanel">
+  <div class="tab-content" id="project-2" role="tabpanel" aria-labelledby="tab-2">
     <div class="project-header">
       <h3>Cursor but for Video Editors</h3>
       <div class="proves">Proves: Multimodal AI + Complex Tool Integration</div>
@@ -327,7 +348,7 @@ h3{font-size:1.1rem;font-weight:600}
   </div>
 
   <!-- P4: Life OS Agent -->
-  <div class="tab-content" id="project-3" role="tabpanel">
+  <div class="tab-content" id="project-3" role="tabpanel" aria-labelledby="tab-3">
     <div class="project-header">
       <h3>Personal Life OS Agent</h3>
       <div class="proves">Proves: Deep Context + Privacy-First Architecture</div>
@@ -375,7 +396,7 @@ h3{font-size:1.1rem;font-weight:600}
   </div>
 
   <!-- P5: Enterprise Agent -->
-  <div class="tab-content" id="project-4" role="tabpanel">
+  <div class="tab-content" id="project-4" role="tabpanel" aria-labelledby="tab-4">
     <div class="project-header">
       <h3>Autonomous Enterprise Workflow Agent</h3>
       <div class="proves">Proves: Production-Grade Orchestration</div>
@@ -416,11 +437,11 @@ h3{font-size:1.1rem;font-weight:600}
   <h2>5 Themes That Connect Everything</h2>
   <p style="color:var(--text-muted);margin-bottom:8px">Patterns that recur across all 5 projects. Click to explore.</p>
   <div class="themes-grid" id="themes-grid">
-    <div class="theme-card" onclick="selectTheme(0)"><div class="theme-icon">&#129504;</div><h4>Memory is the Moat</h4></div>
-    <div class="theme-card" onclick="selectTheme(1)"><div class="theme-icon">&#128260;</div><h4>The Agentic Loop</h4></div>
-    <div class="theme-card" onclick="selectTheme(2)"><div class="theme-icon">&#128737;</div><h4>HITL is Non-Negotiable</h4></div>
-    <div class="theme-card" onclick="selectTheme(3)"><div class="theme-icon">&#128161;</div><h4>Explainability as Architecture</h4></div>
-    <div class="theme-card" onclick="selectTheme(4)"><div class="theme-icon">&#9881;</div><h4>Resource Awareness</h4></div>
+    <div class="theme-card" onclick="selectTheme(0)" onkeydown="if(event.key==='Enter'||event.key===' ')selectTheme(0)" tabindex="0" role="button" aria-label="Theme: Memory is the Moat"><div class="theme-icon">&#129504;</div><h4>Memory is the Moat</h4></div>
+    <div class="theme-card" onclick="selectTheme(1)" onkeydown="if(event.key==='Enter'||event.key===' ')selectTheme(1)" tabindex="0" role="button" aria-label="Theme: The Agentic Loop"><div class="theme-icon">&#128260;</div><h4>The Agentic Loop</h4></div>
+    <div class="theme-card" onclick="selectTheme(2)" onkeydown="if(event.key==='Enter'||event.key===' ')selectTheme(2)" tabindex="0" role="button" aria-label="Theme: HITL is Non-Negotiable"><div class="theme-icon">&#128737;</div><h4>HITL is Non-Negotiable</h4></div>
+    <div class="theme-card" onclick="selectTheme(3)" onkeydown="if(event.key==='Enter'||event.key===' ')selectTheme(3)" tabindex="0" role="button" aria-label="Theme: Explainability as Architecture"><div class="theme-icon">&#128161;</div><h4>Explainability as Architecture</h4></div>
+    <div class="theme-card" onclick="selectTheme(4)" onkeydown="if(event.key==='Enter'||event.key===' ')selectTheme(4)" tabindex="0" role="button" aria-label="Theme: Resource Awareness"><div class="theme-icon">&#9881;</div><h4>Resource Awareness</h4></div>
   </div>
   <div class="theme-detail" id="theme-detail"></div>
 </div>
@@ -430,10 +451,10 @@ h3{font-size:1.1rem;font-weight:600}
   <h2>Choose Your Starting Point</h2>
   <p style="color:var(--text-muted);margin-bottom:8px">Based on where you are today, here's the recommended path.</p>
   <div class="paths-grid" id="paths-grid">
-    <div class="path-card" onclick="selectPath(0)"><div class="path-label">Starting from</div><h4>New to AI</h4><div class="path-info">P1 &rarr; P2 &rarr; P3 &bull; 3-6 months</div></div>
-    <div class="path-card" onclick="selectPath(1)"><div class="path-label">Starting from</div><h4>Building Wrappers</h4><div class="path-info">C7 &rarr; C6 &rarr; P2 &bull; 1-3 months</div></div>
-    <div class="path-card" onclick="selectPath(2)"><div class="path-label">Starting from</div><h4>Shipping Code</h4><div class="path-info">P4 or P5 &bull; 2-4 months</div></div>
-    <div class="path-card" onclick="selectPath(3)"><div class="path-label">Starting from</div><h4>Already Senior</h4><div class="path-info">P5 &rarr; Audit systems &bull; 1-2 months</div></div>
+    <div class="path-card" onclick="selectPath(0)" onkeydown="if(event.key==='Enter'||event.key===' ')selectPath(0)" tabindex="0" role="button"><div class="path-label">Starting from</div><h4>New to AI</h4><div class="path-info">P1 &rarr; P2 &rarr; P3 &bull; 3-6 months</div></div>
+    <div class="path-card" onclick="selectPath(1)" onkeydown="if(event.key==='Enter'||event.key===' ')selectPath(1)" tabindex="0" role="button"><div class="path-label">Starting from</div><h4>Building Wrappers</h4><div class="path-info">C7 &rarr; C6 &rarr; P2 &bull; 1-3 months</div></div>
+    <div class="path-card" onclick="selectPath(2)" onkeydown="if(event.key==='Enter'||event.key===' ')selectPath(2)" tabindex="0" role="button"><div class="path-label">Starting from</div><h4>Shipping Code</h4><div class="path-info">P4 or P5 &bull; 2-4 months</div></div>
+    <div class="path-card" onclick="selectPath(3)" onkeydown="if(event.key==='Enter'||event.key===' ')selectPath(3)" tabindex="0" role="button"><div class="path-label">Starting from</div><h4>Already Senior</h4><div class="path-info">P5 &rarr; Audit systems &bull; 1-2 months</div></div>
   </div>
   <div class="path-detail" id="path-detail"></div>
 </div>
@@ -457,15 +478,29 @@ function selectLevel(i){
   document.querySelectorAll('.level-card').forEach((c,j)=>c.classList.toggle('active',j===i));
   const d=document.getElementById('level-detail');
   const l=levels[i];
-  d.innerHTML=`<h3>${l.title} &mdash; ${l.salary}</h3><div class="skills"><strong>Skills:</strong> ${l.skills}</div><div style="margin-bottom:6px"><strong>Replacement Risk:</strong> ${l.risk}</div><div class="projects-link">${l.projects}</div>`;
+  d.innerHTML=`<h3>${l.title} &mdash; ${l.salary}</h3><div class="skills"><strong>Skills:</strong> ${l.skills}</div><div style="margin-bottom:6px"><strong>Replacement Risk:</strong> ${l.risk}</div><div class="projects-link">&#128218; ${l.projects}</div>`;
   d.classList.add('show');
+  const bar=document.getElementById('salary-bar');
+  if(bar){const pcts=[15,45,73,100];bar.style.width=pcts[i]+'%'}
 }
 
 // === Project tabs ===
 function selectProject(i){
-  document.querySelectorAll('.tab-btn').forEach((b,j)=>{b.classList.toggle('active',j===i);b.setAttribute('aria-selected',j===i)});
+  document.querySelectorAll('.tab-btn').forEach((b,j)=>{b.classList.toggle('active',j===i);b.setAttribute('aria-selected',String(j===i))});
   document.querySelectorAll('.tab-content').forEach((c,j)=>c.classList.toggle('active',j===i));
 }
+// Arrow-key navigation for tab bar
+document.addEventListener('keydown',function(e){
+  const active=document.querySelector('.tab-btn.active');
+  if(!active)return;
+  const tabs=Array.from(document.querySelectorAll('.tab-btn'));
+  const idx=tabs.indexOf(document.activeElement);
+  if(idx===-1)return;
+  if(e.key==='ArrowRight'){e.preventDefault();const next=(idx+1)%tabs.length;tabs[next].focus();selectProject(next)}
+  if(e.key==='ArrowLeft'){e.preventDefault();const prev=(idx-1+tabs.length)%tabs.length;tabs[prev].focus();selectProject(prev)}
+  if(e.key==='Home'&&tabs.includes(document.activeElement)){e.preventDefault();tabs[0].focus();selectProject(0)}
+  if(e.key==='End'&&tabs.includes(document.activeElement)){e.preventDefault();tabs[tabs.length-1].focus();selectProject(tabs.length-1)}
+});
 
 // === Accordion ===
 function toggleAcc(btn){
@@ -473,6 +508,7 @@ function toggleAcc(btn){
   const isOpen=body.classList.contains('open');
   btn.classList.toggle('open',!isOpen);
   body.classList.toggle('open',!isOpen);
+  btn.setAttribute('aria-expanded',String(!isOpen));
 }
 
 // === Simulation: Memory Pressure ===
@@ -503,41 +539,72 @@ function calcMemory(){
 
 // === Simulation: Agentic Loop ===
 let loopRunning=false;
+function resetLoopUI(){
+  ['ls-plan','ls-code','ls-test','ls-reflect'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el)el.className='loop-step';
+  });
+  document.getElementById('out-iter').textContent='0 / '+document.getElementById('slider-iter').value;
+  document.getElementById('out-cb').innerHTML='<span class="status-dot dot-ok"></span>CLOSED';
+  document.getElementById('out-cb').className='output-value ok';
+  document.getElementById('out-result').textContent='Press Run to start';
+  document.getElementById('out-result').className='output-value info';
+}
 async function runAgenticLoop(){
   if(loopRunning)return;
   loopRunning=true;
+  resetLoopUI();
   const btn=document.getElementById('run-loop-btn');
   btn.disabled=true;btn.textContent='Running...';
   const diff=document.getElementById('task-diff').value;
   const maxIter=+document.getElementById('slider-iter').value;
-  const failChance=diff==='easy'?0.15:diff==='medium'?0.4:0.65;
-  const steps=document.querySelectorAll('#loop-container .loop-step');
-  const stepNames=['Plan','Code','Test','Reflect'];
+  // Fail probabilities per step per difficulty (test step has highest fail chance)
+  const testFailBase=diff==='easy'?0.2:diff==='medium'?0.45:0.7;
+  const stepIds=['ls-plan','ls-code','ls-test','ls-reflect'];
   let consecFail=0;let solved=false;
+  const cbEl=document.getElementById('out-cb');
+  const resEl=document.getElementById('out-result');
   for(let iter=1;iter<=maxIter&&!solved;iter++){
     document.getElementById('out-iter').textContent=iter+' / '+maxIter;
     for(let s=0;s<4;s++){
-      steps.forEach(st=>{st.className='loop-step'});
-      steps[s].classList.add('active-step');
-      await sleep(400);
-      if(s===2){
-        const pass=Math.random()>failChance/(1+iter*0.15);
-        if(pass){steps[s].classList.remove('active-step');steps[s].classList.add('pass');consecFail=0;
-          if(iter>=2||diff==='easy'){solved=true;break}
-        }else{steps[s].classList.remove('active-step');steps[s].classList.add('fail');consecFail++}
-        if(consecFail>=3){document.getElementById('out-cb').textContent='OPEN - Escalate!';document.getElementById('out-cb').className='output-value danger';break}
-        await sleep(300);
+      // Reset all steps to neutral
+      stepIds.forEach((id,j)=>{
+        const el=document.getElementById(id);
+        if(j<s)el.className='loop-step pass';
+        else if(j===s)el.className='loop-step active-step';
+        else el.className='loop-step';
+      });
+      await sleep(380);
+      if(s===2){// Test step — can fail
+        const adjustedFail=testFailBase*(1-iter*0.1);// Gets easier each iteration (learning)
+        const pass=Math.random()>Math.max(adjustedFail,0.05);
+        document.getElementById(stepIds[2]).className='loop-step '+(pass?'pass':'fail');
+        if(pass){
+          consecFail=0;
+          cbEl.innerHTML='<span class="status-dot dot-ok"></span>CLOSED';
+          cbEl.className='output-value ok';
+          if(iter>=1){solved=true;break}
+        }else{
+          consecFail++;
+          if(consecFail>=3){
+            cbEl.innerHTML='<span class="status-dot dot-danger"></span>OPEN — Escalating';
+            cbEl.className='output-value danger';
+            break;
+          } else if(consecFail===2){
+            cbEl.innerHTML='<span class="status-dot dot-warn"></span>HALF-OPEN';
+            cbEl.className='output-value warn';
+          }
+        }
+        await sleep(350);
       }
     }
     if(consecFail>=3)break;
     if(!solved)await sleep(200);
   }
-  const resEl=document.getElementById('out-result');
-  if(solved){resEl.textContent='SOLVED';resEl.className='output-value ok'}
+  if(solved){resEl.textContent='SOLVED ✓ Tests passing';resEl.className='output-value ok'}
   else if(consecFail>=3){resEl.textContent='CIRCUIT BREAKER TRIPPED';resEl.className='output-value danger'}
-  else{resEl.textContent='MAX ITERATIONS REACHED';resEl.className='output-value warn'}
-  if(consecFail<3){document.getElementById('out-cb').textContent='CLOSED';document.getElementById('out-cb').className='output-value ok'}
-  btn.disabled=false;btn.textContent='Run Simulation';loopRunning=false;
+  else{resEl.textContent='MAX ITERATIONS HIT';resEl.className='output-value warn'}
+  btn.disabled=false;btn.textContent='Run Again';loopRunning=false;
 }
 function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
 
@@ -667,9 +734,19 @@ function selectPath(i){
   d.classList.add('show');
 }
 
-// Init
+// Init on page load
 calcMemory();
 calcBurnout();
+// Set iter display to match default slider value
+document.getElementById('out-iter').textContent='0 / 5';
+// Add aria-expanded to all accordion buttons
+document.querySelectorAll('.accordion-btn').forEach(btn=>btn.setAttribute('aria-expanded','false'));
+// Add aria-label to all range inputs that have labels
+document.querySelectorAll('input[type=range]').forEach(inp=>{
+  if(!inp.getAttribute('aria-label')&&inp.labels&&inp.labels[0]){
+    inp.setAttribute('aria-label',inp.labels[0].textContent.trim());
+  }
+});
 </script>
 </body>
 </html>
