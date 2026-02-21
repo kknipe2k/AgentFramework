@@ -1,0 +1,104 @@
+{
+  "title": "The 2026 AI Engineer Roadmap: 5 Production-Grade Projects",
+  "source": "Twitter/X - Rohit @rohit4verse, Jan 9 2026",
+  "extracted_at": "2026-02-21T00:00:00Z",
+  "concepts": [
+    {
+      "id": "C1",
+      "name": "Edge AI with Small Language Models (SLM)",
+      "description": "Offline-first mobile app using small language models with zero API costs and complete privacy. Covers lazy model loading, dynamic quantization (4-bit/8-bit based on device), sliding context window with semantic chunking, battery-aware inference batching, and encrypted offline-first sync.",
+      "implementable": true,
+      "complexity": "medium",
+      "dependencies": ["ONNX Runtime or llama.cpp", "mobile framework (React Native/Flutter/Swift)", "quantization tooling", "embedding model for semantic chunking"],
+      "example_scope": "Desktop app that loads a quantized SLM, manages memory pressure, implements sliding context window with semantic similarity retention, and runs fully offline."
+    },
+    {
+      "id": "C2",
+      "name": "Self-Improving Coding Agent with Agentic Loops",
+      "description": "Autonomous agent that writes code, runs tests, and learns from failures using a plan-execute-test-reflect cycle. Features circuit breaker pattern, sandboxed execution, 3-tier memory hierarchy (short-term/long-term/failure memory), vector-similarity-based reflection, and learning from past mistakes.",
+      "implementable": true,
+      "complexity": "high",
+      "dependencies": ["LLM API (Claude/GPT)", "sandboxing (Docker/subprocess)", "vector store for memory", "static analysis tool", "test runner"],
+      "example_scope": "Agent that receives a coding task, generates code, executes in sandbox, runs tests, reflects on failures using past failure memory, and iterates until tests pass or circuit breaker triggers."
+    },
+    {
+      "id": "C3",
+      "name": "Multimodal AI Video Editor Agent",
+      "description": "AI agent integrated into a video editor that understands editing intent. Translates natural language ('make this cinematic') into concrete editing parameters. Uses vision+audio models for scene analysis, generates Edit Decision Lists before execution, implements incremental preview rendering, and provides reasoning for every edit.",
+      "implementable": true,
+      "complexity": "high",
+      "dependencies": ["video processing library (FFmpeg)", "vision model", "audio analysis model", "open-source editor (Shotcut)", "LUT/color grading tools"],
+      "example_scope": "CLI tool or web app that takes a video + natural language instruction, analyzes scenes, generates an Edit Decision List, and applies edits with explainable reasoning."
+    },
+    {
+      "id": "C4",
+      "name": "Personal Life OS with Deep Context & Privacy-First Architecture",
+      "description": "Deeply personal agent managing calendar, finances, and health with continuous context building via a personal knowledge graph. Features proactive monitoring (6-hour cycles), value alignment validation, local-first encrypted data, predictive planning from historical patterns, and memory consolidation with decay.",
+      "implementable": true,
+      "complexity": "high",
+      "dependencies": ["knowledge graph store", "calendar/finance/health APIs", "encryption library", "LLM for reasoning", "scheduling/cron system"],
+      "example_scope": "Agent that ingests calendar + health data, builds a personal knowledge graph, detects burnout patterns (high meeting density + low sleep), and makes proactive recommendations aligned with stated priorities."
+    },
+    {
+      "id": "C5",
+      "name": "Autonomous Enterprise Workflow Agent with Multi-Agent Orchestration",
+      "description": "Production-grade agent that runs business workflows end-to-end. Event-driven architecture monitoring Slack/Jira/email, workflow orchestration with parallel step execution, multi-agent delegation (communication/data/analysis/documentation agents), self-healing with circuit breakers, immutable audit trail, RBAC, full observability, HITL for critical workflows, and cost management.",
+      "implementable": true,
+      "complexity": "high",
+      "dependencies": ["message queue (Redis/RabbitMQ)", "Slack/Jira APIs", "LLM API", "durable state store", "observability stack (traces/metrics)", "RBAC system"],
+      "example_scope": "Multi-agent system that monitors a Slack channel for workflow triggers, orchestrates subtasks across specialist agents, maintains audit logs, and includes human-in-the-loop gates for high-risk actions."
+    },
+    {
+      "id": "C6",
+      "name": "Three-Tier Memory Architecture Pattern",
+      "description": "Cross-cutting pattern appearing in multiple projects: short-term memory (current task context), long-term memory (indexed successful patterns), and failure memory (error signatures with solutions). Includes memory consolidation with decay and vector-similarity retrieval.",
+      "implementable": true,
+      "complexity": "medium",
+      "dependencies": ["vector store (ChromaDB/FAISS)", "embedding model", "persistence layer"],
+      "example_scope": "Standalone memory module with short-term buffer, long-term vector store, and failure index that can be plugged into any agent system."
+    },
+    {
+      "id": "C7",
+      "name": "Circuit Breaker & Self-Healing Patterns for AI Agents",
+      "description": "Production resilience patterns: circuit breaker to stop infinite agentic loops, exponential backoff for transient failures, max iteration limits with state persistence for resumption, and self-healing mechanisms that decide between retry vs escalation.",
+      "implementable": true,
+      "complexity": "low",
+      "dependencies": ["state persistence", "timer/scheduler"],
+      "example_scope": "Reusable circuit breaker module that wraps any agentic loop, tracks consecutive failures, persists state for resumption, and escalates when threshold is exceeded."
+    }
+  ],
+  "math_concepts": [],
+  "cross_cutting_themes": [
+    {
+      "theme": "Memory & Context Management",
+      "appears_in": ["C1", "C2", "C4", "C6"],
+      "insight": "Every project emphasizes sophisticated memory - from sliding context windows to personal knowledge graphs. Memory is the differentiator between toys and systems."
+    },
+    {
+      "theme": "Human-in-the-Loop (HITL)",
+      "appears_in": ["C2", "C4", "C5"],
+      "insight": "Production systems require human oversight gates. Confidence-based escalation and explicit approval for high-risk actions appear repeatedly."
+    },
+    {
+      "theme": "Explainable AI Decisions",
+      "appears_in": ["C3", "C4", "C5"],
+      "insight": "Every recommendation must include reasoning. 'Why did you do this?' should always be answerable with citations to data."
+    },
+    {
+      "theme": "Resource & Cost Awareness",
+      "appears_in": ["C1", "C5"],
+      "insight": "Production AI must manage compute, memory, battery, and token budgets. Optimization is not optional."
+    },
+    {
+      "theme": "Privacy & Security by Default",
+      "appears_in": ["C1", "C4", "C5"],
+      "insight": "Encryption at rest, user-controlled keys, RBAC, sandboxing - security is architectural, not an afterthought."
+    }
+  ],
+  "recommended_order": ["C7", "C6", "C1", "C2", "C3", "C4", "C5"],
+  "questions_for_hitl": [
+    "Which concepts are most relevant to your current work or learning goals?",
+    "Should we focus on the cross-cutting patterns (C6, C7) or a specific project (C1-C5)?",
+    "Any preferred language/framework for prototyping?"
+  ]
+}
