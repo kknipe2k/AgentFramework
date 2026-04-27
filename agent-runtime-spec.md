@@ -440,6 +440,12 @@ type AgentEvent =
   | { type: 'gap_resolved'; capability_name: string; capability_kind: 'tool' | 'skill' | 'agent' }
   | { type: 'capability_requested'; agent_id: string; capability_name: string; capability_kind: 'tool' | 'skill'; reason: string } // request_capability call
 
+  // Budget & cost (see §2a / WI-07)
+  | { type: 'budget_warning';     scope: 'session' | 'framework' | 'global'; spent_usd: number; cap_usd: number; percent: number }
+  | { type: 'budget_downshift';   from_model: string; to_model: string; reason: 'budget_threshold'; spent_usd: number; cap_usd: number }
+  | { type: 'budget_suspended';   scope: 'session' | 'framework' | 'global'; spent_usd: number; cap_usd: number; percent: number }
+  | { type: 'budget_exceeded';    scope: 'session' | 'framework' | 'global'; spent_usd: number; cap_usd: number }
+
   // Hooks & Rails (see §4a / WI-02)
   | { type: 'hook_started'; hook_id: string; category: 'verify' | 'lint' | 'build' | 'test' | 'custom'; firing_point: string }
   | { type: 'hook_passed';  hook_id: string; duration_ms: number; output_preview?: string }
@@ -523,6 +529,93 @@ interface VerifiedDecisionRecord {
   snapshot_id: string  // links to drone snapshot at time of decision
 }
 ```
+
+-----
+
+## §2a Budget & Cost Controls
+
+> **Locked (2026-04-18, WI-07).** Three budget scopes that stack. Four enforcement actions on threshold breach. Reuses the §3a HITL flow for suspend/resume on budget triggers.
+
+A runtime without budget controls produces $500 surprise bills. ARIA's `model-selector.sh` and `offline-learner.py` capture the spend-aware logic; the runtime ports the *enforcement primitives*, not the specific algorithms.
+
+### Budget scopes
+
+Three scopes evaluated in order; the tightest applicable cap wins.
+
+| Scope | Where defined | Default | Use |
+|---|---|---|---|
+| **Per-session** | Settings or framework JSON | $5.00 | Bound any single session run |
+| **Per-framework** | `framework.budget` | None | Cap total spend for a long-running framework |
+| **Per-day global** | Settings | None | Total all-sessions cap (defense in depth) |
+
+### Threshold actions
+
+```typescript
+interface BudgetActions {
+  warn_at_percent?:        number   // default 50 — toast + graph header color shift
+  downshift_at_percent?:   number   // default 75 — switch to cheaper model tier
+  hitl_at_percent?:        number   // default 90 — suspend, require approval to continue
+  hard_stop_at_percent?:   number   // default 100 — kill agents, mark session budget_exceeded
+}
+```
+
+Each action is independently configurable per scope; setting any to `null` disables it for that scope.
+
+### Downshift policy
+
+When `downshift_at_percent` triggers, the runtime invokes the model-selector hook (see WI-13 LLMProvider abstraction). Hook receives current model + remaining budget, returns the model to switch to. Default built-in policy mirrors ARIA's tiers:
+
+```
+opus    → sonnet  (any time downshift fires)
+sonnet  → haiku   (only if remaining budget < 10% AND avg-task-cost > remaining/3)
+haiku   → haiku   (no further downshift; once at haiku, only HITL/hard-stop remain)
+```
+
+Frameworks can replace the hook with their own selector (e.g., a port of `model-selector.sh`'s learning-based selection).
+
+### Budget events (added to Phase 2 union)
+
+```typescript
+| { type: 'budget_warning';     scope: 'session' | 'framework' | 'global'; spent_usd: number; cap_usd: number; percent: number }
+| { type: 'budget_downshift';   from_model: string; to_model: string; reason: 'budget_threshold'; spent_usd: number; cap_usd: number }
+| { type: 'budget_suspended';   scope: 'session' | 'framework' | 'global'; spent_usd: number; cap_usd: number; percent: number }
+| { type: 'budget_exceeded';    scope: 'session' | 'framework' | 'global'; spent_usd: number; cap_usd: number }
+```
+
+`budget_exceeded` triggers immediate agent kill via the drone's `stop_process` command for all session-spawned agents.
+
+### Graph integration
+
+Session header bar shows `spent / cap` with color gradient:
+- `< warn_at_percent` — green
+- `≥ warn_at_percent` — amber
+- `≥ downshift_at_percent` — orange
+- `≥ hitl_at_percent` — red, suspended badge
+- `≥ hard_stop_at_percent` — red, exceeded badge, agents killed
+
+AgentNode size already reflects per-agent spend (Phase 3 L277); §2a adds the session-level header bar.
+
+### Framework JSON
+
+```json
+{
+  "budget": {
+    "session_usd_cap": 5.00,
+    "framework_usd_cap": 100.00,
+    "actions": {
+      "warn_at_percent":      50,
+      "downshift_at_percent": 75,
+      "hitl_at_percent":      90,
+      "hard_stop_at_percent": 100
+    },
+    "downshift_hook": { "type": "tool", "tool_name": "select_cheaper_model" }
+  }
+}
+```
+
+Global per-day cap lives in user settings, not framework JSON.
+
+This is the §0a matrix proof for row 10 (model selection budget + learning) — the *primitive* required is the budget scope/action model; the *learning* part is row 11 (offline RL) which stays as an external Python process consuming exported signals.
 
 -----
 

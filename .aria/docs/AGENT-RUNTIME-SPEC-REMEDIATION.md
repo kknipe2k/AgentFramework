@@ -414,9 +414,10 @@ After review of established patterns (browser permissions, Deno `--allow-*`, npm
 
 ### WI-07: Budget and cost enforcement
 
-**STATUS:** OPEN
+**STATUS:** RESOLVED (2026-04-18, locked in spec §2a)
 **Priority:** P1
 **Effort:** 1 day spec; 1 week implementation
+**Unlocks matrix row:** 10 (model selection budget + learning) — primitive only; learning stays external (row 11, WI-23)
 
 **Problem**
 Spec tracks token usage in a table but has no enforcement: no per-session cap, no per-framework cap, no model-downshift logic. A runaway agent loop can generate $100s in minutes.
