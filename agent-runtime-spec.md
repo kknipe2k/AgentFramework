@@ -1574,7 +1574,7 @@ Frameworks are portable JSON files that define agent behavior. They load into th
   "name": "aria",
   "version": "1.0.0",
   "description": "UI prototyping and component generation framework",
-  "model": "claude-sonnet-4-20250514",
+  "model": { "provider": "anthropic", "id": "claude-sonnet-4-6" },
   "system_prompt": "You are Aria...",
   "tools": [
     {
@@ -2083,8 +2083,9 @@ CREATE TABLE sessions (
   model TEXT,
   started_at INTEGER,
   last_active INTEGER,
-  status TEXT,  -- active | suspended | complete | crashed | recovered
-  snapshot_count INTEGER
+  status TEXT,  -- active | suspended | complete | crashed | recovered | budget_exceeded
+  mode TEXT     -- active mode value (see §3b)
+  -- snapshot_count derivable via COUNT(*) FROM snapshots WHERE session_id = ?
 );
 
 -- Snapshots (drone written)
@@ -2250,7 +2251,7 @@ Recovery is never destructive. Discarded sessions are archived, not deleted.
 │       ├── skills/
 │       └── tools/
 │
-├── AGENT_RUNTIME_SPEC.md    # This document
+├── agent-runtime-spec.md    # This document
 └── package.json
 ```
 
@@ -2261,7 +2262,7 @@ Recovery is never destructive. Discarded sessions are archived, not deleted.
 Use this to begin the build:
 
 ```
-Read AGENT_RUNTIME_SPEC.md fully before writing any code.
+Read agent-runtime-spec.md fully before writing any code.
 
 We are building a local Electron desktop runtime for agentic AI workflows.
 Start with Phase 1: The Drone.
@@ -2288,6 +2289,80 @@ Write tests in Vitest for:
 
 Do not build anything beyond the drone in this session.
 ```
+
+-----
+
+## §11 Reconciliation & Degraded Modes
+
+### Event → Graph → Signals → VDR → Dashboard sequence
+
+```
+┌──────────────┐
+│   Anthropic  │
+│   SDK stream │
+└──────┬───────┘
+       │ ProviderEvent
+       ▼
+┌──────────────────────┐
+│  AgentSDK            │  translates ProviderEvent → AgentEvent
+│  (per session)       │  enriches with agent_id, session_id, ts
+└──────┬───────────────┘
+       │ AgentEvent
+       ├──────────────┬──────────────┬──────────────┐
+       ▼              ▼              ▼              ▼
+┌──────────┐  ┌──────────────┐  ┌──────────┐  ┌─────────────┐
+│ EventBus │  │ Drone        │  │ Signals  │  │ VDR         │
+│ (in-mem) │  │ snapshot_now │  │ writer   │  │ projector   │
+└────┬─────┘  │ on key events│  │ (SQLite) │  │ (decisions) │
+     │        └──────┬───────┘  └────┬─────┘  └──────┬──────┘
+     │               │                │               │
+     ▼               ▼                ▼               ▼
+┌──────────┐  ┌────────────┐  ┌──────────────────────────┐
+│ Renderer │  │ snapshots  │  │ signals + vdr tables     │
+│ live     │  │ table      │  │ (forensic + decision    │
+│ graph    │  └────────────┘  │  layers, see §2b)        │
+└────┬─────┘                  └──────────────┬───────────┘
+     │                                       │
+     │              ┌────────────────────────┘
+     ▼              ▼
+┌─────────────────────────┐
+│ Dashboard (in-app)       │  reads snapshots + signals + VDR
+│ + OTel exporter (WI-23) │  + token_usage + plans
+└─────────────────────────┘
+```
+
+Key invariants:
+- Every `AgentEvent` is delivered to all four sinks (in-mem bus, drone, signals, VDR projector). No sink can drop events without an entry in `error` signals.
+- Drone snapshots are taken on `task_started`, `task_completed`, gap events, HITL events, and on a 30s timer fallback. Other events are signal-only.
+- VDR is downstream of signals; signal writes never block on VDR.
+- Renderer can be offline (closed window) — events queue in EventBus and replay when renderer reattaches.
+
+### Degraded modes matrix
+
+What the UI shows when a critical subsystem is unavailable.
+
+| Subsystem down | Detection | UI behavior | Session behavior |
+|---|---|---|---|
+| **Anthropic API** (provider unavailable) | Heartbeat fails OR stream errors with auth/quota/network | Top banner: "Provider offline — sessions paused"; agent nodes show stalled state | Drone keeps running; snapshots continue; on reconnect, sessions resume from `stalled` state |
+| **MCP server (one)** | Heartbeat fails for that server | MCPNode goes offline (red); affected ToolNodes pulse warning | Agents needing that server's tools route through gap flow (Phase 4 / §4b); other agents unaffected |
+| **MCP server (all)** | All servers down | All MCPNodes offline; toast: "All MCP servers unavailable" | Frameworks with no MCP-dependent tools continue; others suspend |
+| **Drone process** | Main loses IPC channel (`disconnect` event from fork) | Top banner: "Drone process crashed — recovering"; graph disabled | Main spawns replacement drone, loads from last snapshot, replays events from EventBus tail; if replacement fails, session marked `crashed`, recovery offered on next launch |
+| **SQLite database** (lock contention or corruption) | WAL write fails | Top banner: "Persistence layer degraded"; signals queued in memory | Session continues for `degraded_session_window_seconds` (default 60s); after window, session marked `crashed` and graceful_shutdown invoked |
+| **Renderer (window closed)** | Main detects renderer disconnect | N/A (no UI) | Drone + main continue; on relaunch, renderer reattaches to running session via session_id; full graph reconstructed from signals |
+| **Hook command unavailable** (e.g., `npm` not installed) | Hook exec fails with ENOENT | HookNode shows red with "command not found"; rail violation if hook is `block` | Per `on_failure` policy: warn (continue) or block (suspend) or rollback |
+| **Registry upstream** (Anthropic skills repo unreachable) | Fetch fails | Builder search shows "Upstream unavailable; local-only results"; install button disabled for upstream items | Local artifacts unaffected; existing installs continue working |
+| **Secrets vault** (keychain access denied) | keytar throws | Settings shows "Cannot access keychain"; affected MCPs cannot connect | Sessions using those MCPs route through gap flow |
+| **Budget exceeded** (cap hit) | `budget_exceeded` event | Session header red badge "Budget exceeded"; agents killed | Session marked `budget_exceeded`; user must reset cap or end session |
+
+### Reconciliation rule
+
+Once per minute, the runtime reconciles in-memory state with SQLite:
+- Compare unflushed signals queue against signals table → flush any missing.
+- Compare current plan in memory against plans table → write back any drift.
+- Detect orphaned tool calls (`tool_invoked` without `tool_result` for >5min and no error) → mark `tool_call_uncertain`, surface to user.
+- Detect orphaned agents (last activity >timeout) → mark stalled, alert user.
+
+This is the safety net for transient subsystem failures. Hard crashes are handled by the snapshot/recovery path (§1b).
 
 -----
 

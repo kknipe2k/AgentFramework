@@ -1,9 +1,24 @@
 # Agent Runtime Spec — Remediation Plan
 
 **Companion to:** `AGENT-RUNTIME-SPEC-REVIEW.md`
-**Source spec:** `agent-runtime-spec.md` (795 lines, commit `2e36f5b`)
+**Source spec:** `agent-runtime-spec.md`
 **Created:** 2026-04-18
+**Last updated:** 2026-04-18 (all P0/P1/P2/P4 work items resolved; v2-deferred items remain DEFERRED)
 **Branch:** `claude/review-aria-agentic-wrapper-Xz7Y3`
+
+---
+
+## Resolution Status (2026-04-18)
+
+| Tier | Status | Items |
+|---|---|---|
+| **P0 — Blocking** | 2/2 RESOLVED | WI-00 (Capability Matrix), WI-01 (ARIA Archetype model) |
+| **P1 — Critical** | 6/6 RESOLVED | WI-02 (Verify+rails), WI-03 (Plan/task), WI-04 (Tool/Skill/Agent), WI-05 (Gap detection), WI-06 (5-layer security), WI-07 (Budget) |
+| **P2 — Important** | 10/10 RESOLVED | WI-08 (Signals), WI-09 (IPC), WI-10 (Multi-session), WI-11 (MCP namespace), WI-12 (Registry), WI-13 (LLMProvider), WI-14 (Recovery), WI-15 (Mode), WI-16 (HITL), WI-17 (Dev-loop) |
+| **P3 — Nice-to-have** | DEFERRED v2 | WI-18, WI-19, WI-20, WI-21, WI-22 (signing portion), WI-23, WI-25; WI-24 SUBSUMED by WI-06 |
+| **P4 — Polish** | 1/1 RESOLVED | WI-26 (typo, model IDs, schema trim, sequence diagram, degraded modes matrix) |
+
+**Spec is ready for Phase 1 code.** All blocking and critical items have been resolved into the spec; downstream phases have unblocking primitives defined.
 
 ---
 
@@ -927,7 +942,7 @@ React Flow supports PNG export out of the box. Add an "Export graph" button. Use
 
 ### WI-26: Spec-level quality fixes
 
-**STATUS:** OPEN
+**STATUS:** RESOLVED (2026-04-18, locked in spec §11 and inline fixes)
 **Effort:** 1 hour
 
 Grab-bag of small issues:
