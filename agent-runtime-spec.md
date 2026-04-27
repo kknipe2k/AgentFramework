@@ -95,6 +95,143 @@ This matrix is the spec's contract with itself. Every P1 work item must justify 
 
 -----
 
+## §0b Three Concepts: Tool, Skill, Agent
+
+> **Locked terminology (2026-04-18).** Skills are read, tools are called, agents are spawned. Anywhere this spec used "skill" to mean "callable thing," that has been corrected to "tool."
+
+### Definitions
+
+| Concept | What it is | How declared | How invoked | Sources |
+|---|---|---|---|---|
+| **Tool** | Callable capability with input/output schema | MCP server JSON; generated `tool.md`; built-in TS registration | Model emits `tool_use` block | MCP, built-in, generator |
+| **Skill** | Context-loaded instruction set; markdown read into agent context | Canonical `skill.md` (frontmatter + free-form body) | Runtime-injected `LoadSkill` tool | Local library, registry, generator |
+| **Agent** | Composable LLM role: system prompt + allowed tools + allowed skills + model | Framework JSON `agents[]` entry; standalone `agent.md` | Runtime-injected `SpawnAgent` tool; or root agent at session start | Framework JSON |
+
+### Tool
+
+Already covered by Phase 5 (MCP) and Phase 8a (Tool Writer). The previously-named `skill.md` format (callables with `input_schema` / `output_schema`) is renamed `tool.md`. Tool calls emit `tool_invoked` and `tool_result` events.
+
+### Skill
+
+**Canonical `skill.md` schema** (strict frontmatter, free-form body):
+
+```markdown
+---
+name: planning
+version: 1.0.0
+description: Create implementation plans with HITL approval gates
+triggers:
+  semantic:
+    - "create a plan"
+    - "/plan"
+    - "mode_start"
+  programmatic:
+    - event: session_start
+      when: { "!=": [{ "var": "session.mode" }, "LITE"] }
+    - event: task_failed
+      when: { ">=": [{ "var": "task.failure_count" }, 2] }
+mode_variants:
+  LITE:     { include_sections: ["quick"] }
+  STANDARD: { include_sections: ["full"] }
+  FULL:     { include_sections: ["full", "risks"] }
+  FULL+:    { include_sections: ["full", "risks", "design_doc"] }
+required_tools: ["Read", "Write"]
+required_skills: []
+---
+
+# Planning Skill
+
+(free-form body — markdown sections, optionally tagged for mode_variants.include_sections)
+```
+
+**LoadSkill runtime tool** (auto-injected into every agent's tool list):
+
+```typescript
+{
+  name: "LoadSkill",
+  description: "Load instructional context for a named skill before performing related work.",
+  input_schema: {
+    type: "object",
+    properties: {
+      skill_name: { type: "string", description: "Name from the available-skills block in your system prompt." },
+      reason:     { type: "string", description: "Why you're loading this skill now." }
+    },
+    required: ["skill_name", "reason"]
+  }
+}
+```
+
+Tool result returns the skill body, with sections filtered by `${session.mode}` per `mode_variants`. Emits `skill_loaded` event with skill name, version, mode, parent agent.
+
+**Triggers — both semantic and programmatic, both ship in v1.**
+
+- **Semantic.** Runtime injects an "Available skills" block in every agent's system prompt:
+  ```
+  ## Available skills (use the LoadSkill tool to read one before related work)
+  - planning — Create implementation plans with HITL approval gates. Triggers: "create a plan", "/plan", mode_start.
+  - debugging — Diagnose test failures and errors. Triggers: "debug", "test failure", "error in".
+  - tdd — Test-driven development workflow. Triggers: "tdd", "test first".
+  ...
+  ```
+  Agent decides when to call `LoadSkill`.
+
+- **Programmatic.** Skills declare `triggers.programmatic` as a list of event-matchers with optional JSONLogic `when` clauses. The runtime registers a small evaluator that subscribes to the event stream; on match, it emits `skill_load_requested` to the appropriate agent. The agent typically complies (calls `LoadSkill`) but may decline with a brief rationale (recorded as a decision).
+
+  Trigger expression language:
+  ```yaml
+  - event: <event_type>          # any AgentEvent.type or '*'
+    agent: <agent_id_pattern>    # optional, defaults to '*'
+    when:                        # optional JSONLogic against the event payload
+      ">=": [{ "var": "task.failure_count" }, 2]
+  ```
+
+  v1 evaluator supports JSONLogic operators: `var`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `and`, `or`, `not`, `in`. New operators added on demand.
+
+  Why both: semantic alone is brittle (agent forgets to load `debugging` after a failure); programmatic alone is rigid (can't load on a hunch). Together: programmatic safety net + semantic flexibility.
+
+### Agent
+
+**Framework JSON entry:**
+
+```json
+{
+  "id": "analyzer",
+  "role": "Read-only code analysis",
+  "system_prompt_template": "You are the analyzer. Read code, understand patterns, propose plans. You do not write files.",
+  "allowed_tools": ["Read", "Glob", "Grep"],
+  "allowed_skills": ["discovery"],
+  "model": "haiku",
+  "spawns": [],
+  "spawn_constraints": { "max_concurrent": 1, "timeout_ms": 60000 }
+}
+```
+
+**SpawnAgent runtime tool** — auto-injected for any parent agent whose definition lists `spawns: [...]`. Spawning a child enforces the child's `allowed_tools` / `allowed_skills` constraints. Spawn emits `agent_spawned` with parent_id chain.
+
+Agent definitions can also live as standalone `agent.md` files for distribution (frontmatter mirrors the JSON entry; body is the system prompt template).
+
+### Event taxonomy implications
+
+Phase 2's `AgentEvent` union is updated:
+
+- Renamed: `skill_invoked` → `tool_invoked`, `skill_complete` → `tool_result`, `mcp_tool_called` → folded into `tool_invoked` (with `source: 'mcp' | 'builtin' | 'generated'`), `mcp_tool_result` → folded into `tool_result`.
+- Added: `skill_loaded`, `skill_load_requested`, `tool_missing` (vs existing `skill_missing`).
+- `skill_missing` retained but now means "framework declares a skill that isn't installed" (load-time gap). `tool_missing` means "agent tried to use a tool that isn't in its allowed list or doesn't exist" (runtime gap).
+
+### Phase impact summary
+
+| Phase | Change |
+|---|---|
+| Phase 2 | Event union renamed (see above). |
+| Phase 3 | `SkillNode` and `ToolNode` are distinct: ToolNode has flowing-edge animation during call; SkillNode has dashed outline indicating in-context load (no in/out flow). |
+| Phase 4 | Gap flow distinguishes tool-missing (suspend, builder needed) from skill-missing (warn + suggest install — usually less severe). Detail in WI-05. |
+| Phase 5 | MCP exposes Tools only. MCP cannot publish Skills or Agents. |
+| Phase 7 | Registry search filterable by `type: tool | skill | agent`. |
+| Phase 8 | Splits into 8a Tool Writer, 8b Skill Writer, 8c Agent Composer. Detail in WI-06. |
+| Phase 9 | Builder canvas palette has three sections: Tools / Skills / Agents. |
+
+-----
+
 ## Architecture Overview
 
 ```
@@ -268,17 +405,28 @@ type AgentEvent =
   | { type: 'agent_spawned'; agent_id: string; agent_name: string; parent_id: string | null }
   | { type: 'agent_complete'; agent_id: string; result: string }
   | { type: 'agent_error'; agent_id: string; error: string }
-  | { type: 'skill_invoked'; skill_id: string; agent_id: string; input: unknown }
-  | { type: 'skill_complete'; skill_id: string; output: unknown; duration_ms: number }
-  | { type: 'skill_missing'; skill_name: string; agent_id: string; context: string }
-  | { type: 'mcp_tool_called'; tool_name: string; server: string; input: unknown }
-  | { type: 'mcp_tool_result'; tool_name: string; output: unknown; duration_ms: number }
+
+  // Tools (callables — see §0b)
+  | { type: 'tool_invoked'; tool_name: string; agent_id: string; source: 'mcp' | 'builtin' | 'generated'; server?: string; input: unknown }
+  | { type: 'tool_result'; tool_name: string; agent_id: string; output: unknown; duration_ms: number }
+  | { type: 'tool_missing'; tool_name: string; agent_id: string; reason: 'not_in_allowed_list' | 'not_installed' }
+
+  // Skills (instruction sets — see §0b)
+  | { type: 'skill_loaded'; skill_name: string; skill_version: string; agent_id: string; mode: string; trigger_kind: 'semantic' | 'programmatic' }
+  | { type: 'skill_load_requested'; skill_name: string; agent_id: string; trigger_event: string }
+  | { type: 'skill_missing'; skill_name: string; agent_id: string; context: string } // load-time: framework declares a skill not in local library
+
+  // HITL, plan, hooks (see WI-02, WI-03, WI-16)
   | { type: 'hitl_requested'; agent_id: string; question: string; options: string[] | null }
   | { type: 'hitl_response'; agent_id: string; response: string }
+
+  // Cost & streaming
   | { type: 'token_usage'; input: number; output: number; model: string; cost_usd: number }
   | { type: 'stream_text'; agent_id: string; text: string }
   | { type: 'decision_record'; agent_id: string; decision: string; rationale: string; tool_used: string }
 ```
+
+> Plan/task, hook, rail, and budget events are added by WI-03, WI-02, and WI-07 respectively. This union grows; Phase 2 owns the canonical list.
 
 ### SDK Wrapper
 
@@ -293,9 +441,10 @@ class AgentSDK {
   async runAgent(config: AgentConfig): Promise<void> {
     // Emit agent_spawned
     // Stream with SDK, emit stream_text per chunk
-    // On tool use: emit skill_invoked or mcp_tool_called
-    // On tool result: emit skill_complete or mcp_tool_result
-    // On missing tool: emit skill_missing → drone snapshots → session suspends cleanly
+    // On tool use: emit tool_invoked (source: mcp | builtin | generated)
+    // On tool result: emit tool_result
+    // On LoadSkill tool result: also emit skill_loaded with mode/trigger_kind
+    // On missing tool: emit tool_missing → gap flow (see Phase 4, WI-05)
     // On text block: extract decision records, emit decision_record
     // On complete: emit agent_complete
     // On error: emit agent_error → drone notified
@@ -334,18 +483,23 @@ The graph is the product’s face. It renders the full agentic runtime as it hap
 
 ```
 AgentNode      — spawned agent, shows status, current action, token spend
-SkillNode      — invoked skill, shows input/output summary on hover
-MCPNode        — connected MCP server, shows tool calls flowing through it
-GapNode        — missing skill or agent, pulsing amber, suspends session cleanly
+ToolNode       — callable invocation (MCP / built-in / generated); animated edge during call
+SkillNode      — context-loaded instruction set (LoadSkill); dashed outline, no flow animation
+MCPNode        — connected MCP server, hosts ToolNodes for its tools
+GapNode        — missing tool (suspends) or missing skill (warns); see Phase 4
 HITLNode       — blocked on human input, highlighted, awaiting response
-FrameworkNode  — root node, the active framework (Aria, custom, etc.)
+PlanNode       — current plan root, shows progress (added by WI-03)
+TaskNode       — task within plan, shows status and HITL flag (added by WI-03)
+VerifyNode     — post-task hook firing, pass/fail (added by WI-02)
+FrameworkNode  — root node, the active framework (e.g., examples/aria)
 ```
 
 ### Graph Behavior
 
 - Nodes spawn in real time as events arrive from the pipeline
-- Edges animate as tool calls flow: agent → skill, agent → MCP
-- GapNode appears immediately on `skill_missing` event — session suspends cleanly
+- Edges animate as tool calls flow: agent → ToolNode (or agent → MCPNode → ToolNode for MCP-hosted tools)
+- Skill loads render a brief dashed line from agent → SkillNode (no in-flight animation; loaded skill stays in context)
+- GapNode appears immediately on `tool_missing` (suspends) or `skill_missing` (warn — see Phase 4 / WI-05)
 - HITLNode blocks the graph visually, dims non-relevant nodes, prompts user
 - Completed agents and skills collapse to summary state, remain inspectable
 - Full graph is zoomable, pannable, selectable
@@ -414,6 +568,8 @@ GapNode
 ## Phase 5: MCP Manager
 
 Visible in the graph. Every connected MCP server is a node. Tool calls route through it as animated edges.
+
+> **Scope (per §0b):** MCP exposes **Tools only**. MCP servers cannot publish Skills or Agents. Skills and Agents are owned by the framework / local library / generators.
 
 ### Manager Capabilities
 

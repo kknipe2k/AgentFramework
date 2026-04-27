@@ -275,43 +275,44 @@ The `examples/aria/` framework uses `approval_required: true` + `loop_policy: fr
 
 ---
 
-### WI-04: Disambiguate "skill" vs "tool"
+### WI-04: Three concepts — Tool, Skill, Agent
 
-**STATUS:** OPEN
+**STATUS:** RESOLVED (2026-04-18, locked in spec §0b)
 **Priority:** P1
 **Effort:** 1 day spec
+**Unlocks matrix rows:** 6 (subagent isolation), 19 (skills as instruction sets), 20 (mode-variant skills)
 
-**Problem**
-The spec's `skill.md` format has `input_schema`/`output_schema` frontmatter — that's a tool. ARIA's skills are context-loaded markdown prompts with semantic triggers and mode variations. Calling both "skill" will cause years of developer confusion.
+**Locked decisions**
 
-**Proposed resolution**
-Pick one terminology and apply globally. Recommendation:
+1. **Three concepts, not two:**
+   - **Tool** — callable, has input/output schema. `tool_use` block. Sources: MCP server, generated `tool.md`, built-in.
+   - **Skill** — context-loaded instruction set in canonical `skill.md` (frontmatter + free-form body). Loaded via the runtime-injected `LoadSkill` tool.
+   - **Agent** — composable LLM role: system prompt + allowed tools + allowed skills + model. Spawned via `SpawnAgent` tool.
+2. **Dedicated `LoadSkill` runtime tool** — clean `skill_loaded` event boundary; framework auto-injects.
+3. **Skill triggers — semantic AND programmatic, both in v1.**
+   - Semantic: agent self-loads from "Available skills" block in system prompt.
+   - Programmatic: JSONLogic-style trigger expressions evaluated against the event stream; runtime emits `skill_load_requested` on match.
+4. **Strict frontmatter, free-form body.** Existing ARIA skills get ported to canonical format in `examples/aria/skills/`.
+5. **Skill writer output scoped to non-executable** (cross-ref WI-06): Skills (instructions), Tool-bindings (MCP wrappers, no new code), Agent compositions. Never executable code.
 
-- **Tool** = callable capability with input/output schemas. Source: MCP server, in-process function, or generated skill-as-callable. Maps to Anthropic SDK `tool_use` blocks.
-- **Skill** = context-loaded instruction set (markdown with semantic triggers, mode variations, subagent orchestration hints). Loaded into the system prompt or read by agents as part of their working context. Does not have input/output schemas.
+**Spec changes**
+- Added `§0b Three Concepts: Tool, Skill, Agent` (canonical definitions + LoadSkill / SpawnAgent specs + trigger expression language).
+- Renamed `skill_invoked` / `skill_complete` → `tool_invoked` / `tool_result` in Phase 2 event union.
+- Added `skill_loaded`, `skill_load_requested`, `tool_missing` events.
+- Phase 3 node types updated: `ToolNode` (callable invocation), `SkillNode` (context load — distinct visual).
+- Phase 5 MCP: explicit that MCP exposes Tools, never Skills.
+- Marked Phase 8 split (Tool Writer / Skill Writer / Agent Composer) as a follow-up under WI-06.
 
-Update:
-1. Spec Phase 7 renamed "Tool Finder" for registry-discovered MCPs / callables
-2. Spec Phase 8 renamed "Tool Writer" for generated callables; new Phase 8b "Skill Writer" for generated instruction sets
-3. `skill.md` format (L502–533) renamed `tool.md`; create separate `skill.md` format mirroring ARIA's existing skill structure
-4. Framework JSON gains both:
-   ```json
-   {
-     "tools": [ "create_component", "read_pdf" ],
-     "skills": [ "planning", "tdd", "debugging" ]
-   }
-   ```
-5. `AgentEvent.skill_invoked` → `tool_invoked`; add `skill_loaded` for context-loads
+**Acceptance criteria** — all met
+- [x] Three concepts defined and enforced consistently
+- [x] `tool.md` and `skill.md` formats both specified
+- [x] Framework JSON has `tools`, `skills`, `agents` distinct fields
+- [x] Event taxonomy split tool / skill / agent
+- [x] Programmatic trigger language defined
+- [x] Existing spec contradictions resolved (Phase 2/3/5)
 
-**Acceptance criteria**
-- [ ] Global rename across the spec; no remaining ambiguous use
-- [ ] Both `tool.md` and `skill.md` formats defined
-- [ ] Framework JSON schema has both fields
-- [ ] Event taxonomy separates `tool_*` from `skill_*`
-- [ ] Registry (WI-12) search filterable by `type: tool | skill`
-
-**Dependencies:** WI-01
-**Blocks:** WI-05, WI-06
+**Dependencies:** WI-01 ✓
+**Blocks:** WI-05 (gap detection now has tool_missing vs skill_missing), WI-06 (writer scope locked)
 
 ---
 
