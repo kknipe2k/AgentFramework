@@ -1,0 +1,154 @@
+{
+  "$schema": "https://schemas.aria-runtime.dev/framework/v1.json",
+  "name": "ralph",
+  "version": "1.0.0",
+  "description": "Reference framework reconstructing Ralph's PRD-driven autonomous loop using runtime primitives. Sibling to examples/aria/ — same primitives, different composition (continuous loop, no approval gate).",
+  "author": "ARIA project",
+
+  "model":           { "provider": "anthropic", "id": "claude-sonnet-4-6" },
+  "fallback_models": [{ "provider": "anthropic", "id": "claude-haiku-4-5" }],
+
+  "modes": {
+    "values":  ["RALPH"],
+    "default": "RALPH"
+  },
+
+  "sizing": {
+    "mode": "declarative",
+    "rules": [{ "default": "RALPH" }]
+  },
+
+  "plan_creation": {
+    "agent": "ralph-agent",
+    "approval_required": false,
+    "loop_policy": {
+      "kind": "continuous",
+      "goal_store": ".ralph/prd.json"
+    }
+  },
+
+  "task_defaults": {
+    "max_failures": 3,
+    "post_hooks": [
+      { "id": "verify", "category": "verify", "level": "standard",
+        "ref": { "type": "shell", "command": "bash .aria/verify.sh" },
+        "on_failure": "warn" }
+    ]
+  },
+
+  "hooks": {
+    "post_file_edit": [
+      { "id": "lint", "category": "lint",
+        "ref": { "type": "shell", "command": "scripts/lint-changed.sh" },
+        "on_failure": "warn" }
+    ]
+  },
+
+  "rails": {
+    "hard": [
+      { "id": "no_secrets", "fires_on": ["pre_commit"],
+        "check": { "type": "shell", "command": "scripts/check-secrets.sh" },
+        "message": "Secrets detected in changes." }
+    ],
+    "soft": []
+  },
+
+  "dont_touch": [
+    ".aria-runtime/state/**",
+    ".ralph/**",
+    "package-lock.json",
+    ".env*",
+    ".git/**"
+  ],
+
+  "hitl_policy": {
+    "on_gap":               { "enabled": true,  "ui": "panel" },
+    "on_failure_threshold": { "enabled": true,  "threshold": 3, "ui": "panel" },
+    "on_dont_touch_edit":   { "enabled": true,  "ui": "modal" },
+    "on_capability_violation": { "enabled": true, "ui": "modal" },
+    "on_budget_threshold":  { "enabled": true,  "percent": 90, "ui": "modal" },
+
+    "on_plan_approval":     { "enabled": false },
+    "on_risky_tool":        { "enabled": false, "_comment": "Ralph autonomous loop — risky tool gate is opt-in by user via Operator tier" },
+    "per_task":             { "enabled": false },
+
+    "notifiers": [
+      { "type": "terminal_bell", "enabled": true },
+      { "type": "desktop",       "enabled": true }
+    ],
+
+    "timeout_seconds":           7200,
+    "default_action_on_timeout": "abort"
+  },
+
+  "budget": {
+    "session_usd_cap":   10.00,
+    "framework_usd_cap": 200.00,
+    "actions": {
+      "warn_at_percent":      50,
+      "downshift_at_percent": 75,
+      "hitl_at_percent":      90,
+      "hard_stop_at_percent": 100
+    },
+    "downshift_hook": { "type": "tool", "tool_name": "select_cheaper_model" }
+  },
+
+  "tools": [
+    { "name": "Read",           "source": "builtin" },
+    { "name": "Write",          "source": "builtin" },
+    { "name": "Edit",           "source": "builtin" },
+    { "name": "Bash",           "source": "builtin" },
+    { "name": "Glob",           "source": "builtin" },
+    { "name": "Grep",           "source": "builtin" },
+    { "name": "LoadSkill",      "source": "builtin" },
+    { "name": "request_capability", "source": "builtin" },
+    { "name": "aria_verify",    "source": "external", "path": "../aria/tools/aria_verify.md" },
+    { "name": "git_checkpoint", "source": "external", "path": "../aria/tools/git_checkpoint.md" },
+    { "name": "git_rollback",   "source": "external", "path": "../aria/tools/git_rollback.md" },
+    { "name": "select_cheaper_model", "source": "external", "path": "../aria/tools/select_cheaper_model.md" }
+  ],
+
+  "skills": [
+    { "name": "ralph_loop",  "path": "skills/ralph_loop.md" },
+    { "name": "executing",   "source": "external", "path": "../aria/skills/executing.md" },
+    { "name": "debugging",   "source": "external", "path": "../aria/skills/debugging.md" }
+  ],
+
+  "agents": [
+    { "id": "ralph-agent", "path": "agents/ralph-agent.md" }
+  ],
+
+  "session_root_agent": "ralph-agent",
+
+  "commands": [
+    { "name": "/ralph",       "description": "Start the Ralph loop against the current PRD",     "agent": "ralph-agent" },
+    { "name": "/ralph-init",  "description": "Initialize a new PRD",                              "tool": "ralph_init" },
+    { "name": "/ralph-status","description": "Show progress against the PRD",                     "tool": "show_status" }
+  ],
+
+  "session": {
+    "snapshot_interval_seconds": 30,
+    "idle_timeout_seconds":      600,
+    "stall_timeout_seconds":     120
+  },
+
+  "decision_trace": true,
+
+  "examples_archetype_proof": {
+    "deltas_vs_aria": {
+      "loop_policy":               "continuous (one persistent agent reading goal_store) vs aria's fresh_context_per_task",
+      "approval_required":         "false (autonomous) vs aria's true",
+      "hitl_density":              "minimal — gap, failure, dont_touch, budget only — vs aria's full set",
+      "session_root_agent":        "single ralph-agent vs aria's orchestrator with 7 child agents",
+      "modes":                     "single RALPH mode vs aria's 4-mode router",
+      "session_usd_cap":           "$10 (longer-running) vs aria's $5",
+      "idle_timeout":              "10min (deliberate) vs aria's 5min"
+    },
+    "shared_with_aria": [
+      "All runtime primitives (modes, hooks, rails, dont_touch, budget, hitl, tools, skills, agents)",
+      "Tool reuse via source: external pointing to ../aria/tools/",
+      "Skill reuse for executing and debugging",
+      "Phase 8 §8.security 5-layer model applies identically"
+    ]
+  }
+}
