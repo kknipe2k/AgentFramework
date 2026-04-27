@@ -573,9 +573,10 @@ Specify the algorithm in Phase 5:
 
 ### WI-12: Registry trust chain
 
-**STATUS:** OPEN
+**STATUS:** RESOLVED (2026-04-18, locked in spec Phase 7)
 **Priority:** P2 (security)
 **Effort:** 2 days spec
+**Decision:** v1 ships with single trusted upstream (Anthropic skills) + local library; pluggable registries deferred to v2/WI-22; skills.lock with content hashes is mandatory; reproducible installs via committed lockfile
 
 **Problem**
 Spec Phase 7 lists `agent.md registry — GitHub index of community agent definitions` (doesn't exist), `mcp.so/api/search` (real-ish), and "community registries — pluggable" (imaginary). No signature verification, no lockfile, no version pinning.
@@ -724,9 +725,10 @@ The `examples/aria/` framework declares ARIA's four modes and sizing matrix verb
 
 ### WI-16: HITL policy modes
 
-**STATUS:** OPEN
+**STATUS:** RESOLVED (2026-04-18, locked in spec §6a)
 **Priority:** P2
 **Effort:** 1 day spec
+**Unlocks matrix rows:** 14 (HITL notifications), 18 (failure escalation)
 
 **Problem**
 Spec has one HITL policy value: `"on_gap"`. ARIA's HITL fires on: destructive ops, risky tool use, per-epic gates, explicit user choice prompts, failure escalation.

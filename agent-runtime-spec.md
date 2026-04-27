@@ -635,6 +635,14 @@ type AgentEvent =
   // MCP auth (see §1c / WI-10)
   | { type: 'mcp_auth_conflict'; server_url: string; existing_session_id: string; requesting_session_id: string }
 
+  // HITL extras (see §6a / WI-16)
+  | { type: 'hitl_timeout'; trigger: string; session_id: string; default_action: string }
+  | { type: 'notifier_dispatched'; notifier_type: string; trigger: string; success: boolean }
+  | { type: 'notifier_failed'; notifier_type: string; trigger: string; error: string }
+
+  // Registry / artifact integrity (see Phase 7 / WI-12)
+  | { type: 'artifact_hash_mismatch'; artifact_name: string; expected: string; got: string }
+
   // Plan & Task lifecycle (see §3a / WI-03)
   | { type: 'plan_created'; plan_id: string; title: string; task_count: number; approval_required: boolean }
   | { type: 'plan_approval_requested'; plan_id: string }
@@ -1591,7 +1599,7 @@ Frameworks are portable JSON files that define agent behavior. They load into th
     }
   ],
   "skills": ["create_component", "write_tests", "review_code"],
-  "hitl_policy": "on_gap",
+  "hitl_policy": { /* see §6a — structured object, not a single string */ },
   "decision_trace": true,
   "session": {
     "snapshot_interval_seconds": 30,
@@ -1613,52 +1621,213 @@ Examples — `examples/aria/` ships as the reference framework that reconstructs
 
 -----
 
+## §6a HITL Policy Primitive
+
+> **Locked (2026-04-18, WI-16).** HITL is a structured object with multiple trigger types and a notifier plugin interface — not a single string value.
+
+ARIA's HITL fires for: gaps, destructive operations, risky tools, per-epic gates, failure escalation, budget thresholds, capability violations. The runtime needs primitives for each.
+
+### Framework JSON
+
+```json
+"hitl_policy": {
+  "on_gap":                  { "enabled": true,  "ui": "panel" },
+  "on_risky_tool":           { "enabled": true,  "tools": ["Bash:rm", "Bash:git push", "WebFetch:*"], "ui": "modal" },
+  "on_dont_touch_edit":      { "enabled": true,  "ui": "modal" },
+  "on_failure_threshold":    { "enabled": true,  "threshold": 3, "ui": "panel" },
+  "on_capability_violation": { "enabled": true,  "ui": "modal" },
+  "on_budget_threshold":     { "enabled": true,  "percent": 90, "ui": "modal" },
+  "on_plan_approval":        { "enabled": true,  "ui": "panel" },
+  "per_task":                { "enabled": false },
+  "per_epic":                { "enabled": false },
+
+  "notifiers": [
+    { "type": "terminal_bell", "enabled": true },
+    { "type": "desktop",       "enabled": true },
+    { "type": "sound",         "enabled": false },
+    { "type": "plugin",        "name": "slack-webhook", "config": { "url_secret_ref": "secret://slack_webhook" } }
+  ],
+
+  "timeout_seconds": 3600,
+  "default_action_on_timeout": "abort"
+}
+```
+
+### HITL trigger types (locked)
+
+| Trigger | Fires when | Per-mode default | UI variant |
+|---|---|---|---|
+| `on_gap` | `tool_missing` or `skill_missing` (Phase 4 / §4b) | All modes: enabled | Panel (full takeover) |
+| `on_risky_tool` | Agent attempts a tool listed in `tools` | All modes: enabled | Modal (approve/deny) |
+| `on_dont_touch_edit` | Agent attempts to edit a `dont_touch` path (§4a) | All modes: enabled | Modal (approve/deny once or always) |
+| `on_failure_threshold` | `task_escalated` (§3a, after `failure_count >= max_failures`) | All modes: enabled | Panel (retry with guidance / skip / abort) |
+| `on_capability_violation` | Phase 8 §8.security L2 violation | All modes: enabled | Modal (allow once / session / forever / block) |
+| `on_budget_threshold` | `budget_suspended` (§2a, configurable %) | All modes: enabled | Modal (approve continue / reduce cap / abort) |
+| `on_plan_approval` | `plan_approval_requested` (§3a) | LITE: disabled; STANDARD/FULL/FULL+: enabled | Panel (approve/revise/cancel) |
+| `per_task` | Before each task | LITE/STANDARD/FULL: disabled; FULL+: optional | Modal |
+| `per_epic` | Between epics | FULL+: optional | Panel |
+
+### UI variants
+
+- **Panel:** takes over the main view, dims graph, requires explicit interaction. Used for substantial decisions.
+- **Modal:** floating dialog, blocks adjacent interaction, dismissed by approve/deny. Used for quick yes/no.
+- **Toast:** non-blocking notification, auto-dismisses with default action after timeout. Used for soft warnings (not currently any HITL trigger uses toast).
+
+### Notifier plugin interface
+
+Notifiers are plugins called when any enabled HITL trigger fires.
+
+```typescript
+interface HitlNotifier {
+  readonly type: string
+  notify(event: HitlNotifyEvent): Promise<void>
+}
+
+interface HitlNotifyEvent {
+  trigger: string                    // e.g., 'on_failure_threshold'
+  session_id: string
+  question: string                    // human-readable summary
+  options: string[] | null            // expected user choices, if any
+  context: Record<string, unknown>
+  timeout_at: number                  // unix ms
+}
+```
+
+Built-in notifiers in v1:
+- `terminal_bell` — emits BEL to active terminal (works in all OSes)
+- `desktop` — Electron Notification API (cross-platform)
+- `sound` — play a wav from settings; off by default
+
+Plugin notifiers (Slack, email, custom) loaded from `notifiers/` directory. Plugins follow the same Phase 8 §8.security model: declared capabilities, sandboxed validation, tier-gated install.
+
+### Failure escalation flow (cross-ref §3a)
+
+When `task_escalated` fires:
+
+1. HITL trigger `on_failure_threshold` evaluated. If enabled, runtime emits `hitl_requested` with task context, last error, attempts.
+2. All enabled notifiers called in parallel.
+3. Session waits for response (default 1h timeout, then `default_action_on_timeout`).
+4. User response routes back as one of:
+   - `task_started` (retry with guidance)
+   - `task_skipped`
+   - `plan_aborted`
+5. Decision is recorded in VDR with full context.
+
+### HITL events (already in Phase 2 union, unchanged structurally)
+
+`hitl_requested`, `hitl_response` already exist; this WI adds:
+
+```typescript
+| { type: 'hitl_timeout'; trigger: string; session_id: string; default_action: string }
+| { type: 'notifier_dispatched'; notifier_type: string; trigger: string; success: boolean }
+| { type: 'notifier_failed'; notifier_type: string; trigger: string; error: string }
+```
+
+### Mode-keyed defaults
+
+Frameworks set per-mode HITL policy overrides via §3b's `per_mode_overrides`:
+
+```json
+"per_mode_overrides": {
+  "LITE":  { "hitl_policy.on_plan_approval.enabled": false },
+  "FULL+": { "hitl_policy.per_epic.enabled": true }
+}
+```
+
+This is the §0a matrix proof for rows 14 (HITL notifications) and 18 (failure escalation).
+
+-----
+
 ## Phases 7–9: Agent Builder (Build Time)
 
 The Agent Builder is a distinct mode — not part of the runtime. The user switches to it deliberately, either from the gap panel or from the main nav. Nothing built here affects a running session until the user explicitly resumes.
 
-### Phase 7: Registry Search and Skill Finder
+### Phase 7: Registry Search and Capability Finder
+
+> **v1 scope (locked 2026-04-18, WI-12):** one trusted upstream + local library only. Pluggable community registries deferred to v2.
+
+#### v1 Sources
 
 ```
-Search Sources (searched in order, results ranked by relevance)
-  ├── agent.md registry — GitHub index of community agent definitions
-  ├── skill.md registry — curated and community skill index
-  └── MCP server registry — mcp.so, Anthropic directory, community sources
+Search Sources (searched in order)
+  ├── Local library — installed artifacts on this machine (always searched first)
+  └── Anthropic Skills upstream — https://github.com/anthropics/skills
+       (single trusted, hash-pinned, signed-by-repo-HEAD)
 
-Search Interface
-  - Natural language query: "I need a skill that can read PDF files"
-  - Results show: name, description, author, verified badge, source
-  - Preview: full skill.md or agent.md before installing
-  - Install: validated locally before becoming available to frameworks
-
-Validation Before Install
-  1. Parse skill.md / agent.md — valid format?
-  2. Run against mock inputs in isolated sandbox (drone manages lifecycle)
-  3. Check output schema matches declared schema
-  4. Flag dangerous patterns (undeclared network calls, exec, etc.)
-  5. Pass → added to local skill library
-  6. Fail → report shown, user decides whether to install anyway
+NOT in v1:
+  ✗ Pluggable community registries (deferred to v2)
+  ✗ mcp.so/api/search (deferred to v2 — no signature/trust chain yet)
+  ✗ Arbitrary GitHub URLs (deferred to v2 — no provenance)
 ```
+
+#### Trust chain for v1 upstream
+
+1. Anthropic skills repo URL is hardcoded as a constant.
+2. On first connect, runtime fetches the repo HEAD commit hash via the GitHub API. That hash becomes the trust root for this install.
+3. Each artifact retrieved from the upstream includes its content hash. Runtime verifies hash on download.
+4. Trust root rotates on user-initiated "Update upstream" action; user sees the old/new HEAD hashes and confirms.
+
+#### `skills.lock` file
+
+Every installed artifact records to `.aria-runtime/skills.lock`:
+
+```json
+{
+  "version": 1,
+  "installed": {
+    "pdf_summarizer@1.0.0": {
+      "kind": "skill",
+      "source": "anthropic-upstream",
+      "source_commit": "abc123def456...",
+      "content_hash": "sha256:def456...",
+      "installed_at": "2026-04-18T14:23:00Z",
+      "validation_report_id": "vr-789xyz",
+      "tier_at_install": "promoted"
+    }
+  }
+}
+```
+
+Runtime validates `content_hash` on every load. Mismatch → block load with `artifact_hash_mismatch` event; user reinstalls or removes.
+
+`skills.lock` is checked into version control alongside the framework JSON, enabling reproducible installs across machines.
+
+#### Search interface
+
+- Natural language query → upstream's pre-built index (also fetched and hash-verified).
+- Results show: name, description, type (`tool | skill | agent`), source, content_hash, declared capabilities (from L1 — see Phase 8).
+- Preview shows full artifact + capabilities + author from the upstream commit.
+- Install runs full Phase 8 §8.security validation (L1–L5) and updates `skills.lock`.
+
+#### Validation before install
+
+Per Phase 8 §8.security — same five layers apply to registry installs as to generated artifacts. Hash check (above) is in addition.
+
+#### Result type
 
 ```typescript
 interface RegistrySearchResult {
   name: string
   description: string
-  type: 'skill' | 'agent' | 'mcp'
-  source_url: string
+  type: 'tool' | 'skill' | 'agent'
+  source: 'local' | 'anthropic-upstream'
+  source_commit: string
+  content_hash: string
+  capabilities: CapabilityBlock        // from L1 disclosure
+  preview_url: string
   author: string
-  verified: boolean
-  install_method: 'json' | 'mcp_url' | 'npm' | 'github'
-  skill_md_url?: string
-  agent_md_url?: string
 }
-
-const REGISTRIES = [
-  'https://raw.githubusercontent.com/anthropics/skills/main/index.json',
-  'https://mcp.so/api/search',
-  // community registries — pluggable
-]
 ```
+
+#### Deferred to v2
+
+- Pluggable registry config (user-configurable trust roots)
+- Sigstore-style cryptographic signatures (currently rely on Git commit signing)
+- Reputation / community ratings
+- Revocation lists for known-bad artifacts
+- Multi-registry namespace resolution
+
+These are tracked under WI-22.
 
 ### Phase 8: Generators (Tool Writer / Skill Writer / Agent Composer)
 
