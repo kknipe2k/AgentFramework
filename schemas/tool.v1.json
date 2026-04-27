@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aria-runtime.dev/tool.v1.json",
+  "title": "Tool",
+  "description": "Canonical tool.md frontmatter schema per spec §0b. Tools are callables invoked by agents via the model's tool_use block. Three binding flavors supported: MCP server tool, shell command, or pure inline declarative implementation. v0.1 generated tools are restricted to mcp_binding or inline_implementation (no shell/code generation) per Phase 8 §8.security.",
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "version", "description", "input_schema", "output_schema", "capabilities"],
+
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "version":     { "$ref": "common.v1.json#/$defs/SemVer" },
+    "description": { "type": "string", "minLength": 1, "maxLength": 500 },
+
+    "input_schema":  { "type": "object", "description": "JSON Schema for the tool's input. Validated at invocation time." },
+    "output_schema": { "type": "object", "description": "JSON Schema for the tool's output. Result validated against this; mismatch flagged as L3 validation failure." },
+
+    "mcp_binding": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["server", "tool"],
+          "properties": {
+            "server":           { "type": "string", "description": "MCP server identifier (e.g., 'pdf-mcp@1.0')." },
+            "tool":             { "type": "string", "description": "Tool name on the MCP server." },
+            "argument_mapping": {
+              "type": "object",
+              "additionalProperties": { "type": "string" },
+              "description": "JSONPath-style mapping from tool input to MCP tool arguments."
+            }
+          }
+        }
+      ]
+    },
+
+    "shell_binding": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["command"],
+          "properties": {
+            "command":      { "type": "string", "description": "Shell command template; ${input.foo} substitution at runtime." },
+            "cwd":          { "type": "string" },
+            "timeout_ms":   { "type": "integer", "minimum": 100, "maximum": 3600000 },
+            "parse_output": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["match", "capture_to"],
+                "properties": {
+                  "match":      { "type": "string", "description": "Regex applied to stdout." },
+                  "capture_to": { "type": "string", "description": "Output field name." },
+                  "flags":      { "type": "string", "pattern": "^[gimsuy]*$" },
+                  "transform":  { "type": "string", "enum": ["string", "number", "boolean"] }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "description": "Shell binding requires 'shell: true' in capabilities. v0.1 generated tools cannot have shell_binding (declarative-only per §8.security)."
+    },
+
+    "inline_implementation": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type":  { "const": "declarative_decision_table" },
+            "rules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "if":      { "$ref": "common.v1.json#/$defs/JSONLogicExpression" },
+                  "then":    { "type": "object" },
+                  "default": { "type": "object" }
+                }
+              },
+              "minItems": 1
+            }
+          },
+          "required": ["rules"]
+        }
+      ],
+      "description": "Pure declarative tool: input -> output via JSONLogic decision table. Zero capabilities required; safest tool surface."
+    },
+
+    "capabilities": { "$ref": "common.v1.json#/$defs/Capabilities" },
+    "provenance":   { "$ref": "common.v1.json#/$defs/Provenance" },
+
+    "tags": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+  },
+
+  "allOf": [
+    {
+      "description": "At least one binding must be non-null. Mutual exclusivity not enforced strictly — runtime picks first non-null in priority order: inline > mcp > shell.",
+      "anyOf": [
+        { "properties": { "mcp_binding":           { "type": "object" } }, "required": ["mcp_binding"] },
+        { "properties": { "shell_binding":         { "type": "object" } }, "required": ["shell_binding"] },
+        { "properties": { "inline_implementation": { "type": "object" } }, "required": ["inline_implementation"] }
+      ]
+    }
+  ],
+
+  "examples": [
+    {
+      "name": "select_cheaper_model",
+      "version": "1.0.0",
+      "description": "Budget downshift hook.",
+      "input_schema":  { "type": "object", "properties": { "current_model": { "type": "string" } } },
+      "output_schema": { "type": "object", "properties": { "selected_model": { "type": "string" } } },
+      "inline_implementation": {
+        "type": "declarative_decision_table",
+        "rules": [
+          { "default": { "selected_model": "claude-haiku-4-5" } }
+        ]
+      },
+      "capabilities": {
+        "tools_called": [], "skills_loaded": [], "file_access": { "read": [], "write": [] },
+        "network": [], "shell": false, "spawn_agents": []
+      }
+    }
+  ]
+}

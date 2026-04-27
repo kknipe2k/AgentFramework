@@ -69,7 +69,7 @@
     "on_budget_threshold":  { "enabled": true,  "percent": 90, "ui": "modal" },
 
     "on_plan_approval":     { "enabled": false },
-    "on_risky_tool":        { "enabled": false, "_comment": "Ralph autonomous loop — risky tool gate is opt-in by user via Operator tier" },
+    "on_risky_tool":        { "enabled": false },
     "per_task":             { "enabled": false },
 
     "notifiers": [

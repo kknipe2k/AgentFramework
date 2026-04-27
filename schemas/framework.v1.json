@@ -1,0 +1,324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aria-runtime.dev/framework.v1.json",
+  "title": "Framework",
+  "description": "Top-level framework.json schema per spec §6 (Phase 6 Framework JSON Loader). Frameworks compose runtime primitives (modes, hooks, rails, plan, HITL, budget, tools, skills, agents) into a working agentic system. examples/aria/ and examples/ralph/ are the v0.1 reference frameworks.",
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "version", "description", "model", "tools", "skills", "agents", "session_root_agent"],
+
+  "properties": {
+    "$schema":     { "type": "string" },
+    "name":        { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$", "minLength": 1, "maxLength": 64 },
+    "version":     { "$ref": "common.v1.json#/$defs/SemVer" },
+    "description": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "author":      { "type": "string" },
+
+    "model":           { "$ref": "common.v1.json#/$defs/ModelRef" },
+    "fallback_models": { "type": "array", "items": { "$ref": "common.v1.json#/$defs/ModelRef" }, "default": [] },
+
+    "modes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["values", "default"],
+      "properties": {
+        "values":  { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9+_-]*$" }, "uniqueItems": true, "minItems": 1 },
+        "default": { "type": "string" },
+        "per_mode_overrides": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "description": "Map of dotted-path -> value. Runtime walks the framework JSON and applies overrides for the active mode at session start.",
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+
+    "sizing": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "agent"],
+          "properties": {
+            "mode":          { "const": "agent" },
+            "agent":         { "type": "string", "description": "Agent id from agents[] that emits propose_mode." },
+            "auto_confirm":  { "type": "boolean", "default": false },
+            "fallback_rules": { "$ref": "#/$defs/SizingRules" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "rules"],
+          "properties": {
+            "mode":  { "const": "declarative" },
+            "rules": { "$ref": "#/$defs/SizingRules" }
+          }
+        }
+      ]
+    },
+
+    "plan_creation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent"],
+      "properties": {
+        "agent":             { "type": "string" },
+        "approval_required": { "type": "boolean", "default": true },
+        "loop_policy":       { "$ref": "#/$defs/LoopPolicy" }
+      }
+    },
+
+    "task_defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_failures": { "type": "integer", "minimum": 1, "maximum": 20, "default": 3 },
+        "hitl_default": { "type": "boolean", "default": false },
+        "post_hooks":   {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              { "$ref": "common.v1.json#/$defs/Hook" },
+              { "type": "object", "required": ["$ref"], "properties": { "$ref": { "type": "string" } } }
+            ]
+          }
+        }
+      }
+    },
+
+    "hook_defs": {
+      "type": "object",
+      "additionalProperties": { "$ref": "common.v1.json#/$defs/Hook" },
+      "description": "Named hook definitions referenceable via { \"$ref\": \"#/hook_defs/<name>\" } from task_defaults.post_hooks or hooks.*."
+    },
+
+    "hooks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pre_task":         { "type": "array", "items": { "$ref": "common.v1.json#/$defs/Hook" } },
+        "post_task":        { "type": "array", "items": { "$ref": "common.v1.json#/$defs/Hook" } },
+        "post_file_edit":   { "type": "array", "items": { "$ref": "common.v1.json#/$defs/Hook" } },
+        "pre_commit":       { "type": "array", "items": { "$ref": "common.v1.json#/$defs/Hook" } },
+        "pre_agent_spawn":  { "type": "array", "items": { "$ref": "common.v1.json#/$defs/Hook" } },
+        "session_end":      { "type": "array", "items": { "$ref": "common.v1.json#/$defs/Hook" } }
+      }
+    },
+
+    "rails": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hard": { "type": "array", "items": { "$ref": "#/$defs/Rail" } },
+        "soft": { "type": "array", "items": { "$ref": "#/$defs/Rail" } }
+      }
+    },
+
+    "dont_touch": { "$ref": "common.v1.json#/$defs/FileGlobList" },
+
+    "hitl_policy": { "$ref": "#/$defs/HitlPolicy" },
+
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "session_usd_cap":    { "type": "number", "minimum": 0 },
+        "framework_usd_cap":  { "type": "number", "minimum": 0 },
+        "actions": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "warn_at_percent":      { "type": "integer", "minimum": 1, "maximum": 100 },
+            "downshift_at_percent": { "type": "integer", "minimum": 1, "maximum": 100 },
+            "hitl_at_percent":      { "type": "integer", "minimum": 1, "maximum": 100 },
+            "hard_stop_at_percent": { "type": "integer", "minimum": 1, "maximum": 100 }
+          }
+        },
+        "downshift_hook": { "$ref": "common.v1.json#/$defs/HookRef" }
+      }
+    },
+
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "source"],
+        "properties": {
+          "name":   { "type": "string" },
+          "source": { "type": "string", "enum": ["builtin", "generated", "external", "registry"] },
+          "path":   { "type": "string", "description": "Relative path to tool.md (when source != 'builtin' and != 'registry')." },
+          "registry_id": { "type": "string", "description": "Registry coordinate (when source == 'registry')." }
+        }
+      }
+    },
+
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name":   { "type": "string" },
+          "path":   { "type": "string" },
+          "source": { "type": "string", "enum": ["local", "external", "registry"], "default": "local" },
+          "registry_id": { "type": "string" }
+        }
+      }
+    },
+
+    "agents": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "path"],
+            "properties": {
+              "id":   { "type": "string" },
+              "path": { "type": "string" }
+            }
+          },
+          { "$ref": "agent.v1.json" }
+        ]
+      },
+      "minItems": 1
+    },
+
+    "session_root_agent": {
+      "type": "string",
+      "description": "Agent id (must be in agents[]) that the runtime spawns at session_start."
+    },
+
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "description"],
+        "properties": {
+          "name":        { "type": "string", "pattern": "^/[a-z][a-z0-9-]*$" },
+          "description": { "type": "string" },
+          "agent":       { "type": "string" },
+          "tool":        { "type": "string" }
+        }
+      }
+    },
+
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "snapshot_interval_seconds": { "type": "integer", "minimum": 1,  "default": 30 },
+        "idle_timeout_seconds":      { "type": "integer", "minimum": 30, "default": 300 },
+        "stall_timeout_seconds":     { "type": "integer", "minimum": 10, "default": 60 }
+      }
+    },
+
+    "decision_trace": { "type": "boolean", "default": true },
+
+    "design_notes_required": { "type": "boolean", "default": false },
+    "design_doc_required":   { "type": "boolean", "default": false },
+
+    "mcp_aliases": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Short-name to canonical-name aliases per §5a (e.g., 'extract_text' -> 'pdf-mcp__extract_text')."
+    },
+
+    "examples_archetype_proof": {
+      "type": "object",
+      "description": "Free-form metadata; not validated. Used by examples/aria/ to map matrix rows to file locations."
+    }
+  },
+
+  "$defs": {
+
+    "SizingRules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "if":      { "$ref": "common.v1.json#/$defs/JSONLogicExpression" },
+          "then":    { "type": "string" },
+          "default": { "type": "string" }
+        }
+      }
+    },
+
+    "LoopPolicy": {
+      "oneOf": [
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "one_shot" } } },
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "fresh_context_per_task" } } },
+        {
+          "type": "object",
+          "required": ["kind", "goal_store"],
+          "properties": {
+            "kind":       { "const": "continuous" },
+            "goal_store": { "type": "string", "description": "Path to PRD-style goal store file." }
+          }
+        }
+      ]
+    },
+
+    "Rail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "fires_on", "check", "message"],
+      "properties": {
+        "id":       { "type": "string", "minLength": 1 },
+        "fires_on": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "check":    { "$ref": "common.v1.json#/$defs/HookRef" },
+        "message":  { "type": "string", "minLength": 1 }
+      }
+    },
+
+    "HitlPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "on_gap":                  { "$ref": "#/$defs/HitlTrigger" },
+        "on_risky_tool":           { "type": "object", "additionalProperties": false,
+                                     "properties": { "enabled": { "type": "boolean" }, "tools": { "type": "array", "items": { "type": "string" } }, "ui": { "type": "string", "enum": ["panel", "modal", "toast"] } } },
+        "on_dont_touch_edit":      { "$ref": "#/$defs/HitlTrigger" },
+        "on_failure_threshold":    { "allOf": [{ "$ref": "#/$defs/HitlTrigger" }, { "properties": { "threshold": { "type": "integer", "minimum": 1 } } }] },
+        "on_capability_violation": { "$ref": "#/$defs/HitlTrigger" },
+        "on_budget_threshold":     { "allOf": [{ "$ref": "#/$defs/HitlTrigger" }, { "properties": { "percent": { "type": "integer", "minimum": 1, "maximum": 100 } } }] },
+        "on_plan_approval":        { "$ref": "#/$defs/HitlTrigger" },
+        "per_task":                { "$ref": "#/$defs/HitlTrigger" },
+        "per_epic":                { "$ref": "#/$defs/HitlTrigger" },
+
+        "notifiers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type":     { "type": "string" },
+              "enabled":  { "type": "boolean" },
+              "name":     { "type": "string" },
+              "config":   { "type": "object" }
+            }
+          }
+        },
+
+        "timeout_seconds":           { "type": "integer", "minimum": 1 },
+        "default_action_on_timeout": { "type": "string", "enum": ["abort", "approve", "reject"] }
+      }
+    },
+
+    "HitlTrigger": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "ui":      { "type": "string", "enum": ["panel", "modal", "toast"] }
+      }
+    }
+  }
+}

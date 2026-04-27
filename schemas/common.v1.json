@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aria-runtime.dev/common.v1.json",
+  "title": "Common Types",
+  "description": "Shared type definitions used across framework, skill, tool, and agent schemas. Versioned independently; common.vN.json may be referenced by artifact.vM.json where N <= M.",
+  "$defs": {
+
+    "SemVer": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$",
+      "description": "Semantic Versioning 2.0.0 string."
+    },
+
+    "ModelRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "id"],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["anthropic", "openai", "google", "local-ollama"],
+          "description": "LLM provider identifier. v0.1 ships only 'anthropic'; others are reserved."
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Provider-specific model identifier (e.g., 'claude-sonnet-4-6')."
+        }
+      }
+    },
+
+    "FileGlobList": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "List of glob patterns. Patterns follow gitignore syntax: leading '!' negates, trailing '/' matches directories. Symlink-escape attempts are blocked at L2 enforcement."
+    },
+
+    "Capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tools_called", "skills_loaded", "file_access", "network", "shell", "spawn_agents"],
+      "properties": {
+        "tools_called": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "description": "Names of tools this artifact may invoke."
+        },
+        "skills_loaded": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "description": "Names of skills this artifact may load via LoadSkill."
+        },
+        "file_access": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["read", "write"],
+          "properties": {
+            "read":  { "$ref": "#/$defs/FileGlobList" },
+            "write": { "$ref": "#/$defs/FileGlobList" }
+          }
+        },
+        "network": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "description": "Allowed hosts (HTTPS only at L2). Use '*' for unrestricted; '*' requires Operator tier per Phase 8 §8.security L4."
+        },
+        "shell": {
+          "type": "boolean",
+          "description": "If true, artifact may invoke shell commands. Requires Promoted or Operator tier; sandboxed by §8.security L2b."
+        },
+        "spawn_agents": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "description": "Agent IDs this artifact may spawn via SpawnAgent. Capability narrowing enforced (child cannot exceed parent)."
+        }
+      }
+    },
+
+    "Provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generator"],
+      "properties": {
+        "generator": {
+          "type": "string",
+          "enum": ["hand-authored", "tool_writer", "skill_writer", "agent_composer", "imported"],
+          "description": "How this artifact came into existence. 'hand-authored' artifacts default to Operator-tier-only loading per §8.security L4."
+        },
+        "source": {
+          "type": "string",
+          "description": "Free-form source description (e.g., '.aria/skills/planning.md (ported)' or registry URL)."
+        },
+        "model": {
+          "type": "string",
+          "description": "LLM model used for generation, if generated."
+        },
+        "prompt_hash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "description": "SHA-256 of the generation prompt; full prompt stored in skills.audit.jsonl."
+        },
+        "generated_at": { "type": "string", "format": "date-time" },
+        "validated_at": { "type": "string", "format": "date-time" },
+        "authored_at":  { "type": "string", "format": "date-time" },
+        "validation_report_id": { "type": "string" },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$|^sha256:placeholder-replace-on-first-load$",
+          "description": "SHA-256 of post-validation artifact content. Placeholder allowed during authoring; replaced on install."
+        },
+        "signature": {
+          "type": "string",
+          "description": "ed25519 or sigstore signature; runtime-signed at install."
+        }
+      }
+    },
+
+    "HookRef": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "command"],
+          "properties": {
+            "type":       { "const": "shell" },
+            "command":    { "type": "string", "minLength": 1 },
+            "timeout_ms": { "type": "integer", "minimum": 100, "maximum": 3600000 },
+            "cwd":        { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "tool_name"],
+          "properties": {
+            "type":      { "const": "tool" },
+            "tool_name": { "type": "string", "minLength": 1 },
+            "input":     { "type": "object" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "agent_id"],
+          "properties": {
+            "type":     { "const": "agent" },
+            "agent_id": { "type": "string", "minLength": 1 },
+            "prompt":   { "type": "string" }
+          }
+        }
+      ],
+      "description": "Reference to an executable hook. Three variants: shell command, tool invocation, or agent spawn."
+    },
+
+    "Hook": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "category", "ref", "on_failure"],
+      "properties": {
+        "id":         { "type": "string", "minLength": 1 },
+        "category":   { "type": "string", "enum": ["verify", "lint", "build", "test", "custom"] },
+        "level":      { "type": "string", "enum": ["quick", "standard", "full"] },
+        "ref":        { "$ref": "#/$defs/HookRef" },
+        "on_failure": { "type": "string", "enum": ["block", "warn", "rollback"] }
+      }
+    },
+
+    "JSONLogicExpression": {
+      "description": "JSONLogic expression. Validated structurally at parse time; operator semantics enforced at evaluation time. Operators in v0.1: var, ==, !=, <, <=, >, >=, and, or, not, in, +, -, *, /.",
+      "oneOf": [
+        { "type": "object" },
+        { "type": "boolean" },
+        { "type": "number" },
+        { "type": "string" }
+      ]
+    },
+
+    "Tier": {
+      "type": "string",
+      "enum": ["novice", "promoted", "operator"],
+      "description": "User tier per Phase 8 §8.security L4."
+    },
+
+    "AlertLevel": {
+      "type": "string",
+      "enum": ["info", "warn", "critical"]
+    }
+  }
+}
