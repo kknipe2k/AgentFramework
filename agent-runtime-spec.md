@@ -323,6 +323,76 @@ Framework JSON files live in `examples/`. Edit a file, hit "Reload framework" in
 
 -----
 
+## §0d Release Scope Matrix
+
+> **Locked (2026-04-18, OSS shipping plan).** What's in v0.1, v1.0, and v2.0+. Pulls every "deferred to v2" / "v1.1" / "stretch goal" note from elsewhere in the spec into one consolidated table. The release scope is the contract; scope-creep means redating, not silently adding.
+
+| Capability | v0.1 (MVP, Windows) | v1.0 (multi-OS, full archetype) | v2.0+ (deferred) |
+|---|:---:|:---:|:---:|
+| **Core** | | | |
+| Drone (Phase 1, Rust + tokio) | ✅ | ✅ | ✅ |
+| SDK pipeline (Phase 2 + AnthropicProvider direct HTTP+SSE) | ✅ | ✅ | ✅ |
+| LLMProvider trait (§2c) | ✅ (anthropic only) | ✅ (anthropic only) | ➕ openai, google, local-ollama |
+| Live Graph (Phase 3) — AgentNode/ToolNode/SkillNode/GapNode/HITLNode/PlanNode/TaskNode/VerifyNode | ✅ | ✅ | ✅ |
+| Gap detection (§4b) — static + request_capability | ✅ | ✅ | ➕ heuristic (Layer 3) |
+| Framework JSON Loader (Phase 6) + schema validation | ✅ | ✅ | ✅ |
+| **Primitives** | | | |
+| §3a Plan / Task primitive | ✅ (fresh_context_per_task only) | ✅ (all three loop policies) | ✅ |
+| §3b Mode primitive | ❌ (hardcoded STANDARD) | ✅ | ✅ |
+| §4a Verify hooks + Rails + dont_touch | ✅ | ✅ | ✅ |
+| §6a HITL policy | ✅ (gap, failure, dont_touch only) | ✅ (full 9-trigger set) | ✅ |
+| §2a Budget primitive | ✅ (warn + hard_stop only) | ✅ (all four actions) | ✅ |
+| Subagent isolation (analyzer/implementer/verify-app/simplifier) | ✅ | ✅ | ✅ |
+| **Multi-instance** | | | |
+| Single session | ✅ | ✅ | ✅ |
+| §1c Multi-session (drone-per-session, MCP pool) | ❌ | ✅ | ✅ |
+| **Build-time (Agent Builder)** | | | |
+| Phase 7 Registry — local library only | ✅ (manual file copy) | ✅ (Anthropic upstream + skills.lock) | ➕ pluggable registries |
+| Phase 8a Tool Writer | ❌ | ✅ (mcp_binding + inline only) | ✅ |
+| Phase 8b Skill Writer | ❌ | ✅ | ✅ |
+| Phase 8c Agent Composer | ❌ | ✅ | ✅ |
+| Phase 9 Visual Canvas + Tester | ❌ | ✅ | ✅ |
+| **Security** | | | |
+| §8.security L1 Capability disclosure | ✅ | ✅ | ✅ |
+| §8.security L2a Application enforcement | ✅ | ✅ | ✅ |
+| §8.security L2b OS-level sandboxing | ❌ (best-effort, documented gap) | ✅ (Linux seccomp+landlock; macOS sandbox-exec; Windows Job Objects) | ✅ |
+| §8.security L3 Sandboxed validation | ❌ | ✅ | ✅ |
+| §8.security L4 Tier system | ❌ (manual review only — Operator-equivalent) | ✅ (Novice/Promoted/Operator) | ✅ |
+| §8.security L5 Provenance + audit log | ✅ (basic) | ✅ (with Sigstore signatures) | ✅ |
+| **MCP** | | | |
+| Phase 5 MCP Manager + multi-server | ❌ | ✅ | ✅ |
+| §5a Tool namespace resolution | n/a (no MCP) | ✅ | ✅ |
+| **Recovery** | | | |
+| §1b Recovery from snapshot (resume) | ✅ | ✅ | ✅ |
+| Tool-call uncertainty resolution | ✅ (basic prompt) | ✅ | ✅ |
+| Deterministic replay (WI-18) | ❌ | ❌ | ✅ |
+| **Persistence** | | | |
+| §2b Signals + VDR projection | ✅ | ✅ | ✅ |
+| Importer for shell ARIA's signals.jsonl | ❌ | ✅ | ✅ |
+| OTel export (WI-23) | ❌ | ❌ | ✅ |
+| **Distribution & dev experience** | | | |
+| Signed binary | ✅ (Windows .msi) | ✅ (macOS .dmg, Linux AppImage, Windows .msi) | ✅ |
+| Auto-update | ❌ (manual download) | ✅ (Tauri updater plugin, opt-in) | ✅ |
+| First-run UX (§14) | ✅ (minimal) | ✅ (full onboarding + tutorial) | ✅ |
+| Localization | ❌ (en-US only) | ❌ (en-US only) | ➕ i18n framework + community translations |
+| Accessibility (WCAG AA) | partial | ✅ | ✅ |
+| **Collab / OSS** | | | |
+| GitHub repo public | ❌ (private through v0.1) | ✅ | ✅ |
+| Apache 2.0 license | ✅ (committed at v0.1 release) | ✅ | ✅ |
+| Public roadmap | ✅ | ✅ | ✅ |
+| Plugin system (§19 plugin nodes, §20 collab, §21 remote) | ❌ | ❌ | ✅ |
+| **Reference frameworks** | | | |
+| examples/aria/ (full archetype) | ✅ (loadable but stripped — no §3b mode router; no MCP-dependent tools) | ✅ | ✅ |
+| examples/ralph/ (continuous loop) | ❌ | ✅ | ✅ |
+
+### Scope-control rule
+
+Scope-creep is the OSS killer. The scope above is the contract. Adding a feature to v0.1 means *removing* something else; pure additions go to v1.0+. Any PR that violates this gets the "out-of-scope" label and is queued, not merged.
+
+The matrix is referenced from `docs/MVP-v0.1.md` (the build checklist) and from the README's "What works / what doesn't" section.
+
+-----
+
 ## Architecture Overview
 
 ```
@@ -2200,32 +2270,53 @@ Auto-accept toast example (Promoted tier):
 
 ### Phase 9: Visual Canvas and Tester
 
-**Builder Canvas**
+> **Defers to v1.0** per §0d release scope. v0.1 users edit `framework.json` by hand; the Canvas is added in v1.0 alongside the Generators (Phase 8a/b/c).
+
+The Canvas is a build-time tool that lets users compose runtime primitives (Tools / Skills / Agents per §0b) visually instead of hand-editing JSON. It generates valid `framework.json` against `schemas/framework.v1.json`; output is the source of truth, the canvas is the editor.
+
+**Builder Canvas — three-panel layout, rendered in the same React + React Flow webview as the runtime graph**
 
 ```
 Palette (left sidebar)
-  - Agent types
-  - Installed skills (local library)
-  - Available MCP tools
-  - HITL nodes
+  - Tools tab    — installed Tools (built-in / generated / MCP-hosted), filterable by capability
+  - Skills tab   — installed Skills (local library + Anthropic upstream), filterable by tag
+  - Agents tab   — installed Agent definitions (drag onto canvas to instantiate)
+  - HITL tab     — HITL trigger types (drag onto an Agent node to wire policy)
+  - Hooks tab    — hook firing points (pre_task, post_task, etc.) with category filters
 
 Canvas (center)
-  - Drag palette items onto canvas
-  - Connect nodes with edges (defines spawn and tool relationships)
-  - Configure each node inline
-  - Live preview of generated framework JSON (right sidebar)
-  - Export as framework JSON
+  - Drag palette items onto the canvas; React Flow renders nodes per §3 Phase 3 conventions
+  - Connect nodes with edges:
+      Agent -> Skill   = allowed_skills entry
+      Agent -> Tool    = allowed_tools entry
+      Agent -> Agent   = spawns entry (capability narrowing rule applied automatically: child's allowed_* is intersected with parent's)
+      Hook -> Task     = post_hooks entry on task_defaults
+  - Configure each node inline (right-click for properties)
+  - Capability disclosure (§8.security L1) rendered live below each node — plain English, derived from declared allowed_*
+  - Validation: framework.v1.json schema runs continuously; errors surfaced as red badges
 
-Tester
-  - Load a framework
-  - Define a test task (natural language)
-  - Run in sandboxed session (drone managed, isolated)
-  - Watch graph render
-  - Review VDR output
-  - Check token spend and timing
+Inspector (right sidebar)
+  - Live preview of generated framework.json
+  - Diff view against the file on disk (when editing an existing framework)
+  - Capability summary across the entire framework (totals: file paths read/written, network hosts allowed, etc.)
+  - Export: write framework.json + companion skill.md/tool.md/agent.md files to a directory
+  - "Validate" button runs schemas/*.json validation explicitly; "Test" button (below) runs L3 sandbox
+
+Tester (modal — opens from Inspector)
+  - Load the framework from canvas (does NOT need to save first)
+  - Define a test task (natural language input)
+  - Run in an isolated session with a separate SQLite database (drone-managed sandbox per §1c)
+  - Watch graph render in a smaller pane; full graph available by promoting test session to main
+  - Review VDR + signals output
+  - Check token spend and timing against typical session benchmarks
   - Pass / fail with full trace
-  - Does not affect any real session or data
+  - Capability violations during test (§8.security L2) surfaced as test failures, not as live HITL prompts (test sessions don't block on user input — defaults applied)
+  - Test runs do not write to any user data directory; results discarded on close unless explicitly saved
 ```
+
+**Canvas tech stack** — React + React Flow + Zustand for state + the same Tauri IPC channel that delivers AgentEvent. Capability validation runs in the Rust main process (re-using `crates/runtime-core/src/capability.rs`) and posts results back as events. No duplication of validation logic between TS and Rust.
+
+**Generated artifacts conform to schemas** — anything the canvas exports is valid against `schemas/framework.v1.json`, `skill.v1.json`, `tool.v1.json`, `agent.v1.json`. CI validates the canvas's output via the same checker that runs on hand-edited frameworks.
 
 -----
 
@@ -2720,6 +2811,206 @@ Each cell runs: fmt-check, clippy, test, doc-test, build, e2e (smoke). Nightly c
 - Release cadence and changelog churn
 
 Public read of project health. Quality regressions visible to anyone evaluating adoption.
+
+-----
+
+## §13 Privacy & Telemetry
+
+> **Locked (2026-04-18, OSS trust-critical).** What leaves your machine, what stays, and what would change that.
+
+### Default policy: zero telemetry
+
+The runtime collects nothing about you, your sessions, your prompts, your code, your skills, or your usage. There is no analytics SDK, no crash reporter, no "anonymous metrics," no "phone home on launch." This is the default and is enforced by:
+
+- No third-party telemetry / analytics dependency in `Cargo.toml` or `package.json`. CI's `cargo deny` policy blocks adding one.
+- No outbound network connections at app startup. The first outbound connection is the Anthropic API call when the user starts a session, against the user's explicit API key.
+- No bundled crash-reporter (Sentry, BugSnag, etc.). Crashes are written to local logs only.
+- The `cargo audit` + `npm audit` reports include any new network-touching dep; CI surfaces it for review.
+
+### What does leave your machine
+
+| Destination | When | What | Why |
+|---|---|---|---|
+| Anthropic API | When user starts a session and the framework references `provider: anthropic` | Messages, tool definitions, tool inputs/outputs per the user's prompts | Required for the runtime to work; user provides the key |
+| MCP servers (user-configured) | When agent invokes a tool hosted by that server | Tool name + input | Required for MCP tool to execute; routed through the user's MCP config |
+| Anthropic skills upstream (Phase 7) | When user clicks "Search registry" or "Update upstream" | The search query (if applicable); no session data | Required for registry search; user-initiated only |
+| Optional update check (v1.0+) | When user has auto-update enabled | Current version + OS | Required to know if there's a newer build; **opt-in only**; controlled by `Settings → Updates → Check for updates` (default: off in v0.1, off in v1.0 unless user enables) |
+
+Nothing else leaves the machine. No "improve our product" telemetry, even anonymized.
+
+### What stays local
+
+The following are stored on disk and never transmitted unless the user explicitly exports them:
+
+- `snapshots` table (drone-written session state)
+- `signals.jsonl` and the `signals` SQLite table (forensic event log)
+- `vdr` table (decision records)
+- `skills.audit.jsonl` (install / capability-violation / tier-change log)
+- `token_usage` table (cost tracking)
+- `current-plan.json` and per-session state files
+- Provider API keys (in OS keychain, not in any file the runtime writes)
+
+Logs from the drone, main, and sandbox processes go to `$DATA_DIR/logs/{date}/`. Rotated daily, kept for 30 days, then deleted. User can configure retention or disable logging entirely in Settings.
+
+### User data export
+
+Settings → Data → Export creates a `.aria-runtime-export.tar.gz` with everything in `$DATA_DIR` except secrets (which are keychain-only). User chooses what to share when they file a bug report.
+
+### User data deletion
+
+Settings → Data → Delete All Local Data wipes `$DATA_DIR` and revokes keychain entries. Confirmation prompt with explicit scope: sessions, snapshots, audit log, secrets. No "soft" deletion — files are unlinked immediately.
+
+### If we ever add telemetry
+
+If the project ever adds opt-in telemetry (e.g., aggregate latency metrics for performance work), the policy is:
+
+1. Opt-in only; never on by default.
+2. Disclosed in `docs/PRIVACY.md` with full schema of what's sent.
+3. ADR proposed and approved by maintainers per §12 process.
+4. Local preview: user can see exactly what would be sent before enabling.
+5. Public dashboard: aggregate-only, no per-user data.
+6. Sunset policy: telemetry that hasn't informed a release in 6 months gets removed.
+
+Until that happens, the answer to "what does the runtime send?" remains *nothing the user did not initiate*.
+
+### Provider-side disclosure
+
+The Anthropic API processes the user's prompts per Anthropic's data-usage policy. The runtime does not modify or augment what Anthropic sees beyond the user's intent. Users with strict data-handling requirements should:
+
+- Use Anthropic Console's no-train mode (already the default for API customers).
+- Use a self-hosted local model via the planned `local-ollama` provider (v2.0+).
+- Disable WebFetch / network-bound tools that exfiltrate data inadvertently.
+
+These options are surfaced in Settings → Privacy.
+
+### Compliance
+
+- No GDPR-relevant data is processed by the runtime itself (we're not the data processor; the user is, when they invoke the LLM API).
+- No CCPA-relevant data is collected.
+- The runtime never stores personal data about the user or their contacts beyond what the user's own framework JSON instructs it to store.
+- For enterprise/regulated users: the runtime can be configured to log nothing (toggle in Settings → Privacy → Disable all local logs); their session is then ephemeral.
+
+-----
+
+## §14 First-Run Experience
+
+> **Locked (2026-04-18, MVP-shippable UX).** What a user sees when they download v0.1 and open it cold.
+
+### State machine
+
+```
+[Welcome screen] → [API key setup] → [Import or skip] → [First session prompt] → [Running session]
+                       │                    │
+                       ↓                    ↓
+                  [Skip for now]        [Browse examples]
+                       │                    │
+                       ↓                    ↓
+                  [Running session]    [Import + first session]
+```
+
+### Screen 1: Welcome
+
+```
+┌────────────────────────────────────────────────────────┐
+│  Agent Runtime v0.1                                    │
+│                                                        │
+│  A desktop runtime for agentic AI workflows.           │
+│  Live graph, gap detection, capability sandboxing.     │
+│                                                        │
+│  → Apache 2.0 licensed, signed binary.                 │
+│  → Local-only by default. No telemetry. (See §13.)     │
+│  → Windows-first; Linux/macOS in v1.0.                 │
+│                                                        │
+│         [Get started]    [Show me the spec]            │
+└────────────────────────────────────────────────────────┘
+```
+
+"Show me the spec" opens the bundled `agent-runtime-spec.md` in the system's default markdown viewer.
+
+### Screen 2: API key setup
+
+```
+┌────────────────────────────────────────────────────────┐
+│  Connect a model provider                              │
+│                                                        │
+│  v0.1 supports Anthropic only. Get a key at            │
+│  https://console.anthropic.com/settings/keys           │
+│                                                        │
+│  Anthropic API key: [_________________________]        │
+│                                                        │
+│  ☑ Store in OS keychain (recommended; default on)      │
+│  ☐ Test the connection now                             │
+│                                                        │
+│         [Skip for now]              [Connect]          │
+└────────────────────────────────────────────────────────┘
+```
+
+- Key stored via `keyring` crate (macOS Keychain / Windows Credential Manager / Linux secret-service). Never written to logs, snapshots, or VDR.
+- "Skip for now" allows browsing examples without making any API call.
+- "Test the connection now" hits Anthropic `/v1/models` (a free endpoint) and reports success/failure inline.
+
+### Screen 3: Import or skip
+
+```
+┌────────────────────────────────────────────────────────┐
+│  Choose a starting framework                           │
+│                                                        │
+│  ARIA (recommended)                                    │
+│    Plan -> approve -> execute, with verify gates       │
+│    after each task. Mode-aware (LITE/STANDARD/FULL/+). │
+│    [Use this]                                          │
+│                                                        │
+│  Empty                                                 │
+│    Start from scratch. You'll need to compose          │
+│    primitives manually.                                │
+│    [Use this]                                          │
+│                                                        │
+│  Browse examples on disk                               │
+│    Open a framework.json from your machine.            │
+│    [Browse...]                                         │
+└────────────────────────────────────────────────────────┘
+```
+
+- "ARIA recommended" copies `examples/aria/` from the bundled app resources to `$DATA_DIR/frameworks/aria/`. (Bundled files are read-only; user gets a writable copy.)
+- "Empty" is a reasonable framework JSON skeleton with one orchestrator agent and `examples/aria/` skills available as imports.
+- v0.1 ships ARIA only. Ralph and other examples added in v1.0+.
+
+### Screen 4: First session prompt
+
+```
+┌────────────────────────────────────────────────────────┐
+│  Start your first session                              │
+│                                                        │
+│  What would you like to do? (One sentence is fine.)    │
+│                                                        │
+│  ┌──────────────────────────────────────────────────┐  │
+│  │ e.g., Add a logout button to my app              │  │
+│  └──────────────────────────────────────────────────┘  │
+│                                                        │
+│  Working directory: [______________________] [Browse]  │
+│                                                        │
+│         [Cancel]                  [Start session]      │
+└────────────────────────────────────────────────────────┘
+```
+
+- The runtime spawns the framework's `session_root_agent` (orchestrator for ARIA). The graph populates as the orchestrator spawns children (router → planner → analyzer → ...).
+- v0.1: hardcoded STANDARD mode (mode router deferred to v1.0).
+- Working directory is the project the agents will operate on.
+
+### After first session
+
+A subtle "First-run tour complete" toast offers a 60-second tour of the live graph (hover for details, click to drill in, watch the gap flow). User can dismiss; tour is also accessible from Help → Show me around.
+
+### Skip-onboarding for power users
+
+Power users (especially future contributors testing the build) can skip via `cmd+shift+S` from the Welcome screen — this bypasses screens 2-4 and drops directly into a blank Builder canvas. Settings → API key still needed before any session can start.
+
+### What's NOT in v0.1 first-run
+
+- Tutorial videos (defer to v1.0)
+- Sample completed sessions to walk through (defer to v1.0)
+- Multi-language welcome (defer to v2.0+)
+- Onboarding telemetry to track abandonment (per §13, never)
 
 -----
 

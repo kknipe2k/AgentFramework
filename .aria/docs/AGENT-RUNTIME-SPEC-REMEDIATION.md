@@ -17,8 +17,9 @@
 | **P2 — Important** | 10/10 RESOLVED | WI-08 (Signals), WI-09 (IPC), WI-10 (Multi-session), WI-11 (MCP namespace), WI-12 (Registry), WI-13 (LLMProvider), WI-14 (Recovery), WI-15 (Mode), WI-16 (HITL), WI-17 (Dev-loop) |
 | **P3 — Nice-to-have** | DEFERRED v2 | WI-18, WI-19, WI-20, WI-21, WI-22 (signing portion), WI-23, WI-25; WI-24 SUBSUMED by WI-06 |
 | **P4 — Polish** | 1/1 RESOLVED | WI-26 (typo, model IDs, schema trim, sequence diagram, degraded modes matrix) |
+| **Post-review additions** | 6/6 RESOLVED | WI-27 (Tauri migration), WI-28 (§12 Engineering Charter), WI-29 (JSON Schemas), WI-30 (§13 Privacy & Telemetry), WI-31 (§14 First-Run UX + §0d Release Scope), WI-32 (Phase 9 Tauri update) |
 
-**Spec is ready for Phase 1 code.** All blocking and critical items have been resolved into the spec; downstream phases have unblocking primitives defined.
+**Spec is ready for Phase 1 code.** All blocking and critical items have been resolved into the spec; downstream phases have unblocking primitives defined; OSS shipping path locked via §0d release scope matrix; runtime stack committed to Tauri + Rust; quality gates codified in §12 Engineering Charter; trust posture explicit in §13 Privacy & Telemetry; first-run UX in §14; JSON Schemas in `schemas/` validate every example artifact (19/19 frontmatter files pass).
 
 ---
 
@@ -993,6 +994,59 @@ Each WI can be:
 2. Branch: `spec/WI-NN-short-title`
 3. PR updates spec + appends to this file with `STATUS: RESOLVED` and a link to the PR
 4. Merge once every acceptance criterion is checked
+
+---
+
+## Post-Review Additions
+
+These work items emerged from post-spec-review checkpoints (Tauri-vs-Electron decision, OSS shipping plan, schema gap audit, first-run UX, release scope matrix). They follow the same template as WI-00..WI-26.
+
+### WI-27: Tauri + Rust migration (replace Electron + Node)
+
+**STATUS:** RESOLVED (2026-04-18, locked in spec Tech Stack, §0c, §1, §1c, §1d, §2, §2c, §8.security L2, §11, Project Structure, Phase 1 starting prompt)
+**Priority:** P1 (foundational, OSS-driven decision)
+**Effort:** ~250 lines spec edit; large code-side impact
+
+Switch the runtime stack from Electron + TypeScript-everywhere to Tauri + Rust backend + TS/React frontend. Drivers: ~10MB binary vs 150MB; ~50-80MB RAM vs 400-600MB; real OS-level capability enforcement (Phase 8 §8.security L2 now actually delivers); smaller attack surface for OSS scrutiny; better startup/battery for an always-open desktop runtime.
+
+The frontend (React + React Flow + Vite + Tailwind) is unchanged — Tauri uses the OS webview. Rust shifts cover drone, main, sandbox, and direct HTTP+SSE Anthropic client (no third-party SDK).
+
+### WI-28: §12 Engineering Charter
+
+**STATUS:** RESOLVED (2026-04-18, locked in spec §12)
+**Priority:** P1 (OSS quality gate)
+
+Process gates that prevent junk code regardless of contributor skill: coverage thresholds (80% line / 100% on safety primitives), property + fuzz testing, type-strictness rules, lint/format pre-commit hooks, code review with CODEOWNERS, dependency hygiene (cargo audit + npm audit + cargo deny), doc tests, ADRs, SemVer + signed releases (Sigstore + SLSA), Apache 2.0 + DCO, contributor onboarding, observability of quality.
+
+### WI-29: JSON Schemas as source of truth
+
+**STATUS:** RESOLVED (2026-04-18, schemas/ directory created with 5 schemas + README)
+**Priority:** P1 (blocks Phase 6 loader code)
+
+Author `schemas/{common,skill,tool,agent,framework}.v1.json` per JSON Schema Draft 2020-12. Strict (additionalProperties: false). Cross-validated: examples/aria/framework.json + examples/ralph/framework.json + all 19 skill/agent/tool frontmatter files pass. Real validation caught one bug in examples/ralph/framework.json (_comment field in hitl_policy.on_risky_tool). Type generation pipeline (typify for Rust, json-schema-to-typescript for TS) prevents drift.
+
+### WI-30: §13 Privacy & Telemetry
+
+**STATUS:** RESOLVED (2026-04-18, locked in spec §13)
+**Priority:** P1 (OSS trust-critical)
+
+Default policy: zero telemetry, no analytics, no crash reporter, no phone-home. Enforced via cargo deny + npm audit blocking telemetry deps. What leaves the machine: only Anthropic API calls (user's key), MCP servers (user's config), registry searches (user-initiated). Optional update check is opt-in. User data export + delete-all-local in Settings. If telemetry is ever added: opt-in only, ADR required, public dashboard.
+
+### WI-31: §0d Release Scope Matrix + §14 First-Run UX
+
+**STATUS:** RESOLVED (2026-04-18, locked in spec §0d and §14)
+**Priority:** P1 (MVP shipping path)
+
+§0d: consolidated v0.1 / v1.0 / v2.0+ scope table covering 40+ features; scope-control rule (additions to v0.1 require equivalent removals).
+
+§14: first-run state machine (Welcome → API key → Import or skip → First session prompt → Running session). API keys via OS keychain; ARIA bundled as the default starting framework; tutorial accessible via Help; power-user skip via cmd+shift+S.
+
+### WI-32: Phase 9 Tauri-aware update
+
+**STATUS:** RESOLVED (2026-04-18, Phase 9 rewritten)
+**Priority:** P2 (clarity; Phase 9 deferred to v1.0 per §0d but spec consistency matters)
+
+Phase 9 (Visual Canvas + Tester) updated: three-concept palette (Tools / Skills / Agents distinct), capability narrowing applied automatically on Agent→Agent edges, capability disclosure rendered live below each node (§8.security L1), validation against `schemas/framework.v1.json` runs continuously, exported JSON validated by same CI checker as hand-edited frameworks. Tauri+React+React Flow+Zustand stack noted; capability validation re-uses Rust core (no TS/Rust duplication).
 
 ---
 
