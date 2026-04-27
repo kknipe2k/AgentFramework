@@ -18,7 +18,9 @@ The per-milestone prompt always references `CLAUDE.md` as the protocol; it doesn
 | File | Status | Purpose |
 |---|---|---|
 | `README.md` (this file) | Stable | Index + how-to-use |
-| `TEMPLATE.md` | Stable | Per-milestone shape; copy this when authoring M12+ |
+| `TEMPLATE.md` | Stable | Per-milestone shape; copy this when authoring milestone prompts |
+| `PROCESS-VALIDATION.md` | Stable | Framework reference for evaluating whether the prompt-driven pattern works (axes, scoring, threshold gates) |
+| `retrospectives/` | Live | Per-session retrospectives Claude fills in during/after every milestone; see `retrospectives/README.md` |
 | `M01-foundation.md` | Authored | M1 (weeks 1–2): Cargo workspace + drone + runtime-core types + CI green |
 | `M02-event-pipeline.md` | TODO | M2 (weeks 3–4): SDK + AnthropicProvider + Tauri shell + event flow |
 | `M03-live-graph.md` | TODO | M3 (weeks 5–6): React Flow + node types + VDR projection |

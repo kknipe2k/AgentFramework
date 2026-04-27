@@ -635,3 +635,87 @@ This file changes when:
 Substantive changes are committed with a clear `docs(claude-md): ...` commit message and noted in `CHANGELOG.md`. The commit history of this file is a useful audit of "how the project's working agreements evolved."
 
 If this file disagrees with the spec or an ADR, the spec/ADR wins; this file is the execution protocol layered on top, not a source of truth for design decisions.
+
+---
+
+## 19. Retrospective protocol (Claude-driven)
+
+**Every milestone session produces a retrospective.** Claude maintains it during the session and surfaces it alongside the PR. The user reviews the retrospective the same way they review the code diff. The user does **not** fill in retrospective fields.
+
+This protocol exists because Claude has the live context (friction events, ambiguities, self-correction iterations); the user only sees the final PR. Asking the user to score what they didn't observe is asking them to reconstruct context they never had. Claude self-assessing is more honest about who has the information.
+
+### Per-session deliverable
+
+For every milestone or sub-milestone session, Claude creates a retrospective file at:
+
+`docs/build-prompts/retrospectives/M[NN].[N]-retrospective.md`
+
+(or `M[NN]-retrospective.md` for parent milestones not split into sub-milestones).
+
+Copied from `docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md`.
+
+### Workflow within the session
+
+1. **At session start**, immediately after stating the deliverable + test plan, copy `RETROSPECTIVE-TEMPLATE.md` to the per-session path. Set the header (sub-milestone ID, branch, starting commit, estimated effort).
+2. **During the session**, fill in the live observation log AS friction surfaces. Don't summarize at the end — details fade. Specifically:
+   - Add a row to the friction-events table the moment a friction event occurs.
+   - Add a row to the ambiguity-events table when contradictions or unclear guidance is encountered.
+   - Add a row to the surface-events table whenever a decision is surfaced to the user.
+   - Add a row to the protocol-drift table if you almost broke a Hard Rule (§4) — and alert the user immediately, not at session end.
+   - Add a row to the surprise-events table when something unexpected (good or bad) happens.
+3. **At session end** (when all acceptance criteria pass and gates are green):
+   - Score the three-axis retrospective (1–5 per row per `PROCESS-VALIDATION.md`)
+   - Evaluate threshold gates (5 hard + 5 soft)
+   - Mark the outcome (Sound / Sound-but-rough / Friction-heavy / Not-ready)
+   - Fill in the Decisions section with specific updates for the next sub-milestone
+4. **Surface to the user.** The PR draft now includes:
+   - PR title (Conventional Commits)
+   - PR description (per `.github/PULL_REQUEST_TEMPLATE.md`)
+   - Diff stat
+   - Quality gate results
+   - **The filled-in retrospective** at `docs/build-prompts/retrospectives/M[NN].[N]-retrospective.md`
+5. **State explicitly:** *"I will not commit until you approve. Please review both the PR description and the retrospective."*
+6. **On approval**, the retrospective is committed alongside the milestone code in the same PR.
+
+### What the user reviews
+
+Two artifacts:
+
+1. **The PR code diff** — does the milestone deliver?
+2. **The filled-in retrospective** — does Claude's self-assessment match observable evidence?
+
+User especially validates **Hard Gate G1** (do-not-commit-until-approved): if the retrospective claims it passed but the git log shows a commit before the user said "approved," that's a flag. User pushes back; Claude revises.
+
+### Honest self-assessment is mandatory
+
+The retrospective must reflect what actually happened, not a sanitized version. If Claude self-corrected through 4 rounds when 3 was the budget, that goes in the retrospective. If a friction event was severity 4, score it 4 — don't downgrade to make the totals look better.
+
+A retrospective that claims everything was 5/5 with no friction events is itself a flag. Real sessions have friction.
+
+### Per-parent-milestone summary
+
+After the **last sub-milestone** of a parent milestone (e.g., after M01.4 for M01), Claude creates `docs/build-prompts/retrospectives/M[NN]-summary.md` from `docs/build-prompts/retrospectives/SUMMARY-TEMPLATE.md`. This aggregates findings across the parent's sub-milestone retrospectives and gates the start of the next parent milestone.
+
+If a parent milestone is not split, this summary file isn't needed — the single retrospective IS the summary.
+
+### Outcome routing
+
+Per the outcome marked in the retrospective:
+
+- **Sound** — proceed to next sub-milestone in a fresh session. Apply `CLAUDE.md` / `TEMPLATE.md` updates from the Decisions section in a follow-up commit if substantive.
+- **Sound but rough** — spend a brief session updating `CLAUDE.md` / `TEMPLATE.md` per Decisions, THEN proceed.
+- **Friction-heavy** — stop. Iterate on protocol before next sub-milestone.
+- **Not ready** — a hard gate failed. Diagnose. Recovery session may be needed. May require an ADR if a primitive protocol change is needed.
+
+### Cross-milestone trends
+
+A `docs/build-prompts/retrospectives/TRENDS.md` is optional and grows over time. When patterns emerge across multiple parent milestones (e.g., "Claude consistently asks about X" or "the time-box estimate is always 1.5× off for Rust-heavy milestones"), Claude updates TRENDS.md. This is the project's quality history; future contributors read it to understand how the build pattern evolved.
+
+### Why this is enforced as a project-wide protocol
+
+- **Catches friction early.** A per-sub-milestone retrospective surfaces protocol problems after ~5–8 hours of work, not after 30+ hours of compounding error.
+- **Honest about who has context.** Claude logs what Claude saw; user reviews what user can verify.
+- **Builds the project's quality history.** After M11, the chain of retrospectives is part of the project's documentation. Someone reading the project a year from now sees how it actually got built — friction included.
+- **Aligns with CLAUDE-Code's actual capabilities.** Claude can fill in tables in real time as work happens; the user can't. Use the right tool for the job.
+
+See `docs/build-prompts/PROCESS-VALIDATION.md` for the framework reference (axes, scoring rubric, threshold gates) and `docs/build-prompts/retrospectives/` for the templates and accumulated retrospectives.
