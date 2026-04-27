@@ -1,0 +1,40 @@
+Agent Runtime
+Copyright 2026 Agent Runtime Project Contributors
+
+This product includes software developed by the Agent Runtime Project
+Contributors and other open-source contributors. See LICENSE for the full
+Apache 2.0 license text.
+
+This NOTICE file lists notable third-party components and their licenses.
+A full SBOM (CycloneDX format) is generated for each release and attached
+to the GitHub Release artifacts.
+
+---
+
+Notable runtime dependencies (Apache 2.0, MIT, or compatible permissive
+licenses unless noted):
+
+- Tauri (https://tauri.app/) — Apache 2.0 / MIT
+- tokio (https://tokio.rs/) — MIT
+- reqwest (https://github.com/seanmonstar/reqwest) — Apache 2.0 / MIT
+- eventsource-stream (https://github.com/jpopesculian/eventsource-stream) — Apache 2.0 / MIT
+- rusqlite (https://github.com/rusqlite/rusqlite) — MIT
+- serde (https://serde.rs/) — Apache 2.0 / MIT
+- React (https://react.dev/) — MIT
+- React Flow (https://reactflow.dev/) — MIT
+- Tailwind CSS (https://tailwindcss.com/) — MIT
+- Vite (https://vite.dev/) — MIT
+- Anthropic SDK / API documentation (https://docs.anthropic.com/) — used per
+  Anthropic Terms of Service; the runtime makes API calls on behalf of users
+  using their own API keys.
+
+For a complete and current list of dependencies including transitive
+dependencies, see the SBOM (CycloneDX format) attached to each release.
+
+---
+
+Reference framework: examples/aria/ reconstructs the capabilities of the
+shell-based ARIA framework (in this same repository, see archive/aria-shell/
+once the runtime ships v0.1) using only runtime primitives. ARIA in turn
+draws on patterns from Boris Cherny's subagent architecture and the Ralph
+autonomous loop pattern. Both are credited in the architecture documentation.
