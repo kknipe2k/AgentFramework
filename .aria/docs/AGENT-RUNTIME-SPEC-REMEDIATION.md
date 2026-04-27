@@ -28,26 +28,31 @@ Work items are the unit of execution. Pick one, resolve it (spec update + if app
 
 | Tier | IDs | Gate |
 |---|---|---|
-| **P0 — Blocking** | WI-01 | Nothing else starts until resolved |
+| **P0 — Blocking** | WI-00, WI-01 | Nothing else starts until resolved |
 | **P1 — Critical** | WI-02 to WI-07 | Must be resolved before Phase 1 code |
 | **P2 — Important** | WI-08 to WI-17 | Resolve per related phase |
 | **P3 — Nice-to-have** | WI-18 to WI-25 | v2+ |
 | **P4 — Polish** | WI-26 | Any time |
+
+**Project framing (locked 2026-04-18):** The runtime is a **generic agent-building, maintenance, and runtime-management platform**. ARIA is the **reference archetype** — the canonical agentic system used to validate that the runtime's primitives are sufficient. v1 MVP is complete when a user can reconstruct every ARIA capability inside the runtime using only primitives, without modifying runtime source. The existing `.aria/` shell codebase is reference material, not a port target.
 
 ---
 
 ## Dependency Graph
 
 ```
-WI-01 (ARIA relationship)
-  ├── WI-02 (Verification + rails)
-  ├── WI-03 (Planning model)
+WI-00 (Archetype Capability Matrix) — MVP done-criterion
+  └── informs every P1 item (each must trace back to one or more matrix rows)
+
+WI-01 (ARIA relationship: Archetype)
+  ├── WI-02 (Verify-as-primitive)
+  ├── WI-03 (Plan-as-primitive)
   ├── WI-04 (Skill vs Tool)
   │     ├── WI-05 (Gap detection)
   │     └── WI-06 (Skill-writer security)
-  ├── WI-07 (Budget enforcement)
-  ├── WI-15 (Mode router import)
-  └── WI-08 (Signal schema v2 inherit)
+  ├── WI-07 (Budget primitive)
+  ├── WI-15 (Mode router primitive)
+  └── WI-08 (Signal schema)
         └── WI-14 (Recovery semantics)
 
 WI-09 (IPC) ──── independent, Phase 1 blocker
@@ -63,116 +68,209 @@ WI-17 (Dev-loop) ──── Phase 1 blocker
 
 ## P0 — Blocking
 
-### WI-01: Define relationship to existing ARIA
+### WI-00: ARIA Archetype Capability Matrix (MVP done-criterion)
 
 **STATUS:** OPEN
-**Priority:** P0 (blocks everything)
-**Effort:** 1–2 days (decision + 1-pager)
+**Priority:** P0 (defines MVP scope)
+**Effort:** 2–3 days
 
 **Problem**
-The spec makes no reference to the existing 13,190-LOC ARIA codebase (shell engine, skills, Ralph loop, dashboard, offline RL, hooks). Every downstream decision depends on whether ARIA is replaced, wrapped, or run in parallel, and the spec silently assumes greenfield.
+With the runtime positioned as a generic agent platform and ARIA as the reference archetype, "MVP done" is ambiguous unless we have a concrete checklist. Without it, every P1 work item risks being scoped by intuition rather than by what's actually needed to reconstruct ARIA.
 
 **Proposed resolution**
-Write a new `agent-runtime-spec.md §0: Relationship to ARIA` section that commits to one of:
+Build a capability matrix table in the spec (`§0a: Archetype Capability Matrix`) that lists every ARIA capability and the runtime primitive that must exist to express it. Each row becomes an MVP acceptance row. v1 ships when every row's primitive is present and a worked example reconstructs the row using only framework JSON + shipped primitives.
 
-- **Option A — Replace.** Deprecate `.aria/` over N releases. Port all skills, rails, verify.sh, Ralph loop, offline-learner to TypeScript. Highest value, highest risk, ~6–9 months.
-- **Option B — Wrapper (recommended for v1).** Electron runtime is the UI/drone/graph layer. Backend shells out to existing `.aria/verify.sh`, `.aria/rails-executor.sh`, `.aria/ralph/ralph.sh`, `.aria/lib/offline-learner.py`. Framework JSON references shell entry-points. ~2–3 months.
-- **Option C — Parallel product.** New target user, different distribution. Existing ARIA stays shell-based. Worst option; dilutes focus.
+Initial rows (extend during WI-00 work):
 
-Decision must include:
-- Fate of `.aria/` directory over the next 12 months
-- Migration path for existing skills (if replace)
-- Which subprocess contract shell tools must expose (if wrapper)
-- Named owner for the decision
+| ARIA Capability | Runtime Primitive Required | Driving WI |
+|---|---|---|
+| LITE / STANDARD / FULL / FULL+ mode router | `modes` field in framework JSON + sizing-agent role | WI-15 |
+| Sizing matrix (tasks × LOC × files × deps × auth) | Framework-defined sizing function (declarative table or agent prompt) | WI-15 |
+| `verify.sh` after every task | Per-task post-hook field (shell command or tool ref) | WI-02 |
+| Hard / soft rails (`rails/safety.json`) | `rails` section in framework JSON + rails-evaluator hook | WI-02 |
+| Plan → HITL approve → execute | PlanNode + TaskNode + approval-gate event | WI-03 |
+| Subagent isolation (analyzer, implementer, verify-app, simplifier) | Agent type definitions in framework JSON + spawn rules | WI-03, WI-04 |
+| Decision trace (`decisions.jsonl`) | Built-in VDR projection from event stream | WI-08 |
+| Signal Schema v2 (8 signal types) | Native event taxonomy in runtime | WI-08 |
+| Ralph autonomous loop | Loop-policy primitive + PRD-style goal store | WI-03 |
+| Model selection (budget + learning) | Model-selector hook + budget primitive | WI-07, WI-13 |
+| Offline RL (Thompson Sampling) | External-process plugin reading signals, writing policy | WI-08, WI-23 |
+| Dashboard (`:8420`) | Built-in (replaces ARIA dashboard) | core |
+| Git ops (checkpoint/rollback/PR) | Tool wrappers + drone snapshot integration | WI-02 |
+| HITL notifications (terminal/desktop/sound) | Notifier plugin interface | WI-16 |
+| Slash commands (`/aria-start`, etc.) | Command-palette registration from framework JSON | core |
+| Hooks (PreToolUse, PostToolUse, Stop) | Hook event types in runtime + framework subscription | WI-08 |
+| Project-context "don't touch" zones | `dont_touch` field in framework JSON | WI-02 |
+| Failure escalation (3 failures → HITL) | Failure-counter primitive + HITL trigger policy | WI-16 |
+| Skills as context-loaded markdown | Skill-as-instruction-set type (distinct from tool) | WI-04 |
+| Mode-variant skill behavior | Mode-aware skill loader | WI-04, WI-15 |
 
 **Acceptance criteria**
-- [ ] `agent-runtime-spec.md §0` exists, ≤2 pages, names chosen option
-- [ ] Every later phase references §0 when making a design choice dependent on it
-- [ ] Fate of each top-level `.aria/` subsystem explicitly listed: inherit / port / deprecate / drop
-- [ ] Owner identified
+- [ ] Spec §0a exists with the table
+- [ ] Every row maps to at least one downstream WI
+- [ ] Every P1 WI references the matrix rows it unlocks
+- [ ] A "ARIA Reconstruction Walkthrough" example is added to the spec showing how the bundled `examples/aria/` framework reconstructs a representative row using only primitives
+- [ ] Matrix is review-locked before any Phase 1 code is written
 
 **Dependencies:** None (root)
+**Blocks:** Every P1 WI scope
+
+---
+
+### WI-01: ARIA relationship — Archetype model
+
+**STATUS:** OPEN
+**Priority:** P0
+**Effort:** 1 day spec
+
+**Problem**
+The spec makes no reference to the existing 13,190-LOC ARIA codebase. Without an explicit relationship statement, every downstream design decision is ambiguous about whether it should reuse, port, or ignore existing work.
+
+**Proposed resolution**
+Write `agent-runtime-spec.md §0: Project Positioning & Relationship to ARIA` committing to the **Archetype** model:
+
+- The runtime is a generic agent-building / maintenance / runtime-management platform.
+- ARIA is the canonical reference framework — recreated inside the runtime to validate the runtime's primitives.
+- Existing `.aria/` shell codebase remains as **reference material**. It is not ported, replaced, or wrapped. It stays usable as-is for users who prefer shell.
+- The runtime ships an `examples/aria/` directory containing the framework JSON + bundled tools/skills that reconstruct ARIA's capabilities. This is not a "built-in default" — it is a worked example users can copy or study.
+- v1 MVP success criterion = the WI-00 capability matrix is fully checked.
+
+Per-subsystem fate (referenced from §0):
+
+| `.aria/` subsystem | Fate |
+|---|---|
+| `verify.sh`, `verify-executor.sh` | Reference only. `examples/aria/` reimplements via runtime post-task hooks. |
+| `rails-executor.sh`, `rails/safety.json` | Reference only. Reimplemented via runtime rails primitive. |
+| `ralph/ralph.sh` | Reference only. Reimplemented via runtime loop policy. |
+| `planner/planner.sh` | Reference only. Reimplemented via planning agent + plan primitive. |
+| `model-selector.sh` | Reference only. Reimplemented via budget primitive + model-selector hook. |
+| `lib/offline-learner.py` | Stays as external Python process, consumes runtime signal export. Optional. |
+| `lib/meta-reasoning.sh` | Reference only. Reimplemented as in-runtime decision skill. |
+| `hitl.sh` | Reference only. Reimplemented via HITL primitive + notifier plugins. |
+| `git-ops.sh` | Reference only. Reimplemented via tool wrappers around git. |
+| `hooks/` (Git hooks) | Stays. Independent of runtime. |
+| `.claude/agents/` (subagents) | Reference only. Reimplemented as runtime agent definitions. |
+| `dashboard/`, `serve-dashboard.py` | Replaced. Runtime ships its own dashboard. |
+| `docs/` (CONCEPT-*, WORKFLOW-MAP, etc.) | Stays. Source of truth for what the archetype must do. |
+
+**Acceptance criteria**
+- [ ] Spec §0 exists, ≤2 pages
+- [ ] Archetype model named explicitly
+- [ ] Per-subsystem fate table present
+- [ ] Spec L426 ("Aria ships as the built-in default framework") rewritten to reflect `examples/aria/`
+- [ ] Owner identified
+
+**Dependencies:** WI-00 (the matrix references this positioning)
 **Blocks:** WI-02, WI-03, WI-04, WI-07, WI-08, WI-15
 
 ---
 
 ## P1 — Critical (resolve before Phase 1 code)
 
-### WI-02: Verification and safety rails in runtime
+### WI-02: Verify-and-rails primitive (so users can build ARIA's verify pipeline themselves)
 
 **STATUS:** OPEN
 **Priority:** P1
 **Effort:** 2–3 days spec; 2–3 weeks implementation
+**Unlocks matrix rows:** verify.sh hook, rails, dont_touch zones, git checkpoint/rollback
 
 **Problem**
-The spec contains no verification pipeline, no safety rails, no rollback primitive. ARIA's central value proposition ("autonomous but safe") depends on these. Current `.aria/verify.sh` (701L, with git-stash rollback) and `.aria/rails/safety.json` have no spec analog.
+The runtime needs primitives that let a framework author *express* a verification pipeline and safety rails — not built-in implementations of ARIA's specific verify.sh and rails/safety.json. Without these primitives, the WI-00 matrix rows for verify and rails cannot be reconstructed.
 
 **Proposed resolution**
-Add `§4a: Verification & Rails` between current Phase 4 and 5, covering:
+Add `§4a: Verify & Rails Primitives` between current Phase 4 and 5. The runtime ships:
 
-1. **`VerifyNode`** as a first-class graph node type. Emitted automatically after any agent action that writes files. Shows verify.sh level (quick/standard/full), pass/fail, failure details on click.
-2. **Rails config** in framework JSON:
+1. **Post-task hook field** in framework JSON:
    ```json
-   "rails": {
-     "hard": [{ "id": "no_secrets", "check": "...", "message": "..." }],
-     "soft": [{ "id": "no_debug", "check": "...", "message": "..." }]
+   "hooks": {
+     "post_task": [{ "type": "shell", "command": "bash .aria/verify.sh", "level": "standard" }],
+     "post_file_edit": [{ "type": "tool", "tool": "lint_changed_files" }]
    }
    ```
-3. **Verify events** in `AgentEvent` union:
-   - `verify_start`, `verify_pass`, `verify_fail`, `rail_triggered`
-4. **Rollback primitive** — drone's existing snapshot system gains a `revert_to_snapshot` command. On `verify_fail`, HITL prompt offers rollback.
-5. **Project-context zones** — framework JSON includes `don't_touch: [...]` paths. Attempting to edit a file in the list triggers `rail_triggered` with policy `hard`.
+   Hooks accept `type: shell | tool | agent` so authors can plug in any executor (shell script, MCP tool, or another agent).
+2. **`VerifyNode`** as a graph node type rendered when a `post_task` hook of category `verify` fires. Pass/fail visible. Click for output. *The runtime knows nothing about test frameworks; it just renders what the hook emits.*
+3. **Rails primitive** in framework JSON:
+   ```json
+   "rails": {
+     "hard": [{ "id": "no_secrets", "check": "shell:scripts/check-secrets.sh", "message": "..." }],
+     "soft": [{ "id": "no_debug",   "check": "tool:scan_for_debug",           "message": "..." }]
+   }
+   ```
+   Rails are evaluated by a runtime-provided rails-evaluator that shells out / calls tools as declared. The runtime provides the *framework* for rails; the *checks* come from the author.
+4. **Hook & rail events** in the `AgentEvent` union:
+   `hook_started`, `hook_passed`, `hook_failed`, `rail_triggered{ id, policy, message }`.
+5. **`revert_to_snapshot` drone command** + automatic HITL rollback prompt on `hook_failed` (policy configurable per hook).
+6. **`dont_touch` field** in framework JSON — a list of glob patterns. Built-in pre-edit rail blocks writes to matching paths with `policy: hard`.
+
+The `examples/aria/` framework wires (1)–(6) up to reproduce ARIA's `verify.sh`, `rails/safety.json`, and `project-context.md` zones using only these primitives.
 
 **Acceptance criteria**
-- [ ] Spec §4a exists with all five sub-items
-- [ ] Framework JSON schema updated with `rails` and `don't_touch` fields
-- [ ] `AgentEvent` union includes new verify/rail event types
+- [ ] Spec §4a exists with all six sub-items, all framed as **primitives**
+- [ ] Framework JSON schema gains `hooks`, `rails`, `dont_touch` fields
+- [ ] `AgentEvent` union extended with hook/rail events
 - [ ] Drone command API includes `revert_to_snapshot`
-- [ ] Example framework JSON updated to show a minimal rails config
+- [ ] `examples/aria/framework.json` shows a working reconstruction of verify + rails + dont_touch
+- [ ] WI-00 matrix rows for verify, rails, dont_touch, git ops are checkable from this WI
 
-**Dependencies:** WI-01 (determines whether rails port from shell or rewrite)
+**Dependencies:** WI-00, WI-01
 **Blocks:** Phase 1 code
 
 ---
 
-### WI-03: Planning model and task progression
+### WI-03: Plan / task primitive (so frameworks can express plan-driven workflows)
 
 **STATUS:** OPEN
 **Priority:** P1
 **Effort:** 2 days spec; 1 week implementation
+**Unlocks matrix rows:** plan→approve→execute, ralph loop, subagent isolation, failure escalation
 
 **Problem**
-Spec has no plan model. ARIA's core workflow is plan → HITL approve → execute one task at a time → verify after each → commit → next. Without this the runtime is a flat agent trace, not a plan-driven workflow.
+The runtime needs a generic plan/task primitive that frameworks can use to express *any* multi-step workflow with approval gates and per-task lifecycle. ARIA's plan-then-execute is one realization; Ralph's PRD-driven loop is another. Without a plan primitive, the runtime cannot express either.
 
 **Proposed resolution**
-Add `§3a: Plan & Task Model` between Phase 3 and 4, covering:
+Add `§3a: Plan & Task Primitive`. The runtime provides:
 
-1. **`PlanNode`** in the graph — root of the current plan, shows total tasks, completed count, current task.
-2. **`TaskNode`** children — each task shows title, status (`pending | running | done | blocked`), HITL flag, estimated time, actual time.
-3. **Plan schema** (inherits from `current-plan.json`):
+1. **`Plan` data type** (durable, in SQLite, snapshot-aware):
    ```typescript
    interface Plan {
      id: string
      title: string
      tasks: Task[]
      status: 'pending_approval' | 'approved' | 'in_progress' | 'complete' | 'aborted'
-     hitl_checkpoints: string[]
-     risks: string[]
+     approval_required: boolean      // false = auto-approve (Ralph-style)
+     loop_policy: 'one_shot' | 'fresh_context_per_task' | 'continuous'
+   }
+
+   interface Task {
+     id: string
+     title: string
+     status: 'pending' | 'running' | 'done' | 'blocked' | 'failed'
+     hitl: boolean
+     hitl_reason?: string
+     post_hooks?: HookRef[]          // override framework defaults
+     failure_count: number
+     max_failures: number             // triggers escalation
    }
    ```
-4. **Plan events** added to `AgentEvent`:
-   - `plan_created`, `plan_approved`, `plan_revised`, `task_started`, `task_completed`, `task_failed`
-5. **Approval gate** — on `plan_created`, runtime enters `awaiting_approval` state. Graph dims, approval panel shows. `a | r | c` flow same as shell ARIA.
+2. **Graph nodes:** `PlanNode` (root), `TaskNode` (children). Render driven by data type, not framework-specific logic.
+3. **Plan/task events** in `AgentEvent`:
+   `plan_created`, `plan_approval_requested`, `plan_approved`, `plan_revised`, `task_started`, `task_completed`, `task_failed`, `task_escalated`.
+4. **Approval-gate primitive** — when `approval_required: true` and `plan_created` fires, runtime enters `awaiting_approval`, graph dims, approval panel shows. `a | r | c` actions emit corresponding events. Framework decides UX copy.
+5. **Loop policy primitive** — `loop_policy: fresh_context_per_task` is what ARIA's planning skill needs. `loop_policy: continuous` is what Ralph needs (one persistent agent, multi-iteration). Framework picks per plan.
+6. **Failure escalation primitive** — when `task.failure_count >= max_failures`, emit `task_escalated` and route to whatever HITL handler the framework has registered (see WI-16).
+
+The `examples/aria/` framework uses `approval_required: true` + `loop_policy: fresh_context_per_task`. An `examples/ralph/` framework uses `approval_required: false` + `loop_policy: continuous` + a PRD goal store.
 
 **Acceptance criteria**
-- [ ] Spec §3a exists
-- [ ] Plan/Task node types defined with render semantics
-- [ ] `AgentEvent` union extended
-- [ ] `Plan` interface defined and matches `current-plan.json` schema
-- [ ] Approval-gate UX documented
-- [ ] Example end-to-end walkthrough: user types a goal → planner agent creates plan → approval → tasks execute one by one with verify gates
+- [ ] Spec §3a exists, framed as primitive
+- [ ] `Plan` and `Task` data types defined
+- [ ] Graph node types and event taxonomy specified
+- [ ] Approval-gate, loop-policy, failure-escalation are independent primitives the framework composes
+- [ ] `examples/aria/` reconstructs ARIA-style plan workflow
+- [ ] `examples/ralph/` reconstructs Ralph-style loop using the same primitive
+- [ ] WI-00 matrix rows for plan, ralph loop, failure escalation are checkable
 
-**Dependencies:** WI-01, WI-02 (verify gate integrates with task loop)
+**Dependencies:** WI-00, WI-01, WI-02 (verify hook lives at task boundary)
 **Blocks:** Phase 1 code
 
 ---
@@ -544,43 +642,58 @@ Add `§1b: Recovery Semantics` clarifying:
 
 ---
 
-### WI-15: Mode router import (LITE/STANDARD/FULL/FULL+)
+### WI-15: Mode-and-sizing primitive (so frameworks can express LITE/STANDARD/FULL/FULL+)
 
 **STATUS:** OPEN
 **Priority:** P2
 **Effort:** 1–2 days spec
+**Unlocks matrix rows:** mode router, sizing matrix, mode-variant skill behavior
 
 **Problem**
-ARIA's sizing matrix (tasks × LOC × files × deps × auth scope → LITE/STANDARD/FULL/FULL+) drives planning, verification rigor, HITL density, subagent isolation. Spec has one mode.
+The runtime needs a generic mode primitive: a session-scoped enum value the framework defines and that downstream primitives (hooks, plan policy, HITL policy, subagent rules) can branch on. ARIA's LITE/STANDARD/FULL/FULL+ is one realization; another framework might define `dev | staging | prod` or `learning | production`. Without a mode primitive, none of these can be expressed.
 
 **Proposed resolution**
-Add `§3b: Mode Router` as a framework-level concept:
+Add `§3b: Mode & Sizing Primitive`. The runtime provides:
 
-1. Framework JSON gets:
+1. **Mode field** in framework JSON — author-defined enum:
    ```json
    "modes": {
+     "values": ["LITE", "STANDARD", "FULL", "FULL+"],
      "default": "STANDARD",
-     "allow": ["LITE", "STANDARD", "FULL", "FULL+"],
-     "per_mode": {
-       "LITE":     { "verification": "if_tests_exist", "hitl_policy": "destructive_only", "subagents": false },
-       "STANDARD": { "verification": "every_task",     "hitl_policy": "risky_actions",   "subagents": true  },
-       "FULL":     { "verification": "mandatory",      "hitl_policy": "all_risky",       "subagents": true, "design_notes": true },
-       "FULL+":    { "verification": "mandatory",      "hitl_policy": "per_epic",        "subagents": true, "design_notes": true, "design_doc": true }
+     "per_mode_overrides": {
+       "LITE":  { "hooks.post_task": [], "plan.approval_required": false },
+       "FULL+": { "design_doc_required": true }
      }
    }
    ```
-2. **Router agent** runs first on session start, sizing the request, proposing a mode. User confirms (or the framework forces a mode).
-3. Mode becomes a session property; all subsequent behavior keys off it.
-4. Dashboard / graph show active mode in the session header.
+   Any other primitive (hooks, plan, rails, HITL policy) can reference `${mode}` and apply overrides per mode.
+2. **Sizing-agent role** — special agent type whose job is to read the user's request and emit a recommended mode value via a `propose_mode` tool call. Output is human-confirmed (or auto-accepted, framework's choice).
+3. **Sizing function (declarative alternative)** — instead of an LLM agent, framework can declare a JSON sizing table:
+   ```json
+   "sizing": {
+     "mode": "declarative",
+     "rules": [
+       { "if": { "tasks_estimated": "<=5", "loc_estimated": "<2000" }, "then": "LITE" },
+       { "if": { "auth_or_payments": true }, "then": "FULL" }
+     ]
+   }
+   ```
+   Runtime evaluates the rules against a user-supplied or framework-collected fact set.
+4. **Session-scoped mode value** — once set, immutable for the session. Available to every event handler, hook, plan, agent prompt as `session.mode`.
+5. **Mode change events** — `mode_proposed`, `mode_confirmed`, `mode_locked`. Graph header shows active mode.
+
+The `examples/aria/` framework declares ARIA's four modes and sizing matrix verbatim using these primitives.
 
 **Acceptance criteria**
-- [ ] Spec §3b exists
-- [ ] Framework JSON extended
-- [ ] Sizing matrix from `CLAUDE.md` included verbatim or referenced
-- [ ] Default ARIA framework JSON shows all four modes configured
+- [ ] Spec §3b exists, framed as primitive
+- [ ] Mode field schema defined (author-defined enum, not built-in)
+- [ ] Both sizing-agent and declarative-sizing supported
+- [ ] `${mode}` interpolation rules across other primitives specified
+- [ ] `examples/aria/framework.json` reproduces ARIA's mode router using only the primitive
+- [ ] WI-00 matrix rows for mode router, sizing matrix, mode-variant skill behavior are checkable
 
-**Dependencies:** WI-01, WI-03
-**Blocks:** Default ARIA framework bundling
+**Dependencies:** WI-00, WI-01, WI-03 (plan policy is mode-overridable)
+**Blocks:** `examples/aria/` framework bundling
 
 ---
 

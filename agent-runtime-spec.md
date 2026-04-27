@@ -12,6 +12,89 @@ Built on the Anthropic SDK natively. MCP manager built in. Claude family first, 
 
 -----
 
+## §0 Project Positioning & Relationship to ARIA
+
+> **Locked decision (2026-04-18).** Supersedes any contrary statement elsewhere in this spec.
+
+### What this runtime is
+
+A **generic agent-building, maintenance, and runtime-management platform**. It ships **primitives** (drone, event pipeline, live graph, plan/task model, hooks, rails, mode field, HITL primitive, registry, builder) — not opinionated agent workflows.
+
+Frameworks are how you compose those primitives into a product. The runtime ships zero built-in frameworks.
+
+### What ARIA is, in this project
+
+**ARIA is the reference archetype**, not a built-in. The existing `.aria/` shell codebase (engine, skills, Ralph loop, dashboard, offline RL, hooks, ~13K LOC) is reference material that defines what an agentic system *should* be capable of. We do not port it, wrap it, or replace it.
+
+The runtime ships an `examples/aria/` directory containing a framework JSON + bundled tools/skills that **reconstruct ARIA's capabilities using only the runtime's primitives**. This is a worked example, not a default.
+
+### MVP success criterion
+
+v1 ships when a user can reconstruct every row of the **ARIA Archetype Capability Matrix** (§0a) inside the runtime using only framework JSON + primitives, **without modifying runtime source**. If a row cannot be reconstructed, either the matrix row is wrong or a primitive is missing — both block v1.
+
+`examples/aria/` is the executable proof of this criterion.
+
+### Per-subsystem fate of `.aria/`
+
+| `.aria/` subsystem | Fate |
+|---|---|
+| `verify.sh`, `verify-executor.sh` | **Reference only.** `examples/aria/` reimplements via runtime post-task hooks. |
+| `rails-executor.sh`, `rails/safety.json` | **Reference only.** Reimplemented via runtime rails primitive. |
+| `ralph/ralph.sh` | **Reference only.** Reimplemented via runtime loop policy + plan primitive. |
+| `planner/planner.sh` | **Reference only.** Reimplemented via planning agent + plan primitive. |
+| `model-selector.sh` | **Reference only.** Reimplemented via budget primitive + model-selector hook. |
+| `lib/offline-learner.py` | **Stays as external Python process.** Consumes runtime signal export. Optional. |
+| `lib/meta-reasoning.sh` | **Reference only.** Reimplemented as in-runtime decision skill. |
+| `hitl.sh` | **Reference only.** Reimplemented via HITL primitive + notifier plugins. |
+| `git-ops.sh` | **Reference only.** Reimplemented via tool wrappers around git. |
+| `hooks/` (Git hooks) | **Stays untouched.** Independent of runtime. |
+| `.claude/agents/` (subagents) | **Reference only.** Reimplemented as runtime agent definitions. |
+| `dashboard/`, `serve-dashboard.py` | **Replaced.** Runtime ships its own dashboard (the live graph + panels). |
+| `docs/` (CONCEPT-*, WORKFLOW-MAP, etc.) | **Stays.** Source of truth for what the archetype must do. |
+
+### Existing shell ARIA stays usable
+
+Users who prefer the shell experience can keep using `.aria/` as-is. The runtime does not deprecate or break it. They are independent products that share a problem statement.
+
+### Cross-references
+
+- §0a — **ARIA Archetype Capability Matrix** (MVP done-criterion)
+- Phase 6 — Framework JSON Loader: the schema below is extended by every primitive (hooks, rails, plan, mode, HITL, budget). Phase 6's example must show `examples/aria/framework.json` end-to-end.
+- The phrase "Aria ships as the built-in default framework" elsewhere in this spec is **superseded** by this section. ARIA ships in `examples/`, not as a built-in default.
+
+-----
+
+## §0a ARIA Archetype Capability Matrix
+
+> **MVP done-criterion.** Every row must be reconstructible inside the runtime using framework JSON + primitives. If a row's primitive is not in the runtime, v1 is not done.
+
+| # | ARIA Capability | Runtime Primitive Required | Driving WI |
+|---|---|---|---|
+| 1 | LITE / STANDARD / FULL / FULL+ mode router | `modes` field in framework JSON + sizing-agent role | WI-15 |
+| 2 | Sizing matrix (tasks × LOC × files × deps × auth) | Declarative sizing rules OR sizing agent | WI-15 |
+| 3 | `verify.sh` after every task | Per-task `post_task` hook (shell / tool / agent) | WI-02 |
+| 4 | Hard / soft rails (`rails/safety.json`) | `rails` section + rails-evaluator | WI-02 |
+| 5 | Plan → HITL approve → execute one-by-one | `Plan` primitive + approval-gate event | WI-03 |
+| 6 | Subagent isolation (analyzer, implementer, verify-app, simplifier) | Agent type defs + spawn rules in framework JSON | WI-03, WI-04 |
+| 7 | Decision trace (`decisions.jsonl`) | Built-in VDR projection from event stream | WI-08 |
+| 8 | Signal Schema v2 (8 signal types) | Native event taxonomy in runtime | WI-08 |
+| 9 | Ralph autonomous loop | `loop_policy: continuous` + PRD-style goal store | WI-03 |
+| 10 | Model selection (budget + learning) | Model-selector hook + budget primitive | WI-07, WI-13 |
+| 11 | Offline RL (Thompson Sampling) | External-process plugin reading exported signals | WI-08, WI-23 |
+| 12 | Dashboard (`:8420`) | Built-in (replaces ARIA dashboard) | core |
+| 13 | Git ops (checkpoint / rollback / PR) | Tool wrappers + drone snapshot integration | WI-02 |
+| 14 | HITL notifications (terminal / desktop / sound) | Notifier plugin interface | WI-16 |
+| 15 | Slash commands (`/aria-start`, etc.) | Command-palette registration from framework JSON | core |
+| 16 | Hooks (PreToolUse, PostToolUse, Stop) | Hook event types + framework subscription | WI-08 |
+| 17 | Project-context "don't touch" zones | `dont_touch` field + pre-edit rail | WI-02 |
+| 18 | Failure escalation (3 failures → HITL) | Failure-counter primitive + HITL trigger policy | WI-16 |
+| 19 | Skills as context-loaded markdown | `Skill` type distinct from `Tool` | WI-04 |
+| 20 | Mode-variant skill behavior | Mode-aware skill loader | WI-04, WI-15 |
+
+This matrix is the spec's contract with itself. Every P1 work item must justify its scope by which row(s) it unlocks. Rows that turn out not to need a primitive (because they fall out of an existing one) get marked `subsumed-by: <primitive>` rather than dropped.
+
+-----
+
 ## Architecture Overview
 
 ```
@@ -422,7 +505,7 @@ Load — upload JSON, validate schema, preview in UI before activating
 Switch — swap active framework between sessions (snapshot before switch)
 Version — frameworks are versioned, rollback available
 Share — export framework JSON for distribution
-Default — Aria ships as the built-in default framework
+Examples — `examples/aria/` ships as the reference framework that reconstructs ARIA's capabilities (see §0). The runtime has no built-in default framework
 ```
 
 -----
@@ -737,8 +820,11 @@ Recovery is never destructive. Discarded sessions are archived, not deleted.
 │           ├── CostTracker.tsx
 │           └── RecoveryDialog.tsx
 │
-├── frameworks/
-│   └── aria.json            # Default bundled framework
+├── examples/
+│   └── aria/                # Reference framework reconstructing ARIA via primitives (see §0)
+│       ├── framework.json
+│       ├── skills/
+│       └── tools/
 │
 ├── AGENT_RUNTIME_SPEC.md    # This document
 └── package.json
