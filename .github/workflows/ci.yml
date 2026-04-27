@@ -1,0 +1,255 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-progress runs on the same ref when a new commit lands
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────────
+  # Always-on jobs — run regardless of whether code has landed yet
+  # ────────────────────────────────────────────────────────────────────────
+
+  schema-validate:
+    name: Schema validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install jsonschema
+        run: pip install --quiet jsonschema pyyaml
+
+      - name: Validate framework JSON files
+        run: |
+          python <<'EOF'
+          import json, jsonschema
+          from pathlib import Path
+          schemas_dir = Path("schemas")
+          store = {}
+          for f in schemas_dir.glob("*.json"):
+              s = json.loads(f.read_text())
+              if "$id" in s: store[s["$id"]] = s
+              store[f.name] = s
+          resolver = jsonschema.RefResolver(
+              base_uri=f"file://{schemas_dir.resolve()}/",
+              referrer=store["framework.v1.json"],
+              store=store,
+          )
+          failed = []
+          for fw in Path("examples").rglob("framework.json"):
+              data = json.loads(fw.read_text())
+              errors = list(jsonschema.Draft202012Validator(
+                  store["framework.v1.json"], resolver=resolver
+              ).iter_errors(data))
+              if errors:
+                  failed.append((str(fw), errors))
+                  print(f"::error file={fw}::Schema validation failed ({len(errors)} errors)")
+                  for e in errors[:5]:
+                      print(f"  path={list(e.path)} msg={e.message[:200]}")
+              else:
+                  print(f"OK {fw}")
+          if failed:
+              raise SystemExit(1)
+          EOF
+
+      - name: Validate skill / agent / tool frontmatter
+        run: |
+          python <<'EOF'
+          import json, jsonschema, re
+          import yaml
+          from pathlib import Path
+
+          def parse_frontmatter(path):
+              text = Path(path).read_text()
+              m = re.match(r'^---\n(.*?)\n---', text, re.DOTALL)
+              return yaml.safe_load(m.group(1)) if m else None
+
+          schemas_dir = Path("schemas")
+          store = {}
+          for f in schemas_dir.glob("*.json"):
+              s = json.loads(f.read_text())
+              if "$id" in s: store[s["$id"]] = s
+              store[f.name] = s
+          resolver = jsonschema.RefResolver(
+              base_uri=f"file://{schemas_dir.resolve()}/",
+              referrer=store["framework.v1.json"],
+              store=store,
+          )
+          checks = [
+              ("examples/*/skills/*.md", "skill.v1.json"),
+              ("examples/*/agents/*.md", "agent.v1.json"),
+              ("examples/*/tools/*.md",  "tool.v1.json"),
+          ]
+          failed = 0
+          for glob, schema_name in checks:
+              for f in sorted(Path(".").glob(glob)):
+                  fm = parse_frontmatter(f)
+                  if fm is None:
+                      print(f"::warning file={f}::No frontmatter found")
+                      continue
+                  errors = list(jsonschema.Draft202012Validator(
+                      store[schema_name], resolver=resolver
+                  ).iter_errors(fm))
+                  if errors:
+                      failed += 1
+                      print(f"::error file={f}::Frontmatter validation failed ({len(errors)} errors)")
+                      for e in errors[:5]:
+                          print(f"  path={list(e.path)} msg={e.message[:200]}")
+                  else:
+                      print(f"OK {f}")
+          if failed: raise SystemExit(1)
+          EOF
+
+  markdown-lint:
+    name: Markdown lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run markdownlint-cli2
+        uses: DavidAnson/markdownlint-cli2-action@v18
+        with:
+          globs: |
+            *.md
+            docs/**/*.md
+            examples/**/*.md
+            !**/node_modules/**
+        continue-on-error: true   # advisory until we tune the ruleset
+
+  spec-link-check:
+    name: Spec link check (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for broken markdown links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: '--verbose --no-progress --max-concurrency 4 ''**/*.md'''
+          fail: false   # advisory; tighten once links are stable
+        continue-on-error: true
+
+  # ────────────────────────────────────────────────────────────────────────
+  # Code jobs — gated on Cargo workspace existing.
+  # These activate at M1 (Foundation) when crates/ lands.
+  # ────────────────────────────────────────────────────────────────────────
+
+  detect-cargo:
+    name: Detect Cargo workspace
+    runs-on: ubuntu-latest
+    outputs:
+      has_cargo: ${{ steps.check.outputs.has_cargo }}
+      has_npm:   ${{ steps.check.outputs.has_npm }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          if [ -f "Cargo.toml" ]; then
+            echo "has_cargo=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_cargo=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -f "package.json" ] && [ -f "package-lock.json" ]; then
+            echo "has_npm=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_npm=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  rust:
+    name: Rust ${{ matrix.os }} / ${{ matrix.toolchain }}
+    needs: detect-cargo
+    if: needs.detect-cargo.outputs.has_cargo == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        toolchain: [stable]
+        include:
+          - os: ubuntu-latest
+            toolchain: '1.80'   # MSRV
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace --all-features
+      - run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: '-D rustdoc::missing_docs -D rustdoc::broken_intra_doc_links'
+
+  cargo-audit:
+    name: cargo audit
+    needs: detect-cargo
+    if: needs.detect-cargo.outputs.has_cargo == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit --deny warnings
+
+  cargo-deny:
+    name: cargo deny
+    needs: detect-cargo
+    if: needs.detect-cargo.outputs.has_cargo == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  coverage:
+    name: Coverage (Rust)
+    needs: detect-cargo
+    if: needs.detect-cargo.outputs.has_cargo == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-llvm-cov --locked
+      - run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      - uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          fail_ci_if_error: true
+
+  frontend:
+    name: Frontend (TypeScript)
+    needs: detect-cargo
+    if: needs.detect-cargo.outputs.has_npm == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npx prettier --check '**/*.{ts,tsx,js,jsx,json,md,yml,yaml}'
+      - run: npx eslint .
+      - run: npx tsc --noEmit
+      - run: npm run test

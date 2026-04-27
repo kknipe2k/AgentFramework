@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aria-runtime.dev/skill.v1.json",
+  "title": "Skill",
+  "description": "Canonical skill.md frontmatter schema per spec §0b. Skills are context-loaded instruction sets, NOT callables. They are loaded via the runtime-injected LoadSkill tool. The frontmatter is YAML in the file, but is parsed into the JSON shape validated here.",
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "version", "description", "capabilities"],
+
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Skill identifier. lowercase, hyphen or underscore separated."
+    },
+    "version": { "$ref": "common.v1.json#/$defs/SemVer" },
+    "description": { "type": "string", "minLength": 1, "maxLength": 500 },
+
+    "triggers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "semantic": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true,
+          "description": "Phrases or events that, when seen by the agent in its context, suggest loading this skill. Surfaced in the system prompt's 'Available skills' block."
+        },
+        "programmatic": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["event"],
+            "properties": {
+              "event": {
+                "type": "string",
+                "description": "AgentEvent.type to match, or '*'. See spec §2 for the canonical event union."
+              },
+              "agent": {
+                "type": "string",
+                "description": "Optional agent_id pattern to scope the trigger to a specific agent type. Defaults to '*'."
+              },
+              "when": {
+                "$ref": "common.v1.json#/$defs/JSONLogicExpression",
+                "description": "Optional JSONLogic predicate against the event payload."
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "mode_variants": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z][A-Za-z0-9+_-]*$": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "include_sections": {
+              "type": "array",
+              "items": { "type": "string" },
+              "uniqueItems": true,
+              "description": "Markdown section names from the skill body to include for this mode. Sections not listed are stripped before injection into agent context."
+            },
+            "description_override": { "type": "string" }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "description": "Per-mode behavior. Mode keys are author-defined per §3b."
+    },
+
+    "required_tools":  { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "required_skills": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+
+    "capabilities": { "$ref": "common.v1.json#/$defs/Capabilities" },
+    "provenance":   { "$ref": "common.v1.json#/$defs/Provenance" },
+
+    "tags": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+  },
+
+  "examples": [
+    {
+      "name": "planning",
+      "version": "1.0.0",
+      "description": "Create implementation plans with HITL approval gates.",
+      "triggers": {
+        "semantic": ["create a plan", "/plan"],
+        "programmatic": [
+          { "event": "session_start", "when": { "!=": [{ "var": "session.mode" }, "LITE"] } }
+        ]
+      },
+      "mode_variants": {
+        "LITE":     { "include_sections": ["quick"] },
+        "STANDARD": { "include_sections": ["full", "approval"] }
+      },
+      "required_tools": ["Read", "Write"],
+      "required_skills": [],
+      "capabilities": {
+        "tools_called":   ["Read", "Write"],
+        "skills_loaded":  [],
+        "file_access":    { "read": ["**/*"], "write": [".aria-runtime/state/current-plan.json"] },
+        "network":        [],
+        "shell":          false,
+        "spawn_agents":   []
+      }
+    }
+  ]
+}

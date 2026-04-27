@@ -1,0 +1,130 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag to release (e.g., v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+  id-token: write       # for OIDC-based signing in later versions
+
+jobs:
+  detect-cargo:
+    name: Detect Cargo workspace
+    runs-on: ubuntu-latest
+    outputs:
+      has_cargo: ${{ steps.check.outputs.has_cargo }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          if [ -f "Cargo.toml" ]; then
+            echo "has_cargo=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_cargo=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-windows:
+    name: Build Windows (signed .msi)
+    needs: detect-cargo
+    if: needs.detect-cargo.outputs.has_cargo == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build with Tauri
+        run: npx tauri build
+        env:
+          # Code-signing cert. Configure in repo Secrets:
+          #   TAURI_SIGNING_PRIVATE_KEY        — Tauri updater signing key
+          #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+          # For Windows code-signing (.msi):
+          #   WINDOWS_CERT_BASE64               — base64 of .pfx
+          #   WINDOWS_CERT_PASSWORD
+          # These get plumbed in via tauri.conf.json's signing config at v0.1.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          cargo install cargo-cyclonedx --locked
+          cargo cyclonedx --format json --output-path runtime-sbom.cdx.json
+          npm install -g @cyclonedx/cyclonedx-npm
+          cyclonedx-npm --output-format json --output-file frontend-sbom.cdx.json
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            *.cdx.json
+
+  github-release:
+    name: Create GitHub Release
+    needs: build-windows
+    if: needs.detect-cargo.outputs.has_cargo == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          if [ -z "$VERSION" ]; then VERSION="${{ github.event.inputs.tag }}"; VERSION="${VERSION#v}"; fi
+          # Pull the matching section from CHANGELOG.md (between [VERSION] and the next [...] header)
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.changelog.outputs.version }}
+          name: Agent Runtime v${{ steps.changelog.outputs.version }}
+          body_path: release-notes.md
+          files: |
+            dist/**/*.msi
+            dist/**/*.cdx.json
+          draft: false
+          prerelease: ${{ startsWith(steps.changelog.outputs.version, '0.') }}
+
+  pre-release-stub:
+    name: Release stub (pre-code)
+    needs: detect-cargo
+    if: needs.detect-cargo.outputs.has_cargo == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          echo "::warning::Release workflow ran but Cargo workspace not yet present."
+          echo "::warning::This workflow becomes active at M1 (Foundation) when crates/ lands."
+          echo "::warning::Tagging v0.0.x for pre-code milestones is fine; binary release waits for M11."

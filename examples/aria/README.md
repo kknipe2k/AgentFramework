@@ -1,0 +1,90 @@
+# `examples/aria/` — Reference Framework (ARIA Archetype)
+
+This directory is the **archetype proof artifact** for the agent runtime spec. It reconstructs every capability of the existing shell-based ARIA system using only runtime primitives. If a row of the §0a Capability Matrix cannot be expressed here, the runtime is missing a primitive (and v1 is not done).
+
+> **This is a worked example, not a built-in default.** The runtime ships with no default framework. Users copy or adapt this directory as a starting point.
+
+---
+
+## Capability Matrix → File Map
+
+| # | ARIA Capability | Where it lives in this example |
+|---|---|---|
+| 1 | LITE / STANDARD / FULL / FULL+ mode router | `framework.json` → `modes` + `sizing` |
+| 2 | Sizing matrix | `framework.json` → `sizing.fallback_rules` + `agents/router.md` |
+| 3 | `verify.sh` after every task | `framework.json` → `task_defaults.post_hooks` + `hook_defs.verify_*` |
+| 4 | Hard / soft rails | `framework.json` → `rails.hard`, `rails.soft` |
+| 5 | Plan → HITL approve → execute | `framework.json` → `plan_creation` + `agents/planner.md` |
+| 6 | Subagent isolation (analyzer / implementer / verify-app / simplifier) | `agents/{analyzer,implementer,verify-app,simplifier}.md` |
+| 7 | Decision trace | `framework.json` → `decision_trace: true` (runtime auto-projects from signals) |
+| 8 | Signal Schema v2 (8 types) | runtime built-in (every event auto-persists per `§2b`) |
+| 9 | Ralph autonomous loop | sibling `examples/ralph/` overrides `loop_policy: continuous` |
+| 10 | Model selection (budget + learning) | `framework.json` → `model` + `budget.downshift_hook` + `tools/select_cheaper_model.md` |
+| 11 | Offline RL (Thompson Sampling) | external Python process consuming exported signals (out of runtime scope per `§0`) |
+| 12 | Dashboard | runtime built-in (replaces `.aria/dashboard/`) |
+| 13 | Git ops (checkpoint / rollback / PR) | `tools/git_checkpoint.md`, `tools/git_rollback.md` |
+| 14 | HITL notifications | `framework.json` → `hitl_policy.notifiers` |
+| 15 | Slash commands | `framework.json` → `commands` |
+| 16 | Hooks (PreToolUse / PostToolUse / Stop) | `framework.json` → `hooks.*` + `task_defaults.post_hooks` |
+| 17 | Project-context "don't touch" zones | `framework.json` → `dont_touch` |
+| 18 | Failure escalation (3 failures → HITL) | `framework.json` → `task_defaults.max_failures` + `hitl_policy.on_failure_threshold` |
+| 19 | Skills as context-loaded markdown | `skills/*.md` (loaded via `LoadSkill`, not called) |
+| 20 | Mode-variant skill behavior | `skills/planning.md` → `mode_variants` frontmatter |
+
+---
+
+## Directory Layout
+
+```
+examples/aria/
+├── README.md                # This file — matrix → file index
+├── framework.json           # Main framework definition
+├── skills/                  # Instruction-set markdown (loaded via LoadSkill)
+│   ├── planning.md
+│   ├── executing.md
+│   ├── debugging.md
+│   ├── tdd.md
+│   └── discovery.md
+├── agents/                  # Composable LLM roles (spawned via SpawnAgent)
+│   ├── orchestrator.md      # Session root agent
+│   ├── router.md            # Sizing — proposes mode
+│   ├── planner.md           # Plan creation
+│   ├── analyzer.md          # Read-only code analysis
+│   ├── implementer.md       # Targeted file edits
+│   ├── verify-app.md        # E2E verification
+│   ├── simplifier.md        # Code cleanup pass
+│   └── report-writer.md     # End-of-session summary
+└── tools/                   # Generated tools (MCP-bindings or wrappers)
+    ├── git_checkpoint.md
+    ├── git_rollback.md
+    ├── aria_verify.md
+    └── select_cheaper_model.md
+```
+
+---
+
+## What this example does NOT include
+
+- **All 17 ARIA skills.** This example ships 5 representative skills (planning, executing, debugging, tdd, discovery). The remaining 12 (researcher, brainstorming, prototyping, slide-generation, deep-research, meta-reasoning, etc.) follow the same pattern and would be ported the same way. They are not necessary to prove the primitives.
+- **Built-in tool implementations.** `Read`, `Write`, `Bash`, etc. are runtime built-ins. We only ship `tool.md` files for *generated* or *wrapper* tools.
+- **The offline RL learner.** Stays as an external Python process per `§0` — it consumes exported signals from the runtime, not framework-level work.
+- **The dashboard.** Runtime built-in — `examples/aria/` does not need to ship one.
+
+---
+
+## How to use
+
+1. Open the runtime.
+2. Load this framework: File → Load Framework → `examples/aria/framework.json`.
+3. Runtime validates against schema (Phase 6) and Phase 8 §8.security capability checks.
+4. Start a session. Router will ask sizing questions; pick a mode.
+5. Watch the live graph render the orchestrator → planner → tasks → analyzer/implementer/verify-app pipeline.
+6. Compare behavior against `.aria/`'s shell pipeline. Should match for every matrix row.
+
+---
+
+## Provenance
+
+This framework is hand-authored from the existing `.aria/` codebase as the canonical reference. It is not generated by the Skill Writer (Phase 8). Every artifact in `tools/` and `skills/` carries `provenance: { generator: "hand-authored", ... }` per Phase 8 §8.security L5.
+
+Hand-authored artifacts default to **Operator-tier-only** loading per `§0b`, so this framework requires Operator tier to install. When ARIA is generated by users via the Skill Writer in their own frameworks, those generated copies carry full provenance and run under Promoted tier.

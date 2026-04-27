@@ -1,0 +1,33 @@
+# CODEOWNERS — auto-assigns reviewers per the Engineering Charter (§12).
+# Order matters: later patterns override earlier ones for the same path.
+# Two-maintainer approval required for all paths in v0.1; tightening to
+# security-track reviewers happens once the project has named ones.
+
+# Default owner — anything not matched below
+*                                       @kknipe2k
+
+# Spec is the contract; all spec changes need maintainer review
+/agent-runtime-spec.md                  @kknipe2k
+/docs/                                  @kknipe2k
+/docs/adr/                              @kknipe2k
+
+# Schemas are the source of truth — schema changes require ADR + extra eyes
+/schemas/                               @kknipe2k
+
+# Example frameworks demonstrate the spec works; reviewed for consistency
+/examples/                              @kknipe2k
+
+# OSS scaffolding — license, security, contributing — change carefully
+/LICENSE                                @kknipe2k
+/NOTICE                                 @kknipe2k
+/SECURITY.md                            @kknipe2k
+/CODE_OF_CONDUCT.md                     @kknipe2k
+/CONTRIBUTING.md                        @kknipe2k
+/.github/                               @kknipe2k
+
+# Once code lands (M1+), tighter ownership applies:
+# /crates/runtime-drone/                @kknipe2k @security-reviewer
+# /crates/runtime-sandbox/              @kknipe2k @security-reviewer
+# /crates/runtime-main/src/capability/  @kknipe2k @security-reviewer
+# /crates/runtime-main/src/providers/   @kknipe2k @security-reviewer
+# /src-tauri/tauri.conf.json            @kknipe2k @security-reviewer

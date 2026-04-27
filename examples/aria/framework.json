@@ -1,0 +1,244 @@
+{
+  "$schema": "https://schemas.aria-runtime.dev/framework/v1.json",
+  "name": "aria",
+  "version": "1.0.0",
+  "description": "Reference framework reconstructing ARIA's capabilities using runtime primitives only. Archetype proof for spec §0/§0a — every row of the Capability Matrix maps to a section of this file.",
+  "author": "ARIA project",
+
+  "model":           { "provider": "anthropic", "id": "claude-sonnet-4-6" },
+  "fallback_models": [{ "provider": "anthropic", "id": "claude-haiku-4-5" }],
+
+  "modes": {
+    "values":  ["LITE", "STANDARD", "FULL", "FULL+"],
+    "default": "STANDARD",
+    "per_mode_overrides": {
+      "LITE": {
+        "task_defaults.post_hooks":         [{ "$ref": "#/hook_defs/verify_quick" }],
+        "plan_creation.approval_required":   false,
+        "plan_creation.loop_policy":         { "kind": "one_shot" },
+        "hitl_policy.on_plan_approval.enabled": false,
+        "hitl_policy.on_risky_tool.enabled":    true
+      },
+      "STANDARD": {
+        "task_defaults.post_hooks":         [{ "$ref": "#/hook_defs/verify_standard" }],
+        "plan_creation.approval_required":   true,
+        "plan_creation.loop_policy":         { "kind": "fresh_context_per_task" }
+      },
+      "FULL": {
+        "task_defaults.post_hooks":         [{ "$ref": "#/hook_defs/verify_standard" }],
+        "task_defaults.max_failures":       3,
+        "plan_creation.approval_required":   true,
+        "plan_creation.loop_policy":         { "kind": "fresh_context_per_task" },
+        "hitl_policy.on_capability_violation.enabled": true,
+        "design_notes_required":             true
+      },
+      "FULL+": {
+        "task_defaults.post_hooks":         [{ "$ref": "#/hook_defs/verify_full" }],
+        "task_defaults.max_failures":       5,
+        "plan_creation.approval_required":   true,
+        "plan_creation.loop_policy":         { "kind": "fresh_context_per_task" },
+        "hitl_policy.per_epic.enabled":     true,
+        "design_doc_required":              true
+      }
+    }
+  },
+
+  "sizing": {
+    "mode":  "agent",
+    "agent": "router",
+    "auto_confirm": false,
+    "fallback_rules": [
+      { "if": { "tasks_estimated": { "<=": 5 },  "loc_estimated": { "<": 2000 } },     "then": "LITE" },
+      { "if": { "auth_or_payments": true },                                              "then": "FULL" },
+      { "if": { "tasks_estimated": { ">":  40 } },                                       "then": "FULL+" },
+      { "default": "STANDARD" }
+    ]
+  },
+
+  "plan_creation": {
+    "agent": "planner",
+    "approval_required": true,
+    "loop_policy":       { "kind": "fresh_context_per_task" }
+  },
+
+  "task_defaults": {
+    "max_failures": 3,
+    "post_hooks":   [{ "$ref": "#/hook_defs/verify_standard" }]
+  },
+
+  "hook_defs": {
+    "verify_quick": {
+      "id": "verify_quick", "category": "verify", "level": "quick",
+      "ref": { "type": "shell", "command": "bash .aria/verify.sh quick", "timeout_ms": 60000 },
+      "on_failure": "warn"
+    },
+    "verify_standard": {
+      "id": "verify_standard", "category": "verify", "level": "standard",
+      "ref": { "type": "shell", "command": "bash .aria/verify.sh", "timeout_ms": 300000 },
+      "on_failure": "rollback"
+    },
+    "verify_full": {
+      "id": "verify_full", "category": "verify", "level": "full",
+      "ref": { "type": "shell", "command": "bash .aria/verify.sh full", "timeout_ms": 900000 },
+      "on_failure": "rollback"
+    }
+  },
+
+  "hooks": {
+    "post_file_edit": [
+      { "id": "lint_changed", "category": "lint",
+        "ref": { "type": "shell", "command": "scripts/lint-changed.sh" },
+        "on_failure": "warn" }
+    ],
+    "pre_commit": [
+      { "id": "secret_scan", "category": "verify",
+        "ref": { "type": "shell", "command": "scripts/check-secrets.sh" },
+        "on_failure": "block" }
+    ],
+    "session_end": [
+      { "id": "summary_report", "category": "custom",
+        "ref": { "type": "agent", "agent_id": "report-writer" },
+        "on_failure": "warn" }
+    ]
+  },
+
+  "rails": {
+    "hard": [
+      { "id": "no_secrets",
+        "fires_on": ["pre_commit", "post_file_edit"],
+        "check":    { "type": "shell", "command": "scripts/check-secrets.sh" },
+        "message":  "Secrets detected in changes — commit blocked." },
+      { "id": "no_env_files",
+        "fires_on": ["pre_commit"],
+        "check":    { "type": "shell", "command": "scripts/no-env-files.sh" },
+        "message":  "Cannot commit .env files. Add to .gitignore." }
+    ],
+    "soft": [
+      { "id": "no_debug",
+        "fires_on": ["post_file_edit"],
+        "check":    { "type": "shell", "command": "scripts/scan-debug.sh" },
+        "message":  "Debug statements found; consider removing before commit." }
+    ]
+  },
+
+  "dont_touch": [
+    ".aria/state/**",
+    ".aria/learned/**",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "Cargo.lock",
+    ".env*",
+    ".git/**"
+  ],
+
+  "hitl_policy": {
+    "on_gap":                  { "enabled": true,  "ui": "panel" },
+    "on_risky_tool":           { "enabled": true,  "tools": ["Bash:rm -rf", "Bash:git push --force", "Bash:git reset --hard", "WebFetch:*"], "ui": "modal" },
+    "on_dont_touch_edit":      { "enabled": true,  "ui": "modal" },
+    "on_failure_threshold":    { "enabled": true,  "threshold": 3, "ui": "panel" },
+    "on_capability_violation": { "enabled": true,  "ui": "modal" },
+    "on_budget_threshold":     { "enabled": true,  "percent": 90, "ui": "modal" },
+    "on_plan_approval":        { "enabled": true,  "ui": "panel" },
+    "per_task":                { "enabled": false },
+    "per_epic":                { "enabled": false },
+
+    "notifiers": [
+      { "type": "terminal_bell", "enabled": true },
+      { "type": "desktop",       "enabled": true },
+      { "type": "sound",         "enabled": false }
+    ],
+
+    "timeout_seconds":           3600,
+    "default_action_on_timeout": "abort"
+  },
+
+  "budget": {
+    "session_usd_cap":   5.00,
+    "framework_usd_cap": 100.00,
+    "actions": {
+      "warn_at_percent":      50,
+      "downshift_at_percent": 75,
+      "hitl_at_percent":      90,
+      "hard_stop_at_percent": 100
+    },
+    "downshift_hook": { "type": "tool", "tool_name": "select_cheaper_model" }
+  },
+
+  "tools": [
+    { "name": "Read",           "source": "builtin" },
+    { "name": "Write",          "source": "builtin" },
+    { "name": "Edit",           "source": "builtin" },
+    { "name": "Bash",           "source": "builtin" },
+    { "name": "Glob",           "source": "builtin" },
+    { "name": "Grep",           "source": "builtin" },
+    { "name": "WebFetch",       "source": "builtin" },
+    { "name": "LoadSkill",      "source": "builtin" },
+    { "name": "SpawnAgent",     "source": "builtin" },
+    { "name": "request_capability", "source": "builtin" },
+    { "name": "git_checkpoint", "source": "generated", "path": "tools/git_checkpoint.md" },
+    { "name": "git_rollback",   "source": "generated", "path": "tools/git_rollback.md" },
+    { "name": "aria_verify",    "source": "generated", "path": "tools/aria_verify.md" }
+  ],
+
+  "skills": [
+    { "name": "planning",     "path": "skills/planning.md" },
+    { "name": "executing",    "path": "skills/executing.md" },
+    { "name": "debugging",    "path": "skills/debugging.md" },
+    { "name": "tdd",          "path": "skills/tdd.md" },
+    { "name": "discovery",    "path": "skills/discovery.md" }
+  ],
+
+  "agents": [
+    { "id": "orchestrator", "path": "agents/orchestrator.md" },
+    { "id": "router",       "path": "agents/router.md" },
+    { "id": "planner",      "path": "agents/planner.md" },
+    { "id": "analyzer",     "path": "agents/analyzer.md" },
+    { "id": "implementer",  "path": "agents/implementer.md" },
+    { "id": "verify-app",   "path": "agents/verify-app.md" },
+    { "id": "simplifier",   "path": "agents/simplifier.md" },
+    { "id": "report-writer","path": "agents/report-writer.md" }
+  ],
+
+  "session_root_agent": "orchestrator",
+
+  "commands": [
+    { "name": "/aria-start",   "description": "Initialize a new ARIA session — invokes router for sizing", "agent": "router" },
+    { "name": "/aria-status",  "description": "Show session progress and current plan",                    "tool": "show_status" },
+    { "name": "/aria-verify",  "description": "Run verification pipeline at the chosen level",             "tool": "aria_verify" },
+    { "name": "/plan",         "description": "Create or revise the current plan",                          "agent": "planner" }
+  ],
+
+  "session": {
+    "snapshot_interval_seconds": 30,
+    "idle_timeout_seconds":      300,
+    "stall_timeout_seconds":      60
+  },
+
+  "decision_trace": true,
+
+  "examples_archetype_proof": {
+    "matrix_rows_unlocked_here": {
+      "1_mode_router":               "modes + sizing",
+      "2_sizing_matrix":             "sizing.fallback_rules + router agent",
+      "3_verify_after_every_task":   "task_defaults.post_hooks + hook_defs.verify_*",
+      "4_hard_soft_rails":           "rails.hard + rails.soft",
+      "5_plan_approve_execute":      "plan_creation + task_defaults + agents.planner",
+      "6_subagent_isolation":        "agents.{analyzer,implementer,verify-app,simplifier}",
+      "7_decision_trace":            "decision_trace: true",
+      "8_signal_schema":             "(runtime built-in; signals always emitted)",
+      "9_ralph_loop":                "(see examples/ralph/framework.json — overrides loop_policy)",
+      "10_model_selection_budget":   "model + budget.downshift_hook + select_cheaper_model tool",
+      "11_offline_RL":               "(external Python process consuming exported signals)",
+      "12_dashboard":                "(runtime built-in; replaces .aria/dashboard)",
+      "13_git_ops":                  "tools.git_checkpoint + tools.git_rollback",
+      "14_HITL_notifications":       "hitl_policy.notifiers",
+      "15_slash_commands":           "commands",
+      "16_hooks":                    "hooks.{post_file_edit,pre_commit,session_end} + task_defaults.post_hooks",
+      "17_dont_touch_zones":         "dont_touch",
+      "18_failure_escalation":       "task_defaults.max_failures + hitl_policy.on_failure_threshold",
+      "19_skills_as_instructions":   "skills (loaded via LoadSkill, not called)",
+      "20_mode_variant_skills":      "(skill mode_variants in canonical skill.md frontmatter — see skills/planning.md)"
+    }
+  }
+}

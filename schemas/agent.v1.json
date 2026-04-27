@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aria-runtime.dev/agent.v1.json",
+  "title": "Agent",
+  "description": "Canonical agent.md frontmatter or framework.json agents[] entry per spec §0b. Agents are composable LLM roles: system prompt + allowed tools + allowed skills + model. Spawned via SpawnAgent. Capability narrowing enforced (child cannot exceed parent's allowed_* sets).",
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "role", "model", "allowed_tools", "allowed_skills", "spawns", "capabilities"],
+
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "role":  { "type": "string", "minLength": 1, "maxLength": 200 },
+    "model": { "$ref": "common.v1.json#/$defs/ModelRef" },
+
+    "system_prompt_template": {
+      "type": "string",
+      "description": "Optional. If absent, runtime uses agent.md body as the prompt template. Template variables: ${session.mode}, ${task.title}, etc."
+    },
+
+    "allowed_tools":  { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "allowed_skills": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "spawns":         { "type": "array", "items": { "type": "string" }, "uniqueItems": true,
+                        "description": "Agent IDs this agent may spawn. Must be a subset of capabilities.spawn_agents." },
+
+    "spawn_constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_concurrent": { "type": "integer", "minimum": 1, "maximum": 32, "default": 1 },
+        "timeout_ms":     { "type": "integer", "minimum": 0, "default": 0,
+                            "description": "0 = session lifetime (e.g., orchestrator)." }
+      }
+    },
+
+    "capabilities": { "$ref": "common.v1.json#/$defs/Capabilities" },
+    "provenance":   { "$ref": "common.v1.json#/$defs/Provenance" }
+  },
+
+  "examples": [
+    {
+      "id": "analyzer",
+      "role": "Read-only code analysis",
+      "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+      "allowed_tools":  ["Read", "Glob", "Grep", "LoadSkill"],
+      "allowed_skills": ["discovery"],
+      "spawns": [],
+      "capabilities": {
+        "tools_called":  ["Read", "Glob", "Grep", "LoadSkill"],
+        "skills_loaded": ["discovery"],
+        "file_access":   { "read": ["**/*"], "write": [] },
+        "network":       [],
+        "shell":         false,
+        "spawn_agents":  []
+      },
+      "spawn_constraints": { "max_concurrent": 4, "timeout_ms": 180000 }
+    }
+  ]
+}
