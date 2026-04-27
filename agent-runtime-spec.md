@@ -2602,6 +2602,127 @@ This is the safety net for transient subsystem failures. Hard crashes are handle
 
 -----
 
+## §12 Engineering Charter
+
+> **Locked (2026-04-18, OSS quality gate).** Process > language. These are the contracts that keep junk code out of the runtime regardless of contributor skill level.
+
+### Test Rigor
+
+| Layer | Tool | Threshold |
+|---|---|---|
+| Unit (Rust) | `cargo test` | ≥80% line coverage; **100% on safety primitives** (drone, capability enforcer, plan state machine, snapshot/recovery) |
+| Property (Rust) | `proptest` | All public state machines have property tests for invariants; all serde types have round-trip property tests |
+| Fuzz (Rust) | `cargo-fuzz` | Framework JSON parser, capability declaration parser, signal codec, IPC frame codec — all have fuzz harnesses; CI runs short fuzz on every PR, long fuzz nightly |
+| Unit (TS) | Vitest | ≥80% line coverage on renderer logic |
+| E2E | Playwright | Smoke test for every Phase deliverable: load framework → start session → trigger gap → resume → end session passes against built app |
+| Integration | `cargo test --features integration` | Real SQLite, real socket IPC, mocked Anthropic API via wiremock; covers drone↔main and main↔sandbox boundaries |
+
+Coverage is enforced by `cargo-llvm-cov` (Rust) and `vitest --coverage` (TS) in CI. PRs that drop coverage below threshold fail the gate.
+
+### Type Strictness
+
+| Concern | Rule |
+|---|---|
+| Rust warnings | `#![deny(warnings)]` at workspace root in CI builds |
+| Clippy | `#![warn(clippy::pedantic, clippy::nursery)]`; CI runs `cargo clippy --workspace --all-targets -- -D warnings` |
+| Unsafe | `#![forbid(unsafe_code)]` everywhere except `runtime-sandbox` (where seccomp/landlock require it); each `unsafe` block requires a `// SAFETY:` comment explaining invariants |
+| TS strict | `"strict": true` in `tsconfig.json` — no `any` (use `unknown`); no implicit any; no untyped catch |
+| TS escape hatches | `// @ts-ignore` and `// @ts-expect-error` require an issue link explaining why |
+
+### Lint & Format
+
+- `cargo fmt --all -- --check` blocks PRs.
+- `cargo clippy --workspace -- -D warnings` blocks PRs.
+- `prettier --check` and `eslint .` block PRs.
+- `cargo deny check` blocks PRs (license + vuln + duplicate-version policy).
+- Pre-commit hook (`lefthook` or `pre-commit`) runs all of the above locally; CI mirror prevents `--no-verify` bypass.
+
+### Code Review
+
+- **Branch protection** on `main`: required statuses (CI green), required reviewers (2 maintainers for core; CODEOWNERS for `crates/runtime-drone`, `runtime-sandbox`, `capability/`, `§8.security` paths), no force push, no direct push.
+- **CODEOWNERS** mandates security-track reviewers on `runtime-sandbox/`, `capability/`, and `crates/runtime-main/src/providers/` (LLM client surface).
+- **Squash-merge only.** Linear history; revert via revert PR, never via force push.
+- **PRs must link to an issue or ADR** for any change touching a §0a matrix-row primitive.
+
+### Dependency Hygiene
+
+- `cargo audit` and `npm audit` run in CI; high/critical findings block release.
+- `renovate` opens upgrade PRs weekly with grouped semver-minor.
+- `cargo deny` policy in repo: deny GPL/AGPL deps (Apache-2.0 incompatibility); deny duplicate major versions; deny unmaintained crates per RustSec advisories.
+- All Cargo + npm deps pin at minimum to `~major.minor` in manifests; `Cargo.lock` and `package-lock.json` committed.
+- **SBOM (CycloneDX) generated per release** via `cargo-cyclonedx` + `cyclonedx-bom` (npm). Attached to release artifacts.
+
+### Documentation
+
+- **Public API** (`pub` items in Rust, exported types in TS) requires doc comments. CI runs `cargo doc --workspace --no-deps -- -D rustdoc::missing_docs` and `typedoc` in strict mode.
+- **Doc tests must compile.** `cargo test --doc` runs in CI; broken examples fail the gate. Same for runnable Markdown blocks in `examples/` validated by a small custom checker.
+- Every `pub` API has at least one example in its doc comment.
+- **ADRs** in `docs/adr/`: every primitive change (anything affecting §0a matrix rows) requires an ADR using the template; PR description links to the ADR.
+
+### Versioning & Release
+
+- **SemVer** strict. Breaking changes to the framework JSON schema, AgentEvent union, or any `pub` Rust API require a major bump.
+- **`schemas/` directory is the source of truth** for framework JSON / skill / tool / agent shapes. Versioned as `framework.v1.json`, `framework.v2.json`, etc. Rust types and TS types both generated from these schemas via `typify` (Rust) and `json-schema-to-typescript` (TS) — no hand-written drift.
+- **Conventional Commits** enforced via `commitlint`; `release-please` automates changelog + tag + GitHub Release.
+- **Releases are signed** (Sigstore) and reproducible (Tauri supports this; build via documented `cargo tauri build` invocation in CI). SLSA Level 3 provenance attached.
+- **LTS policy:** the most recent two minor releases on the current major receive security patches.
+
+### Security Disclosure
+
+- `SECURITY.md` at repo root documents the disclosure flow: encrypted email + 90-day embargo before public disclosure unless actively exploited.
+- `docs/SECURITY.md` carries the threat model — currently §8 §8.security threat model is the seed; expanded over time to cover runtime-binary attacks (Phase 1+ once code lands), supply-chain (Phase 2), and provider-side attacks (e.g., malicious tool result that injects a follow-up prompt).
+- CVE numbers requested via GitHub Security Advisories.
+- Disclosed CVEs reflected in the release changelog under a "Security" header with severity (CVSS v3.1) and remediation version.
+
+### License & Contributor Agreement
+
+- **Apache 2.0.** Patent grant matters for AI tooling. Compatible with most downstream uses; not infectious like AGPL.
+- **DCO sign-off** instead of CLA. Contributors append `Signed-off-by: Name <email>` to commits; lower friction than CLA + adequate IP hygiene.
+- `LICENSE` at repo root contains Apache 2.0 verbatim. `NOTICE` file lists third-party Apache-licensed deps' attributions.
+
+### Contributor Experience
+
+- `CONTRIBUTING.md` covers: clone → setup → first build → first test → first PR.
+- `.devcontainer/` config so contributors can `code .` and have all toolchains (Rust, Node, Tauri deps) ready in a container.
+- Issue templates: bug, feature, security (private channel link), proposal (pre-ADR).
+- PR template asks: linked issue/ADR? tests added? coverage delta? breaking change?
+- Maintainer onboarding doc covers: how to triage, how to release, how to handle CVE, how to update CODEOWNERS.
+
+### Architecture Decision Records (ADRs)
+
+ADRs are durable rationale; tribal knowledge dies with maintainers. Required for:
+
+- Adding/changing/removing any §0a matrix-row primitive
+- Changing the framework JSON schema (any version)
+- Adding a new `LLMProvider` impl
+- Changing capability enforcement behavior (any L1–L5 layer)
+- Changing the IPC protocol between main, drone, or sandbox
+- Adopting a new core dependency (anything that becomes a runtime dependency, not dev-only)
+
+Template at `docs/adr/0000-template.md`. ADRs are immutable once merged; superseded ADRs link to their successor.
+
+### CI Matrix
+
+| OS | Rust | Node | Tauri |
+|---|---|---|---|
+| ubuntu-latest | stable, 1.80, MSRV | 20 | latest stable |
+| macos-latest | stable | 20 | latest stable |
+| windows-latest | stable | 20 | latest stable |
+
+Each cell runs: fmt-check, clippy, test, doc-test, build, e2e (smoke). Nightly cell adds: extended fuzz, cargo-audit, renovate refresh, dependency review.
+
+### Observability of Quality
+
+`docs/QUALITY.md` is auto-generated weekly by a CI job that reads:
+- Latest coverage report (per crate)
+- Open security advisories
+- Test count, fuzz hours, CVE-fix-time SLO compliance
+- Release cadence and changelog churn
+
+Public read of project health. Quality regressions visible to anyone evaluating adoption.
+
+-----
+
 ## What This Is Not
 
 - Not a chatbot interface
