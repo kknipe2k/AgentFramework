@@ -137,12 +137,31 @@ mode_variants:
   FULL+:    { include_sections: ["full", "risks", "design_doc"] }
 required_tools: ["Read", "Write"]
 required_skills: []
+
+# Security & lineage (see Phase 8 / WI-06)
+capabilities:
+  tools_called:    ["Read", "Write"]
+  skills_loaded:   []
+  file_access:     { read: [".aria/state/**"], write: [".aria/state/current-plan.json"] }
+  network:         []
+  shell:           false
+  spawn_agents:    []
+provenance:        # only present for generated skills; absent for hand-authored
+  generator:       "skill_writer"
+  model:           "claude-opus-4-7"
+  prompt_hash:     "sha256:..."
+  generated_at:    "2026-04-18T14:23:00Z"
+  validated_at:    "2026-04-18T14:23:42Z"
+  content_hash:    "sha256:..."
+  signature:       "ed25519:..."
 ---
 
 # Planning Skill
 
 (free-form body — markdown sections, optionally tagged for mode_variants.include_sections)
 ```
+
+The `capabilities` block is mandatory for generated skills (Phase 8 validator rejects artifacts missing it). For hand-authored skills it is strongly recommended; if absent, the runtime treats the skill as Operator-tier-only (cannot be loaded under Novice/Promoted enforcement).
 
 **LoadSkill runtime tool** (auto-injected into every agent's tool list):
 
@@ -227,7 +246,7 @@ Phase 2's `AgentEvent` union is updated:
 | Phase 4 | Gap flow distinguishes tool-missing (suspend, builder needed) from skill-missing (warn + suggest install — usually less severe). Detail in WI-05. |
 | Phase 5 | MCP exposes Tools only. MCP cannot publish Skills or Agents. |
 | Phase 7 | Registry search filterable by `type: tool | skill | agent`. |
-| Phase 8 | Splits into 8a Tool Writer, 8b Skill Writer, 8c Agent Composer. Detail in WI-06. |
+| Phase 8 | Splits into 8a Tool Writer, 8b Skill Writer, 8c Agent Composer. All three share the §8.security 5-layer model (L1 Capability Disclosure, L2 Capability Enforcement, L3 Sandboxed Validation, L4 Tiered Human Gate, L5 Provenance & Audit). |
 | Phase 9 | Builder canvas palette has three sections: Tools / Skills / Agents. |
 
 -----
@@ -420,6 +439,13 @@ type AgentEvent =
   | { type: 'agent_missing'; agent_id: string; referenced_by: string } // schema error at load
   | { type: 'gap_resolved'; capability_name: string; capability_kind: 'tool' | 'skill' | 'agent' }
   | { type: 'capability_requested'; agent_id: string; capability_name: string; capability_kind: 'tool' | 'skill'; reason: string } // request_capability call
+
+  // Capability enforcement (see Phase 8 §8.security L2 / WI-06)
+  | { type: 'capability_violation'; artifact_kind: 'tool' | 'skill' | 'agent'; artifact_name: string; attempted: string; declared: string[]; agent_id: string }
+  | { type: 'capability_grant'; artifact_name: string; granted_capability: string; scope: 'once' | 'session' | 'forever' } // user explicitly allowed a violation
+  | { type: 'tier_changed'; from: 'novice' | 'promoted' | 'operator'; to: 'novice' | 'promoted' | 'operator' }
+  | { type: 'artifact_installed'; kind: 'tool' | 'skill' | 'agent'; name: string; version: string; tier: string; gate: 'manual' | 'auto_accepted'; provenance_id: string }
+  | { type: 'artifact_validation'; kind: 'tool' | 'skill' | 'agent'; name: string; passed: boolean; report_id: string }
 
   // HITL, plan, hooks (see WI-02, WI-03, WI-16)
   | { type: 'hitl_requested'; agent_id: string; question: string; options: string[] | null }
@@ -794,63 +820,215 @@ const REGISTRIES = [
 ]
 ```
 
-### Phase 8: Skill Writer
+### Phase 8: Generators (Tool Writer / Skill Writer / Agent Composer)
 
-When nothing exists in registries the builder writes it.
+When nothing exists in registries, the builder generates it. Per §0b, three distinct generators correspond to the three concepts.
 
-**Collaborative Mode**
+> **Output scope (locked, see §0b and WI-06):** generators emit declarative artifacts only — never executable code. Tool Writer outputs MCP-binding configurations. Skill Writer outputs instruction-set markdown. Agent Composer outputs framework JSON entries composing existing tools + skills.
 
+#### §8.security Five-Layer Security Model
+
+All generators share one security model. Every layer applies to every artifact, regardless of generator type or user tier.
+
+| Layer | Purpose | Enforcement | Pattern source |
+|---|---|---|---|
+| **L1: Capability Disclosure** | User sees declared capabilities at install in plain English | Mandatory in artifact frontmatter; validator rejects artifacts missing it | Browser permissions, Deno `--allow-*`, Chrome extension manifest |
+| **L2: Capability Enforcement** | Artifact cannot exceed declared capabilities at runtime | Runtime intercepts every tool call / skill load / file access from the artifact and checks against its declared `capabilities` block | Deno permission model, WASM sandbox, capability-based security |
+| **L3: Sandboxed Validation** | Artifact is exercised against mock inputs before install | Dedicated sandbox process spawned by drone; validator runs declared examples + adversarial inputs; result attached to artifact metadata | npm prepublish, Vercel preview deploys |
+| **L4: Tiered Human Gate** | Default-safe install path with promotion | Three install tiers (Novice / Promoted / Operator); see below | Dependabot auto-merge, browser permission "remember this decision" |
+| **L5: Provenance & Audit** | Immutable record of generation lineage and install decisions | Every artifact carries `provenance` block; every install/reject/uninstall logged to `skills.audit.jsonl` | npm provenance, Sigstore, SLSA |
+
+##### L1: Capability Disclosure (mandatory frontmatter block)
+
+Every generated `tool.md`, `skill.md`, and agent JSON entry must include a `capabilities` block. The validator rejects artifacts missing it.
+
+```yaml
+capabilities:
+  tools_called:    ["WebFetch", "Read"]              # other tools this artifact will invoke
+  skills_loaded:   ["debugging"]                     # other skills this artifact will load
+  file_access:     { read: ["src/**"], write: [] }   # glob patterns
+  network:         ["api.example.com"]               # allowed hosts; "*" requires Operator tier
+  shell:           false                              # true requires Operator tier
+  spawn_agents:    []                                 # which child agents this can spawn
 ```
-User describes what they need in natural language
-Platform asks clarifying questions (HITL)
-SDK generates skill.md iteratively
-User reviews each iteration
-Approved → runs through validator → added to skill library
+
+Builder UI translates this to plain English at install time:
+
+> *This skill will: read files matching `src/**`; call the `WebFetch` tool against `api.example.com`; load the `debugging` skill. It will NOT: write files, run shell commands, or access the network beyond `api.example.com`.*
+
+##### L2: Capability Enforcement (runtime interception)
+
+The runtime maintains a per-artifact capability set loaded from L1. Every operation initiated by the artifact passes through a capability check:
+
+- Tool call → check `tools_called` includes the target.
+- Skill load → check `skills_loaded` includes the target.
+- File read/write → check glob patterns in `file_access`.
+- Network access (via WebFetch / generated tool that calls out) → check host in `network`.
+- Shell access (via Bash) → check `shell == true`.
+- Agent spawn → check `spawn_agents` includes the target.
+
+Capability violation:
+- Emits `capability_violation` event with `{ artifact, attempted, declared }`
+- Blocks the operation
+- Surfaces a HITL prompt: "Skill `<name>` attempted `<operation>` not in its declared capabilities. Allow once / Block / Open Builder to update."
+- VDR records the attempt regardless of user choice.
+
+> **Implication:** L2 is the layer that makes "auto-accept tested" safe. Without L2, "tested" only means the sandbox didn't catch anything; with L2, the artifact literally cannot exceed what it declared, no matter what the model wrote.
+
+##### L3: Sandboxed Validation (always-on)
+
+Drone spawns a dedicated sandbox process for validation. Validator runs:
+
+1. **Schema check** — frontmatter parses, required fields present, capability block present.
+2. **Declared-examples run** — every example in the artifact is exercised. Outputs must match `output_schema`.
+3. **Capability-bound execution** — same L2 check applied to the sandbox. If the artifact attempts anything outside its declared capabilities during validation, validation fails (artifact is lying about what it does).
+4. **Adversarial inputs (skills/tools)** — empty input, oversize input, inputs with prompt-injection patterns. Outputs logged but not blocking unless they cause crashes.
+5. **Static red flags** — known-bad patterns in skill body or tool config (literal API keys, shell-out instructions, `eval`-style patterns). Hard block.
+
+Validator output is attached to the artifact as `validation_report` and surfaced in the Builder UI.
+
+##### L4: Tiered Human Gate
+
+Three tiers. User starts at Novice; promotion requires explicit opt-in with warning.
+
+| Tier | Default for | Install gate | Auto-accept criteria |
+|---|---|---|---|
+| **Novice** | New users; first 5 installs | Manual review of capabilities + diff + validation report; explicit "Install" click | None — every install is reviewed |
+| **Promoted** | Users who toggled "auto-accept tested artifacts" in settings (with one-time warning explaining risks) | Auto-install if **all** of: validation passed; capabilities don't include `shell:true` or `network:["*"]`; not from an untrusted registry | Generated and validated artifact within Promoted-allowed capability bounds |
+| **Operator** | Power users who explicitly enabled (with stronger warning) | Auto-install permitted for any capability set; only L2 enforcement and L3 validation gate | Anything that passes L3 |
+
+Promotion is sticky but reversible. Tier changes are audit-logged (L5).
+
+**Forbidden in all tiers:**
+- Auto-install of an artifact that fails L3 validation.
+- Auto-install of an artifact whose declared capabilities exceed what the validator could verify.
+- Bypassing L2 enforcement at runtime.
+
+##### L5: Provenance & Audit
+
+Every generated artifact carries a `provenance` block in frontmatter:
+
+```yaml
+provenance:
+  generator: "skill_writer"                          # tool_writer | skill_writer | agent_composer
+  model: "claude-opus-4-7"
+  prompt_hash: "sha256:abc123..."                    # hash of generation prompt; full prompt in audit log
+  generated_at: "2026-04-18T14:23:00Z"
+  validated_at: "2026-04-18T14:23:42Z"
+  validation_report_id: "vr-789xyz"
+  content_hash: "sha256:def456..."                   # hash of post-validation artifact
+  signature: "ed25519:..."                            # runtime-signed; key per-installation
 ```
 
-**Autonomous Mode**
+Every install / reject / uninstall / capability-violation / tier-change is appended to `.aria-runtime/skills.audit.jsonl`:
 
-```
-User provides: intent + any examples or constraints
-SDK generates complete skill.md without back-and-forth
-Validator runs immediately
-Result presented for user approval before install
-User can request revisions or approve as-is
+```json
+{
+  "id": "audit-1714512345",
+  "timestamp": "2026-04-18T14:23:50Z",
+  "event": "install",
+  "artifact_kind": "skill",
+  "artifact_name": "pdf_summarizer",
+  "artifact_version": "1.0.0",
+  "content_hash": "sha256:def456...",
+  "tier_at_install": "promoted",
+  "tier_gate": "auto_accept_tested",
+  "validation_report_id": "vr-789xyz",
+  "user_decision": "auto_accepted",
+  "provenance": { ... }
+}
 ```
 
-### skill.md Standard Format
+Audit log is append-only, hash-chained (each entry includes the hash of the previous entry). Redaction rule: prompts and tool inputs containing detected secrets are replaced with `[REDACTED:<reason>]` before logging; original kept in encrypted local-only store accessible from Builder.
+
+#### Threat Model
+
+What v1 defends against:
+
+- **(a) Malicious model output** — prompt injection or model hallucination producing a trojan skill. Defenses: L2 (declared capabilities are enforced), L3 (validator catches red flags), L4 Novice tier (mandatory review). A trojan skill can declare capabilities matching its trojan behavior, but a Novice user reviewing the capability block will see, in plain English, what it will do. Auto-accept tiers refuse network:* and shell:true.
+- **(b) Compromised registry** — upstream serves a poisoned skill. Defenses: hash-locked installs (WI-12), L3 sandbox runs every install regardless of source, L5 provenance flags non-runtime-signed artifacts.
+- **(c) User error** — user installs a known-bad skill. Defenses: Novice tier review + capability disclosure forces user to read what they're installing; Promoted tier blocks dangerous capability sets; deny-list of known-bad patterns hard-blocks regardless of tier.
+
+What v1 does NOT defend against (out of scope):
+
+- Operator tier user knowingly installing a known-bad artifact.
+- Skills attempting prompt injection on the next agent (mitigation: skill bodies are loaded as user-content blocks, not system prompts; hardening is Phase 4 / runtime-wide concern, not generator concern).
+- Attacks on the runtime binary itself (signed releases, OS-level concern).
+
+#### Generator-specific surface
+
+##### §8a Tool Writer
+
+Outputs `tool.md` declaring an MCP-binding, never executable code.
 
 ```markdown
 ---
-name: skill_name
+name: read_pdf
 version: 1.0.0
-description: What this skill does
-author: source or generated
-input_schema:
-  type: object
-  properties:
-    param_name:
-      type: string
-      description: what this param does
-  required: [param_name]
-output_schema:
-  type: object
-tags: [tag1, tag2]
-tested: true
+description: Extract text from PDF files
+provenance: { ... }
+mcp_binding:
+  server: "pdf-mcp@1.0"
+  tool: "extract_text"
+  argument_mapping:
+    file_path: "$.input.path"
+input_schema: { ... }
+output_schema: { ... }
+capabilities:
+  tools_called: []
+  skills_loaded: []
+  file_access: { read: ["**/*.pdf"], write: [] }
+  network: []
+  shell: false
 ---
 
 ## Description
-Full description of what this skill does.
-
-## Implementation
-How the skill accomplishes its goal.
-
+...
 ## Examples
-Input/output examples.
-
-## Error Handling
-Known failure modes and how they are handled.
+...
 ```
+
+Validator additionally checks: MCP server is reachable, declared tool exists on server, argument mapping is valid against MCP tool schema.
+
+##### §8b Skill Writer
+
+Outputs canonical `skill.md` per §0b. Never executable code; the body is markdown instructional context loaded into agent prompts via `LoadSkill`.
+
+Modes:
+- **Collaborative** — iterative HITL: user describes need, model proposes, user reviews each iteration, approved version validated and installed per L4 tier.
+- **Autonomous** — single-shot: user provides intent + constraints; model generates; validator runs; per L4 tier either auto-installs (Promoted/Operator within bounds) or queues for review (Novice).
+
+Skill writer cannot emit a skill that declares `tools_called` or `skills_loaded` for items not in the local library or registry — references must resolve at generation time. Else: validation fails.
+
+##### §8c Agent Composer
+
+Outputs framework JSON entries composing existing tools + skills + child agents. No new code, only composition.
+
+Composer enforces capability *narrowing*: a child agent's declared capabilities cannot exceed the parent's. Parent that lacks `network` cannot spawn a child that has `network`.
+
+#### Builder UI integration
+
+Each generator runs inside the Builder. Generator UI flow:
+
+```
+1. User describes intent (natural language)
+2. Generator produces draft + capability block
+3. Validator runs (L3) — drone-managed sandbox, isolated
+4. Builder displays:
+     - Plain-English capability disclosure (from L1)
+     - Validation report (L3) — pass/fail per check
+     - Diff view (vs existing version if any)
+     - Provenance block (L5)
+5. Tier-appropriate gate (L4):
+     - Novice → "Install" button + review checklist
+     - Promoted → auto-installs if within bounds; surfaces toast with link to artifact
+     - Operator → auto-installs; surfaces toast
+6. On install: artifact + provenance + validation report committed; audit entry written
+```
+
+Auto-accept toast example (Promoted tier):
+
+> ⚡ Installed `pdf_summarizer` v1.0.0 (auto-accepted: validation passed; declared capabilities within Promoted bounds). [Review] [Uninstall]
 
 ### Phase 9: Visual Canvas and Tester
 
