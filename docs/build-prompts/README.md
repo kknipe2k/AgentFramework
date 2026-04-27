@@ -19,7 +19,8 @@ The per-milestone prompt always references `CLAUDE.md` as the protocol; it doesn
 |---|---|---|
 | `README.md` (this file) | Stable | Index + how-to-use |
 | `TEMPLATE.md` | Stable | Per-milestone shape; includes the **scope-split rule** for milestones >250 prompt-lines or >12h work |
-| `PROCESS-VALIDATION.md` | Stable | Test for the build pattern itself (run alongside each milestone) |
+| `PROCESS-VALIDATION.md` | Stable | Framework reference for evaluating whether the prompt-driven pattern works (axes, scoring, threshold gates) |
+| `retrospectives/` | Live | Per-session retrospectives Claude fills in during/after every milestone; see `retrospectives/README.md` |
 | **M01 — split into 4 sub-milestones** | | |
 | `M01.1-workspace-skeleton.md` | Authored | M01.1 (~5–8h): Cargo workspace + empty crates + Tauri stub + CI green |
 | `M01.2-type-generation.md` | Authored | M01.2 (~6–10h): xtask + typify + runtime-core types from schemas + drift check |
