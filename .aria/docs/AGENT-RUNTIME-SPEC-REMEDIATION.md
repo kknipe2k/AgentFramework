@@ -481,7 +481,7 @@ Keep VDR simple for decision traceability; keep signals rich for forensics and d
 
 ### WI-09: IPC channel (fork, not stdio-JSON)
 
-**STATUS:** OPEN
+**STATUS:** RESOLVED (2026-04-18, locked in spec §1d)
 **Priority:** P2
 **Effort:** 2 hours spec; zero-cost implementation
 
@@ -509,9 +509,10 @@ Update the starting prompt and the `DroneEvent` / `DroneCommand` section to use 
 
 ### WI-10: Multi-session concurrency model
 
-**STATUS:** OPEN
+**STATUS:** RESOLVED (2026-04-18, locked in spec §1c)
 **Priority:** P2
 **Effort:** 1–2 days spec
+**Decision:** drone-per-session, shared SQLite WAL, ref-counted MCP pool, first-connection-wins auth, v1 cap of 8 concurrent sessions
 
 **Problem**
 Spec doesn't answer: can two frameworks run simultaneously? Is the drone singleton or per-session? How is SQLite accessed concurrently? What if two sessions want the same MCP server with different auth?
@@ -540,7 +541,7 @@ Spec must add:
 
 ### WI-11: MCP namespace collision rule
 
-**STATUS:** OPEN
+**STATUS:** RESOLVED (2026-04-18, locked in spec §5a)
 **Priority:** P2
 **Effort:** 2 hours spec
 
@@ -668,10 +669,10 @@ Add `§1b: Recovery Semantics` clarifying:
 
 ### WI-15: Mode-and-sizing primitive (so frameworks can express LITE/STANDARD/FULL/FULL+)
 
-**STATUS:** OPEN
+**STATUS:** RESOLVED (2026-04-18, locked in spec §3b)
 **Priority:** P2
 **Effort:** 1–2 days spec
-**Unlocks matrix rows:** mode router, sizing matrix, mode-variant skill behavior
+**Unlocks matrix rows:** 1 (mode router), 2 (sizing matrix), 20 (mode-variant skill behavior, with §0b)
 
 **Problem**
 The runtime needs a generic mode primitive: a session-scoped enum value the framework defines and that downstream primitives (hooks, plan policy, HITL policy, subagent rules) can branch on. ARIA's LITE/STANDARD/FULL/FULL+ is one realization; another framework might define `dev | staging | prod` or `learning | production`. Without a mode primitive, none of these can be expressed.
@@ -761,7 +762,7 @@ Each triggers a different `HITLNode` variant with appropriate UI (approve/deny f
 
 ### WI-17: Dev-loop story
 
-**STATUS:** OPEN
+**STATUS:** RESOLVED (2026-04-18, locked in spec §0c)
 **Priority:** P2
 **Effort:** 2 hours spec
 

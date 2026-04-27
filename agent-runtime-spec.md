@@ -251,6 +251,53 @@ Phase 2's `AgentEvent` union is updated:
 
 -----
 
+## §0c Development Loop
+
+> **Locked (2026-04-18, WI-17).** How a developer iterates on the runtime + frameworks without packaging Electron.
+
+### `package.json` scripts
+
+```json
+{
+  "scripts": {
+    "dev":      "concurrently \"npm:dev:*\"",
+    "dev:vite": "vite",                                          // renderer
+    "dev:main": "electron-vite dev",                             // main + preload
+    "dev:drone": "nodemon --exec ts-node electron/drone/drone.ts",  // drone with auto-reload
+    "test":     "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "build":    "electron-vite build && electron-builder --dir",
+    "pack":     "electron-builder --dir",                        // unsigned for local testing
+    "release":  "electron-vite build && electron-builder"
+  }
+}
+```
+
+### Hot-reload behavior per process
+
+| Process | Hot reload | State preserved? |
+|---|---|---|
+| Renderer (Vite HMR) | Yes, instant | Local React state lost; SQLite-backed graph state preserved |
+| Main process | Yes, on restart (electron-vite) | All in-memory state lost; user prompted before restart |
+| Drone process | Yes, via nodemon | Drone is stateless w.r.t memory — all state in SQLite, fully preserved |
+
+**Drone reloads do not lose session state** — this is a deliberate consequence of state-in-SQLite architecture. Useful for iterating on drone logic against a live session.
+
+**Main reloads will drop MCP connections and active streams.** User sees a "main reloading" toast; sessions resume on reconnect (drone keeps running, snapshots ensure no data loss).
+
+### Working on a framework
+
+Framework JSON files live in `examples/`. Edit a file, hit "Reload framework" in the Builder — runtime re-validates, swaps the active framework for new sessions. Existing sessions continue with the old framework version (snapshot keeps the JSON it loaded with).
+
+### Working on the runtime
+
+- Code in `src/main`, `src/renderer`, `electron/drone` triggers the appropriate hot-reload path.
+- TypeScript errors surfaced inline in dev mode; in prod mode runtime fails fast.
+- Tests run via `npm run test`; coverage threshold enforced in CI.
+
+-----
+
 ## Architecture Overview
 
 ```
@@ -466,6 +513,75 @@ The runtime does NOT attempt deterministic replay. If a user wants to *replay* a
 
 For v1: resume continues; replay does not exist.
 
+### §1c Multi-Session & SQLite Concurrency
+
+> **Locked (2026-04-18, WI-10).** One drone per session; one shared SQLite database in WAL mode; ref-counted MCP connection pool.
+
+#### Drone-per-session
+
+Each session spawns its own drone process (`child_process.fork('drone.ts', ['--session-id', s])`). Drones do not share state in memory; coordination happens through the shared SQLite database.
+
+Rationale:
+- Crash isolation — one drone dying cannot corrupt another session.
+- Resource accounting — easy to attribute snapshots, signals, and budget to the drone owning the session.
+- Clean shutdown — graceful_shutdown applies per-drone without ordering hazards.
+
+Tradeoff: more processes. With Electron's process model this is fine for single-digit concurrent sessions; v1 caps at 8 concurrent active sessions and queues additional requests.
+
+#### SQLite WAL mode
+
+Database opened with:
+```sql
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA busy_timeout = 5000;
+PRAGMA foreign_keys = ON;
+```
+
+WAL allows concurrent readers + one writer; busy_timeout retries on writer contention. Snapshot writes are the highest-volume path — kept under a single transaction per snapshot.
+
+#### MCP connection pool
+
+MCP servers identified by URL are singleton-per-URL at the runtime level, ref-counted across sessions:
+
+1. Session A connects to `mcp://localhost:3000` → connection created, refcount 1.
+2. Session B connects to same URL → existing connection reused, refcount 2.
+3. Session A ends → refcount 1, connection stays.
+4. Session B ends → refcount 0, connection torn down.
+
+Auth conflicts resolved by **first-connection-wins**: the first session to connect with a given URL sets the auth config. Subsequent sessions attempting to connect with different auth get a warning (`mcp_auth_conflict` event) and either accept the existing config or fail their connection. v2 may add isolated-pools-per-auth.
+
+#### Cross-session UI
+
+The Electron renderer can display multiple sessions simultaneously (tabs or split view). Each session has its own graph, panels, and gap state. Switching tabs does not pause sessions — only the active tab is rendered.
+
+### §1d IPC Channel (fork, not stdio)
+
+> **Locked (2026-04-18, WI-09).** Drone ↔ main IPC uses `child_process.fork`'s message channel, not stdin/stdout JSON.
+
+```typescript
+// Main process spawns drone
+const drone = fork('./electron/drone/drone.ts', [
+  '--session-id', sessionId,
+  '--db-path',    dbPath
+])
+
+drone.on('message', (event: DroneEvent) => eventBus.emit(event))
+drone.on('exit', code => handleDroneExit(code))
+drone.send({ type: 'snapshot_now', reason: 'task_boundary' } satisfies DroneCommand)
+
+// Drone process listens / emits
+process.on('message', (cmd: DroneCommand) => handleCommand(cmd))
+process.send!({ type: 'heartbeat', status, timestamp: Date.now() } satisfies DroneEvent)
+```
+
+Why not stdio:
+- Library warnings or stray `console.log` corrupt newline-delimited JSON streams.
+- `process.send` is binary-safe and serializes via Node's IPC channel, not text.
+- `disconnect`/`exit` events give automatic dead-drone detection.
+
+stdout/stderr are reserved for logs (visible in dev mode, captured to file in prod).
+
 -----
 
 ## Phase 2: SDK Event Pipeline
@@ -507,6 +623,17 @@ type AgentEvent =
   | { type: 'hook_passed';  hook_id: string; duration_ms: number; output_preview?: string }
   | { type: 'hook_failed';  hook_id: string; duration_ms: number; error: string; on_failure: 'block' | 'warn' | 'rollback' }
   | { type: 'rail_triggered'; rail_id: string; policy: 'hard' | 'soft'; firing_point: string; message: string; agent_id?: string }
+
+  // Mode (see §3b / WI-15)
+  | { type: 'mode_proposed';  proposed_mode: string; rationale?: string; agent_id?: string }
+  | { type: 'mode_confirmed'; mode: string; confirmed_by: 'user' | 'auto' | 'declarative' }
+  | { type: 'mode_locked';    mode: string }
+
+  // Tool alias warnings (see §5a / WI-11)
+  | { type: 'tool_alias_ambiguous'; short_name: string; candidates: string[] }
+
+  // MCP auth (see §1c / WI-10)
+  | { type: 'mcp_auth_conflict'; server_url: string; existing_session_id: string; requesting_session_id: string }
 
   // Plan & Task lifecycle (see §3a / WI-03)
   | { type: 'plan_created'; plan_id: string; title: string; task_count: number; approval_required: boolean }
@@ -979,6 +1106,95 @@ When `loop_policy: continuous`, `PlanNode` shows the goal-store progress instead
 
 -----
 
+## §3b Mode & Sizing Primitive
+
+> **Locked (2026-04-18, WI-15).** A generic mode primitive: an author-defined enum value, scoped per session, that other primitives reference for overrides. ARIA's LITE/STANDARD/FULL/FULL+ is one realization. Frameworks can define their own.
+
+### Mode field in framework JSON
+
+```json
+{
+  "modes": {
+    "values":  ["LITE", "STANDARD", "FULL", "FULL+"],
+    "default": "STANDARD",
+    "per_mode_overrides": {
+      "LITE": {
+        "task_defaults.post_hooks": [],
+        "plan_creation.approval_required": false,
+        "plan_creation.loop_policy": { "kind": "one_shot" }
+      },
+      "FULL+": {
+        "design_doc_required": true,
+        "task_defaults.max_failures": 5
+      }
+    }
+  }
+}
+```
+
+`per_mode_overrides` uses dotted-path keys; the runtime walks the framework JSON and applies the override for the active mode at session start. Any primitive (hooks, plan, rails, HITL policy, budget) can be mode-overridden.
+
+### Sizing — two paths
+
+Frameworks pick how the mode is determined per session.
+
+#### Path A: Sizing agent
+
+```json
+{
+  "sizing": {
+    "mode":  "agent",
+    "agent": "router",                  // an agent in framework.agents[]
+    "auto_confirm": false                // if true, skip user confirmation
+  }
+}
+```
+
+The router agent receives the user's request, emits a `propose_mode` tool call with one of `modes.values`, optionally with rationale. Runtime emits `mode_proposed`; user confirms (`mode_confirmed`) unless `auto_confirm: true`.
+
+#### Path B: Declarative sizing rules
+
+```json
+{
+  "sizing": {
+    "mode":  "declarative",
+    "rules": [
+      { "if": { "tasks_estimated":  { "<=": 5 },  "loc_estimated": { "<": 2000 } }, "then": "LITE" },
+      { "if": { "auth_or_payments": true },                                          "then": "FULL" },
+      { "if": { "tasks_estimated":  { ">":  40 } },                                  "then": "FULL+" },
+      { "default": "STANDARD" }
+    ]
+  }
+}
+```
+
+Rules evaluated against a fact set the framework collects (asks user, infers from request, reads project context). Runtime evaluates JSONLogic-style operators. First matching rule wins; `default` catches the rest.
+
+### Session-scoped mode value
+
+Once `mode_confirmed` fires, the value is immutable for the session. Available as `session.mode` to:
+- Hook conditions (`when: { "==": [{ "var": "session.mode" }, "FULL"] }`)
+- Skill mode_variants (canonical `skill.md` already references `${session.mode}`)
+- Plan policy (`plan_creation.approval_required_per_mode`)
+- HITL policy (WI-16)
+- Budget caps (per-mode caps allowed in §2a)
+
+### Mode events (added to Phase 2 union)
+
+```typescript
+| { type: 'mode_proposed';  proposed_mode: string; rationale?: string; agent_id?: string }
+| { type: 'mode_confirmed'; mode: string; confirmed_by: 'user' | 'auto' | 'declarative' }
+| { type: 'mode_locked';    mode: string }   // emitted once at session start, after confirm
+```
+
+### Graph integration
+
+Session header bar shows active mode badge (color-coded per framework's choice). Mode is also rendered on the FrameworkNode as a sub-label.
+
+This is the §0a matrix proof for rows 1 (mode router), 2 (sizing matrix), and 20 (mode-variant skill behavior — combined with §0b skill `mode_variants`).
+
+-----
+
 ## Phase 4: Gap Detection and Clean Suspension
 
 The runtime’s job on a gap is to stop cleanly and tell the user exactly what is missing. Nothing more.
@@ -1300,9 +1516,31 @@ Health Monitoring
 
 Multi-Server
   - Multiple MCP servers active simultaneously
-  - Tool namespace collision detection and resolution
+  - Tool namespace resolution per §5a (below)
   - Per-server auth config (stored in secrets vault, not in session state)
 ```
+
+### §5a Tool Namespace Resolution
+
+> **Locked (2026-04-18, WI-11).** Algorithm for resolving tool names across multiple connected MCP servers.
+
+1. **Canonical name:** every tool is exposed to agents as `<server_name>__<tool_name>` (double-underscore delimiter).
+2. **Short-name alias:** if a tool name is unambiguous across all currently-connected servers, the short name also resolves. Ambiguous → short name fails with a clear error listing the canonical options.
+3. **Explicit override** in framework JSON via `mcp_aliases`:
+   ```json
+   "mcp_aliases": {
+     "create_component": "react-mcp__create_component",
+     "extract_text":     "pdf-mcp__extract_text"
+   }
+   ```
+   Aliases override short-name ambiguity errors.
+4. **Server name constraints:** server names cannot contain `__`. Tools may contain `__`; the parser splits on the first `__` from the left.
+5. **Re-resolution on connect/disconnect:** when an MCP connects/disconnects, runtime re-evaluates short-name uniqueness. Newly-ambiguous short names emit a `tool_alias_ambiguous` warning event so frameworks can pin via `mcp_aliases`.
+
+Example:
+- Connected: `pdf-mcp` (exposes `extract_text`), `image-mcp` (exposes `extract_text`)
+- Agent calls `extract_text` → ambiguous → fails with: *"Tool `extract_text` is ambiguous. Candidates: `pdf-mcp__extract_text`, `image-mcp__extract_text`. Use the canonical name or set an alias in `mcp_aliases`."*
+- Framework adds `"extract_text": "pdf-mcp__extract_text"` → short name resolves to PDF.
 
 ### MCP Node in Graph
 
@@ -1862,10 +2100,10 @@ Start with Phase 1: The Drone.
 Build the drone as a standalone Node.js process in electron/drone/drone.ts.
 It should:
 1. Accept --session-id and --db-path as CLI args
-2. Initialize SQLite using better-sqlite3 at db-path
+2. Initialize SQLite using better-sqlite3 at db-path with WAL mode (see §1c)
 3. Start a heartbeat loop (5 second interval) and write heartbeat records to SQLite
-4. Accept commands from main process via process.stdin (newline-delimited JSON)
-5. Emit events to main process via process.stdout (newline-delimited JSON)
+4. Use child_process.fork IPC: receive commands via process.on('message'), emit events via process.send (NOT stdin/stdout — see §1d)
+5. Reserve stdout/stderr for logging only; main never parses them
 6. Implement snapshot_now command: serialize provided state to snapshots table
 7. Implement graceful_shutdown command: flush pending writes, exit cleanly
 8. Catch SIGTERM and SIGINT for emergency snapshot before exit
