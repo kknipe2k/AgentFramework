@@ -46,7 +46,7 @@ This is **v0.1.0 Windows Preview**. Honest scope:
 - MCP server: add by URL, connect, agent uses its tools
 - Import skills/agents/tools by URL or local file
 - `examples/aria/` reference framework demonstrating the spec end-to-end
-- Apache 2.0, signed Windows installer
+- Apache 2.0, unsigned Windows installer with SHA-256 + Sigstore provenance attestation (paid code-signing deferred to v0.5+ — see ADR-0004)
 
 ### What doesn't work yet (deferred to v1.0)
 - macOS / Linux — Windows-only in v0.1
@@ -81,11 +81,29 @@ The reference framework `examples/aria/` reconstructs an existing shell-based ag
 
 > v0.1.0 hasn't released yet. Once it has:
 
-1. Download the signed `.msi` from [GitHub Releases](https://github.com/kknipe2k/AgentFramework/releases).
-2. Verify the signature with `signtool verify /pa /v <file>.msi` (the cert details will be in the release notes).
-3. Run the installer. Welcome screen → API key → import or skip → first session.
+1. **Download** the `.msi` from [GitHub Releases](https://github.com/kknipe2k/AgentFramework/releases).
+2. **Verify integrity** — release notes include a SHA-256 checksum:
+   ```powershell
+   Get-FileHash <file>.msi -Algorithm SHA256
+   ```
+   Compare against the value in the release notes. If they don't match, **stop** — the file was tampered with or downloaded from somewhere other than the official release.
+3. **(Optional) Verify provenance** — every release also has a Sigstore attestation cryptographically proving "GitHub Actions for this repo built this binary from this commit":
+   ```bash
+   cosign verify-blob \
+     --bundle <file>.msi.sigstore \
+     --certificate-identity-regexp 'https://github.com/kknipe2k/AgentFramework/' \
+     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+     <file>.msi
+   ```
+4. **Run the installer.** **Windows will show a SmartScreen warning** — this is expected for unsigned open-source releases:
+   - You'll see "Windows protected your PC."
+   - Click **More info**, then **Run anyway**.
+   - This is normal because v0.1 doesn't yet have a paid Windows code-signing certificate (deferred — see ADR-0004 for the rationale). Verifying SHA-256 + Sigstore above gives you stronger guarantees than the SmartScreen check would.
+5. **First run** — Welcome screen → API key → import or skip → first session.
 
-API key required: get one at [console.anthropic.com](https://console.anthropic.com/settings/keys). Stored in OS keychain; never written to disk by this runtime.
+API key required: get one at [console.anthropic.com](https://console.anthropic.com/settings/keys). Stored in your OS keychain; never written to disk by this runtime.
+
+**If you'd rather not click through SmartScreen,** you can build from source — `cargo tauri build` produces the same artifact locally with no warning.
 
 ## Try the workbench (novice path)
 
@@ -153,7 +171,7 @@ Full architecture: [`agent-runtime-spec.md`](agent-runtime-spec.md), in particul
 ## Roadmap
 
 - **v0.1.0 Windows Preview** — current target ([build checklist](docs/MVP-v0.1.md))
-- **v1.0** — multi-OS (Linux + macOS), full L2b OS sandboxing, Operator tier, MCP collision UI, Anthropic upstream search, mode router, multi-session, continuous-loop policy, Sigstore signed releases. Estimated 6–12 months after v0.1.0.
+- **v1.0** — multi-OS (Linux + macOS), full L2b OS sandboxing, Operator tier, MCP collision UI, Anthropic upstream search, mode router, multi-session, continuous-loop policy. Estimated 6–12 months after v0.1.0. (Sigstore attestations already present from v0.1; paid Windows EV code-signing revisited at v0.5+ when adoption is proven.)
 - **v2.0+** — pluggable registries, plugin nodes, team/collab, remote/CI execution, OTel, additional providers. Multi-year horizon.
 
 ## Spec, ADRs, and history

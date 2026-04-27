@@ -23,6 +23,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - SECURITY.md (private disclosure flow + response SLOs + scope + threat model summary).
 - CONTRIBUTING.md (state of project, what's accepted now, code-contribution setup, quality gates, DCO, ADR requirements).
 
+### Changed
+
+- **Code-signing posture for v0.1: deferred** (per ADR-0004). v0.1 ships unsigned `.msi` with SHA-256 checksums and Sigstore provenance attestations via GitHub Actions OIDC. Paid Windows EV code-signing revisited at v0.5+ when adoption is proven. Affects: `docs/MVP-v0.1.md` M11 acceptance + risk register R4; `docs/README-v0.1.md` install instructions (SmartScreen-warning explainer + checksum/cosign verification steps); `.github/workflows/release.yml` (drops signing secrets, adds SHA-256 generation + `actions/attest-build-provenance@v1`); spec §0d distribution row.
+
 ### Status
 
 Pre-implementation. The runtime binary does not yet exist. This repository contains:

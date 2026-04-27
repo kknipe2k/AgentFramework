@@ -50,25 +50,37 @@ jobs:
 
       - run: npm ci
 
-      - name: Build with Tauri
+      - name: Build with Tauri (unsigned)
+        # Paid code-signing cert is deferred per ADR-0004. v0.1 ships unsigned;
+        # integrity is established via SHA-256 + Sigstore attestation below.
+        # When EV cert is procured (v0.5+), re-introduce signing secrets here.
         run: npx tauri build
-        env:
-          # Code-signing cert. Configure in repo Secrets:
-          #   TAURI_SIGNING_PRIVATE_KEY        — Tauri updater signing key
-          #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-          # For Windows code-signing (.msi):
-          #   WINDOWS_CERT_BASE64               — base64 of .pfx
-          #   WINDOWS_CERT_PASSWORD
-          # These get plumbed in via tauri.conf.json's signing config at v0.1.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Generate SHA-256 checksums
+        shell: bash
+        run: |
+          cd src-tauri/target/release/bundle/msi
+          for f in *.msi; do
+            sha256sum "$f" | tee "${f}.sha256"
+          done
 
       - name: Generate SBOM (CycloneDX)
+        shell: bash
         run: |
           cargo install cargo-cyclonedx --locked
           cargo cyclonedx --format json --output-path runtime-sbom.cdx.json
           npm install -g @cyclonedx/cyclonedx-npm
           cyclonedx-npm --output-format json --output-file frontend-sbom.cdx.json
+
+      - name: Sigstore attestation (provenance via OIDC)
+        # Free, OSS-native. Cryptographically attests "GitHub Actions for this
+        # repo built this binary from this commit." Verifiable by users with
+        # `cosign verify-blob` — see README install instructions.
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            *.cdx.json
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -76,6 +88,7 @@ jobs:
           name: windows-installer
           path: |
             src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/msi/*.sha256
             *.cdx.json
 
   github-release:
@@ -113,6 +126,7 @@ jobs:
           body_path: release-notes.md
           files: |
             dist/**/*.msi
+            dist/**/*.sha256
             dist/**/*.cdx.json
           draft: false
           prerelease: ${{ startsWith(steps.changelog.outputs.version, '0.') }}
