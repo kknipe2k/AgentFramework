@@ -455,9 +455,10 @@ Add `§2a: Budget & Cost Controls`, specifying:
 
 ### WI-08: Inherit Signal Schema v2
 
-**STATUS:** OPEN
+**STATUS:** RESOLVED (2026-04-18, locked in spec §2b)
 **Priority:** P2
 **Effort:** 1 day spec
+**Unlocks matrix rows:** 7 (decision trace), 8 (signal schema v2), 11 (offline RL via export), 16 (hooks)
 
 **Problem**
 Spec's VDR (L228–242) is strictly weaker than ARIA's Signal Schema v2. It loses: pre/post event separation, retry chains, parent-signal correlation, context classification (`skill|framework|code|search|verify|commit|subagent`), output previews, duration tracking, skill-load vs skill-invoke distinction.
@@ -601,9 +602,10 @@ Update Phase 7 to reflect this scope.
 
 ### WI-13: LLMProvider abstraction
 
-**STATUS:** OPEN
+**STATUS:** RESOLVED (2026-04-18, locked in spec §2c)
 **Priority:** P2
 **Effort:** 1 day spec
+**Unlocks matrix row:** 10 (model selection budget+learning) — primitive substrate for downshift hook in §2a
 
 **Problem**
 Spec claims "Claude family first, frontier model agnostic long term" but wraps `@anthropic-ai/sdk` directly in `AgentSDK`. Adding a second provider later will be a large refactor.
@@ -636,9 +638,10 @@ interface LLMProvider {
 
 ### WI-14: Recovery semantics documented
 
-**STATUS:** OPEN
+**STATUS:** RESOLVED (2026-04-18, locked in spec §1b)
 **Priority:** P2
 **Effort:** 1 day spec
+**Notes:** Replay (deterministic) is explicit non-goal in v1; deferred to WI-18 (v2)
 
 **Problem**
 Spec L133 says "Resume rebuilds SDK message history from snapshot, reconnects MCPs, restores graph state" — but model tool results often depend on external state (a web fetch, a file read at time T). Replay is non-deterministic. Spec doesn't distinguish rebuilding *history* from *re-executing*.

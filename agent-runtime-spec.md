@@ -410,6 +410,62 @@ type StopReason = 'graceful' | 'crash' | 'timeout' | 'user_abort' | 'force_kill'
 |Agent hangs (no output >timeout)|Warn user, wait grace period, snapshot, suspend       |“Agent stalled” prompt with options            |
 |Gap detected (skill missing)    |Snapshot, suspend session cleanly                     |Gap panel opens, user directed to Agent Builder|
 
+### §1b Recovery Semantics
+
+> **Locked (2026-04-18, WI-14).** Resume rebuilds **history**, not execution. Document tool-call uncertainty handling. Make non-determinism an explicit non-goal in v1.
+
+#### Resume rebuilds history (does not re-execute)
+
+When a user resumes a suspended/crashed session from a drone snapshot:
+
+1. Prior agent messages, tool calls, and tool results are loaded from the snapshot into the SDK message history **as if they had already happened**.
+2. The model starts generating the **next** turn fresh, with full prior context.
+3. The runtime does NOT replay tool calls. Tools that depended on external state (web fetches, time-of-day, file contents at time T) are not re-invoked.
+
+This is intentional. Re-invoking tool calls would be non-deterministic (web responses change, files change) and could make irreversible operations (writes, commits, API calls) happen twice.
+
+#### Tool calls in flight at crash time
+
+A snapshot taken *between* a `tool_invoked` and the corresponding `tool_result` represents an uncertain operation. The runtime detects this on resume by looking for `tool_invoked` signals without a paired `tool_result`.
+
+For each such tool call:
+1. VDR row marked `tool_call_uncertain: true`.
+2. Resume UI surfaces a prompt:
+
+   > Tool `<name>` was invoked but did not complete before crash. What happened?
+   > [r]etry — re-invoke from scratch
+   > [s]kip — treat as if it returned nothing; agent continues with that gap
+   > [m]ark complete — assume it completed (provide output if known)
+   > [a]bort — cancel resume, archive session
+
+3. User decision is recorded as a `tool_call_uncertainty_resolved` decision signal.
+
+#### MCP reconnection
+
+On resume:
+1. Each MCP server in the snapshot's connection list is reconnected.
+2. Failed reconnections leave the MCP node offline; tools from that server become unavailable.
+3. Tools-from-offline-MCP that the agent attempts emit `tool_missing` and route through the gap flow (Phase 4 / §4b).
+4. User can cancel reconnect and continue with the MCP offline (degraded mode).
+
+#### Plan state restoration
+
+If the suspended session had an active plan (§3a):
+1. Plan + task statuses restored from snapshot.
+2. Currently-running task is set to `pending` (unless its `task_completed` event is in the snapshot, in which case it's already `done`).
+3. Tasks that completed before suspension stay `done`.
+4. Loop policy resumes from the restored task.
+
+#### Capability state
+
+Per-artifact capability sets (Phase 8 §8.security L2) are restored. Pending capability grants (`scope: 'session'`) carry over; `scope: 'once'` grants are cleared.
+
+#### Non-determinism is explicit
+
+The runtime does NOT attempt deterministic replay. If a user wants to *replay* a session (rerun decisions to see if the model would behave differently), that's a separate "replay" mode (WI-18, deferred to v2) that runs against frozen tool inputs/outputs from the original VDR rather than re-invoking tools.
+
+For v1: resume continues; replay does not exist.
+
 -----
 
 ## Phase 2: SDK Event Pipeline
@@ -490,7 +546,7 @@ type AgentEvent =
 // src/main/sdk/AgentSDK.ts
 
 class AgentSDK {
-  private client: Anthropic
+  private provider: LLMProvider     // see §2c — not bound to Anthropic concretely
   private eventBus: EventEmitter
   private sessionId: string
 
@@ -529,6 +585,123 @@ interface VerifiedDecisionRecord {
   snapshot_id: string  // links to drone snapshot at time of decision
 }
 ```
+
+### §2c LLMProvider Abstraction
+
+> **Locked (2026-04-18, WI-13).** The runtime ships a single provider implementation in v1 (Anthropic) but binds `AgentSDK` to a `LLMProvider` interface, not to `@anthropic-ai/sdk` directly. Adding a second provider later is a new class, not a refactor.
+
+```typescript
+interface LLMProvider {
+  readonly name: string                                    // 'anthropic' | 'openai' | 'google' | ...
+  readonly supports: { tool_use: boolean; streaming: boolean; thinking: boolean }
+
+  stream(config: AgentConfig): AsyncIterable<ProviderEvent>
+  countTokens(messages: Message[]): Promise<number>
+  listModels(): Promise<ModelInfo[]>
+  estimateCost(input_tokens: number, output_tokens: number, model: string): number
+}
+
+interface ProviderEvent {
+  // Provider-specific events translated by the provider into AgentEvent by AgentSDK
+  kind: 'text_delta' | 'tool_use' | 'tool_result' | 'message_stop' | 'error' | 'thinking_delta'
+  payload: unknown
+}
+
+interface ModelInfo {
+  id: string
+  display_name: string
+  context_window: number
+  pricing: { input_per_mtok: number; output_per_mtok: number }
+  capabilities: { tool_use: boolean; thinking: boolean; vision: boolean }
+}
+```
+
+`AgentSDK` consumes `ProviderEvent` and translates into `AgentEvent`. Provider-specific concerns (Anthropic's `content_block_delta`, OpenAI's `delta`, etc.) stay inside the provider. The translation layer is what adds source/agent_id/session context.
+
+v1 ships `AnthropicProvider`; provider selection lives in framework JSON:
+
+```json
+{
+  "model": { "provider": "anthropic", "id": "claude-opus-4-7" },
+  "fallback_models": [
+    { "provider": "anthropic", "id": "claude-sonnet-4-6" }
+  ]
+}
+```
+
+Model IDs move out of hardcoded constants; provider's `listModels()` populates the Builder UI's selector dropdown.
+
+-----
+
+### §2b Signals & VDR Projection
+
+> **Locked (2026-04-18, WI-08).** The `AgentEvent` union above is the live event stream the runtime emits. Persistence layers two views on top: **signals** (rich per-operation forensic records) and **VDR** (decision-level projection). This inherits `.aria/docs/SIGNAL-SCHEMA-V2.md` directly rather than re-deriving a weaker model.
+
+#### Signals (rich, forensic)
+
+A signal is a persisted, schema-validated record of one operation. Eight signal types (1:1 with Signal Schema v2):
+
+| # | Signal type | Source events | Purpose |
+|---|---|---|---|
+| 1 | `tool` | `tool_invoked` (pre) + `tool_result` (post), correlated | Per-tool-call forensic record with input/output preview, duration, retry chain |
+| 2 | `skill` | `skill_loaded`, `skill_load_requested` | Skill-load record with mode, trigger_kind, parent agent |
+| 3 | `agent` | `agent_spawned`, `agent_complete`, `agent_error` | Subagent record with tools_used summary, files_touched, parent chain |
+| 4 | `decision` | `decision_record`, `capability_grant`, `tier_changed` | Discrete decision points with rationale and confidence |
+| 5 | `verify` | `hook_*` where category=verify; `rail_triggered` | Verification outcome with test results, coverage, failing items |
+| 6 | `error` | `agent_error`, `hook_failed`, `tool_missing`, `capability_violation` | Error chain with retry_of correlation |
+| 7 | `hitl` | `hitl_requested`, `hitl_response`, `plan_approval_*`, `task_escalated` | Human intervention record with decision time, response |
+| 8 | `session` | `session_start`, `plan_complete`, `session_end` | Session-level summary boundaries |
+
+Pre/post events are correlated via a `pre_signal_id` field. Retry chains via `retry_of`. Parent-child via `parent_signal_id`. Context classification via `context.type ∈ {skill, framework, code, search, verify, commit, subagent}`.
+
+Full schema in `.aria/docs/SIGNAL-SCHEMA-V2.md`. The runtime ports this verbatim — adding new fields only when justified.
+
+#### VDR (Verified Decision Records — projection)
+
+VDR is a **projection** of signals 4 (decision) + 5 (verify), narrowed to decisions that affected outcomes. It is not a parallel system. One row per decision-producing event with:
+
+- `signal_ids: string[]` — pointers back to the contributing signals (preserves forensic depth)
+- Decision text, rationale, alternatives considered, confidence
+- Tool invoked + input/output (denormalized from the contributing tool signal for fast read)
+- Outcome (success / failure / pending), token cost
+- Snapshot ID linking to drone snapshot at decision time
+
+**Why two layers:** signals are write-heavy and forensic (every Read, every Bash); VDR is read-heavy and decision-focused (dashboard, query-decisions, postmortems). Splitting keeps signal writes fast and VDR queries cheap.
+
+#### SQLite schema additions
+
+```sql
+-- Signals (write-heavy, append-only, indexed for forensic query)
+CREATE TABLE signals (
+  id TEXT PRIMARY KEY,
+  session_id TEXT,
+  type TEXT,                  -- tool | skill | agent | decision | verify | error | hitl | session
+  event TEXT,                 -- pre | post | started | completed | failed | etc.
+  timestamp TEXT,
+  duration_ms INTEGER,
+  payload_json TEXT,          -- full signal record per Signal Schema v2
+  pre_signal_id TEXT,         -- correlation: post -> pre
+  parent_signal_id TEXT,      -- correlation: child -> parent
+  retry_of TEXT,              -- correlation: retry chain
+  context_type TEXT,          -- skill | framework | code | search | verify | commit | subagent
+  FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+CREATE INDEX idx_signals_session_time ON signals(session_id, timestamp);
+CREATE INDEX idx_signals_type ON signals(type);
+CREATE INDEX idx_signals_correlation ON signals(pre_signal_id, parent_signal_id, retry_of);
+
+-- VDR remains as defined (Phase 2) but adds:
+ALTER TABLE vdr ADD COLUMN signal_ids TEXT;     -- JSON array of contributing signal IDs
+ALTER TABLE vdr ADD COLUMN context_type TEXT;
+```
+
+#### Importer for existing ARIA traces
+
+For users transitioning from shell ARIA: the runtime ships a one-shot importer that reads `.aria/state/signals.jsonl` and `.aria/state/decisions.jsonl` into the new schema. Non-destructive (does not modify shell ARIA's files). Per §0 archetype model, this enables the runtime to load historical context for users reconstructing ARIA in `examples/aria/`.
+
+#### Export
+
+Signals can stream out via the OpenTelemetry exporter (WI-23) or to a flat-file mirror (`.aria-runtime/signals.jsonl`) for external consumers like the offline RL learner (matrix row 11).
 
 -----
 
