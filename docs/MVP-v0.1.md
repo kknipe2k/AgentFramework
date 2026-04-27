@@ -41,25 +41,40 @@ Total: ~24 weeks elapsed at sustained pace. Compresses with parallel work; expan
 
 ## M1 — Foundation (weeks 1–2)
 
-**Deliverable**
-- Cargo workspace at repo root with `crates/{runtime-core,runtime-main,runtime-drone,runtime-sandbox}` and `src-tauri/`
+> **Split into 4 sub-milestones** per the TEMPLATE.md scope-split rule (the single M1 prompt was 540 lines — too much for a fresh-session opening message). Each sub-milestone is its own branch and PR.
+>
+> - **M01.1** (~5–8h) — Workspace skeleton: Cargo.toml + empty crates + Tauri stub + CI green. See `docs/build-prompts/M01.1-workspace-skeleton.md`.
+> - **M01.2** (~6–10h) — Type generation: xtask + typify + runtime-core types from schemas + drift check. See `docs/build-prompts/M01.2-type-generation.md`.
+> - **M01.3** (~12–18h) — Drone Phase 1: heartbeat + snapshot + IPC + SIGTERM + 100% coverage. See `docs/build-prompts/M01.3-drone-implementation.md`.
+> - **M01.4** (~4–6h) — Fuzz harness + workspace coverage + per-crate READMEs + cross-OS verification. See `docs/build-prompts/M01.4-fuzz-and-polish.md`.
+>
+> Sub-milestones are sequential; each PR must merge before the next session opens. M1 is "done" when all 4 have merged.
+
+**Deliverable** (across all 4 sub-milestones)
+- Cargo workspace at repo root with `crates/{runtime-core,runtime-main,runtime-drone,runtime-sandbox,xtask}` and `src-tauri/`
 - `runtime-core` crate with types generated from `schemas/*.json` via `typify`
-- `runtime-drone` crate implementing Phase 1 per spec
-- CI pipeline (`.github/workflows/ci.yml`) running fmt + clippy + test + audit on Linux/macOS/Windows
+- `runtime-drone` crate implementing Phase 1 per spec, with 100% line coverage
+- `xtask regenerate-types` subcommand + CI drift check
+- Fuzz harness for `drone_command_decode` + nightly fuzz workflow
+- Per-crate READMEs documenting the public API surface
+- CI pipeline (`.github/workflows/ci.yml`) running fmt + clippy + test + audit + deny + coverage + fuzz-smoke on Linux/macOS/Windows
 - `rust-toolchain.toml` pinning Rust version
 
-**Acceptance criteria**
+**Acceptance criteria** (final, across all 4 sub-milestones)
 - [ ] `cargo fmt --all -- --check` passes
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings` passes
-- [ ] `cargo test --workspace` passes (drone tests at least)
-- [ ] CI green on all 3 OS targets
+- [ ] `cargo test --workspace` passes
+- [ ] CI green on all 3 OS targets × stable + MSRV
 - [ ] `runtime-drone --session-id test --db-path /tmp/d.sqlite --ipc-socket /tmp/d.sock` starts, writes heartbeat rows to SQLite, accepts `SnapshotNow` command via socket, accepts `GracefulShutdown`, handles SIGTERM with emergency snapshot
-- [ ] Drone test coverage ≥80% (cargo-llvm-cov)
+- [ ] Drone test coverage **100%** (cargo-llvm-cov per-package); workspace coverage ≥80%
 - [ ] `runtime-core` types compile and round-trip-serialize via proptest
+- [ ] `cargo xtask regenerate-types --check` passes (no schema/type drift)
+- [ ] `cargo +nightly fuzz run drone_command_decode -- -max_total_time=30` runs without panic in CI
+- [ ] All `pub` APIs in `runtime-core` and `runtime-drone` doc-commented with compile-checked examples
 
 **Dependencies** — none (root milestone)
 
-**Out of scope** — anything that isn't drone + types + CI
+**Out of scope** — anything that isn't workspace skeleton + types + drone + fuzz/coverage/docs (each sub-milestone has its own out-of-scope list)
 
 ---
 
