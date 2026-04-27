@@ -291,15 +291,20 @@ Total: ~24 weeks elapsed at sustained pace. Compresses with parallel work; expan
 
 **Deliverable**
 - `examples/aria/` stripped to v0.1-compatible (mode hardcoded to STANDARD, no MCP-dependent tools by default — but loadable into v0.1)
-- Code-signing certificate procured (likely DigiCert, SSL.com, or Sectigo for Windows EV cert; ~$300-500/year)
-- `cargo tauri build` produces signed `.msi` for Windows x64
-- README.md (root) updated for v0.1 (replaces shell ARIA README, which moves to `archive/aria-shell/README.md`)
+- `cargo tauri build` produces unsigned `.msi` for Windows x64 (paid code-signing cert deferred — see "Why unsigned" below)
+- SHA-256 checksum generated for the `.msi` and published in release notes
+- Sigstore provenance attestation via GitHub Actions OIDC (free; cryptographically attests "GitHub Actions for this repo built this binary from this commit")
+- README.md (root) updated for v0.1 (replaces shell ARIA README, which moves to `archive/aria-shell/README.md`); includes prominent SmartScreen-warning explainer + checksum verification instructions
 - SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md finalized
 - LICENSE (Apache 2.0)
 - CHANGELOG.md with v0.1.0 entry
-- `.github/workflows/release.yml` automates build + sign + SBOM + GitHub Release on tag push
+- `.github/workflows/release.yml` automates build + SHA-256 + Sigstore attestation + SBOM + GitHub Release on tag push
 - ADRs 0001–0003 in `docs/adr/`
-- v0.1.0 git tag + GitHub Release with signed .msi attached + SBOM (CycloneDX) attached
+- v0.1.0 git tag + GitHub Release with unsigned .msi + SHA-256 + Sigstore attestation + SBOM (CycloneDX) attached
+
+**Why unsigned**
+
+EV code-signing certificates run $300–600/year and require business verification (LLC + notarized identity + USB hardware token). For a v0.1 OSS project with no validated audience, that's premature spending and procurement friction. Most successful OSS desktop tools ship unsigned at first release; trust comes from SHA-256 checksums + Sigstore provenance + transparent build process + the project's public reputation over time. Paid signing gets revisited at v0.5 or v1.0 when adoption is proven (or when a sponsor/employer offers to cover it). See ADR-0004 for the full reasoning.
 - 30-90 second screen recording for launch
 
 **Acceptance criteria — the MVP success criterion (BLOCKING)**
@@ -307,7 +312,8 @@ Total: ~24 weeks elapsed at sustained pace. Compresses with parallel work; expan
 This is the ship gate. v0.1.0 ships only when **both** paths complete on a fresh Windows VM:
 
 **Novice path** — fresh Windows VM, no prior knowledge:
-- [ ] Download signed `.msi` from GitHub Release; Windows SmartScreen accepts the signature
+- [ ] Download `.msi` from GitHub Release; verify SHA-256 against the release notes (matches → continue; mismatch → stop and report)
+- [ ] Click through the SmartScreen warning ("More info" → "Run anyway"); the warning is expected and documented in the README
 - [ ] Install + launch
 - [ ] Welcome → API key (entered, test-connect succeeds) → "Build my own" → empty canvas
 - [ ] Generate Tool ("fetch URL contents") → review → install
@@ -332,7 +338,7 @@ This is the ship gate. v0.1.0 ships only when **both** paths complete on a fresh
 **Other ship gates:**
 - [ ] All §12 quality gates pass on `main` branch HEAD
 - [ ] CHANGELOG complete and dated
-- [ ] Release artifact signed by code-signing cert
+- [ ] Release artifact: SHA-256 generated, Sigstore attestation present, signature verifies via `cosign verify-blob` (paid code-signing deferred per ADR-0004)
 - [ ] SBOM attached to release
 - [ ] README links work; LICENSE displays in app's About dialog
 - [ ] No known critical bugs in issue tracker
@@ -385,7 +391,7 @@ Block release until ALL of these are checked:
 ### Security
 - [ ] SECURITY.md present with disclosure flow
 - [ ] `docs/SECURITY.md` threat model up to date with what v0.1 actually does (and doesn't — L2b best-effort, Operator tier missing)
-- [ ] Code-signing certificate procured and the .msi is signed; verify with `signtool verify /pa /v dist/runtime-v0.1.0.msi`
+- [ ] Unsigned `.msi` built reproducibly; SHA-256 generated; Sigstore attestation produced via GitHub Actions OIDC; `cosign verify-blob` confirms attestation. Paid code-signing deferred — see ADR-0004 for rationale and the trigger criteria for revisiting.
 - [ ] No secrets committed to repo (gitleaks scan)
 - [ ] SBOM (CycloneDX) generated and attached to release
 - [ ] No `.env` files in repo; `.gitignore` covers them
@@ -424,7 +430,7 @@ Risks ordered by probability × impact. Each has a mitigation.
 | R1 | Anthropic API breaking change mid-build | low | high | LLMProvider trait abstracts; pin SDK version; test against `wiremock` in CI; small surface (HTTP+SSE direct) is easier to fix than a SDK shim |
 | R2 | React Flow can't handle large graphs (100+ nodes) | medium | medium | v0.1 sessions are small; profile early at M3; if needed, use clustering/collapse; React Flow has known patterns for this |
 | R3 | Tauri webview behavior diverges across OS | low (Windows-only in v0.1) | medium | Test on Windows 10 + Windows 11 + Windows Server in CI; v1.0 multi-OS port is when this risk realizes |
-| R4 | Code-signing cert procurement takes 2-3 weeks (EV verification) | high | medium | Order at start of M10, not M11; have a fallback identity-validated cert if EV delays |
+| R4 | Windows SmartScreen warns on unsigned .msi, friction for novices | high | low | Documented in README + first-run UX warns user; SHA-256 + Sigstore attestation give technically-inclined users verifiable provenance; paid EV signing revisited at v0.5+ per ADR-0004 |
 | R5 | Generator output quality is inconsistent | high | medium | Pin model temperature; use deterministic seeds; capability validation L3 catches most failures; manual review at Novice tier; iterate prompts in M9 |
 | R6 | Capability enforcement L2a has a bypass | medium | high | Property tests + fuzz testing in M5; security review before M11; document L2b is v1.0 publicly |
 | R7 | SQLite WAL contention under multi-process load | low (single-session in v0.1) | low | Single-session simplifies; busy_timeout handles transients; v1.0 multi-session needs more rigor |

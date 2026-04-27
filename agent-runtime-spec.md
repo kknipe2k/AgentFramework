@@ -371,7 +371,7 @@ Framework JSON files live in `examples/`. Edit a file, hit "Reload framework" in
 | Importer for shell ARIA's signals.jsonl | ❌ | ✅ | ✅ |
 | OTel export (WI-23) | ❌ | ❌ | ✅ |
 | **Distribution & dev experience** | | | |
-| Signed binary | ✅ (Windows .msi, code-signed) | ✅ + macOS .dmg + Linux AppImage | ✅ |
+| Distribution integrity | ✅ Windows .msi (unsigned) + SHA-256 + Sigstore attestation via OIDC | ✅ + paid Windows EV code-signing (revisited per ADR-0004) + macOS .dmg + Linux AppImage | ✅ + multi-vendor signing |
 | Auto-update | ❌ (manual download from GitHub Releases) | ✅ (Tauri updater plugin, opt-in, off by default) | ✅ |
 | First-run UX (§14) | ✅ full state machine + "build your first agent" guided path | ✅ + tutorial videos + sample sessions | ✅ |
 | Localization | ❌ (en-US only) | ❌ (en-US only) | ➕ i18n framework + community translations |
