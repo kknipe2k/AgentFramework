@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A local Electron desktop runtime for agentic AI workflows. Not a chatbot wrapper. Not a framework. A **runtime** — the way Node.js is to JavaScript — that frameworks, agents, and skills execute inside.
+A local Tauri desktop runtime for agentic AI workflows. Not a chatbot wrapper. Not a framework. A **runtime** — the way the JVM is to Java, or Deno is to TypeScript — that frameworks, agents, and skills execute inside.
 
 The core differentiator is a live visual graph that renders agent and skill spawning in real time, detects capability gaps, and suspends cleanly when something is missing — directing the user to the Agent Builder to resolve it. Underneath everything is a dedicated drone process that owns session survival, recovery, and process lifecycle.
 
@@ -253,104 +253,151 @@ Phase 2's `AgentEvent` union is updated:
 
 ## §0c Development Loop
 
-> **Locked (2026-04-18, WI-17).** How a developer iterates on the runtime + frameworks without packaging Electron.
+> **Locked (2026-04-18, WI-17 + Tauri migration).** How a developer iterates on the runtime + frameworks.
 
-### `package.json` scripts
+### Repo layout (workspace)
 
-```json
-{
-  "scripts": {
-    "dev":      "concurrently \"npm:dev:*\"",
-    "dev:vite": "vite",                                          // renderer
-    "dev:main": "electron-vite dev",                             // main + preload
-    "dev:drone": "nodemon --exec ts-node electron/drone/drone.ts",  // drone with auto-reload
-    "test":     "vitest run",
-    "test:watch": "vitest",
-    "test:e2e": "playwright test",
-    "build":    "electron-vite build && electron-builder --dir",
-    "pack":     "electron-builder --dir",                        // unsigned for local testing
-    "release":  "electron-vite build && electron-builder"
-  }
-}
+```
+.
+├── Cargo.toml                  # Workspace root
+├── crates/
+│   ├── runtime-core/           # Domain types, AgentEvent, framework schema
+│   ├── runtime-main/           # Tauri main process (orchestration, MCP, SDK)
+│   ├── runtime-drone/          # Drone binary (heartbeat, snapshots, IPC)
+│   └── runtime-sandbox/        # Per-artifact sandbox host (L2 enforcement)
+├── src-tauri/                  # Tauri wrapper (commands, allowlist config)
+├── src/                        # Frontend (TypeScript + React)
+├── examples/                   # Framework artifacts (aria/, ralph/)
+└── package.json                # Frontend deps only
+```
+
+### Dev commands
+
+```bash
+# Frontend HMR + Tauri main + drone, all hot-reloading
+cargo tauri dev
+
+# Watch + restart drone independently when iterating on it
+cargo watch -x "run -p runtime-drone -- --session-id dev --db-path .dev/runtime.db"
+
+# Frontend-only iteration (mock backend)
+npm run dev
+
+# Tests
+cargo test --workspace                    # Rust unit + integration
+cargo test --workspace --features fuzz   # Property + fuzz suites
+cargo clippy --workspace -- -D warnings  # Lint
+cargo fmt --all -- --check               # Format check
+npm run test                              # Frontend unit (Vitest)
+npm run test:e2e                          # E2E (Playwright against built app)
+
+# Production build (signed, reproducible)
+cargo tauri build --target universal-apple-darwin    # macOS
+cargo tauri build --target x86_64-pc-windows-msvc    # Windows
+cargo tauri build --target x86_64-unknown-linux-gnu  # Linux
 ```
 
 ### Hot-reload behavior per process
 
 | Process | Hot reload | State preserved? |
 |---|---|---|
-| Renderer (Vite HMR) | Yes, instant | Local React state lost; SQLite-backed graph state preserved |
-| Main process | Yes, on restart (electron-vite) | All in-memory state lost; user prompted before restart |
-| Drone process | Yes, via nodemon | Drone is stateless w.r.t memory — all state in SQLite, fully preserved |
+| Renderer (Vite HMR via Tauri dev) | Yes, instant | Local React state lost; SQLite-backed graph state preserved |
+| Main (Rust) | On rebuild (~2-5s for incremental) | All in-memory state lost; sessions resume from drone snapshots |
+| Drone (Rust, via `cargo watch`) | On rebuild | Drone state lives in SQLite — fully preserved across restarts |
+| Sandbox (per-artifact) | Spawned fresh per validation; no hot-reload concept | N/A |
 
-**Drone reloads do not lose session state** — this is a deliberate consequence of state-in-SQLite architecture. Useful for iterating on drone logic against a live session.
+**Drone reloads do not lose session state** — state lives in SQLite. Useful for iterating drone logic against a live session.
 
-**Main reloads will drop MCP connections and active streams.** User sees a "main reloading" toast; sessions resume on reconnect (drone keeps running, snapshots ensure no data loss).
+**Main reloads drop MCP connections and active streams.** User sees a "main reloading" toast; sessions resume on reconnect (drone keeps running, snapshots ensure no data loss).
 
 ### Working on a framework
 
-Framework JSON files live in `examples/`. Edit a file, hit "Reload framework" in the Builder — runtime re-validates, swaps the active framework for new sessions. Existing sessions continue with the old framework version (snapshot keeps the JSON it loaded with).
+Framework JSON files live in `examples/`. Edit a file, hit "Reload framework" in the Builder — runtime re-validates against the JSON Schema (see Phase 6) and swaps the active framework for new sessions. Existing sessions continue with the old framework version (snapshot keeps the JSON it loaded with).
 
 ### Working on the runtime
 
-- Code in `src/main`, `src/renderer`, `electron/drone` triggers the appropriate hot-reload path.
-- TypeScript errors surfaced inline in dev mode; in prod mode runtime fails fast.
-- Tests run via `npm run test`; coverage threshold enforced in CI.
+- Rust code triggers `cargo watch` rebuild; clippy + rustfmt run on save (configured in editor / pre-commit).
+- TypeScript errors surface in renderer HMR; `tsc --noEmit` runs in CI.
+- Tests run via `cargo test` + `npm run test`; coverage thresholds enforced in CI (see §12 Engineering Charter).
+- Pre-commit hook runs `cargo fmt --check`, `cargo clippy -- -D warnings`, `prettier --check`, `tsc --noEmit`. Hooks blocked from `--no-verify` in CI mirror.
 
 -----
 
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Electron Shell                        │
-│                                                         │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │              Renderer Process (UI)               │   │
-│  │                                                  │   │
-│  │   Live Graph    │  Agent Builder  │  MCP Manager │   │
-│  │   Gap Detector  │  Registry Search│  Session UI  │   │
-│  │   (runtime)     │  Skill Writer   │  Framework   │   │
-│  │                 │  (build time)   │  Manager     │   │
-│  └──────────────────────────────────────────────────┘   │
-│                         │ IPC                            │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │              Main Process (Node)                 │   │
-│  │                                                  │   │
-│  │   SDK Event Pipeline   │   MCP Client Layer      │   │
-│  │   Framework Loader     │   Gap Suspender         │   │
-│  │   Builder: Registry    │   Builder: Skill Writer │   │
-│  │   Builder: Test Harness│                         │   │
-│  └──────────────────────────────────────────────────┘   │
-│                         │                                │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │           Drone Process (Survival Layer)         │   │
-│  │                                                  │   │
-│  │   Heartbeat  │  Snapshots  │  Recovery  │  Spawn │   │
-│  └──────────────────────────────────────────────────┘   │
-│                         │                                │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │           Persistence Layer (SQLite)             │   │
-│  │   Sessions  │  VDR Traces  │  Artifacts  │  Logs │   │
-│  └──────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                       Tauri Shell                         │
+│                                                          │
+│  ┌───────────────────────────────────────────────────┐   │
+│  │       OS WebView (WebKit / WebView2 / GTK)        │   │
+│  │       Renderer = TypeScript + React + React Flow  │   │
+│  │                                                   │   │
+│  │  Live Graph │ Agent Builder │ MCP Manager         │   │
+│  │  Gap Panel  │ Registry/Generators │ Session UI    │   │
+│  │  HITL UI    │ (runtime + build modes)             │   │
+│  │                                                   │   │
+│  │  No Node API. Tauri IPC only. Capability-checked. │   │
+│  └───────────────────────────────────────────────────┘   │
+│                       │ Tauri typed IPC (allowlisted)    │
+│  ┌───────────────────────────────────────────────────┐   │
+│  │                Main Process (Rust + tokio)        │   │
+│  │                                                   │   │
+│  │  SDK Event Pipeline (HTTP+SSE → AgentEvent)       │   │
+│  │  MCP Client Layer (rmcp / JSON-RPC stdio)         │   │
+│  │  Framework Loader + JSON Schema validator         │   │
+│  │  Gap Suspender + capability enforcer (§8 L2)      │   │
+│  │  Builder: Registry / Generators / Test Harness    │   │
+│  │  Notifier plugin host                             │   │
+│  └───────────────────────────────────────────────────┘   │
+│                       │ Unix socket / Windows named pipe │
+│                       │ (framed JSON, dead-process detect)│
+│  ┌───────────────────────────────────────────────────┐   │
+│  │           Drone Process (Rust + tokio)            │   │
+│  │                                                   │   │
+│  │  Heartbeat │ Snapshots │ Recovery │ Process spawn │   │
+│  │  Per-session; survives main crash; SQLite owner   │   │
+│  └───────────────────────────────────────────────────┘   │
+│                       │                                  │
+│  ┌───────────────────────────────────────────────────┐   │
+│  │      Persistence Layer (SQLite, WAL, rusqlite)    │   │
+│  │  Sessions │ Snapshots │ Signals │ VDR │ Artifacts │   │
+│  │  skills.lock │ skills.audit.jsonl │ token_usage   │   │
+│  └───────────────────────────────────────────────────┘   │
+│                                                          │
+│  ┌───────────────────────────────────────────────────┐   │
+│  │   Sandboxes (per-skill capability enforcement)    │   │
+│  │  Spawned by drone for L3 validation + L2 runtime  │   │
+│  │  OS process boundary; Tauri allowlist; no Node    │   │
+│  └───────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────┘
 ```
 
 -----
 
 ## Tech Stack
 
-|Layer         |Technology               |Reason                                            |
-|--------------|-------------------------|--------------------------------------------------|
-|Shell         |Electron (latest stable) |Process ownership, desktop integration            |
-|UI Framework  |React 18 + TypeScript    |Component model, type safety                      |
-|Graph Renderer|React Flow               |Production-grade, extensible, live updates        |
-|Styling       |Tailwind CSS             |Utility-first, consistent design system           |
-|SDK           |@anthropic-ai/sdk        |Native streaming, tool use, type safety           |
-|Persistence   |SQLite via better-sqlite3|Local, zero server, fast                          |
-|PTY           |node-pty                 |CLI bridge fallback, bidirectional process control|
-|IPC           |Electron contextBridge   |Secure renderer ↔ main communication              |
-|Build         |Vite + electron-builder  |Fast dev loop, cross-platform packaging           |
-|Test          |Vitest + Playwright      |Unit and E2E coverage                             |
+> **Locked (2026-04-18, OSS-driven decision).** Tauri + Rust backend chosen over Electron for: ~10 MB binaries vs 150 MB, ~50–80 MB RAM vs 400–600 MB, real OS-level process sandboxing for §8.security L2 capability enforcement, smaller attack surface for OSS scrutiny, faster startup, better battery life on laptops where the runtime stays open all day. Frontend stack stays TypeScript/React — Tauri uses the OS webview (WebKit / WebView2 / WebKitGTK).
+
+|Layer         |Technology                            |Reason                                                     |
+|--------------|--------------------------------------|-----------------------------------------------------------|
+|Shell         |Tauri 2.x                             |Small footprint, real sandboxing, signed reproducible builds|
+|Backend       |Rust 1.80+                            |Memory safety, zero-cost abstractions, fits drone/IPC strengths|
+|Async runtime |tokio                                 |Production-grade async I/O, channels, process supervision  |
+|UI Framework  |React 18 + TypeScript                 |Component model, mature React Flow ecosystem               |
+|Graph Renderer|React Flow                            |Production-grade, extensible, live updates                 |
+|Styling       |Tailwind CSS                          |Utility-first, consistent design system                    |
+|LLM client    |Direct HTTP + SSE via reqwest + eventsource-stream | Anthropic API is small/stable; direct HTTP avoids SDK churn and a maintenance shim |
+|MCP client    |rmcp (official Rust MCP) or direct JSON-RPC over stdio | Official crate when feature-complete; fallback is straightforward |
+|Persistence   |SQLite via rusqlite (WAL mode)        |Local, zero server, fast, embedded                         |
+|PTY           |portable-pty                          |Cross-platform PTY, CLI bridge fallback                    |
+|IPC (renderer↔main)|Tauri typed IPC commands + events |Secure, allowlist-enforced, capability-checked             |
+|IPC (main↔drone)|tokio Unix socket / Windows named pipe with framed JSON|Stdout-clean, binary-safe, dead-process detection |
+|Frontend build|Vite                                  |Fast dev loop, HMR for renderer                            |
+|App build     |Tauri CLI + cargo                     |Reproducible builds, signed releases (Sigstore)            |
+|Test (Rust)   |cargo test + proptest + cargo-fuzz    |Unit + property + fuzz                                     |
+|Test (TS)     |Vitest + Playwright                   |Renderer unit + E2E                                        |
+|Lint/format   |rustfmt + clippy::pedantic + eslint + prettier | Opinionated, consistent across contributors      |
 
 -----
 
@@ -421,28 +468,40 @@ Session Recovery
 
 ### Drone Process Interface
 
-```typescript
-// Drone spawned as: node drone.js --session-id <id> --db-path <path>
+```rust
+// crates/runtime-drone/src/protocol.rs
+//
+// Drone spawned by main as a tokio child process:
+//   runtime-drone --session-id <id> --db-path <path> --ipc-socket <path>
+//
+// IPC: framed JSON-newline over Unix domain socket (Linux/macOS) or
+// Windows named pipe. Stdout/stderr reserved for logs (captured to file).
 
-// Messages drone sends to main process via IPC
-type DroneEvent =
-  | { type: 'heartbeat'; status: HeartbeatStatus; timestamp: number }
-  | { type: 'snapshot_written'; snapshot_id: string; session_id: string }
-  | { type: 'activity_state_change'; from: ActivityState; to: ActivityState }
-  | { type: 'process_spawned'; pid: number; process_type: ProcessType }
-  | { type: 'process_stopped'; pid: number; reason: StopReason }
-  | { type: 'recovery_available'; session_id: string; snapshot_id: string }
-  | { type: 'alert'; level: 'warn' | 'critical'; message: string }
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DroneEvent {
+    Heartbeat            { status: HeartbeatStatus, timestamp: i64 },
+    SnapshotWritten      { snapshot_id: String,    session_id: String },
+    ActivityStateChange  { from: ActivityState,    to: ActivityState },
+    ProcessSpawned       { pid: u32,               process_type: ProcessType },
+    ProcessStopped       { pid: u32,               reason: StopReason },
+    RecoveryAvailable    { session_id: String,     snapshot_id: String },
+    Alert                { level: AlertLevel,      message: String },
+}
 
-// Messages main process sends to drone
-type DroneCommand =
-  | { type: 'snapshot_now'; reason: string }
-  | { type: 'graceful_shutdown'; timeout_ms: number }
-  | { type: 'spawn_process'; process_type: ProcessType; config: ProcessConfig }
-  | { type: 'stop_process'; pid: number; force: boolean }
-  | { type: 'set_activity_timeout'; ms: number }
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DroneCommand {
+    SnapshotNow         { reason: String },
+    GracefulShutdown    { timeout_ms: u64 },
+    SpawnProcess        { process_type: ProcessType, config: ProcessConfig },
+    StopProcess         { pid: u32, force: bool },
+    SetActivityTimeout  { ms: u64 },
+    RevertToSnapshot    { snapshot_id: String, reason: RevertReason },  // §1b / WI-14
+}
 
-type ActivityState = 'active' | 'idle' | 'stalled' | 'timed_out' | 'user_aborted' | 'recovering'
+#[derive(Serialize, Deserialize)]
+pub enum ActivityState { Active, Idle, Stalled, TimedOut, UserAborted, Recovering }
 type StopReason = 'graceful' | 'crash' | 'timeout' | 'user_abort' | 'force_kill'
 ```
 
@@ -526,7 +585,7 @@ Rationale:
 - Resource accounting — easy to attribute snapshots, signals, and budget to the drone owning the session.
 - Clean shutdown — graceful_shutdown applies per-drone without ordering hazards.
 
-Tradeoff: more processes. With Electron's process model this is fine for single-digit concurrent sessions; v1 caps at 8 concurrent active sessions and queues additional requests.
+Tradeoff: more processes. With Tauri's lighter process model (~10 MB resident per drone in Rust) this is fine for tens of concurrent sessions; v1 caps at 8 concurrent active sessions and queues additional requests as a conservative starting point.
 
 #### SQLite WAL mode
 
@@ -553,34 +612,77 @@ Auth conflicts resolved by **first-connection-wins**: the first session to conne
 
 #### Cross-session UI
 
-The Electron renderer can display multiple sessions simultaneously (tabs or split view). Each session has its own graph, panels, and gap state. Switching tabs does not pause sessions — only the active tab is rendered.
+The webview renderer can display multiple sessions simultaneously (tabs or split view). Each session has its own graph, panels, and gap state. Switching tabs does not pause sessions — only the active tab is rendered.
 
-### §1d IPC Channel (fork, not stdio)
+### §1d IPC Channels
 
-> **Locked (2026-04-18, WI-09).** Drone ↔ main IPC uses `child_process.fork`'s message channel, not stdin/stdout JSON.
+> **Locked (2026-04-18, WI-09 + Tauri migration).** Two IPC layers, both typed and stdout-clean.
+
+#### Layer 1: Renderer ↔ Main (Tauri IPC)
+
+Tauri provides typed commands + events between the webview and the Rust main process. Renderer cannot bypass these — there is no Node API in the webview. All commands are allowlist-enforced via `tauri.conf.json`.
 
 ```typescript
-// Main process spawns drone
-const drone = fork('./electron/drone/drone.ts', [
-  '--session-id', sessionId,
-  '--db-path',    dbPath
-])
+// Renderer (TS)
+import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 
-drone.on('message', (event: DroneEvent) => eventBus.emit(event))
-drone.on('exit', code => handleDroneExit(code))
-drone.send({ type: 'snapshot_now', reason: 'task_boundary' } satisfies DroneCommand)
+await invoke('load_framework', { path: 'examples/aria/framework.json' })
+const unlisten = await listen<AgentEvent>('agent_event', (e) => graph.handle(e.payload))
+```
 
-// Drone process listens / emits
-process.on('message', (cmd: DroneCommand) => handleCommand(cmd))
-process.send!({ type: 'heartbeat', status, timestamp: Date.now() } satisfies DroneEvent)
+```rust
+// Main (Rust)
+#[tauri::command]
+async fn load_framework(path: String, app: tauri::AppHandle) -> Result<FrameworkInfo, String> {
+    // ... validation, schema check, load ...
+    app.emit("agent_event", AgentEvent::SessionStart { /* ... */ }).ok();
+    Ok(info)
+}
+```
+
+Tauri's `tauri.conf.json` allowlist enumerates which commands and which file/network operations the renderer can request. Anything not on the allowlist is hard-denied at the bridge — capability enforcement starts here.
+
+#### Layer 2: Main ↔ Drone (framed JSON over Unix socket / named pipe)
+
+Drone is spawned by main as a tokio child process. IPC uses framed JSON-newline over a Unix domain socket (macOS/Linux) or Windows named pipe — chosen over stdio for the same reasons as before, plus stronger isolation.
+
+```rust
+// Main spawns drone
+let socket_path = session_socket_path(&session_id);
+let drone = tokio::process::Command::new("runtime-drone")
+    .arg("--session-id").arg(&session_id)
+    .arg("--db-path").arg(&db_path)
+    .arg("--ipc-socket").arg(&socket_path)
+    .stdout(Stdio::piped())                      // captured to log file
+    .stderr(Stdio::piped())                      // captured to log file
+    .spawn()?;
+
+let listener = UnixListener::bind(&socket_path)?;
+let (sock, _) = listener.accept().await?;
+let (read, write) = sock.into_split();
+let mut events = FramedRead::new(read, JsonCodec::<DroneEvent>::new());
+let mut commands = FramedWrite::new(write, JsonCodec::<DroneCommand>::new());
+
+// Drone heartbeats arrive on `events`; main sends commands via `commands`.
+```
+
+```rust
+// Drone connects back to main's socket
+let stream = UnixStream::connect(&args.ipc_socket).await?;
+let (read, write) = stream.into_split();
+// Mirror codec on the drone side; receive DroneCommand, emit DroneEvent.
 ```
 
 Why not stdio:
-- Library warnings or stray `console.log` corrupt newline-delimited JSON streams.
-- `process.send` is binary-safe and serializes via Node's IPC channel, not text.
-- `disconnect`/`exit` events give automatic dead-drone detection.
+- Library warnings to stdout corrupt JSON streams.
+- Socket-framed JSON is binary-safe and gives clean dead-process detection (socket close = drone gone).
+- Stdout/stderr stay available for log capture (`runtime-drone` logs to a structured file via `tracing` crate, not to the IPC stream).
 
-stdout/stderr are reserved for logs (visible in dev mode, captured to file in prod).
+Why a socket per session:
+- Trivially supports multi-session (`§1c`) — each session pair (main, drone) has its own socket path under `$RUNTIME_DATA_DIR/sockets/{session_id}.sock`.
+- Permission-restricted: socket created with mode 0600, owner-only.
+- Easy to mock in tests (point at a `tempfile`-backed socket).
 
 -----
 
@@ -677,28 +779,56 @@ type AgentEvent =
 
 ### SDK Wrapper
 
-```typescript
-// src/main/sdk/AgentSDK.ts
+```rust
+// crates/runtime-main/src/sdk/agent_sdk.rs
 
-class AgentSDK {
-  private provider: LLMProvider     // see §2c — not bound to Anthropic concretely
-  private eventBus: EventEmitter
-  private sessionId: string
+pub struct AgentSdk<P: LLMProvider> {
+    provider:   P,                         // see §2c — generic over provider
+    event_tx:   mpsc::Sender<AgentEvent>,
+    session_id: SessionId,
+}
 
-  async runAgent(config: AgentConfig): Promise<void> {
-    // Emit agent_spawned
-    // Stream with SDK, emit stream_text per chunk
-    // On tool use: emit tool_invoked (source: mcp | builtin | generated)
-    // On tool result: emit tool_result
-    // On LoadSkill tool result: also emit skill_loaded with mode/trigger_kind
-    // On request_capability: emit capability_requested → tool_missing or skill_missing per kind (see §4b)
-    // On missing tool (static): emit tool_missing → gap flow (see Phase 4, §4b)
-    // On text block: extract decision records, emit decision_record
-    // On complete: emit agent_complete
-    // On error: emit agent_error → drone notified
-  }
+impl<P: LLMProvider> AgentSdk<P> {
+    pub async fn run_agent(&self, config: AgentConfig) -> Result<(), SdkError> {
+        // Emit agent_spawned
+        // Stream provider events; translate ProviderEvent → AgentEvent
+        // On tool use:    emit tool_invoked   (source: mcp | builtin | generated)
+        // On tool result: emit tool_result
+        // On LoadSkill result: emit skill_loaded with mode + trigger_kind
+        // On request_capability: emit capability_requested → tool_missing or
+        //                        skill_missing per kind (see §4b)
+        // On missing tool (static): emit tool_missing → gap flow
+        // On text block:  extract decision records, emit decision_record
+        // On complete:    emit agent_complete
+        // On error:       emit agent_error → drone notified
+        Ok(())
+    }
 }
 ```
+
+Provider implementation hits the Anthropic HTTP+SSE API directly:
+
+```rust
+// crates/runtime-main/src/providers/anthropic.rs
+
+pub struct AnthropicProvider {
+    http: reqwest::Client,
+    api_key: SecretString,                 // from keychain via secrets vault
+    base_url: Url,
+}
+
+impl LLMProvider for AnthropicProvider {
+    async fn stream(&self, config: AgentConfig)
+        -> Result<impl Stream<Item = ProviderEvent>, ProviderError>
+    {
+        // POST /v1/messages with stream=true
+        // Parse SSE via eventsource-stream
+        // Yield ProviderEvent { kind: TextDelta | ToolUse | ToolResult | MessageStop | Error }
+    }
+}
+```
+
+Direct HTTP keeps the dependency surface small: `reqwest`, `eventsource-stream`, `serde`, `tokio`. No third-party SDK to track for breaking changes.
 
 ### Verified Decision Records (VDR)
 
@@ -723,35 +853,46 @@ interface VerifiedDecisionRecord {
 
 ### §2c LLMProvider Abstraction
 
-> **Locked (2026-04-18, WI-13).** The runtime ships a single provider implementation in v1 (Anthropic) but binds `AgentSDK` to a `LLMProvider` interface, not to `@anthropic-ai/sdk` directly. Adding a second provider later is a new class, not a refactor.
+> **Locked (2026-04-18, WI-13 + Tauri migration).** The runtime ships a single provider implementation in v1 (Anthropic, hitting the HTTP API directly with reqwest + eventsource-stream — no third-party SDK). `AgentSdk` is generic over an `LLMProvider` trait so a second provider (OpenAI, Google, local-Ollama) is a new impl, not a refactor.
 
-```typescript
-interface LLMProvider {
-  readonly name: string                                    // 'anthropic' | 'openai' | 'google' | ...
-  readonly supports: { tool_use: boolean; streaming: boolean; thinking: boolean }
+```rust
+#[async_trait]
+pub trait LLMProvider: Send + Sync {
+    fn name(&self) -> &str;                               // "anthropic" | "openai" | ...
+    fn supports(&self) -> ProviderSupport;
 
-  stream(config: AgentConfig): AsyncIterable<ProviderEvent>
-  countTokens(messages: Message[]): Promise<number>
-  listModels(): Promise<ModelInfo[]>
-  estimateCost(input_tokens: number, output_tokens: number, model: string): number
+    async fn stream(&self, config: AgentConfig)
+        -> Result<BoxStream<'_, ProviderEvent>, ProviderError>;
+    async fn count_tokens(&self, messages: &[Message]) -> Result<u64, ProviderError>;
+    async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError>;
+    fn estimate_cost(&self, input_tokens: u64, output_tokens: u64, model: &str) -> f64;
 }
 
-interface ProviderEvent {
-  // Provider-specific events translated by the provider into AgentEvent by AgentSDK
-  kind: 'text_delta' | 'tool_use' | 'tool_result' | 'message_stop' | 'error' | 'thinking_delta'
-  payload: unknown
+pub struct ProviderSupport {
+    pub tool_use:  bool,
+    pub streaming: bool,
+    pub thinking:  bool,
 }
 
-interface ModelInfo {
-  id: string
-  display_name: string
-  context_window: number
-  pricing: { input_per_mtok: number; output_per_mtok: number }
-  capabilities: { tool_use: boolean; thinking: boolean; vision: boolean }
+pub enum ProviderEvent {
+    TextDelta     { text: String },
+    ToolUse       { id: String, name: String, input: serde_json::Value },
+    ToolResult    { id: String, output: serde_json::Value },
+    ThinkingDelta { text: String },
+    MessageStop   { stop_reason: String },
+    Error         { code: String, message: String },
+}
+
+pub struct ModelInfo {
+    pub id:             String,
+    pub display_name:   String,
+    pub context_window: u32,
+    pub pricing:        Pricing,
+    pub capabilities:   ModelCapabilities,
 }
 ```
 
-`AgentSDK` consumes `ProviderEvent` and translates into `AgentEvent`. Provider-specific concerns (Anthropic's `content_block_delta`, OpenAI's `delta`, etc.) stay inside the provider. The translation layer is what adds source/agent_id/session context.
+`AgentSdk` consumes `ProviderEvent` and translates into `AgentEvent`. Provider-specific concerns (Anthropic's `content_block_delta`, OpenAI's `delta`, etc.) stay inside the provider impl. The translation layer is what adds source/agent_id/session context.
 
 v1 ships `AnthropicProvider`; provider selection lives in framework JSON:
 
@@ -1695,7 +1836,7 @@ interface HitlNotifyEvent {
 
 Built-in notifiers in v1:
 - `terminal_bell` — emits BEL to active terminal (works in all OSes)
-- `desktop` — Electron Notification API (cross-platform)
+- `desktop` — Tauri's notification plugin (cross-platform: native macOS/Windows/Linux notifications)
 - `sound` — play a wav from settings; off by default
 
 Plugin notifiers (Slack, email, custom) loaded from `notifiers/` directory. Plugins follow the same Phase 8 §8.security model: declared capabilities, sandboxed validation, tier-gated install.
@@ -1865,9 +2006,13 @@ Builder UI translates this to plain English at install time:
 
 > *This skill will: read files matching `src/**`; call the `WebFetch` tool against `api.example.com`; load the `debugging` skill. It will NOT: write files, run shell commands, or access the network beyond `api.example.com`.*
 
-##### L2: Capability Enforcement (runtime interception)
+##### L2: Capability Enforcement (defense in depth)
 
-The runtime maintains a per-artifact capability set loaded from L1. Every operation initiated by the artifact passes through a capability check:
+The runtime maintains a per-artifact capability set loaded from L1. Every operation initiated by the artifact passes through **two enforcement layers**:
+
+**L2a — Application-level check (Rust main process)**
+
+Before any operation is dispatched to a tool or sandbox:
 
 - Tool call → check `tools_called` includes the target.
 - Skill load → check `skills_loaded` includes the target.
@@ -1876,13 +2021,27 @@ The runtime maintains a per-artifact capability set loaded from L1. Every operat
 - Shell access (via Bash) → check `shell == true`.
 - Agent spawn → check `spawn_agents` includes the target.
 
-Capability violation:
-- Emits `capability_violation` event with `{ artifact, attempted, declared }`
-- Blocks the operation
+**L2b — OS-level enforcement (Tauri allowlist + sandbox process)**
+
+The runtime exploits the Tauri + Rust + per-artifact-sandbox stack to enforce capabilities at the OS boundary, not just in application code:
+
+1. **Tauri allowlist** — the renderer cannot reach any backend command not explicitly allowlisted in `tauri.conf.json`. There is no Node API in the renderer, so prompt-injection-driven `eval` or shell-out is structurally impossible.
+2. **Per-artifact sandbox process** — when an artifact with `shell: true` or `network: [...]` runs, the drone spawns a dedicated `runtime-sandbox` child process. The sandbox process is launched with OS-level restrictions:
+   - **Linux:** seccomp-bpf syscall allowlist + landlock filesystem restrictions + namespaces (mount, network, PID).
+   - **macOS:** sandbox-exec profile derived from declared capabilities.
+   - **Windows:** Job Objects + AppContainer + restricted token.
+3. **File access enforcement** — even at L2a, file paths are normalized and glob-matched; symlink escape attempts are detected and blocked.
+4. **Network enforcement** — `WebFetch` and generated network-bound tools route through a single Rust HTTP client that consults the artifact's `network` allowlist before issuing any request. DNS pinning prevents allowlist-bypass via DNS rebinding.
+
+**Capability violation handling**
+
+- Emits `capability_violation` event with `{ artifact, attempted, declared, layer: 'l2a' | 'l2b' }`.
+- Blocks the operation at whichever layer caught it.
 - Surfaces a HITL prompt: "Skill `<name>` attempted `<operation>` not in its declared capabilities. Allow once / Block / Open Builder to update."
 - VDR records the attempt regardless of user choice.
+- L2b violations (the artifact bypassed L2a and was caught by the OS) are flagged at higher severity — the artifact attempted something it declared it would not. Triggers `tier_changed` audit entry; the artifact is automatically demoted to "review-required" status regardless of user tier.
 
-> **Implication:** L2 is the layer that makes "auto-accept tested" safe. Without L2, "tested" only means the sandbox didn't catch anything; with L2, the artifact literally cannot exceed what it declared, no matter what the model wrote.
+> **Why this matters for OSS scrutiny.** L2 in Electron is best-effort — V8 isolates and worker_threads aren't real sandboxes. L2 in Tauri/Rust delivers what it promises: an artifact that declares `shell: false` literally cannot invoke a shell, because the sandbox process has no shell binary in its filesystem view and the seccomp filter blocks `execve`. This is what makes "auto-accept tested" actually safe.
 
 ##### L3: Sandboxed Validation (always-on)
 
@@ -2159,7 +2318,7 @@ CREATE TABLE mcp_servers (
 Keys, tokens, credentials stored separately from session state. Never written to snapshots. Never logged in VDR.
 
 ```
-Storage: OS keychain via keytar (Electron compatible)
+Storage: OS keychain via the `keyring` crate (cross-platform: macOS Keychain, Windows Credential Manager, GNOME Keyring / KWallet via secret-service)
 Access: Main process only, never renderer
 API keys: Per model provider
 MCP auth: Per server
@@ -2189,70 +2348,114 @@ Recovery is never destructive. Discarded sessions are archived, not deleted.
 
 ```
 /
-├── electron/
-│   ├── main.ts              # Electron main process entry
-│   ├── preload.ts           # contextBridge IPC definitions
-│   └── drone/
-│       ├── drone.ts         # Drone process entry (spawned separately)
-│       ├── heartbeat.ts
-│       ├── snapshot.ts
-│       ├── recovery.ts
-│       └── process-manager.ts
+├── Cargo.toml                  # Workspace root
+├── Cargo.lock                  # Committed
+├── rust-toolchain.toml         # Pin Rust version for reproducibility
 │
-├── src/
-│   ├── main/                # Main process modules
-│   │   ├── sdk/
-│   │   │   ├── AgentSDK.ts
-│   │   │   ├── EventPipeline.ts
-│   │   │   └── VDRLogger.ts
-│   │   ├── mcp/
-│   │   │   ├── MCPManager.ts
-│   │   │   └── MCPClient.ts
-│   │   ├── framework/
-│   │   │   └── FrameworkLoader.ts
-│   │   ├── builder/         # Build-time only — not loaded during runtime
-│   │   │   ├── RegistrySearch.ts
-│   │   │   ├── SkillValidator.ts
-│   │   │   └── SkillWriter.ts
-│   │   └── db/
-│   │       ├── schema.ts
-│   │       └── SessionStore.ts
+├── crates/
+│   ├── runtime-core/           # Shared domain types
+│   │   ├── src/lib.rs
+│   │   ├── src/event.rs        # AgentEvent enum (canonical)
+│   │   ├── src/framework.rs    # Framework JSON schema types
+│   │   ├── src/capability.rs   # Capability declaration + enforcement types
+│   │   └── src/signal.rs       # Signal Schema v2 types
 │   │
-│   └── renderer/            # React UI
-│       ├── runtime/         # Runtime mode
-│       │   ├── graph/
-│       │   │   ├── LiveGraph.tsx
-│       │   │   ├── nodes/
-│       │   │   │   ├── AgentNode.tsx
-│       │   │   │   ├── SkillNode.tsx
-│       │   │   │   ├── MCPNode.tsx
-│       │   │   │   ├── GapNode.tsx
-│       │   │   │   └── HITLNode.tsx
-│       │   │   └── edges/
-│       │   │       └── AnimatedEdge.tsx
-│       │   └── panels/
-│       │       ├── GapPanel.tsx
-│       │       └── HITLPrompt.tsx
-│       ├── builder/         # Build-time mode (Agent Builder)
-│       │   ├── Canvas.tsx
-│       │   ├── SkillSearch.tsx
-│       │   ├── SkillWriter.tsx
-│       │   └── Tester.tsx
-│       └── shared/
-│           ├── MCPManager.tsx
-│           ├── FrameworkManager.tsx
-│           ├── SessionManager.tsx
-│           ├── CostTracker.tsx
-│           └── RecoveryDialog.tsx
+│   ├── runtime-main/           # Tauri main process
+│   │   ├── src/main.rs
+│   │   ├── src/sdk/agent_sdk.rs
+│   │   ├── src/sdk/event_pipeline.rs
+│   │   ├── src/sdk/vdr_logger.rs
+│   │   ├── src/providers/anthropic.rs       # Direct HTTP+SSE
+│   │   ├── src/providers/mod.rs              # LLMProvider trait
+│   │   ├── src/mcp/manager.rs
+│   │   ├── src/mcp/client.rs
+│   │   ├── src/framework/loader.rs
+│   │   ├── src/framework/validator.rs
+│   │   ├── src/builder/registry.rs           # Build-time
+│   │   ├── src/builder/skill_writer.rs
+│   │   ├── src/builder/validator.rs
+│   │   ├── src/db/schema.rs
+│   │   ├── src/db/session_store.rs
+│   │   └── src/capability/enforcer.rs        # L2a application-level
+│   │
+│   ├── runtime-drone/          # Drone binary
+│   │   ├── src/main.rs         # Entry: --session-id --db-path --ipc-socket
+│   │   ├── src/protocol.rs     # DroneEvent / DroneCommand
+│   │   ├── src/heartbeat.rs
+│   │   ├── src/snapshot.rs
+│   │   ├── src/recovery.rs
+│   │   └── src/process_manager.rs
+│   │
+│   └── runtime-sandbox/        # Per-artifact sandbox host (L2b OS-level)
+│       ├── src/main.rs
+│       ├── src/linux.rs        # seccomp + landlock + namespaces
+│       ├── src/macos.rs        # sandbox-exec
+│       └── src/windows.rs      # Job Objects + AppContainer
 │
-├── examples/
-│   └── aria/                # Reference framework reconstructing ARIA via primitives (see §0)
-│       ├── framework.json
-│       ├── skills/
-│       └── tools/
+├── src-tauri/                  # Tauri wrapper
+│   ├── tauri.conf.json         # Allowlist, signing keys, build config
+│   ├── src/lib.rs              # tauri::Builder + commands
+│   └── icons/
 │
-├── agent-runtime-spec.md    # This document
-└── package.json
+├── src/                        # Frontend (TypeScript + React)
+│   ├── runtime/                # Runtime-mode UI
+│   │   ├── graph/
+│   │   │   ├── LiveGraph.tsx
+│   │   │   ├── nodes/
+│   │   │   │   ├── AgentNode.tsx
+│   │   │   │   ├── ToolNode.tsx
+│   │   │   │   ├── SkillNode.tsx
+│   │   │   │   ├── MCPNode.tsx
+│   │   │   │   ├── GapNode.tsx
+│   │   │   │   ├── HITLNode.tsx
+│   │   │   │   ├── PlanNode.tsx
+│   │   │   │   ├── TaskNode.tsx
+│   │   │   │   ├── VerifyNode.tsx
+│   │   │   │   └── HookNode.tsx
+│   │   │   └── edges/AnimatedEdge.tsx
+│   │   └── panels/{GapPanel,HITLPrompt,ApprovalPanel}.tsx
+│   │
+│   ├── builder/                # Build-time UI
+│   │   ├── Canvas.tsx
+│   │   ├── RegistrySearch.tsx
+│   │   ├── SkillWriter.tsx
+│   │   ├── Tester.tsx
+│   │   └── CapabilityDisclosure.tsx          # L1 plain-English render
+│   │
+│   └── shared/{MCPManager,FrameworkManager,SessionManager,CostTracker,RecoveryDialog}.tsx
+│
+├── examples/                   # Reference frameworks
+│   ├── aria/                   # ARIA archetype proof (see §0)
+│   │   ├── framework.json
+│   │   ├── skills/  agents/  tools/
+│   │   └── README.md
+│   └── ralph/                  # Sibling continuous-loop framework
+│
+├── docs/                       # Public documentation
+│   ├── adr/                    # Architecture Decision Records
+│   ├── SECURITY.md             # Threat model
+│   ├── CONTRIBUTING-DEEPDIVE.md
+│   └── PROVIDERS.md            # How to add a new LLMProvider
+│
+├── schemas/                    # JSON Schemas (source of truth)
+│   ├── framework.v1.json
+│   ├── skill.v1.json
+│   ├── tool.v1.json
+│   └── agent.v1.json
+│
+├── .github/                    # OSS scaffolding
+│   ├── workflows/{ci.yml, release.yml, security.yml}
+│   ├── ISSUE_TEMPLATE/
+│   ├── PULL_REQUEST_TEMPLATE.md
+│   └── CODEOWNERS
+│
+├── LICENSE                     # Apache 2.0
+├── CONTRIBUTING.md
+├── SECURITY.md                 # Disclosure flow
+├── CODE_OF_CONDUCT.md
+├── README.md
+├── agent-runtime-spec.md       # This document
+└── package.json                # Frontend deps only
 ```
 
 -----
@@ -2262,32 +2465,65 @@ Recovery is never destructive. Discarded sessions are archived, not deleted.
 Use this to begin the build:
 
 ```
-Read agent-runtime-spec.md fully before writing any code.
+Read agent-runtime-spec.md fully before writing any code. Pay special
+attention to §0 (positioning), §0a (capability matrix — MVP done-criterion),
+§0b (Tool/Skill/Agent terminology), §1 (drone), §1c (multi-session),
+§1d (IPC — Unix socket / Windows named pipe with framed JSON),
+§8.security (5-layer model, especially L2 OS-level enforcement),
+and §12 (Engineering Charter — coverage thresholds and CI gates).
 
-We are building a local Electron desktop runtime for agentic AI workflows.
-Start with Phase 1: The Drone.
+We are building a local Tauri desktop runtime for agentic AI workflows
+in Rust + TypeScript. Start with Phase 1: The Drone.
 
-Build the drone as a standalone Node.js process in electron/drone/drone.ts.
-It should:
-1. Accept --session-id and --db-path as CLI args
-2. Initialize SQLite using better-sqlite3 at db-path with WAL mode (see §1c)
-3. Start a heartbeat loop (5 second interval) and write heartbeat records to SQLite
-4. Use child_process.fork IPC: receive commands via process.on('message'), emit events via process.send (NOT stdin/stdout — see §1d)
-5. Reserve stdout/stderr for logging only; main never parses them
-6. Implement snapshot_now command: serialize provided state to snapshots table
-7. Implement graceful_shutdown command: flush pending writes, exit cleanly
-8. Catch SIGTERM and SIGINT for emergency snapshot before exit
+Pre-flight (do this before code):
+1. Verify the workspace layout in §"Project Structure" exists or create
+   the empty Cargo workspace skeleton (Cargo.toml, crates/runtime-core,
+   crates/runtime-drone). Empty crates with `lib.rs` / `main.rs` stubs.
+2. Set up rust-toolchain.toml pinning Rust to a specific stable version.
+3. Add CI scaffolding (.github/workflows/ci.yml) with cargo fmt --check,
+   cargo clippy --workspace -- -D warnings, cargo test --workspace.
+   CI must be green before any logic lands.
 
-Use the exact DroneEvent and DroneCommand types from the spec.
-Use the exact SQLite schema from the spec for sessions and snapshots tables.
+Phase 1 implementation in crates/runtime-drone:
+1. CLI args via clap: --session-id, --db-path, --ipc-socket
+2. Initialize SQLite using rusqlite at db-path with WAL mode + busy_timeout
+   per §1c (PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;
+   PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON)
+3. Open a Unix domain socket (or Windows named pipe) at --ipc-socket;
+   accept main's connection; framed JSON-newline using tokio_util Codec
+4. Heartbeat task (tokio::spawn) firing every 5 seconds; emits
+   DroneEvent::Heartbeat and writes to a heartbeats table in SQLite
+5. Command handler task receives DroneCommand from socket; implements:
+   - SnapshotNow { reason }: serialize provided state to snapshots table
+   - GracefulShutdown { timeout_ms }: flush pending writes, exit 0
+   - RevertToSnapshot { snapshot_id, reason }: load + return snapshot blob
+6. SIGTERM/SIGINT handler (tokio::signal): emergency snapshot before exit
+7. stdout/stderr go to a structured tracing log file, not the IPC channel
 
-Write tests in Vitest for:
-- Heartbeat fires at correct interval
-- Snapshot is written correctly to SQLite
-- Graceful shutdown flushes before exit
-- SIGTERM triggers emergency snapshot
+Use the exact DroneEvent and DroneCommand types from the spec. Use the
+exact SQLite schema (Persistence Layer section) for sessions, snapshots,
+signals, vdr tables. Implement all five tables now; logic that uses
+signals/vdr comes in Phase 2.
 
-Do not build anything beyond the drone in this session.
+Write tests:
+- cargo test for heartbeat interval (use tokio::time::pause + advance)
+- cargo test for snapshot_now writes correct row to SQLite
+- cargo test for graceful_shutdown flushes within timeout_ms
+- cargo test for SIGTERM-triggered emergency snapshot
+- proptest for DroneEvent / DroneCommand JSON round-trip stability
+- Coverage must be ≥80% for crates/runtime-drone before merge (§12)
+
+Quality gates that must pass before any commit:
+- cargo fmt --all -- --check
+- cargo clippy --workspace --all-targets -- -D warnings
+- cargo test --workspace
+- cargo audit (no known vulns)
+
+Do not build anything beyond the drone in this session. Phase 2 (SDK
+event pipeline) and beyond come in subsequent sessions.
+
+If any spec section seems unclear, stop and surface the ambiguity rather
+than improvise. The spec is the contract.
 ```
 
 -----
@@ -2304,7 +2540,7 @@ Do not build anything beyond the drone in this session.
        │ ProviderEvent
        ▼
 ┌──────────────────────┐
-│  AgentSDK            │  translates ProviderEvent → AgentEvent
+│  AgentSdk (Rust)     │  translates ProviderEvent → AgentEvent
 │  (per session)       │  enriches with agent_id, session_id, ts
 └──────┬───────────────┘
        │ AgentEvent
@@ -2346,7 +2582,7 @@ What the UI shows when a critical subsystem is unavailable.
 | **Anthropic API** (provider unavailable) | Heartbeat fails OR stream errors with auth/quota/network | Top banner: "Provider offline — sessions paused"; agent nodes show stalled state | Drone keeps running; snapshots continue; on reconnect, sessions resume from `stalled` state |
 | **MCP server (one)** | Heartbeat fails for that server | MCPNode goes offline (red); affected ToolNodes pulse warning | Agents needing that server's tools route through gap flow (Phase 4 / §4b); other agents unaffected |
 | **MCP server (all)** | All servers down | All MCPNodes offline; toast: "All MCP servers unavailable" | Frameworks with no MCP-dependent tools continue; others suspend |
-| **Drone process** | Main loses IPC channel (`disconnect` event from fork) | Top banner: "Drone process crashed — recovering"; graph disabled | Main spawns replacement drone, loads from last snapshot, replays events from EventBus tail; if replacement fails, session marked `crashed`, recovery offered on next launch |
+| **Drone process** | Main loses IPC channel (socket EOF / pipe closure) | Top banner: "Drone process crashed — recovering"; graph disabled | Main spawns replacement drone via `tokio::process::Command`, reconnects socket, loads from last snapshot, replays events from in-memory tail; if replacement fails twice, session marked `crashed`, recovery offered on next launch |
 | **SQLite database** (lock contention or corruption) | WAL write fails | Top banner: "Persistence layer degraded"; signals queued in memory | Session continues for `degraded_session_window_seconds` (default 60s); after window, session marked `crashed` and graceful_shutdown invoked |
 | **Renderer (window closed)** | Main detects renderer disconnect | N/A (no UI) | Drone + main continue; on relaunch, renderer reattaches to running session via session_id; full graph reconstructed from signals |
 | **Hook command unavailable** (e.g., `npm` not installed) | Hook exec fails with ENOENT | HookNode shows red with "command not found"; rail violation if hook is `block` | Per `on_failure` policy: warn (continue) or block (suspend) or rollback |
