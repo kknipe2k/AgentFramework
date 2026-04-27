@@ -219,7 +219,7 @@ The `examples/aria/` framework wires (1)–(6) up to reproduce ARIA's `verify.sh
 
 ### WI-03: Plan / task primitive (so frameworks can express plan-driven workflows)
 
-**STATUS:** OPEN
+**STATUS:** RESOLVED (2026-04-18, locked in spec §3a)
 **Priority:** P1
 **Effort:** 2 days spec; 1 week implementation
 **Unlocks matrix rows:** plan→approve→execute, ralph loop, subagent isolation, failure escalation

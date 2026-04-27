@@ -440,6 +440,19 @@ type AgentEvent =
   | { type: 'gap_resolved'; capability_name: string; capability_kind: 'tool' | 'skill' | 'agent' }
   | { type: 'capability_requested'; agent_id: string; capability_name: string; capability_kind: 'tool' | 'skill'; reason: string } // request_capability call
 
+  // Plan & Task lifecycle (see §3a / WI-03)
+  | { type: 'plan_created'; plan_id: string; title: string; task_count: number; approval_required: boolean }
+  | { type: 'plan_approval_requested'; plan_id: string }
+  | { type: 'plan_approved'; plan_id: string; approved_by: 'user' | 'auto' }
+  | { type: 'plan_revised'; plan_id: string; revision_reason: string }
+  | { type: 'plan_aborted'; plan_id: string; reason: string }
+  | { type: 'plan_complete'; plan_id: string; duration_ms: number }
+  | { type: 'task_started'; task_id: string; agent_id: string }
+  | { type: 'task_completed'; task_id: string; duration_ms: number }
+  | { type: 'task_failed'; task_id: string; error: string; failure_count: number }
+  | { type: 'task_skipped'; task_id: string; reason: string }
+  | { type: 'task_escalated'; task_id: string; failure_count: number; max_failures: number }
+
   // Capability enforcement (see Phase 8 §8.security L2 / WI-06)
   | { type: 'capability_violation'; artifact_kind: 'tool' | 'skill' | 'agent'; artifact_name: string; attempted: string; declared: string[]; agent_id: string }
   | { type: 'capability_grant'; artifact_name: string; granted_capability: string; scope: 'once' | 'session' | 'forever' } // user explicitly allowed a violation
@@ -545,6 +558,152 @@ FrameworkNode  — root node, the active framework (e.g., examples/aria)
 - Edges use animated dashes during active calls, solid when complete
 - Token spend shown as node weight — larger spend = visually larger node
 - No clutter — only show detail on hover or selection
+
+-----
+
+## §3a Plan & Task Primitive
+
+> **Locked (2026-04-18, WI-03).** A generic plan/task primitive the framework composes. ARIA's "plan → HITL approve → execute one task → verify → commit → next" is one realization. Ralph's "PRD-driven continuous loop" is another. Both reconstruct using the same primitive.
+
+### Data types
+
+```typescript
+interface Plan {
+  id: string
+  session_id: string
+  title: string
+  description?: string
+  tasks: Task[]
+  status: 'pending_approval' | 'approved' | 'in_progress' | 'complete' | 'aborted' | 'awaiting_replan'
+  approval_required: boolean              // false = auto-approve (Ralph-style)
+  loop_policy: LoopPolicy
+  hitl_checkpoints: string[]              // free-form list of checkpoint names referenced by tasks
+  risks: string[]                         // free-form list, surfaced in approval UI
+  created_at: number                      // unix ms
+  approved_at?: number
+  completed_at?: number
+}
+
+interface Task {
+  id: string
+  plan_id: string
+  title: string
+  description?: string
+  status: 'pending' | 'running' | 'done' | 'blocked' | 'failed' | 'skipped'
+  hitl: boolean
+  hitl_reason?: string
+  estimated_minutes?: number
+  actual_minutes?: number
+  post_hooks?: HookRef[]                  // override framework defaults; see §4a
+  failure_count: number                    // increments on task_failed; resets on retry
+  max_failures: number                     // default 3; overridable per task; triggers escalation
+  files_affected?: string[]                // optional, for HITL UX
+  acceptance_criteria?: string[]           // optional, for verify integration
+}
+
+type LoopPolicy =
+  | { kind: 'one_shot' }                            // run once, exit
+  | { kind: 'fresh_context_per_task' }              // ARIA pattern: each task gets a new agent with clean context
+  | { kind: 'continuous'; goal_store: string }       // Ralph pattern: one persistent agent; goal_store points to PRD-style file
+```
+
+### Events (added to Phase 2 union)
+
+```typescript
+| { type: 'plan_created'; plan_id: string; title: string; task_count: number; approval_required: boolean }
+| { type: 'plan_approval_requested'; plan_id: string }
+| { type: 'plan_approved'; plan_id: string; approved_by: 'user' | 'auto' }
+| { type: 'plan_revised'; plan_id: string; revision_reason: string }
+| { type: 'plan_aborted'; plan_id: string; reason: string }
+| { type: 'plan_complete'; plan_id: string; duration_ms: number }
+| { type: 'task_started'; task_id: string; agent_id: string }
+| { type: 'task_completed'; task_id: string; duration_ms: number }
+| { type: 'task_failed'; task_id: string; error: string; failure_count: number }
+| { type: 'task_skipped'; task_id: string; reason: string }
+| { type: 'task_escalated'; task_id: string; failure_count: number; max_failures: number }   // failure_count >= max_failures
+```
+
+### Approval-gate primitive
+
+When a `plan_created` event fires with `approval_required: true`:
+1. Runtime emits `plan_approval_requested` immediately after.
+2. Session state moves to `awaiting_approval`. Graph dims; approval panel surfaces.
+3. UI presents plan title, task list, risks, HITL checkpoints, estimated total time.
+4. User chooses:
+   - **Approve** → emits `plan_approved { approved_by: 'user' }`; status → `approved`; execution starts.
+   - **Revise** → user edits plan inline (or sends back to planner agent with feedback); emits `plan_revised`; status stays `pending_approval`.
+   - **Cancel** → emits `plan_aborted`; session continues without a plan.
+
+When `approval_required: false`:
+- Runtime emits `plan_approved { approved_by: 'auto' }` immediately. No UI gate. Used by Ralph-style loops.
+
+### Loop policy primitive
+
+The loop policy controls how the runtime executes the task list.
+
+| Policy | Behavior | Used by |
+|---|---|---|
+| `one_shot` | Plan runs once start-to-finish. No retries beyond `max_failures`. Exit on completion. | Simple scripted workflows |
+| `fresh_context_per_task` | Each task spawns a new agent (per `framework.agents[]` definition) with clean context. Prior task summaries passed as input. **ARIA-archetype default.** | examples/aria/ |
+| `continuous` | One persistent agent runs. Plan tasks become iteration targets in a `goal_store` file (PRD-style JSON). Agent reads the goal store each iteration, picks the next incomplete item, works on it, updates the store. Loop until store is fully complete. **Ralph-archetype.** | examples/ralph/ |
+
+The runtime ships all three as built-ins. `goal_store` for `continuous` is referenced by path; framework decides format.
+
+### Failure escalation primitive
+
+Per-task failure counter + max threshold:
+
+1. On `task_failed` → `failure_count++`; emit `task_failed`.
+2. If `failure_count >= max_failures` → emit `task_escalated`.
+3. Runtime invokes the framework's HITL handler (see WI-16) with the task context, last error, and prior attempts.
+4. HITL outcomes route back as `task_started` (retry with guidance), `task_skipped`, or `plan_aborted`.
+
+Frameworks can override `max_failures` per task or set a session-wide default (`framework.task_defaults.max_failures`, default 3).
+
+### Graph integration
+
+`PlanNode` (root):
+- Renders title, total/completed task count, approval state, current task pointer.
+- Click expands to show full task list.
+
+`TaskNode` (children):
+- Status (pending/running/done/blocked/failed/skipped) drives color.
+- HITL flag rendered as a badge.
+- Clicking a task surfaces its hooks, agent, and any failure history.
+- Animated edge from PlanNode → currently-running TaskNode.
+
+When `loop_policy: continuous`, `PlanNode` shows the goal-store progress instead of discrete TaskNode children (since tasks are dynamic).
+
+### Framework JSON
+
+```json
+{
+  "task_defaults": {
+    "max_failures": 3,
+    "hitl_default": false,
+    "post_hooks": [{ "type": "shell", "command": "bash .aria/verify.sh" }]
+  },
+  "plan_creation": {
+    "agent": "planner",
+    "approval_required_per_mode": {
+      "LITE":     false,
+      "STANDARD": true,
+      "FULL":     true,
+      "FULL+":    true
+    },
+    "loop_policy_per_mode": {
+      "LITE":     { "kind": "one_shot" },
+      "STANDARD": { "kind": "fresh_context_per_task" },
+      "FULL":     { "kind": "fresh_context_per_task" },
+      "FULL+":    { "kind": "fresh_context_per_task" }
+    }
+  }
+}
+```
+
+(Mode-keyed overrides above use the §3b mode primitive — added by WI-15.)
+
+`examples/aria/framework.json` uses the structure above. `examples/ralph/framework.json` overrides with `loop_policy: { kind: 'continuous', goal_store: '.ralph/prd.json' }` and `approval_required: false`.
 
 -----
 
