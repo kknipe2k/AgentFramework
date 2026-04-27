@@ -409,12 +409,17 @@ type AgentEvent =
   // Tools (callables — see §0b)
   | { type: 'tool_invoked'; tool_name: string; agent_id: string; source: 'mcp' | 'builtin' | 'generated'; server?: string; input: unknown }
   | { type: 'tool_result'; tool_name: string; agent_id: string; output: unknown; duration_ms: number }
-  | { type: 'tool_missing'; tool_name: string; agent_id: string; reason: 'not_in_allowed_list' | 'not_installed' }
+  | { type: 'tool_missing'; tool_name: string; agent_id: string; reason: 'not_in_allowed_list' | 'not_installed' | 'request_capability'; suspends_session: boolean }
 
   // Skills (instruction sets — see §0b)
   | { type: 'skill_loaded'; skill_name: string; skill_version: string; agent_id: string; mode: string; trigger_kind: 'semantic' | 'programmatic' }
   | { type: 'skill_load_requested'; skill_name: string; agent_id: string; trigger_event: string }
-  | { type: 'skill_missing'; skill_name: string; agent_id: string; context: string } // load-time: framework declares a skill not in local library
+  | { type: 'skill_missing'; skill_name: string; agent_id: string; context: string; source: 'static' | 'request_capability' } // recoverable
+
+  // Gaps (see Phase 4 / WI-05)
+  | { type: 'agent_missing'; agent_id: string; referenced_by: string } // schema error at load
+  | { type: 'gap_resolved'; capability_name: string; capability_kind: 'tool' | 'skill' | 'agent' }
+  | { type: 'capability_requested'; agent_id: string; capability_name: string; capability_kind: 'tool' | 'skill'; reason: string } // request_capability call
 
   // HITL, plan, hooks (see WI-02, WI-03, WI-16)
   | { type: 'hitl_requested'; agent_id: string; question: string; options: string[] | null }
@@ -444,7 +449,8 @@ class AgentSDK {
     // On tool use: emit tool_invoked (source: mcp | builtin | generated)
     // On tool result: emit tool_result
     // On LoadSkill tool result: also emit skill_loaded with mode/trigger_kind
-    // On missing tool: emit tool_missing → gap flow (see Phase 4, WI-05)
+    // On request_capability: emit capability_requested → tool_missing or skill_missing per kind (see §4b)
+    // On missing tool (static): emit tool_missing → gap flow (see Phase 4, §4b)
     // On text block: extract decision records, emit decision_record
     // On complete: emit agent_complete
     // On error: emit agent_error → drone notified
@@ -520,47 +526,122 @@ FrameworkNode  — root node, the active framework (e.g., examples/aria)
 
 The runtime’s job on a gap is to stop cleanly and tell the user exactly what is missing. Nothing more.
 
+### §4b Detection Mechanisms
+
+Three layers, two ship in v1. Each layer emits `tool_missing` or `skill_missing` events; Phase 4's flow below handles both.
+
+#### Layer 1: Static (load-time and spawn-time)
+
+When a framework loads or an agent is spawned, the runtime validates every reference.
+
+| Reference | When checked | Mismatch action |
+|---|---|---|
+| `framework.skills[]` | Load time | `skill_missing` (warn) — load continues without that skill |
+| `framework.tools[]` (built-in or generated) | Load time | `tool_missing` (block) — framework fails to load |
+| `framework.agents[].allowed_tools[]` | Spawn time | `tool_missing` (suspend) — that agent cannot start |
+| `framework.agents[].allowed_skills[]` | Load time | `skill_missing` (warn) — load continues without that skill |
+| `framework.agents[].spawns[]` | Load time | `agent_missing` (block) — schema error, framework fails to load |
+
+Skill-missing is recoverable (continue without, or fetch from registry). Tool-missing is not (the agent that needs it cannot proceed).
+
+#### Layer 2: `request_capability` meta-tool
+
+The runtime auto-injects `request_capability` into every agent's tool list. The model uses it when it realizes mid-task that it needs something not in its toolset.
+
+```typescript
+{
+  name: "request_capability",
+  description:
+    "Use when you need a capability (tool or skill) that is not in your toolset. " +
+    "Pause your current work and call this rather than improvising.",
+  input_schema: {
+    type: "object",
+    properties: {
+      capability_name: { type: "string", description: "Best guess at the name of the missing capability." },
+      capability_kind: { type: "string", enum: ["tool", "skill"], description: "tool = callable, skill = instructional context" },
+      reason:          { type: "string", description: "Why you need it — what task it would unlock." },
+      example_input:   { type: "object", description: "If a tool, an example input you would provide.", nullable: true }
+    },
+    required: ["capability_name", "capability_kind", "reason"]
+  }
+}
+```
+
+A `request_capability` call translates to `tool_missing` or `skill_missing` based on `capability_kind`. The agent's tool result stays unresolved until the gap is closed (or the user dismisses it). GapNode appears with the agent's stated `reason`.
+
+System prompt addition (added to every agent): *"If you need a capability you don't have, call `request_capability` rather than improvising."*
+
+#### Layer 3: Heuristic (v1.1, deferred)
+
+Pattern: 3+ similar failures on the same sub-task → suggest a missing capability. Requires a classifier (clustering similar errors, mapping to known capability gaps). Useful but error-prone, and depends on registry metadata to make suggestions concrete.
+
+For v1: repeatedly-failing agents hit the failure-escalation primitive (WI-16) and route to HITL. Heuristic gap detection adds on top in v1.1.
+
+### Severity Matrix
+
+| Event | Trigger | Session state | UX |
+|---|---|---|---|
+| `tool_missing` (static, spawn time) | Agent's `allowed_tools` references unresolved name | Suspended | GapNode on agent edge; "Open Builder to install tool" |
+| `tool_missing` (request_capability) | Agent calls request_capability with kind=tool | Suspended | GapNode at agent's current position; agent's reason shown |
+| `skill_missing` (static, load time) | Framework references unresolved skill | Loaded with warning | GapNode in graph margin; "Install or continue without" |
+| `skill_missing` (request_capability) | Agent calls request_capability with kind=skill | Active, warning toast | GapNode appears, agent continues; user can install async |
+| `agent_missing` (static, load time) | `spawns[]` references unresolved agent_id | Cannot start | Error dialog at framework load; user fixes JSON |
+
 ### Gap Flow (Runtime)
 
 ```
-skill_missing event received
+tool_missing or skill_missing event received
   │
   ├── Emit GapNode to graph immediately
-  │     - Shows: agent that needed the skill
-  │     - Shows: skill name and the context it was called in
+  │     - Shows: agent that needed the capability
+  │     - Shows: capability name, kind (tool/skill), and the context it was called in
   │     - Shows: last known agent output before the gap
   │
-  ├── Drone: snapshot_now (reason: 'gap_detected')
+  ├── If kind=tool OR static-load-blocking:
+  │     ├── Drone: snapshot_now (reason: 'gap_tool_missing')
+  │     └── Session moves to 'suspended' state
   │
-  ├── Session moves to 'suspended' state
+  ├── If kind=skill (recoverable):
+  │     ├── No snapshot needed
+  │     ├── Session stays 'active' with warning toast
+  │     └── VDR records the gap event
   │
   └── Gap Panel opens in UI
-        - "Session suspended. Missing skill: X"
+        - "Missing <kind>: <name>"
         - "Go to Agent Builder to find or create it"
-        - "Resume" button — active once skill is installed
-        - Full VDR trace up to suspension point available
+        - "Resume" button — active once installed (suspend case)
+        - "Continue without" button (recoverable case)
+        - Full VDR trace up to gap available
 ```
+
+### Gap Resolution
+
+When the user installs the missing capability via the Builder:
+1. Runtime re-validates the framework references.
+2. Emits `gap_resolved { capability_name, capability_kind }`.
+3. If session was suspended: drone reloads from snapshot, agent's pending tool result is delivered (for `request_capability`) or the agent is respawned (for static `tool_missing`).
+4. If session was active: GapNode collapses to a normal SkillNode/ToolNode and the warning clears.
 
 ### Gap Panel UX
 
 ```
 Gap Panel (replaces graph chrome, graph visible underneath dimmed)
-  - Skill name and description of what was needed
-  - Agent context — what the agent was trying to accomplish
+  - Capability name, kind (tool|skill), and description of what was needed
+  - Agent context — what the agent was trying to accomplish (request_capability.reason)
   - Link: "Open Agent Builder" (switches to build mode)
   - Session state preserved — graph will reconstruct on resume
-  - Option: "Resume anyway without this skill" (marks session as degraded)
+  - Option: "Resume anyway without this capability" (marks session as degraded; tool case only allowed if framework explicitly opts in)
 ```
 
 ### GapNode in Graph
 
 ```
 GapNode
-  - Amber pulsing ring
-  - Shows skill name
+  - Amber pulsing ring (skill kind) or red pulsing ring (tool kind)
+  - Shows capability name and kind
   - Shows which agent hit the gap
-  - Edge from agent to GapNode animated in red
-  - On resume: GapNode replaced by newly installed SkillNode
+  - Edge from agent to GapNode animated in red (tool) or amber (skill)
+  - On resolution: GapNode replaced by newly installed ToolNode or SkillNode
 ```
 
 -----

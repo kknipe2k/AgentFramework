@@ -318,42 +318,39 @@ The `examples/aria/` framework uses `approval_required: true` + `loop_policy: fr
 
 ### WI-05: Gap detection mechanism
 
-**STATUS:** OPEN
+**STATUS:** RESOLVED (2026-04-18, locked in spec Phase 4 / §4b)
 **Priority:** P1
 **Effort:** 2 days spec; 3 days implementation
+**Unlocks matrix rows:** clean-suspension UX (Phase 4 was a UX-only stub before this)
 
-**Problem**
-`skill_missing` is the trigger for the GapNode + clean suspension — the spec's claimed differentiator. But the spec never says **how** a missing skill/tool is detected. The model does not volunteer "I need tool X."
+**Locked decisions**
 
-**Proposed resolution**
-Add `§4b: Gap Detection Mechanisms`, specifying three detection layers:
+1. **Three-layer detection, two ship in v1:**
+   - **Layer 1 (Static):** load-time and spawn-time reference validation. Skill missing → warn (recoverable); tool missing → suspend; agent_missing → schema-block at load.
+   - **Layer 2 (`request_capability` meta-tool):** runtime auto-injects into every agent's tool list. Translates to `tool_missing` or `skill_missing` per `capability_kind`.
+   - **Layer 3 (Heuristic):** deferred to v1.1. Repeated similar failures → suggest a missing capability. v1 routes repeated failures to HITL via WI-16 instead.
+2. **Severity locked:** `tool_missing` suspends; `skill_missing` warns and continues. Recovery via `gap_resolved` event after Builder install.
+3. **Distinct events:** `tool_missing`, `skill_missing`, `agent_missing`, `capability_requested`, `gap_resolved` all in the canonical Phase 2 union.
 
-1. **Static (pre-flight).** When a framework loads, validate that every `tools[]` and `skills[]` reference resolves locally. Unresolved → emit `skill_missing` at load time, session suspends before the first agent runs.
-2. **Dynamic (meta-tool).** Inject a `request_capability` tool into every agent system prompt:
-   ```
-   name: request_capability
-   description: Use when you need a capability not in your tool list.
-   input_schema:
-     type: object
-     properties:
-       capability_name: { type: string }
-       reason: { type: string }
-       example_input: { type: object }
-   ```
-   When the model calls `request_capability`, the event pipeline translates it to `skill_missing`.
-3. **Heuristic (post-hoc).** If an agent fails 3+ times on similar errors OR repeatedly asks for user confirmation on the same sub-task, emit a soft `skill_missing` candidate event. User sees a suggestion ("This session keeps stumbling on PDF parsing — want to add a PDF tool?") but is not forced to suspend.
+**Spec changes**
+- Phase 4 expanded with §4b "Detection Mechanisms" (three layers + severity matrix + gap flow + resolution flow).
+- `request_capability` tool fully specified with input schema and system-prompt addition.
+- Severity matrix table covers all four event-source combinations.
+- Gap flow now branches on tool-vs-skill kind (suspend vs warn).
+- Phase 2 union extended: `tool_missing.reason` includes `'request_capability'` and `suspends_session: boolean`; `skill_missing.source` distinguishes static vs request; new events `agent_missing`, `gap_resolved`, `capability_requested`.
+- SDK wrapper comments updated to call out `request_capability` translation.
 
-Document that v1 ships with (1) and (2); (3) is a stretch goal.
+**Acceptance criteria** — all met
+- [x] Spec Phase 4 / §4b exists with all three layers (Layer 3 deferred and documented)
+- [x] `request_capability` tool schema fully defined
+- [x] System-prompt addition specified
+- [x] Static-validation reference table covers all 5 framework JSON reference types
+- [x] Severity matrix distinguishes tool/skill, static/request, suspend/warn
+- [x] Gap-resolved flow specified (snapshot resume vs warning clear)
+- [x] Phase 2 event union updated for consistency
 
-**Acceptance criteria**
-- [ ] Spec §4b exists with all three layers
-- [ ] `request_capability` tool schema fully defined
-- [ ] System-prompt template shown with `request_capability` injected
-- [ ] Pre-flight validation algorithm specified (pseudo-code)
-- [ ] Heuristic layer flagged as v1.1
-
-**Dependencies:** WI-04
-**Blocks:** Phase 4 (Gap Detection) code
+**Dependencies:** WI-04 ✓
+**Blocks:** Phase 4 code (now unblocked), WI-12 registry trust (gap-resolved depends on registry install path)
 
 ---
 
