@@ -325,69 +325,78 @@ Framework JSON files live in `examples/`. Edit a file, hit "Reload framework" in
 
 ## §0d Release Scope Matrix
 
-> **Locked (2026-04-18, OSS shipping plan).** What's in v0.1, v1.0, and v2.0+. Pulls every "deferred to v2" / "v1.1" / "stretch goal" note from elsewhere in the spec into one consolidated table. The release scope is the contract; scope-creep means redating, not silently adding.
+> **Locked (2026-04-18, OSS shipping plan; revised after workbench-MVP discussion).** What's in v0.1.0 Windows Preview, v1.0, and v2.0+. Pulls every "deferred to v2" / "v1.1" / "stretch goal" note from elsewhere in the spec into one consolidated table. The release scope is the contract; scope-creep means redating, not silently adding.
+>
+> **MVP framing:** v0.1 is a **workbench**, not a runtime spectator. A novice must be able to build an agentic process from scratch using the Builder Canvas and the three Generators (no JSON editing required). An experienced user must be able to build something complex and useful (canvas + JSON view + Tester + import-by-URL). Both share one workbench.
 
-| Capability | v0.1 (MVP, Windows) | v1.0 (multi-OS, full archetype) | v2.0+ (deferred) |
+| Capability | v0.1.0 Windows Preview | v1.0 (multi-OS, full) | v2.0+ (deferred) |
 |---|:---:|:---:|:---:|
-| **Core** | | | |
+| **Core runtime** | | | |
 | Drone (Phase 1, Rust + tokio) | ✅ | ✅ | ✅ |
 | SDK pipeline (Phase 2 + AnthropicProvider direct HTTP+SSE) | ✅ | ✅ | ✅ |
 | LLMProvider trait (§2c) | ✅ (anthropic only) | ✅ (anthropic only) | ➕ openai, google, local-ollama |
-| Live Graph (Phase 3) — AgentNode/ToolNode/SkillNode/GapNode/HITLNode/PlanNode/TaskNode/VerifyNode | ✅ | ✅ | ✅ |
+| Live Graph (Phase 3) — all node types | ✅ | ✅ | ✅ |
 | Gap detection (§4b) — static + request_capability | ✅ | ✅ | ➕ heuristic (Layer 3) |
 | Framework JSON Loader (Phase 6) + schema validation | ✅ | ✅ | ✅ |
+| **Workbench (Build Time — central to MVP)** | | | |
+| **Phase 9 Visual Canvas + Tester** | ✅ palette + drag-drop + JSON preview + sandboxed Tester | ✅ + multi-framework comparison | ✅ |
+| **Phase 8a Tool Writer** | ✅ Novice + Promoted tiers (mcp_binding + inline only) | ✅ + Operator tier | ✅ |
+| **Phase 8b Skill Writer** | ✅ Novice + Promoted tiers | ✅ + Operator tier | ✅ |
+| **Phase 8c Agent Composer** | ✅ Novice + Promoted tiers | ✅ + Operator tier | ✅ |
+| **Phase 5 MCP Manager — basic** | ✅ add by URL/path, connect, list tools, per-server auth, alias support | ✅ + multi-server collision UI, full namespace resolution | ✅ |
+| **Phase 7 Registry — direct import** | ✅ import-by-URL + import-by-file, hash-locked (`skills.lock`) | ✅ + Anthropic upstream search UI | ➕ pluggable community registries |
 | **Primitives** | | | |
 | §3a Plan / Task primitive | ✅ (fresh_context_per_task only) | ✅ (all three loop policies) | ✅ |
 | §3b Mode primitive | ❌ (hardcoded STANDARD) | ✅ | ✅ |
 | §4a Verify hooks + Rails + dont_touch | ✅ | ✅ | ✅ |
-| §6a HITL policy | ✅ (gap, failure, dont_touch only) | ✅ (full 9-trigger set) | ✅ |
-| §2a Budget primitive | ✅ (warn + hard_stop only) | ✅ (all four actions) | ✅ |
-| Subagent isolation (analyzer/implementer/verify-app/simplifier) | ✅ | ✅ | ✅ |
+| §6a HITL policy | ✅ (full 9-trigger set — needed for tier review UX) | ✅ | ✅ |
+| §2a Budget primitive | ✅ (all four actions) | ✅ | ✅ |
+| Subagent isolation | ✅ | ✅ | ✅ |
 | **Multi-instance** | | | |
 | Single session | ✅ | ✅ | ✅ |
 | §1c Multi-session (drone-per-session, MCP pool) | ❌ | ✅ | ✅ |
-| **Build-time (Agent Builder)** | | | |
-| Phase 7 Registry — local library only | ✅ (manual file copy) | ✅ (Anthropic upstream + skills.lock) | ➕ pluggable registries |
-| Phase 8a Tool Writer | ❌ | ✅ (mcp_binding + inline only) | ✅ |
-| Phase 8b Skill Writer | ❌ | ✅ | ✅ |
-| Phase 8c Agent Composer | ❌ | ✅ | ✅ |
-| Phase 9 Visual Canvas + Tester | ❌ | ✅ | ✅ |
-| **Security** | | | |
-| §8.security L1 Capability disclosure | ✅ | ✅ | ✅ |
-| §8.security L2a Application enforcement | ✅ | ✅ | ✅ |
-| §8.security L2b OS-level sandboxing | ❌ (best-effort, documented gap) | ✅ (Linux seccomp+landlock; macOS sandbox-exec; Windows Job Objects) | ✅ |
-| §8.security L3 Sandboxed validation | ❌ | ✅ | ✅ |
-| §8.security L4 Tier system | ❌ (manual review only — Operator-equivalent) | ✅ (Novice/Promoted/Operator) | ✅ |
-| §8.security L5 Provenance + audit log | ✅ (basic) | ✅ (with Sigstore signatures) | ✅ |
-| **MCP** | | | |
-| Phase 5 MCP Manager + multi-server | ❌ | ✅ | ✅ |
-| §5a Tool namespace resolution | n/a (no MCP) | ✅ | ✅ |
+| **Security (5-layer model — workbench needs Promoted tier safe)** | | | |
+| §8.security L1 Capability disclosure | ✅ full | ✅ | ✅ |
+| §8.security L2a Application enforcement (Rust intercept) | ✅ full | ✅ | ✅ |
+| §8.security L2b OS-level sandboxing | partial (process boundary only; full seccomp/landlock/sandbox-exec in v1.0) | ✅ Linux seccomp+landlock; macOS sandbox-exec; Windows Job Objects | ✅ |
+| §8.security L3 Sandboxed validation | ✅ schema + examples + capability check + red-flag scan | ✅ + adversarial inputs + fuzz | ✅ |
+| §8.security L4 Tier system | ✅ **Novice + Promoted** (Promoted blocked from `shell:true` and `network:["*"]` until L2b ships) | ✅ + Operator tier | ✅ |
+| §8.security L5 Provenance + audit log | ✅ basic (audit log + content hash + tier metadata) | ✅ + Sigstore signatures + SLSA | ✅ |
 | **Recovery** | | | |
 | §1b Recovery from snapshot (resume) | ✅ | ✅ | ✅ |
-| Tool-call uncertainty resolution | ✅ (basic prompt) | ✅ | ✅ |
+| Tool-call uncertainty resolution | ✅ (retry / skip / mark-complete / abort prompt) | ✅ | ✅ |
 | Deterministic replay (WI-18) | ❌ | ❌ | ✅ |
 | **Persistence** | | | |
 | §2b Signals + VDR projection | ✅ | ✅ | ✅ |
 | Importer for shell ARIA's signals.jsonl | ❌ | ✅ | ✅ |
 | OTel export (WI-23) | ❌ | ❌ | ✅ |
 | **Distribution & dev experience** | | | |
-| Signed binary | ✅ (Windows .msi) | ✅ (macOS .dmg, Linux AppImage, Windows .msi) | ✅ |
-| Auto-update | ❌ (manual download) | ✅ (Tauri updater plugin, opt-in) | ✅ |
-| First-run UX (§14) | ✅ (minimal) | ✅ (full onboarding + tutorial) | ✅ |
+| Signed binary | ✅ (Windows .msi, code-signed) | ✅ + macOS .dmg + Linux AppImage | ✅ |
+| Auto-update | ❌ (manual download from GitHub Releases) | ✅ (Tauri updater plugin, opt-in, off by default) | ✅ |
+| First-run UX (§14) | ✅ full state machine + "build your first agent" guided path | ✅ + tutorial videos + sample sessions | ✅ |
 | Localization | ❌ (en-US only) | ❌ (en-US only) | ➕ i18n framework + community translations |
-| Accessibility (WCAG AA) | partial | ✅ | ✅ |
-| **Collab / OSS** | | | |
-| GitHub repo public | ❌ (private through v0.1) | ✅ | ✅ |
-| Apache 2.0 license | ✅ (committed at v0.1 release) | ✅ | ✅ |
+| Accessibility (WCAG AA) | partial — keyboard nav + screen-reader labels on graph nodes | ✅ full WCAG AA + graph alternative views | ✅ |
+| **OSS** | | | |
+| GitHub repo public | ✅ at v0.1 release | ✅ | ✅ |
+| Apache 2.0 license | ✅ | ✅ | ✅ |
 | Public roadmap | ✅ | ✅ | ✅ |
 | Plugin system (§19 plugin nodes, §20 collab, §21 remote) | ❌ | ❌ | ✅ |
 | **Reference frameworks** | | | |
-| examples/aria/ (full archetype) | ✅ (loadable but stripped — no §3b mode router; no MCP-dependent tools) | ✅ | ✅ |
-| examples/ralph/ (continuous loop) | ❌ | ✅ | ✅ |
+| examples/aria/ (full archetype) | ✅ loadable as starting template (no §3b mode router; mode locked to STANDARD) | ✅ all four modes work | ✅ |
+| examples/ralph/ (continuous loop) | ❌ (continuous loop is v1.0) | ✅ | ✅ |
+
+### MVP success criterion
+
+v0.1.0 Windows Preview ships when **both of these are true**, demonstrated end-to-end on a fresh Windows VM that has never seen the codebase:
+
+1. **Novice path:** an end user with no prior knowledge installs the .msi, gets through First-Run UX, opens an empty canvas, generates one Tool + one Skill via the workbench, wires them to an Agent, runs a Test session, and sees the Tester report a pass — all without editing JSON or reading the spec.
+2. **Experienced path:** a user imports `examples/aria/framework.json` and any third skill/tool from a `skill.md` URL pasted into the import dialog, runs a real session against their own codebase, hits a `request_capability` gap, generates the missing Tool inline (Promoted tier auto-installs), resumes, and completes the session.
+
+If either path fails on a fresh machine, MVP is not done.
 
 ### Scope-control rule
 
-Scope-creep is the OSS killer. The scope above is the contract. Adding a feature to v0.1 means *removing* something else; pure additions go to v1.0+. Any PR that violates this gets the "out-of-scope" label and is queued, not merged.
+Scope-creep is the OSS killer. The scope above is the contract. Adding a feature to v0.1 means **removing** something else of equivalent effort; pure additions go to v1.0+. Any PR that violates this gets the "out-of-scope" label and is queued, not merged.
 
 The matrix is referenced from `docs/MVP-v0.1.md` (the build checklist) and from the README's "What works / what doesn't" section.
 
