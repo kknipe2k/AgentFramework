@@ -440,6 +440,12 @@ type AgentEvent =
   | { type: 'gap_resolved'; capability_name: string; capability_kind: 'tool' | 'skill' | 'agent' }
   | { type: 'capability_requested'; agent_id: string; capability_name: string; capability_kind: 'tool' | 'skill'; reason: string } // request_capability call
 
+  // Hooks & Rails (see §4a / WI-02)
+  | { type: 'hook_started'; hook_id: string; category: 'verify' | 'lint' | 'build' | 'test' | 'custom'; firing_point: string }
+  | { type: 'hook_passed';  hook_id: string; duration_ms: number; output_preview?: string }
+  | { type: 'hook_failed';  hook_id: string; duration_ms: number; error: string; on_failure: 'block' | 'warn' | 'rollback' }
+  | { type: 'rail_triggered'; rail_id: string; policy: 'hard' | 'soft'; firing_point: string; message: string; agent_id?: string }
+
   // Plan & Task lifecycle (see §3a / WI-03)
   | { type: 'plan_created'; plan_id: string; title: string; task_count: number; approval_required: boolean }
   | { type: 'plan_approval_requested'; plan_id: string }
@@ -828,6 +834,177 @@ GapNode
   - Edge from agent to GapNode animated in red (tool) or amber (skill)
   - On resolution: GapNode replaced by newly installed ToolNode or SkillNode
 ```
+
+-----
+
+## §4a Verify & Rails Primitives
+
+> **Locked (2026-04-18, WI-02).** The runtime ships hook and rail primitives. Frameworks compose them into pipelines like ARIA's `verify.sh` (5-layer verification) and `rails/safety.json` (hard/soft blocks). The runtime does not bundle test runners, linters, or specific rule sets — those come from the framework via hooks.
+
+### Hook primitive
+
+Hooks fire on lifecycle events. Each hook is a typed reference the runtime knows how to invoke.
+
+```typescript
+type HookRef =
+  | { type: 'shell'; command: string; timeout_ms?: number; cwd?: string }
+  | { type: 'tool';  tool_name: string; input?: Record<string, unknown> }
+  | { type: 'agent'; agent_id: string; prompt?: string }
+
+type HookCategory =
+  | 'verify'      // post-task or post-edit verification
+  | 'lint'        // style / static analysis
+  | 'build'       // compilation / packaging
+  | 'test'        // unit / integration / e2e
+  | 'custom'      // anything else; UI shows generic outcome
+
+interface Hook {
+  id: string
+  category: HookCategory
+  level?: 'quick' | 'standard' | 'full'   // optional grouping
+  ref: HookRef
+  on_failure: 'block' | 'warn' | 'rollback'
+}
+```
+
+Hook firing points (in `framework.hooks`):
+
+| Field | Fires when | Typical use |
+|---|---|---|
+| `pre_task` | Before each task starts | Pre-flight checks, setup |
+| `post_task` | After each task completes (success or fail) | **Verify pipeline (ARIA `verify.sh`)** |
+| `post_file_edit` | After any agent writes a file | Lint, format on save |
+| `pre_commit` | Before any git commit | Secret scan, hook chain |
+| `pre_agent_spawn` | Before a child agent spawns | Capability narrowing check, env prep |
+| `session_end` | When a session terminates | Report generation, cleanup |
+
+```json
+"hooks": {
+  "post_task": [
+    { "id": "verify", "category": "verify", "level": "standard",
+      "ref": { "type": "shell", "command": "bash .aria/verify.sh", "timeout_ms": 300000 },
+      "on_failure": "rollback" }
+  ],
+  "post_file_edit": [
+    { "id": "lint", "category": "lint",
+      "ref": { "type": "tool", "tool_name": "lint_changed_files" },
+      "on_failure": "warn" }
+  ]
+}
+```
+
+### Hook events (added to Phase 2 union)
+
+```typescript
+| { type: 'hook_started'; hook_id: string; category: HookCategory; firing_point: string; ref: HookRef }
+| { type: 'hook_passed';  hook_id: string; duration_ms: number; output_preview?: string }
+| { type: 'hook_failed';  hook_id: string; duration_ms: number; error: string; on_failure: 'block' | 'warn' | 'rollback' }
+```
+
+### Rails primitive
+
+Rails are policy checks declared in framework JSON. The runtime ships a rails-evaluator that runs them at the appropriate firing points.
+
+```json
+"rails": {
+  "hard": [
+    { "id": "no_secrets",
+      "fires_on": ["pre_commit", "post_file_edit"],
+      "check": { "type": "shell", "command": "scripts/check-secrets.sh" },
+      "message": "Secrets detected in staged changes; commit blocked." },
+    { "id": "no_env_files",
+      "fires_on": ["pre_commit"],
+      "check": { "type": "tool", "tool_name": "scan_for_env_files" },
+      "message": "Cannot commit .env files." }
+  ],
+  "soft": [
+    { "id": "no_debug",
+      "fires_on": ["post_file_edit"],
+      "check": { "type": "shell", "command": "scripts/scan-debug.sh" },
+      "message": "Debug statements found; consider removing before commit." }
+  ]
+}
+```
+
+`hard` rails block; `soft` rails warn. Rails evaluator emits `rail_triggered` events per evaluation.
+
+```typescript
+| { type: 'rail_triggered'; rail_id: string; policy: 'hard' | 'soft'; firing_point: string; message: string; agent_id?: string }
+```
+
+### Don't-touch primitive
+
+Pre-edit rail built into the runtime. Framework JSON declares glob patterns; any agent attempting to write a matching path triggers a hard rail.
+
+```json
+"dont_touch": [
+  ".aria/state/**",
+  "package-lock.json",
+  ".env*"
+]
+```
+
+Implemented as a built-in hook on `pre_file_edit` (new firing point) with `on_failure: block`. Emits `rail_triggered { rail_id: 'dont_touch', policy: 'hard' }`.
+
+### Rollback integration
+
+When a hook with `on_failure: rollback` fails, the runtime invokes the drone's `revert_to_snapshot` command targeting the snapshot taken at the most recent `task_started` boundary. Snapshots are already taken there per Phase 1.
+
+Drone command surface added:
+
+```typescript
+| { type: 'revert_to_snapshot'; snapshot_id: string; reason: 'hook_rollback' | 'user_rollback' | 'gap_recovery' }
+```
+
+After rollback, runtime emits `task_failed` with `error: 'rolled_back_after_hook_<hook_id>'` and the failure-escalation path (§3a) takes over.
+
+### Graph integration
+
+`VerifyNode` (specialization for `category: verify`):
+- Renders inline at the relevant TaskNode boundary.
+- Pass = green; warn = amber; fail = red; rollback = red with rollback icon.
+- Click for full output and exit code.
+
+Other categories (`lint`, `build`, `test`, `custom`) render as generic `HookNode` with category badge.
+
+### Framework JSON example (assembling the primitives)
+
+`examples/aria/framework.json` excerpt reconstructing ARIA's verify + rails + dont_touch:
+
+```json
+{
+  "task_defaults": {
+    "max_failures": 3,
+    "post_hooks": [
+      { "id": "verify_standard", "category": "verify", "level": "standard",
+        "ref": { "type": "shell", "command": "bash .aria/verify.sh" },
+        "on_failure": "rollback" }
+    ]
+  },
+  "hooks": {
+    "post_file_edit": [
+      { "id": "lint", "category": "lint",
+        "ref": { "type": "shell", "command": "npm run lint" },
+        "on_failure": "warn" }
+    ]
+  },
+  "rails": {
+    "hard": [
+      { "id": "no_secrets", "fires_on": ["pre_commit"],
+        "check": { "type": "shell", "command": "scripts/check-secrets.sh" },
+        "message": "Secrets detected." }
+    ],
+    "soft": [
+      { "id": "no_debug", "fires_on": ["post_file_edit"],
+        "check": { "type": "shell", "command": "scripts/scan-debug.sh" },
+        "message": "Debug statements found." }
+    ]
+  },
+  "dont_touch": [".aria/state/**", "package-lock.json", ".env*"]
+}
+```
+
+This is the §0a matrix proof for rows: `verify.sh after every task` (3), `Hard/soft rails` (4), `Project-context don't touch zones` (17), `Git checkpoint/rollback` (13).
 
 -----
 

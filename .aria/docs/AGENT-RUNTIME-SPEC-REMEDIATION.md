@@ -169,10 +169,10 @@ Per-subsystem fate (referenced from §0):
 
 ### WI-02: Verify-and-rails primitive (so users can build ARIA's verify pipeline themselves)
 
-**STATUS:** OPEN
+**STATUS:** RESOLVED (2026-04-18, locked in spec §4a)
 **Priority:** P1
 **Effort:** 2–3 days spec; 2–3 weeks implementation
-**Unlocks matrix rows:** verify.sh hook, rails, dont_touch zones, git checkpoint/rollback
+**Unlocks matrix rows:** verify.sh hook (3), rails (4), dont_touch zones (17), git checkpoint/rollback (13)
 
 **Problem**
 The runtime needs primitives that let a framework author *express* a verification pipeline and safety rails — not built-in implementations of ARIA's specific verify.sh and rails/safety.json. Without these primitives, the WI-00 matrix rows for verify and rails cannot be reconstructed.
