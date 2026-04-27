@@ -6,6 +6,59 @@ The template is annotated. Annotations live as HTML comments and are stripped fr
 
 ---
 
+## When to split a milestone
+
+> **Rule:** If a milestone's scope estimate exceeds **250 lines of prompt** OR **12 hours of work**, **split it** into sub-milestones.
+
+A 540-line opening prompt is too much for a fresh Claude Code session — context window pressure, attention dilution, and acceptance-criteria fatigue all compound. The right move is to split the milestone into sequential sub-milestones, each with its own prompt, branch, and PR.
+
+### Naming convention for sub-milestones
+
+- `M[NN].1-<short-title>.md`, `M[NN].2-<short-title>.md`, etc.
+- Sequential — M[NN].1's PR must merge to `main` before M[NN].2's session opens
+- Each sub-milestone is its own branch (`claude/m[nn]-<n>-<short-title>`) and its own PR
+- Each sub-milestone has its own retrospective entry in `PROCESS-VALIDATION.md`
+
+### How to split
+
+Look at the milestone scope and identify natural boundaries. Common axes:
+
+- **Layer boundaries** — e.g., M01 splits into workspace-skeleton / type-generation / drone-implementation / fuzz-and-polish
+- **Subsystem boundaries** — e.g., M04 (Plan + Verify + HITL + Budget) splits into one sub-milestone per primitive
+- **Risk boundaries** — e.g., the highest-risk piece is its own sub-milestone so failure surfaces early
+- **Test-type boundaries** — sometimes implementation is one sub-milestone and the fuzz/coverage closure is another
+
+Each sub-milestone should:
+- Be deliverable in one session (≤12 hours; ideally 5–8)
+- Have its own scope, TDD plan, acceptance criteria
+- Build on prior sub-milestones (via dependencies declared in "Prerequisite sub-milestones")
+- Close cleanly — no "we'll wire this up in the next sub-milestone" hand-waves
+
+If you find a sub-milestone needs further splitting, recurse: M[NN].2.a, M[NN].2.b. Try to avoid this — three levels of sub-milestone is usually a sign the scope was estimated wrong.
+
+### Why split rather than rely on Claude's context window
+
+Even with 200K+ context windows, attention dilutes across long prompts:
+- Acceptance criteria mid-prompt get less weight than ones near the end
+- Mid-flight, Claude can lose track of what was specified earlier
+- Self-correction state gets muddied across unrelated subsystems
+- A single failing test can pull focus from the broader plan
+
+Splitting is the cheap intervention that prevents these failure modes.
+
+### Reference: M01 split
+
+M01 was originally written as one 540-line prompt. It was split into four sub-milestones:
+
+- `M01.1-workspace-skeleton.md` (~180 lines, 5–8h)
+- `M01.2-type-generation.md` (~200 lines, 6–10h)
+- `M01.3-drone-implementation.md` (~280 lines, 12–18h)
+- `M01.4-fuzz-and-polish.md` (~150 lines, 4–6h)
+
+M01.3 is the largest — it's at the upper bound of the rule. If it grows, split further.
+
+---
+
 <!-- ============================================================ -->
 <!-- IDENTITY — who Claude is for this milestone, what they're doing -->
 <!-- ============================================================ -->

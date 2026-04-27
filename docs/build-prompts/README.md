@@ -18,8 +18,14 @@ The per-milestone prompt always references `CLAUDE.md` as the protocol; it doesn
 | File | Status | Purpose |
 |---|---|---|
 | `README.md` (this file) | Stable | Index + how-to-use |
-| `TEMPLATE.md` | Stable | Per-milestone shape; copy this when authoring M12+ |
-| `M01-foundation.md` | Authored | M1 (weeks 1–2): Cargo workspace + drone + runtime-core types + CI green |
+| `TEMPLATE.md` | Stable | Per-milestone shape; includes the **scope-split rule** for milestones >250 prompt-lines or >12h work |
+| `PROCESS-VALIDATION.md` | Stable | Test for the build pattern itself (run alongside each milestone) |
+| **M01 — split into 4 sub-milestones** | | |
+| `M01.1-workspace-skeleton.md` | Authored | M01.1 (~5–8h): Cargo workspace + empty crates + Tauri stub + CI green |
+| `M01.2-type-generation.md` | Authored | M01.2 (~6–10h): xtask + typify + runtime-core types from schemas + drift check |
+| `M01.3-drone-implementation.md` | Authored | M01.3 (~12–18h): runtime-drone Phase 1 — heartbeat + snapshot + IPC + SIGTERM |
+| `M01.4-fuzz-and-polish.md` | Authored | M01.4 (~4–6h): fuzz harness + 100% drone coverage + READMEs + cross-OS verify |
+| **M02–M11 — generated after M01 retrospective** | | |
 | `M02-event-pipeline.md` | TODO | M2 (weeks 3–4): SDK + AnthropicProvider + Tauri shell + event flow |
 | `M03-live-graph.md` | TODO | M3 (weeks 5–6): React Flow + node types + VDR projection |
 | `M04-plan-verify-hitl-budget.md` | TODO | M4 (weeks 7–8): §3a + §4a + §6a + §2a + §1b |
@@ -31,7 +37,7 @@ The per-milestone prompt always references `CLAUDE.md` as the protocol; it doesn
 | `M10-first-run-polish.md` | TODO | M10 (weeks 21–22): §14 onboarding + Settings + Help |
 | `M11-ship-prep.md` | TODO | M11 (weeks 23–24): unsigned .msi + SHA-256 + Sigstore + release |
 
-`M01-foundation.md` is the **proof-of-concept**. After M1 actually runs, lessons learned go into `CLAUDE.md` (where appropriate) and `TEMPLATE.md`, then M02–M11 are generated in one batch using the validated template.
+**M01 is the proof-of-concept**, split into 4 sub-milestones to avoid the prompt-too-long failure mode (the original `M01-foundation.md` was 540 lines — too much for a fresh-session opening prompt; see TEMPLATE.md scope-split rule). After all four M01 sub-milestones run, lessons learned go into `CLAUDE.md` (where appropriate) and `TEMPLATE.md`. Many of M02–M11 will themselves split into sub-milestones per the rule; the split happens at authoring time, not run time.
 
 ## How to use a milestone prompt
 
