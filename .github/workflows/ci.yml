@@ -221,6 +221,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
 
+  fuzz-smoke:
+    name: Fuzz smoke (30s)
+    needs: detect-cargo
+    if: needs.detect-cargo.outputs.has_cargo == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-fuzz --locked
+      - run: cargo +nightly fuzz run drone_command_decode -- -max_total_time=30
+        working-directory: crates/runtime-drone
+
   coverage:
     name: Coverage (Rust)
     needs: detect-cargo

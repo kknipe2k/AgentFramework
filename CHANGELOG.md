@@ -8,37 +8,123 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- M01 Stage C: Drone Phase 1 implementation per spec §1. Heartbeat task (5s tokio interval) writing `heartbeats` rows + emitting `DroneEvent::Heartbeat`. Append-only snapshot writer with SHA-256 `state_hash`. SQLite WAL pragmas in correct order (journal_mode, synchronous, busy_timeout, foreign_keys); 7-table schema (sessions, snapshots, signals, heartbeats, vdr, token_usage, skills). Platform-specific IPC server: Unix domain socket / Windows named pipe; framed JSON-newline via tokio_util::codec::LinesCodec; malformed JSON keeps server alive, emits `Alert`. SIGTERM/SIGINT/CTRL_BREAK/CTRL_C handler with best-effort emergency snapshot. All 6 DroneCommand variants dispatched; SpawnProcess/StopProcess/SetActivityTimeout emit `Alert{Warn}` "not yet implemented" pending M05+. Wire-format codec round-trip proptests added to runtime-core::event and runtime-core::drone. 22 unit tests + 1 integration test (Unix only at v0.1).
-- M01 Stage B: Type-generation pipeline. xtask `regenerate-types` subcommand reads schemas/*.v1.json via typify and writes to crates/runtime-core/src/generated/. Hand-curated AgentEvent + DroneEvent + DroneCommand enums in event.rs / drone.rs (full variant lists per spec §2 + §1d). RuntimeError via thiserror. CI drift check active. examples/aria/framework.json and examples/ralph/framework.json round-trip through generated Framework type.
-- M01 Stage A: Cargo workspace skeleton — five member crates (runtime-core, runtime-main, runtime-drone, runtime-sandbox, xtask), Tauri stub (src-tauri/), workspace lints (deny warnings, forbid unsafe except sandbox, clippy pedantic + nursery), cargo-deny policy. CI's gated Rust jobs activate. No real implementation; trivial placeholder per crate. (Stage B onward adds real code.)
-- Comprehensive product specification (`agent-runtime-spec.md`) for a Tauri-based desktop runtime for agentic AI workflows. 21 phase + section headings covering: project positioning, capability matrix, three-concept model (Tool/Skill/Agent), dev loop, release scope matrix, drone, recovery, multi-session, IPC, event pipeline, budget, signals/VDR, LLMProvider abstraction, live graph, plan/task primitive, mode/sizing, gap detection, verify/rails, MCP manager, framework loader, HITL policy, registry, generators with 5-layer security, builder canvas, persistence, secrets vault, reconciliation/degraded modes, engineering charter, privacy/telemetry, first-run UX.
-- JSON Schema source-of-truth files in `schemas/` (Draft 2020-12): `common.v1.json`, `skill.v1.json`, `tool.v1.json`, `agent.v1.json`, `framework.v1.json`. All 19 example artifacts validate.
-- `examples/aria/` reference framework (19 files, 1947 lines) reconstructing every row of the capability matrix.
-- `examples/ralph/` sibling framework (4 files, 367 lines) demonstrating the `loop_policy: continuous` variant; reuses aria/ tools and skills via `source: external`.
-- `docs/MVP-v0.1.md` build checklist (11 milestones across ~6 months elapsed; novice-and-experienced two-path success criterion).
-- Engineering Charter in spec §12 codifying CI gates, coverage thresholds, dependency hygiene, doc tests, ADR requirements, release signing, security disclosure flow, license + DCO.
-- Privacy & Telemetry policy in spec §13: zero telemetry by default, no analytics, no crash reporter; user data export and delete-all-local in Settings.
-- First-Run UX state machine in spec §14.
-- ADR template and initial ADRs covering ARIA-as-archetype, Tauri-over-Electron, and Engineering Charter adoption.
-- LICENSE (Apache 2.0).
-- NOTICE file with notable third-party dependency attributions.
-- CODE_OF_CONDUCT.md (Contributor Covenant 2.1 by reference).
-- SECURITY.md (private disclosure flow + response SLOs + scope + threat model summary).
-- CONTRIBUTING.md (state of project, what's accepted now, code-contribution setup, quality gates, DCO, ADR requirements).
+- **M01 Foundation milestone** — Cargo workspace with five member crates
+  (`runtime-core`, `runtime-main`, `runtime-drone`, `runtime-sandbox`,
+  `xtask`) plus Tauri stub at `src-tauri/`, workspace lints (deny
+  warnings, forbid unsafe except sandbox, clippy pedantic + nursery),
+  and a `cargo-deny` policy. `rust-toolchain.toml` pins channel to
+  `stable`; MSRV enforcement lives in workspace `Cargo.toml`.
+- **Type-generation pipeline** — `cargo xtask regenerate-types` reads
+  `schemas/*.v1.json` via [`typify`](https://crates.io/crates/typify)
+  and writes to `crates/runtime-core/src/generated/`. CI runs
+  `--check` on every PR to fail on any drift between committed types
+  and freshly regenerated output.
+- **Hand-curated event taxonomy in `runtime-core`** — `AgentEvent`
+  (full variant list per spec §2 + §2a + §2b + §3a + §3b + §4a + §4b
+  + §6a + §8.security), `DroneEvent` + `DroneCommand` per spec §1d,
+  `RuntimeError` via `thiserror`.
+- **Drone Phase 1 (`runtime-drone`)** — heartbeat task (5s tokio
+  interval) writing `heartbeats` rows and emitting
+  `DroneEvent::Heartbeat`; append-only snapshot writer with SHA-256
+  `state_hash`; platform-specific IPC server (Unix domain socket on
+  Linux/macOS, Windows named pipe via `tokio::net::windows::named_pipe`)
+  with framed JSON-newline via `tokio_util::codec::LinesCodec` and
+  malformed-input tolerance (emits `Alert`, keeps server alive);
+  SIGTERM / SIGINT / CTRL_BREAK / CTRL_C handler with best-effort
+  emergency snapshot before exit. SQLite WAL pragmas applied in correct
+  order (`journal_mode → synchronous → busy_timeout → foreign_keys`);
+  7-table schema (`sessions`, `snapshots`, `signals`, `heartbeats`,
+  `vdr`, `token_usage`, `skills`).
+- **Runtime-drone safety-primitive coverage gate** — ≥95% line with
+  `lib.rs` + `shutdown.rs` excluded (OS-signal orchestrators exercised
+  end-to-end by the Unix subprocess integration test). Per-module
+  baseline (M01.C measured): `snapshot.rs` 100%, `db.rs` 98.82%,
+  `heartbeat.rs` 98.59%, `command_handler.rs` 97.94%, `ipc.rs` 84.70%.
+  Workspace coverage gate: ≥80% line, generated code and binary stubs
+  excluded.
+- **Fuzz harness** — cargo-fuzz `drone_command_decode` target for the
+  IPC frame decoder with 6 seed corpus entries (one per
+  `DroneCommand` variant). CI fuzz-smoke job runs 30s on every PR;
+  scheduled `fuzz-nightly.yml` workflow runs 1 hour at 04:00 UTC and
+  uploads the corpus on failure.
+- **Per-crate READMEs** — `runtime-core`, `runtime-drone`, and `xtask`
+  document the public API surface, IPC protocol, SQLite schema,
+  manual smoke procedure, platform-specific details, and the
+  coverage requirement.
+
+### Tests
+
+- **Schema round-trip tests** — `examples/aria/framework.json`,
+  `examples/ralph/framework.json`, and 19 skill / agent / tool
+  frontmatter files all round-trip through generated `runtime-core`
+  types via the serialize-deserialize-serialize stability check.
+- **Property tests** — `proptest` round trips for `AgentEvent`,
+  `DroneEvent`, `DroneCommand`, including the newline-delimited JSON
+  codec wire format.
+- **Drift-check positive and negative cases** in `xtask`.
+- **Drone unit tests** (22 total) — WAL pragmas, schema, snapshot
+  append-only and SHA-256 hash, heartbeat interval, IPC encode /
+  decode, command dispatch, malformed-input → `Alert`, broadcast
+  lagged path.
+- **Subprocess-spawn integration test** (`tests/integration.rs`,
+  `#[cfg(unix)]`) — drone responds to SIGTERM with an emergency
+  snapshot.
+- **Fuzz target compiles and runs** — `cargo +nightly fuzz build`
+  succeeds on Linux/macOS/Windows; `cargo +nightly fuzz run … -- 
+  -max_total_time=30` exits 0 with no panics on Linux CI.
+
+### Documentation
+
+- Per-crate READMEs (`runtime-core`, `runtime-drone`, `xtask`).
+- M01 Foundation specification + per-stage prompts at
+  `docs/build-prompts/M01-foundation.md` (Stages A through E).
+- Per-stage retrospectives at
+  `docs/build-prompts/retrospectives/M01.{A,B,C,D}-retrospective.md`
+  + parent-milestone summary at `M01-summary.md` (per `CLAUDE.md` §19).
+- Comprehensive product specification (`agent-runtime-spec.md`)
+  covering project positioning, capability matrix, three-concept model
+  (Tool/Skill/Agent), dev loop, release scope matrix, drone, recovery,
+  multi-session, IPC, event pipeline, budget, signals/VDR,
+  LLMProvider abstraction, live graph, plan/task primitive,
+  mode/sizing, gap detection, verify/rails, MCP manager, framework
+  loader, HITL policy, registry, generators with 5-layer security,
+  builder canvas, persistence, secrets vault, reconciliation/degraded
+  modes, engineering charter, privacy/telemetry, first-run UX.
+- JSON Schema source-of-truth files in `schemas/` (Draft 2020-12):
+  `common.v1.json`, `skill.v1.json`, `tool.v1.json`, `agent.v1.json`,
+  `framework.v1.json`. All 19 example artifacts validate.
+- `examples/aria/` reference framework reconstructing every row of
+  the capability matrix.
+- `examples/ralph/` sibling framework demonstrating the
+  `loop_policy: continuous` variant; reuses `aria/` tools and skills
+  via `source: external`.
+- `docs/MVP-v0.1.md` build checklist (11 milestones; novice-and-
+  experienced two-path success criterion).
+- Engineering Charter in spec §12; Privacy & Telemetry in §13
+  (zero telemetry by default); First-Run UX state machine in §14.
+- ADR template + ADRs 0001–0004 (ARIA-as-archetype, Tauri-over-
+  Electron, Engineering Charter adoption, defer paid code-signing).
+- OSS scaffolding: `LICENSE` (Apache 2.0), `NOTICE`,
+  `CODE_OF_CONDUCT.md`, `SECURITY.md`, `CONTRIBUTING.md`.
 
 ### Changed
 
-- **Code-signing posture for v0.1: deferred** (per ADR-0004). v0.1 ships unsigned `.msi` with SHA-256 checksums and Sigstore provenance attestations via GitHub Actions OIDC. Paid Windows EV code-signing revisited at v0.5+ when adoption is proven. Affects: `docs/MVP-v0.1.md` M11 acceptance + risk register R4; `docs/README-v0.1.md` install instructions (SmartScreen-warning explainer + checksum/cosign verification steps); `.github/workflows/release.yml` (drops signing secrets, adds SHA-256 generation + `actions/attest-build-provenance@v1`); spec §0d distribution row.
+- **Code-signing posture for v0.1: deferred** (per ADR-0004). v0.1
+  ships unsigned `.msi` with SHA-256 checksums and Sigstore provenance
+  attestations via GitHub Actions OIDC. Paid Windows EV code-signing
+  revisited at v0.5+ when adoption is proven. Affects:
+  `docs/MVP-v0.1.md` M11 acceptance + risk register R4;
+  `docs/README-v0.1.md` install instructions (SmartScreen-warning
+  explainer + checksum/cosign verification steps);
+  `.github/workflows/release.yml` (drops signing secrets, adds
+  SHA-256 generation + `actions/attest-build-provenance@v1`);
+  spec §0d distribution row.
 
 ### Status
 
-Pre-implementation. The runtime binary does not yet exist. This repository contains:
-- The specification we're building toward
-- JSON schemas validating the example artifacts
-- Two reference frameworks (`aria/` and `ralph/`) that the runtime will eventually load
-- The existing `.aria/` shell-based ARIA framework (reference material; moves to `archive/aria-shell/` once v0.1 of the runtime ships)
-
-First milestone (M1: Foundation — Cargo workspace + drone + CI) is the next deliverable.
+M01 Foundation milestone complete. M02 (event pipeline +
+`AnthropicProvider` + Tauri shell + `AgentEvent` flow) is the next
+milestone.
 
 ---
 

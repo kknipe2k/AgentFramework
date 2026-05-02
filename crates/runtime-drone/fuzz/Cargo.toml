@@ -1,0 +1,27 @@
+[package]
+name        = "runtime-drone-fuzz"
+version     = "0.0.0"
+publish     = false
+edition     = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Standalone package — cargo-fuzz convention is a sibling crate that is NOT
+# a workspace member. The empty [workspace] table tells cargo to treat this
+# manifest as its own workspace root rather than inheriting from the parent.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json    = "1"
+runtime-core  = { path = "../../runtime-core" }
+
+[[bin]]
+name = "drone_command_decode"
+path = "fuzz_targets/drone_command_decode.rs"
+test = false
+doc  = false
+
+[profile.release]
+debug = 1

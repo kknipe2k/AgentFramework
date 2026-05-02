@@ -1,0 +1,1 @@
+{"type":"revert_to_snapshot","snapshot_id":"abc","reason":"hook_rollback"}
