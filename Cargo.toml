@@ -16,8 +16,12 @@ license      = "Apache-2.0"
 repository   = "https://github.com/kknipe2k/AgentFramework"
 rust-version = "1.80"
 
-# Shared dependencies — populated by later stages; empty in Stage A.
 [workspace.dependencies]
+serde       = { version = "1.0", default-features = false }
+serde_json  = "1.0"
+serde_yaml  = "0.9"
+thiserror   = "1.0"
+proptest    = "1.4"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
