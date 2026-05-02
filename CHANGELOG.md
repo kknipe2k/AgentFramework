@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- M01 Stage A: Cargo workspace skeleton — five member crates (runtime-core, runtime-main, runtime-drone, runtime-sandbox, xtask), Tauri stub (src-tauri/), workspace lints (deny warnings, forbid unsafe except sandbox, clippy pedantic + nursery), cargo-deny policy. CI's gated Rust jobs activate. No real implementation; trivial placeholder per crate. (Stage B onward adds real code.)
 - Comprehensive product specification (`agent-runtime-spec.md`) for a Tauri-based desktop runtime for agentic AI workflows. 21 phase + section headings covering: project positioning, capability matrix, three-concept model (Tool/Skill/Agent), dev loop, release scope matrix, drone, recovery, multi-session, IPC, event pipeline, budget, signals/VDR, LLMProvider abstraction, live graph, plan/task primitive, mode/sizing, gap detection, verify/rails, MCP manager, framework loader, HITL policy, registry, generators with 5-layer security, builder canvas, persistence, secrets vault, reconciliation/degraded modes, engineering charter, privacy/telemetry, first-run UX.
 - JSON Schema source-of-truth files in `schemas/` (Draft 2020-12): `common.v1.json`, `skill.v1.json`, `tool.v1.json`, `agent.v1.json`, `framework.v1.json`. All 19 example artifacts validate.
 - `examples/aria/` reference framework (19 files, 1947 lines) reconstructing every row of the capability matrix.

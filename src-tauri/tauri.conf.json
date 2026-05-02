@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2.0",
+  "productName": "agent-runtime",
+  "version": "0.1.0",
+  "identifier": "dev.aria-runtime.app",
+  "build": {
+    "beforeDevCommand":   "",
+    "beforeBuildCommand": "",
+    "devUrl":             "http://localhost:1420",
+    "frontendDist":       "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label":  "main",
+        "title":  "Agent Runtime",
+        "width":  1280,
+        "height": 800
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active":     true,
+    "targets":    ["msi"],
+    "icon":       ["icons/icon.png", "icons/icon.ico"]
+  }
+}

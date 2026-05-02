@@ -1,4 +1,11 @@
 
+# Rust build artifacts
+/target/
+
+# Node.js
+/node_modules/
+/dist/
+
 # ARIA runtime directories
 .aria/checkpoints/
 .aria/logs/

@@ -1,0 +1,17 @@
+[package]
+name         = "runtime-sandbox"
+version      = { workspace = true }
+edition      = { workspace = true }
+license      = { workspace = true }
+repository   = { workspace = true }
+rust-version = { workspace = true }
+
+[lints.rust]
+# Sandbox needs unsafe for seccomp / landlock / Job Objects in M5+.
+# v0.1 has no unsafe blocks yet; warn-only keeps the door open.
+unsafe_code = "warn"
+warnings    = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery  = { level = "warn", priority = -1 }
