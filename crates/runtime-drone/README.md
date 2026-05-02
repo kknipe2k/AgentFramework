@@ -56,19 +56,46 @@ sqlite3 /tmp/drone-smoke/d.sqlite "SELECT event_type FROM snapshots;"
 
 ## Coverage
 
-Run with:
+The drone is a safety primitive per `CLAUDE.md` §5. Two gates apply:
 
 ```bash
+# Gate 1: workspace ≥80%, generated code + binary stubs excluded.
+cargo llvm-cov --workspace \
+    --ignore-filename-regex "src.main\.rs|generated" \
+    --fail-under-lines 80
+
+# Gate 2: drone safety primitive ≥95%, additionally excluding the OS-
+# signal orchestrators (lib.rs and shutdown.rs are thin wrappers around
+# testable `_inner`/`_with` variants and are exercised end-to-end by the
+# Unix subprocess integration test in tests/integration.rs).
 cargo llvm-cov --package runtime-drone \
-    --ignore-filename-regex "src.main\.rs|generated"
+    --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.shutdown\.rs" \
+    --fail-under-lines 95
 ```
 
-The OS-signal entry points (`lib::run`, `lib::shutdown_signal_future`, the
-platform-specific `ipc::accept_loop`) are exercised by the subprocess-spawn
-integration test in `tests/integration.rs` (Unix only at v0.1) — coverage
-of those lines on Windows runs depends on the test binary being able to
-reach the production paths, which is structurally limited. See M01.C
-retrospective for the detailed holdout discussion.
+**Per-module baseline** (M01 Stage C measured; subsequent milestones
+must not regress without a retro entry):
+
+| Module | Line | Region |
+|---|---|---|
+| `snapshot.rs` | 100.00% | 97.14% |
+| `db.rs` | 98.82% | 96.08% |
+| `heartbeat.rs` | 98.59% | 96.45% |
+| `command_handler.rs` | 97.94% | 98.01% |
+| `ipc.rs` | 84.70% | 87.23% |
+
+`ipc.rs`'s 84.70% reflects the platform-cfg accept-loop variants (only
+the active OS's variant is exercised per run) plus the broadcast-lagged
+path; cross-OS CI lifts it for Linux/macOS but Windows-only runs see
+the lower number.
+
+Rationale for excluding `lib.rs` + `shutdown.rs`: both are OS-signal
+entry points (real `SIGTERM`/`SIGINT`/`CTRL_BREAK`/`CTRL_C` listeners)
+that cannot be unit-tested cross-platform without firing real OS signals.
+The subprocess integration test on Linux/macOS exercises them
+end-to-end. See `docs/build-prompts/retrospectives/M01.C-retrospective.md`
+and `docs/build-prompts/M01-foundation.md` Stage D §D.3 "Coverage gate
+semantics" for the decision history.
 
 ## License
 
