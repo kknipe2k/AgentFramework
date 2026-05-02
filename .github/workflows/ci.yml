@@ -225,10 +225,34 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-audit --locked
-      # Advisory ignores live in audit.toml at workspace root.
-      # Mirrors deny.toml's [advisories].ignore for the gtk-rs / unic
-      # transitive-dep RUSTSEC entries Tauri 2.x pulls in on Linux.
-      - run: cargo audit --deny warnings
+      # Advisory ignores: cargo-audit reads ~/.cargo/audit.toml by
+      # default and does NOT pick up a workspace-root audit.toml — so
+      # the ignore list is passed via --ignore flags here. Mirrors
+      # deny.toml's [advisories].ignore for the gtk-rs 0.18.x stack
+      # (Tauri 2.x transitive deps on Linux) plus the unic-* family
+      # plus the glib VariantStrIter unsoundness (we don't call it).
+      # All entries are warning-level (unmaintained / unsound-but-
+      # unused), not exploitable vulns.
+      - name: cargo audit (with workspace-policy advisory ignores)
+        run: |
+          cargo audit --deny warnings \
+            --ignore RUSTSEC-2024-0370 \
+            --ignore RUSTSEC-2024-0411 \
+            --ignore RUSTSEC-2024-0412 \
+            --ignore RUSTSEC-2024-0413 \
+            --ignore RUSTSEC-2024-0414 \
+            --ignore RUSTSEC-2024-0415 \
+            --ignore RUSTSEC-2024-0416 \
+            --ignore RUSTSEC-2024-0417 \
+            --ignore RUSTSEC-2024-0418 \
+            --ignore RUSTSEC-2024-0419 \
+            --ignore RUSTSEC-2024-0420 \
+            --ignore RUSTSEC-2024-0429 \
+            --ignore RUSTSEC-2025-0075 \
+            --ignore RUSTSEC-2025-0080 \
+            --ignore RUSTSEC-2025-0081 \
+            --ignore RUSTSEC-2025-0098 \
+            --ignore RUSTSEC-2025-0100
 
   cargo-deny:
     name: cargo deny
