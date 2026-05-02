@@ -234,6 +234,31 @@ jobs:
       - run: cargo +nightly fuzz run drone_command_decode -- -max_total_time=30
         working-directory: crates/runtime-drone
 
+  gap-analysis-append-only:
+    name: gap-analysis.md append-only check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify prior content is unchanged
+        run: |
+          set -euo pipefail
+          BASE_REF="${{ github.event.pull_request.base.ref || 'main' }}"
+          git fetch origin "$BASE_REF":"$BASE_REF" 2>/dev/null || git fetch origin "$BASE_REF"
+          if git show "$BASE_REF":docs/gap-analysis.md > /tmp/gap-base.md 2>/dev/null; then
+            base_lines=$(wc -l < /tmp/gap-base.md)
+            if [ "$base_lines" -gt 0 ]; then
+              if ! diff -q /tmp/gap-base.md <(head -n "$base_lines" docs/gap-analysis.md) > /dev/null; then
+                echo "::error::docs/gap-analysis.md is append-only per CLAUDE.md §20."
+                echo "Prior content was modified or deleted. Diff:"
+                diff /tmp/gap-base.md <(head -n "$base_lines" docs/gap-analysis.md) || true
+                exit 1
+              fi
+            fi
+          fi
+          echo "Append-only invariant holds."
+
   coverage:
     name: Coverage (Rust)
     needs: detect-cargo

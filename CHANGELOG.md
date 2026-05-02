@@ -78,6 +78,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Per-crate READMEs (`runtime-core`, `runtime-drone`, `xtask`).
 - M01 Foundation specification + per-stage prompts at
   `docs/build-prompts/M01-foundation.md` (Stages A through E).
+- M01 Phase Closeout: cumulative gap analysis appended to
+  `docs/gap-analysis.md` per `CLAUDE.md` §20 (append-only living
+  document). Gates the M01 PR. CI gains a `gap-analysis-append-only`
+  job that enforces the immutability of prior entries on every PR.
 - Per-stage retrospectives at
   `docs/build-prompts/retrospectives/M01.{A,B,C,D}-retrospective.md`
   + parent-milestone summary at `M01-summary.md` (per `CLAUDE.md` §19).

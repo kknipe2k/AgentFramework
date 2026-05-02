@@ -113,17 +113,20 @@ Drives `CLAUDE.md` / `TEMPLATE.md` / per-milestone-prompt updates that landed (o
 - [ ] Apply M01.D retro decisions (gotcha #29 Windows libfuzzer DLL, #30 cargo-fuzz empty `[workspace]` table).
 - [ ] Update §5 Coverage thresholds note: define the M02 baseline-delta gating mechanism (per `docs/gap-analysis.md` Pre-M01 carry-forward).
 - [ ] Document the `*_with` / `*_inner` test-seam pattern in §9 (style + naming) as the canonical TDD-friendly approach to OS-signal-driven async functions. See M01.C surprise events row 2.
+- [ ] **Pattern axis friction class.** M01 Pattern axis aggregated 27.25/35 — driven by Stage C 'Sound but rough' coverage-gate ambiguity, codified at commit `1dec4ba`. Verify `CLAUDE.md` §5/§6 and `TEMPLATE.md` carry the codification forward so M02 Stage C-equivalent work doesn't re-litigate. Per `CLAUDE.md` §10 (don't-touch zones additions): no agent should propose alternate coverage interpretations without an ADR.
 
 ### `TEMPLATE.md` updates carrying forward
 
 - [ ] Consider adding a "Tooling artifacts" sub-section to the [LIVE] tables for events that are neither friction (no rework time) nor surprise (tooling behaves as documented). Windows libfuzzer DLL pairing is the prototype.
 - [ ] Consider adding a "Coverage holdouts" subsection — coverage gaps that are structural (cross-platform infeasibility) are a different category from procedural friction. M01.C surfaced this; M01.D applied it via the codification commit.
+- [ ] **TEMPLATE.md Stage D STEP 5 fix** (post-M01 protocol-iteration work). `TEMPLATE.md` Stage D STEP 5 currently says "commit + push + open PR after Stage D approval" which contradicts `CLAUDE.md` §20 (Stage E gates the PR). Fix in protocol-iteration PR before M02 authoring: Stage D = commit only; Stage E = commit + push + PR.
 
 ### Per-milestone-prompt template updates carrying forward
 
 - [ ] Tighten time-box estimates in `TEMPLATE.md` and the M02-onward stage prompts: Claude-driven implementation stages on a well-specified prompt come in at ~0.3× the human-calibrated estimate. Apply correction.
 - [ ] Add a "Prior-stage decisions to apply" preamble to every non-first stage's CLI prompt that explicitly enumerates the decisions Claude must apply before any code, with file:line citations. The current "read prior retrospectives" instruction works but a concrete checklist would forcing-function the application (see M01.A→C `rustdoc::missing_docs` recurrence).
 - [ ] Add a "What to verify locally vs CI-only" subsection to STEP 3 (Verify) for any stage that uses cross-platform-finicky tooling (cargo-fuzz on Windows, integration features that may not exist yet, OS-signal tests).
+- [ ] **Time-box estimation method tightening for M02.** M01 estimated 29–46h, ran in ~9–14h (0.3× ratio). M01's method overestimated by ~3×. For M02, recalibrate: estimate by reading actual M01 stage durations (from retrospectives) for analogous work, not from intuition.
 
 ### M02 stage prompts — known constraints to encode
 

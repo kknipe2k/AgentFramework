@@ -364,3 +364,344 @@ extend the backlog. M01 Stage E will carry both items forward and
 report status.
 
 **Surfaced at:** 2026-05-02 (UTC).
+
+---
+
+## M01 — Foundation (2026-05-02, commit `6bc8d28`)
+
+> Author: Claude (per `CLAUDE.md` §20)
+> Stages aggregated: M01.A (workspace), M01.B (types), M01.C (drone), M01.D (fuzz + polish)
+> Reviewed against: `agent-runtime-spec.md` §1 §1b §1c §1d §2 §11 §12,
+> `schemas/*.v1.json`, M01.A–D retrospectives + `M01-summary.md`.
+
+### Codebase deep dive
+
+M01 lands four real things on top of the empty-repo baseline: a Cargo
+workspace with five member crates plus a Tauri stub
+(`crates/{runtime-core, runtime-main, runtime-drone, runtime-sandbox,
+xtask}` + `src-tauri/`); a typify-driven type-generation pipeline
+(`cargo xtask regenerate-types`) that produces ~22k lines of generated
+Rust under `crates/runtime-core/src/generated/` from
+`schemas/*.v1.json`, plus three hand-curated modules
+(`event.rs::AgentEvent` 30+ variants, `drone.rs::{DroneEvent,
+DroneCommand}`, `error.rs::RuntimeError`); a Phase-1 drone
+(`crates/runtime-drone/src/{db, snapshot, heartbeat, ipc,
+command_handler, shutdown, lib, main}.rs`) implementing heartbeat,
+append-only snapshot writer with SHA-256 `state_hash`, SQLite WAL with
+the four pragmas in spec order, framed-JSON IPC over Unix domain
+socket / Windows named pipe via `LinesCodec`, and SIGTERM/SIGINT/
+CTRL_BREAK/CTRL_C emergency-snapshot handling; and a `cargo-fuzz`
+harness on `drone_command_decode` with a 6-seed corpus + a CI fuzz-
+smoke job + a nightly 1h fuzz workflow.
+
+What's solid: the schemas-as-source-of-truth pipeline (drift-detected
+in CI), the `*_with` / `*_inner` test-seam pattern in `runtime-drone`'s
+`lib.rs`/`shutdown.rs` (lifts coverage from 87% to 95%+ without leaking
+implementation surface), the dual-gate coverage policy
+(workspace ≥80% + drone safety primitive ≥95% with documented
+OS-signal-orchestrator exclusions), property tests on serde round-trip
+across `AgentEvent`/`DroneEvent`/`DroneCommand`, and the per-crate
+READMEs that document IPC framing, SQLite schema, and platform notes
+inline. Hard gates G1–G5 cleared 4/4 stages.
+
+What's structurally weak and likely to compound: (1) `runtime-drone`'s
+`db.rs` schema initialization implements 7 of 8 spec §11 tables;
+`mcp_servers` is deferred (deliberate — MCP work is M06+) but the
+omission isn't documented at the call site. (2) The drone module
+decomposition diverges from spec §"Project Structure" line 2515
+(`protocol.rs` / `recovery.rs` / `process_manager.rs`) — the actual
+shape (`db.rs` / `heartbeat.rs` / `ipc.rs` / `command_handler.rs` /
+`snapshot.rs` / `shutdown.rs`) is more granular and clearer, but the
+spec's illustrative listing is now wrong. (3) `DroneCommand::SnapshotNow`
+in `runtime-core/src/drone.rs:72-77` extends spec §1d's `{reason}` to
+`{reason, state_json}` — necessary because the drone has to know what
+state to snapshot, but the spec is underspecified here and the
+implementation diverges silently.
+
+What surprised: the typify-emitted volume (~22k lines across 5 files)
+required broadening the generated-file `#[allow(...)]` header to
+six lints; the cross-platform 100% coverage gate on a safety primitive
+is structurally infeasible without either firing real OS signals
+cross-platform or refactoring the public `run()` API to accept a
+signal source as a parameter — codified as the dual-gate ≥95% + OS-
+signal-exclusion policy in commit `1dec4ba`.
+
+### Adherence to spec
+
+- ✅ **Workspace + crate layout** — matches spec §"Project Structure"
+  for top-level shape (workspace root + `crates/{runtime-core,
+  runtime-main, runtime-drone, runtime-sandbox}` + `src-tauri/` +
+  `xtask/`) — `Cargo.toml`, `crates/*/Cargo.toml`. Five member crates
+  exist; only `runtime-core` and `runtime-drone` carry real logic in M01
+  (the others are placeholder stubs per the milestone scope).
+- ✅ **SQLite WAL pragmas in spec §1c order** — code at
+  `crates/runtime-drone/src/db.rs:39-48` issues `journal_mode=WAL`,
+  `synchronous=NORMAL`, `busy_timeout=5000`, `foreign_keys=ON` in the
+  exact order spec §1c lines 675-680 require. Verified by unit test
+  `pragmas_set_in_correct_order` at `db.rs:157-180`.
+- ✅ **Append-only snapshot writer with SHA-256 `state_hash`** —
+  spec §1 lines 518-522 + §11 `snapshots` table.
+  `crates/runtime-drone/src/snapshot.rs::write` computes
+  `sha256(state_json)` and inserts a fresh row per call (no UPDATE
+  path).
+- ✅ **5s heartbeat interval** — spec §1 line 513
+  ("every 5 seconds"); `crates/runtime-drone/src/lib.rs:22`
+  (`HEARTBEAT_INTERVAL = Duration::from_secs(5)`).
+- ✅ **Framed JSON-newline IPC over Unix domain socket / Windows
+  named pipe** — spec §1d lines 728-757; code at
+  `crates/runtime-drone/src/ipc.rs:68-119` uses
+  `tokio_util::codec::LinesCodec` with `cfg(unix)` /
+  `cfg(windows)` accept loops.
+- ✅ **SIGTERM/SIGINT/CTRL_BREAK emergency-snapshot handler** —
+  spec §1 lines 530-533; code at
+  `crates/runtime-drone/src/shutdown.rs` writes a final snapshot
+  before clean exit; integration-tested via the Unix subprocess
+  test at `crates/runtime-drone/tests/integration.rs`.
+- ✅ **Schemas as source of truth** — spec §12 line 2799 + `CLAUDE.md`
+  §14. `crates/runtime-core/src/generated/{agent, common, framework,
+  skill, tool}.rs` are typify-emitted from `schemas/*.v1.json` via
+  `cargo xtask regenerate-types`; CI drift check at
+  `crates/xtask/tests/check_drift.rs`.
+- ✅ **Workspace lints (`forbid(unsafe_code)`, clippy
+  pedantic+nursery, deny warnings)** — spec §12 lines 2760-2762;
+  configured at `Cargo.toml` workspace root with sandbox override.
+- ✅ **DCO sign-off + Apache 2.0 + Conventional Commits** — every
+  M01 commit signed (`Signed-off-by:`) and conforms to
+  Conventional Commits (`feat(scope): …` / `docs(scope): …`).
+- ⚠️ **`DroneCommand::SnapshotNow` field set** — spec §1d line 574
+  declares `SnapshotNow { reason: String }`; code at
+  `crates/runtime-core/src/drone.rs:72-77` declares
+  `SnapshotNow { reason, state_json: serde_json::Value }`. The
+  `state_json` field is necessary because the drone needs the state
+  payload to snapshot — but the deviation is silent. Resolution:
+  fold `state_json` into spec §1d in the post-M01 `docs(spec):` PR
+  (carry-forward to M02).
+- ⚠️ **`DroneEvent::SnapshotWritten` field set** — spec §1d line 563
+  declares `SnapshotWritten { snapshot_id, session_id }`; code at
+  `crates/runtime-core/src/drone.rs:20-29` adds `reason` and
+  `timestamp`. Useful for debugging and the dashboard, but a silent
+  extension. Resolution: fold into the same `docs(spec):` PR.
+- ⚠️ **`DroneEvent::Heartbeat.status` type** — spec §1d line 562
+  declares `status: HeartbeatStatus` (a typed enum) but the spec
+  never defines `HeartbeatStatus`. Code at
+  `crates/runtime-core/src/drone.rs:13-18` uses `String`.
+  Resolution: define `HeartbeatStatus` as
+  `enum { Ok, Degraded, Stalled }` in the spec (matches the
+  `heartbeats.status` text values written by `heartbeat::run`) and
+  promote the type in `runtime-core` in M02 prep.
+- ⚠️ **§11 `mcp_servers` table missing from drone schema init** —
+  spec §11 lines 2435-2444 lists `mcp_servers` as one of 8 tables;
+  code at `crates/runtime-drone/src/db.rs:50-141` creates 7
+  (`sessions, snapshots, signals, heartbeats, vdr, token_usage,
+  skills`). MCP work lands in M06, so deferral is reasonable, but
+  the omission isn't documented at `db.rs::init_schema`.
+  Resolution: M02 Stage A decides whether to add the
+  `mcp_servers` table now (fields are stable; no MCP code yet) OR
+  document the deferral inline at `db.rs::init_schema` with a
+  `// SPEC §11: mcp_servers deferred to M06; not used by Phase 1`
+  comment. No action in M01 Stage E.
+- ⚠️ **`runtime-drone` module decomposition diverges from spec
+  §"Project Structure"** — spec line 2515 lists
+  `protocol.rs / heartbeat.rs / snapshot.rs / recovery.rs /
+  process_manager.rs`; M01 ships
+  `db.rs / heartbeat.rs / snapshot.rs / ipc.rs / command_handler.rs /
+  shutdown.rs / lib.rs / main.rs`. Implementation shape is clearer
+  (single responsibility per module) but the spec's illustrative
+  listing is now stale. Resolution: update spec §"Project Structure"
+  drone listing in the post-M01 `docs(spec):` PR; the spec's
+  illustrative tree was always advisory but should match
+  reality before M02.
+- ⚠️ **Spec §1d `JsonCodec<T>::new()` pseudo-code** — spec lines
+  745-747 show `FramedRead::new(read, JsonCodec::<DroneEvent>::new())`
+  but `tokio_util::codec` provides no such codec; code at
+  `crates/runtime-drone/src/ipc.rs:32-39` uses `LinesCodec` with
+  manual `serde_json::to_string` / `from_str`. Already captured in
+  M01.C retro; tracked here as the spec-side fix.
+- ⚠️ **Spec §"Project Structure" `runtime-core/src/{capability,
+  signal}.rs`** — listed at spec lines 2493-2494 but not present in
+  M01; capability lands in M05+, signal in M02. Reasonable phase
+  deferral, but the spec's illustrative listing implies all four
+  files exist from the start. Resolution: add a "files marked '✱'
+  arrive in their owning phase" annotation to spec §"Project
+  Structure" in the post-M01 `docs(spec):` PR.
+- ❌ **None observed.** No outright contradictions where code
+  ships behavior that spec forbids or vice versa.
+
+### Spec review (forward-looking)
+
+- **Missing items:**
+  - `agent-runtime-spec.md` §1d line 562 — `HeartbeatStatus` enum is
+    referenced by `DroneEvent::Heartbeat` but never defined. Define
+    as `{ Ok, Degraded, Stalled }` matching the text values
+    `heartbeat::run` writes to the `heartbeats.status` column.
+    Surfaces in M02 (event pipeline consumes `DroneEvent`).
+  - `agent-runtime-spec.md` §1d line 745 — `JsonCodec<T>` is a
+    pseudo-codec; replace with `LinesCodec` + manual JSON pattern as
+    actually shipped at `crates/runtime-drone/src/ipc.rs:32-39`.
+    Surfaces in any future fresh-session reading of §1d.
+  - `agent-runtime-spec.md` §"Project Structure" lines 2515-2520 —
+    drone module listing is stale; current shape is `db, heartbeat,
+    snapshot, ipc, command_handler, shutdown, lib, main`.
+  - `agent-runtime-spec.md` §1 / §1d — no explicit definition of
+    what `state_json` should contain when main calls
+    `SnapshotNow { reason, state_json }`. Currently main is
+    responsible for serializing the full session state into a
+    `serde_json::Value`; no schema. M04 (session lifecycle) will
+    need to lock this; surfaces there.
+- **Contradictions:** None observed.
+- **Ambiguity:**
+  - `agent-runtime-spec.md` §1c line 670 — "v1 caps at 8 concurrent
+    active sessions and queues additional requests" — surfaces in
+    M04 session-lifecycle work. M01 doesn't enforce this; the drone
+    is per-session and main has no session table semantics yet.
+- **Open questions:**
+  - Cross-platform integration test for the drone subprocess
+    lifecycle. The current integration test at
+    `crates/runtime-drone/tests/integration.rs` is `#[cfg(unix)]`;
+    Windows has no equivalent (named-pipe handling differs enough
+    to warrant a separate test). v0.1 is Windows-only per §0d, so
+    this gap matters. Surfaces in M02 prep — adding a Windows
+    integration test is straightforward and would lift Windows
+    coverage on `ipc.rs` `cfg(windows)` paths.
+  - When M02's `AnthropicProvider` adds a long-lived SSE loop, the
+    same `_with` / `_inner` test-seam pattern that lifted drone
+    coverage from 87% to 95% should be applied; document this in
+    `CLAUDE.md` §9 before M02 Stage A.
+- **Recommended spec changes:** Bundled in the post-M01
+  `docs(spec):` cleanup PR (target: open before M02 Stage A
+  begins) — items above on `HeartbeatStatus`,
+  `SnapshotNow.state_json`, `SnapshotWritten.{reason, timestamp}`,
+  `JsonCodec`→`LinesCodec`, drone module listing,
+  `runtime-core/src/{capability, signal}.rs` annotation, plus the
+  Pre-M01-baseline §10 numbering cosmetic gap and Windows named-pipe
+  inlined details from `crates/runtime-drone/src/ipc.rs:13-30`.
+
+### Fix backlog
+
+- 🔴 **Critical** (must fix before M02 starts): **None.** All M01
+  acceptance criteria are met; no shipped behavior is incorrect.
+  Spec deviations on `DroneCommand::SnapshotNow.state_json` and the
+  `mcp_servers` table omission are forward-looking issues, not
+  defects.
+
+- 🟡 **Important** (should fix this release cycle):
+  - **`mcp_servers` table — add now or document the deferral.**
+    Owner: code / `crates/runtime-drone/src/db.rs:50-141`. M01
+    creates 7 of 8 spec §11 tables; `mcp_servers` is missing.
+    Two options: (a) add the table now in M02 Stage A (fields
+    are stable per spec §11 lines 2435-2444) to ship the full
+    §11 schema and avoid a migration in M06; (b) document the
+    deferral inline at `init_schema` with a
+    `// SPEC §11: mcp_servers deferred to M06` comment. M01
+    Stage E does not pick — decision moves to M02 Stage A.
+  - **Post-M01 `docs(spec):` PR.** Owner: spec /
+    `agent-runtime-spec.md` §1d + §"Project Structure" + §10.
+    Bundle the spec changes recommended above (HeartbeatStatus
+    definition; SnapshotNow/SnapshotWritten field extensions;
+    JsonCodec pseudo-code → LinesCodec + manual JSON; drone module
+    listing; capability/signal annotations; Windows named-pipe
+    details from `ipc.rs` module docs; §10 numbering cosmetic).
+    Open before M02 Stage A so the spec is the contract M02 reads.
+  - **Coverage delta gating mechanism.** Owner: docs / `CLAUDE.md`
+    §5. Pre-M01 carry-forward; still open. M01 used absolute
+    thresholds (workspace ≥80%, drone ≥95%) per the M01.C
+    codification commit `1dec4ba`. Becomes relevant from M02 when
+    `main` accumulates a coverage baseline. Define the
+    `cargo-llvm-cov` diff invocation + threshold-delta script in
+    `CLAUDE.md` §5 before M02 Stage A.
+  - **`*_with` / `_inner` test-seam pattern.** Owner: docs /
+    `CLAUDE.md` §9. Document as the canonical TDD-friendly
+    approach to OS-signal-driven async functions; it lifted drone
+    coverage from 87% → 95% and applies again to
+    `AnthropicProvider`'s SSE loop in M02. Cite
+    `crates/runtime-drone/src/{lib.rs, shutdown.rs}` as the
+    archetype.
+  - **Phase 3 React Flow + Zustand spec expansion.** Owner: spec /
+    `agent-runtime-spec.md` §3. Pre-M01 carry-forward; still open.
+    Address at M03 prep.
+  - **Session FSM diagram.** Owner: spec /
+    `agent-runtime-spec.md` §11 sessions table. Pre-M01
+    carry-forward; still open. Address at M04 prep.
+  - **UI consistency: existing look and feel.** Owner: code / M03
+    prompts. Pre-M01 addendum carry-forward; still open. M03 stage
+    prompts must embed this as an explicit constraint.
+  - **Reuse-first vs duplication-first §9 bias revisit.** Owner:
+    docs / `CLAUDE.md` §9. Pre-M01 addendum carry-forward;
+    deferred to M07–M08 per the addendum decision. No M01 action.
+  - **Windows drone integration test.** Owner: code /
+    `crates/runtime-drone/tests/`. The current integration test is
+    `#[cfg(unix)]`; v0.1 is Windows-only per §0d. Add a
+    `tests/integration_windows.rs` (or `cfg`-gate the existing one
+    to both platforms) to exercise `ipc::accept_loop` on
+    `cfg(windows)`. Lifts the `ipc.rs` 84.70% Windows-platform
+    coverage and exercises the named-pipe path. Address in M02
+    prep alongside the SSE loop test seam.
+  - **`.gitattributes` line-ending normalization.** Owner: code /
+    `.gitattributes`. M01.D session start observed seven generated
+    files showing `LF will be replaced by CRLF` warnings on
+    Windows checkout (content-identical, tooling artifact only).
+    Add `*.rs text eol=lf` and `*.json text eol=lf` to
+    `.gitattributes` so future Windows fresh sessions don't have
+    to re-confirm the no-content-diff invariant. Trivially
+    incidental — could move to 🟢 if not bundled.
+
+- 🟢 **Nice-to-have** (queue for v1.0+ unless trivially incidental):
+  - **§10 numbering gap** (`agent-runtime-spec.md`) — Pre-M01
+    carry-forward. Cosmetic; bundle into the post-M01 `docs(spec):`
+    PR.
+  - **Tauri release-build caching.** Tauri release builds take
+    3.5+ minutes for placeholder crates (444 transitive deps).
+    `Swatinem/rust-cache@v2` is in CI; if M02+ builds get slower,
+    consider a Tauri-skipping CI lane for code-only changes.
+    Track but don't act unless friction surfaces.
+
+### Carry-forward from prior milestones
+
+- **Pre-M01 baseline `f71ad9c`+`6688d41` "Resolved before M01"
+  items** — all 9 items remain resolved as recorded in the
+  Pre-M01 entry; no regressions observed in M01 work.
+- **Pre-M01 baseline 🟡 "Coverage delta gating mechanism"** —
+  **still open.** M01 used absolute thresholds; the delta
+  mechanism is not yet defined. Address before M02 Stage A.
+  Re-listed in M01's 🟡 backlog above.
+- **Pre-M01 baseline 🟡 "Phase 3 spec expansion"** — **still open,
+  pre-M03.** Re-listed in M01's 🟡 backlog above.
+- **Pre-M01 baseline 🟡 "Session FSM diagram"** — **still open,
+  pre-M04.** Re-listed in M01's 🟡 backlog above.
+- **Pre-M01 baseline 🟡 "Windows named pipe spec subsection"** —
+  **partially resolved at the code level.** Implementer notes
+  shipped at `crates/runtime-drone/src/ipc.rs:13-30` (path
+  format, `ServerOptions` defaults, security descriptor) and
+  documented in `crates/runtime-drone/README.md` "Platform-specific
+  notes". Spec rebase still open — bundled into the post-M01
+  `docs(spec):` PR.
+- **Pre-M01 baseline 🟡 "typify `oneOf` clippy suppression
+  confirmation"** — **resolved at M01.B.** The generated-file
+  `#[allow(clippy::pedantic, clippy::nursery, clippy::all,
+  missing_docs, unused_imports, rustdoc::invalid_html_tags)]`
+  header successfully suppresses pedantic/nursery; `cargo clippy
+  --workspace --all-targets -- -D warnings` returns clean across
+  all 5 generated files. See
+  `crates/runtime-core/src/generated/*.rs` headers.
+- **Pre-M01 baseline 🟢 "§10 numbering gap"** — **still open,
+  cosmetic.** Re-listed in M01's 🟢 backlog above.
+- **Pre-M01 addendum 🟡 "Reuse-first vs duplication-first bias"** —
+  **deferred to M07–M08 per the addendum decision.** No M01
+  action.
+- **Pre-M01 addendum 🟡 "UI consistency: existing look and
+  feel"** — **carry forward into M03 prep.** No M01 work touched
+  the renderer (the renderer doesn't exist yet). Re-listed in
+  M01's 🟡 backlog above.
+
+### Sign-off
+
+**Claude:** I have generated this gap analysis after the final
+implementation stage of M01 (Stage D commit `6bc8d28`). This is my
+honest assessment of the cumulative code-vs-spec state. Hard gates
+G1–G5 cleared in all four stages; no Critical-severity findings.
+Forward-looking spec gaps and the `mcp_servers` deferral are the
+highest-priority M02-prep items. User review pending; per
+`CLAUDE.md` §20 this entry is immutable once committed — future
+milestones report status updates via their Carry-forward sections.
+
+**Surfaced at:** 2026-05-02 (UTC).
