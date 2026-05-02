@@ -20,6 +20,7 @@ The per-milestone prompt always references `CLAUDE.md` as the protocol; it doesn
 | `README.md` (this file) | Stable | Index + how-to-use |
 | `TEMPLATE.md` | Stable | Per-milestone shape; includes the **scope-split rule** for milestones >250 prompt-lines or >12h work |
 | `PROCESS-VALIDATION.md` | Stable | Framework reference for evaluating whether the prompt-driven pattern works (axes, scoring, threshold gates) |
+| `../persistence-architecture.md` | Stable | High-level architecture: how memory and instructions persist across sessions / stages / milestones (layers, lifecycle, mutability matrix) |
 | `retrospectives/` | Live | Per-session retrospectives Claude fills in during/after every milestone; see `retrospectives/README.md` |
 | `../gap-analysis.md` | **Live, append-only** | Cumulative product↔spec audit. Every parent milestone appends one entry in its Phase Closeout (final stage) per `CLAUDE.md` §20. **Prior entries are immutable** — CI enforces. |
 | **M01 — staged into A/B/C/D plus E (Phase Closeout); one PR for the parent milestone** | | |
