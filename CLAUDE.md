@@ -98,6 +98,7 @@ A micro-cycle should take 5–15 minutes. If a cycle is longer, the test is too 
 - **Asserts something specific.** A test that calls a function and doesn't assert anything is decoration, not a test.
 - **Fails when the production code is wrong.** If you delete a key invariant from the production code and the test still passes, the test is missing the assertion that matters. Verify by mutation: try breaking the production code and confirm tests fail.
 - **Doesn't tautologically restate the implementation.** `fn add(a, b) { a + b }` paired with `assert_eq!(add(2, 2), 4)` is a tautology test if the production code is just `a + b`. Tests should assert behavior the user observes — error cases, edge inputs, boundary conditions, integration outcomes — not internal structure.
+- **Hard-fails on missing exports / dependencies.** A behavioral test must fail loudly when a required production export, function, or fixture is missing — **never silently skip, never tautologically pass via mocking around the gap.** First run after writing the test should fail with `cannot find function X` / `unresolved import` / `module not found`, not pass-by-skip. Skipping a behavioral test because "the function isn't implemented yet" defeats TDD's red phase. Use real imports; if the import is wrong, surface it immediately.
 - **Reproducible.** No reliance on wall-clock time, network, or random seeds without explicit seeding. Use `tokio::time::pause()` for time-dependent tests.
 
 ### Coverage thresholds (per §12)

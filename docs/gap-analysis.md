@@ -297,3 +297,70 @@ Carry-forward sections. M01 Stage E will be the next entry, after the
 workspace + types + drone + fuzz harness ship.
 
 **Surfaced at:** 2026-05-02 (UTC).
+
+---
+
+## Pre-M01 Addendum — Backlog Carry-Forward Seeds (2026-05-02, prior commit `e24fa58`)
+
+> Author: Claude (per `CLAUDE.md` §20)
+> Stages aggregated: pre-implementation prep (addendum to Pre-M01 entry above)
+> Reviewed against: `CLAUDE.md` §5 (TDD), §9 (Style + anti-patterns)
+> Context: User surfaced two backlog items after the Pre-M01 baseline
+> entry was committed. Per §20 the prior entry is immutable; this
+> addendum is the append-only way to record them so they cannot be
+> forgotten or overlooked.
+
+### Codebase deep dive
+
+**N/A — addendum, not a new milestone.** No new code review since the
+Pre-M01 baseline entry above.
+
+### Adherence to spec
+
+**N/A — no implementation yet.**
+
+### Spec review (forward-looking)
+
+None observed beyond the Pre-M01 baseline entry. This addendum adds
+two backlog items only.
+
+### Fix backlog
+
+- 🔴 **Critical:** None.
+
+- 🟡 **Important:**
+  - **Reuse-first vs. duplication-first bias** — owner: docs / `CLAUDE.md` §9.
+    Currently §9 reads: *"Premature abstraction. Three similar lines is
+    better than a wrong abstraction. Wait for the fourth before
+    extracting."* This is a duplication-first bias appropriate for early
+    milestones (M01–M06) when surface area is small and abstractions
+    risk being wrong. **Decision: leave §9 as-is for now.** **Revisit at
+    M07–M08** when there's enough surface area to make abstractions
+    defensible. At that time, evaluate whether to amend §9 to a
+    reuse-first preference. Do NOT make this change preemptively;
+    record the revisit point here so it isn't forgotten.
+  - **UI consistency: existing look and feel** — owner: code / M03 prompts
+    (frontend lands). All modals and screens in M03 onward must reuse
+    existing component patterns and visual language — no per-feature
+    re-skinning, no new dialog primitives where existing ones fit.
+    M03's stage prompts should embed this as an explicit constraint
+    when the milestone is authored. Carry forward into M03 prep.
+
+- 🟢 **Nice-to-have:** None.
+
+### Carry-forward from prior milestones
+
+- **Pre-M01 baseline entry** — all items remain as recorded. This
+  addendum adds two items above; nothing in the prior entry is
+  modified.
+
+### Sign-off
+
+**Claude:** This addendum captures two backlog items the user surfaced
+after the Pre-M01 baseline was committed. Both target later milestones
+(§9 revisit at M07–M08, UI consistency at M03). Per `CLAUDE.md` §20
+the prior Pre-M01 entry is immutable; this is the append-only way to
+extend the backlog. M01 Stage E will carry both items forward and
+report status.
+
+**Surfaced at:** 2026-05-02 (UTC).
