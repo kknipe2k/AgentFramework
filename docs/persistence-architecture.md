@@ -298,7 +298,7 @@ graph TB
     RETROTPL -.shape.-> RETRO
     SUMTPL -.shape.-> SUMMARY
     ADR -.read.-> SESSION
-    M01PROMPT -.read X.1-X.4.-> SESSION
+    M01PROMPT -.read sections.-> SESSION
 
     SESSION ==write==> CODE
     SESSION ==write==> RETRO
