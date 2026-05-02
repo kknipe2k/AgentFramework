@@ -334,57 +334,13 @@ When unsure: `git status`. State what you see. Wait.
 
 ## 9. Style and naming
 
-### Comments and prose in code
+Full conventions live in **`docs/style.md`** — read that file for comments, naming (Rust + TS + skill files + schemas), function design, error handling, and the project-wide anti-patterns list. Summary of the load-bearing rules:
 
-- **No comments by default.** Code expresses what; comments explain *why*.
-- A comment is justified when:
-  - There's a hidden constraint (e.g., "must run before X because Y").
-  - There's a subtle invariant (e.g., "this map can be empty briefly during Z; downstream handles that").
-  - There's a workaround for a specific bug (link the bug).
-  - The behavior would surprise a reader on first read.
-- A comment is **not** justified when it just restates what the code does. Don't write `// Increment counter` above `counter += 1`.
-- **No marketing language.** Code comments and commit messages don't have "🚀", "blazing fast", "revolutionary." Plain technical prose only.
-- **No "TODO: optimize later" without a linked issue.** Either open the issue and reference it (`// TODO: #N — improve hot path`) or don't write the TODO.
-
-### Naming
-
-- **Rust:** `snake_case` for functions/vars; `CamelCase` for types; `SCREAMING_SNAKE_CASE` for constants. Module names are short, lowercase. Crate names are kebab-case (`runtime-core`). File names mirror module names.
-- **TypeScript:** `camelCase` for vars/functions; `PascalCase` for types/components; `SCREAMING_SNAKE_CASE` for constants. File names: `PascalCase.tsx` for React components, `camelCase.ts` for utility modules.
-- **Skill / tool / agent .md files:** kebab-case (`code-simplifier.md`, `git-checkpoint.md`).
-- **Schema files:** `<name>.v<major>.json` (`framework.v1.json`).
-
-### Names should describe what, not how
-
-- `get_current_user_email` is better than `get_email_from_session_via_db_lookup`.
-- `compute_capability_intersection` is better than `loop_over_capability_arrays_and_filter`.
-- The "how" lives in the function body; the name lives at the call site.
-
-### Function design
-
-- Functions do one thing. If a function name has "and" in it, split it.
-- Functions should be ≤50 lines. Beyond that, decompose.
-- Functions should have ≤3 parameters. Beyond that, introduce a struct.
-- Pure functions are preferred over functions with side effects. Effects (file I/O, network, time) live in well-named functions at the edge of the call graph.
-
-### Errors
-
-- **Rust:** `Result<T, E>` everywhere it can fail. Use `thiserror` for library error types; `anyhow` for application error types at the boundary; `?` for propagation. No `panic!` in library code; `panic!` is for "this is impossible and represents a bug." Use `unwrap_or` / `unwrap_or_else` / `expect("...")` with a real error message when needed.
-- **TypeScript:** throw `Error` subclasses for exceptional conditions; return discriminated unions (`{ ok: true; value: T } | { ok: false; error: E }`) for expected-failure paths in domain logic.
-- Capture root cause, not just symptoms. Error messages should let a user fix the issue without reading the source.
-
-### Anti-patterns (project-wide)
-
-- Hidden AI usage. Disclose AI assistance in commits and PRs.
-- Magic numbers. Name them with constants.
-- Stringly-typed APIs in Rust. Use enums.
-- `any` in TypeScript. Use `unknown` and narrow.
-- `#[allow(clippy::...)]` without an issue link or comment explaining why.
-- `// @ts-ignore` / `// @ts-expect-error` without a comment + issue link.
-- Tests that depend on implementation details (private fields, internal call counts) instead of observable behavior.
-- Functions named `helper`, `util`, `do_thing`, `process`. Be specific.
-- Catching errors and silently dropping them.
-- Adding dependencies for one-line utilities you could write in 3 lines (e.g., adding `is-odd` to npm).
-- Premature abstraction. Three similar lines is better than a wrong abstraction. Wait for the fourth before extracting.
+- **No comments by default.** Comments explain *why* (hidden constraint, subtle invariant, workaround), not *what*. No marketing language.
+- **Naming is conventional per language** (snake_case in Rust, camelCase in TS, kebab-case for `.md` artifacts). Names describe what, not how.
+- **Functions do one thing**, ≤50 lines, ≤3 params. Pure preferred; effects at the edges.
+- **Errors:** Rust `Result<T, E>` (thiserror in libs, anyhow at boundaries); TS throw `Error` subclasses or return discriminated unions. Capture root cause.
+- **Anti-patterns to avoid:** hidden AI usage, magic numbers, stringly-typed APIs, `any`, ad-hoc `#[allow(...)]` / `// @ts-ignore`, implementation-detail tests, generic names (`helper`, `util`, `process`), silent error drops, one-line dep adds, premature abstraction (wait for the fourth).
 
 ---
 
@@ -567,28 +523,16 @@ cargo xtask regenerate-types
 
 ## 15. Common gotchas (lessons learned)
 
-The spec is large and the project covers a lot of ground. These are traps that have already bitten the work or are predictable based on the design:
+The full numbered list of 20 traps lives in **`docs/gotchas.md`** — read it once at session start when working in unfamiliar areas. The cluster:
 
-1. **Tool ≠ Skill ≠ Agent.** Three distinct concepts (§0b). Tools are called. Skills are loaded into context. Agents are spawned. Don't conflate them; the schemas, file formats, and runtime mechanics are different.
-2. **Capability narrowing on Agent→Agent edges.** A child agent's `allowed_tools` and `allowed_skills` cannot exceed the parent's. The Builder Canvas (Phase 9) enforces this automatically; manual JSON editing must respect it.
-3. **v0.1 ships STANDARD mode hardcoded.** No mode router (§3b). The framework JSON's `modes` field still exists in schema but is not evaluated at runtime in v0.1.
-4. **v0.1 ships `fresh_context_per_task` only.** The continuous loop policy (Ralph-style) is in the schema but not implemented. `examples/ralph/framework.json` exists but won't run on v0.1.
-5. **v0.1 ships Novice + Promoted tiers only.** No Operator tier. Promoted is blocked from auto-accepting `shell: true` and `network: ["*"]` artifacts even though the tier's general behavior is auto-accept-when-validated.
-6. **v0.1 is single-session.** §1c Multi-session is v1.0. Do not write multi-session code paths in v0.1; they create surface area without benefit.
-7. **v0.1 is Windows-only.** Not because Tauri is Windows-only — Tauri is cross-platform — but because we test only on Windows in v0.1, and macOS/Linux ports come at v1.0. CI still runs on all three OSes to catch drift early.
-8. **No telemetry, ever.** No analytics, no crash reporter, no "anonymous metrics," no phone-home. Per §13 of spec. Adding any requires an ADR with public dashboard plan + opt-in mechanism.
-9. **Anthropic API is hit directly.** No `@anthropic-ai/sdk` dep, no `anthropic-rs`. `reqwest` + `eventsource-stream` only. The API surface is small and stable; direct HTTP keeps the dependency surface minimal.
-10. **Tauri allowlist is the security boundary.** The renderer has no Node API. Anything the renderer needs from Rust goes through a typed `#[tauri::command]`. Don't widen the allowlist without considering capability implications.
-11. **Drone ≠ Main ≠ Sandbox.** Three Rust processes. Drone owns SQLite + snapshots + recovery (per session). Main owns the agent loop, MCP, providers, framework loader, capability enforcer. Sandbox is per-artifact, OS-isolated, used for L3 validation. Don't blur these.
-12. **IPC is two layers.** Renderer↔Main is Tauri typed IPC. Main↔Drone is framed JSON over Unix socket / named pipe. Different mechanisms with different semantics. Don't try to use Tauri IPC for drone communication.
-13. **SQLite WAL pragmas matter.** `PRAGMA journal_mode = WAL`, `PRAGMA synchronous = NORMAL`, `PRAGMA busy_timeout = 5000`, `PRAGMA foreign_keys = ON`. Set them in this order at every connection open. Missing busy_timeout causes flaky tests under contention.
-14. **Snapshots are append-only.** Drone never updates a snapshot row; new snapshot = new row. State_hash deduplication happens at read time, not write time.
-15. **Resume rebuilds history, doesn't re-execute.** Tool calls in flight at crash time are flagged `tool_call_uncertain` and surfaced to the user. Don't replay tool calls automatically.
-16. **`request_capability` is a meta-tool.** It's auto-injected into every agent's tool list. When the model calls it, the runtime translates to `tool_missing` or `skill_missing` and routes through gap flow. Agents can decline `skill_load_requested` events but typically comply.
-17. **Mode-variant skills filter sections.** A `skill.md` with `mode_variants: { LITE: { include_sections: ["quick"] }, ... }` has its body filtered by section header at load time. The full markdown is on disk; the model sees only the slice for the active mode.
-18. **JSONLogic for triggers.** Programmatic skill triggers use a JSONLogic-style expression language. Operators allowed in v0.1: `var`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `and`, `or`, `not`, `in`, `+`, `-`, `*`, `/`. Adding operators requires extending the evaluator; do not silently extend.
-19. **Capability declarations are mandatory for generated artifacts.** Hand-authored artifacts can omit the `capabilities` block, but they default to Operator-tier-only loading. Generated artifacts (Phase 8) must declare capabilities; the validator rejects missing blocks.
-20. **DCO sign-off is mandatory.** `git commit -s`. Without it, the commit is rejected by the CI hook (once configured at M1+).
+- **Concept boundaries:** Tool ≠ Skill ≠ Agent; Drone ≠ Main ≠ Sandbox; capability narrowing on Agent→Agent edges.
+- **v0.1 scope locks:** STANDARD mode only, `fresh_context_per_task` only, Novice + Promoted tiers only, single-session, Windows-only (CI on all three OSes).
+- **Hard rules from the spec:** no telemetry ever, Anthropic API hit directly (no SDK), Tauri allowlist is the security boundary.
+- **IPC + persistence:** two IPC layers (Tauri ↔ framed JSON), SQLite WAL pragmas in order, snapshots append-only, resume rebuilds (doesn't re-execute), `tool_call_uncertain` flag.
+- **Runtime mechanics:** `request_capability` meta-tool, mode-variant skill section filtering, JSONLogic operator allowlist, generated-artifact capability declarations mandatory.
+- **Process:** DCO sign-off (`git commit -s`) mandatory.
+
+When in doubt, open `docs/gotchas.md` and find the relevant trap before writing code that touches the area.
 
 ---
 
@@ -624,6 +568,8 @@ This checklist is the orientation before TDD's "Red" phase. Skip it and you'll d
 | Schemas (source of truth) | `schemas/*.v1.json` |
 | Reference framework (archetype proof) | `examples/aria/` |
 | Sibling framework (Ralph) | `examples/ralph/` |
+| Style and naming conventions | `docs/style.md` |
+| Common gotchas (20 traps) | `docs/gotchas.md` |
 | Engineering charter | `agent-runtime-spec.md` §12 |
 | Privacy & telemetry | `agent-runtime-spec.md` §13 |
 | First-run UX | `agent-runtime-spec.md` §14 |
@@ -657,146 +603,46 @@ If this file disagrees with the spec or an ADR, the spec/ADR wins; this file is 
 
 ## 19. Retrospective protocol (Claude-driven)
 
-**Every milestone session produces a retrospective.** Claude maintains it during the session and surfaces it alongside the PR. The user reviews the retrospective the same way they review the code diff. The user does **not** fill in retrospective fields.
+**Every milestone session produces a retrospective.** Claude maintains it during the session and surfaces it alongside the PR. The user reviews — does not fill in fields.
 
-This protocol exists because Claude has the live context (friction events, ambiguities, self-correction iterations); the user only sees the final PR. Asking the user to score what they didn't observe is asking them to reconstruct context they never had. Claude self-assessing is more honest about who has the information.
+Full protocol (per-stage workflow steps, scoring rubric, threshold gates, outcome routing, cross-milestone trends) lives in:
 
-### Per-stage deliverable
+- **`docs/build-prompts/PROCESS-VALIDATION.md`** — framework reference (3 axes, 5 hard + 5 soft gates, outcome matrix)
+- **`docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md`** — per-stage shape Claude fills in
+- **`docs/build-prompts/retrospectives/SUMMARY-TEMPLATE.md`** — per-parent-milestone roll-up shape
 
-For every milestone-stage session, Claude creates a retrospective file at:
+### The non-negotiable rules
 
-`docs/build-prompts/retrospectives/M[NN].<X>-retrospective.md`
+1. **Stage B onward must read prior stage retrospectives before writing code.** First action in any non-first stage: read every prior stage's `[END] Decisions for the next stage` section and the most recent `docs/gap-analysis.md` Carry-forward section. **Apply those decisions** — that's why they exist. Stage X.5 CLI prompts embed this read step; this rule is the backstop.
+2. **Fill in the live observation log AS friction surfaces.** Friction, ambiguity, surface, protocol-drift, surprise events get logged in real time — not summarized at session end. Details fade.
+3. **Honest self-assessment.** If you self-corrected through 4 rounds when 3 was the budget, log it. If a friction event was severity 4, score it 4. A retrospective claiming everything 5/5 with no friction is itself a flag.
+4. **Stage end:** score 3 axes per `PROCESS-VALIDATION.md`, evaluate threshold gates, mark outcome (Sound / Sound-but-rough / Friction-heavy / Not-ready), write specific Decisions for the next stage (cite file:line, name the change, name the gate).
+5. **Final stage of a parent milestone:** also write `M[NN]-summary.md` aggregating across stages and draft the PR description.
+6. **Surface and wait.** Per `CLAUDE.md` §8, do not commit until user approves. State explicitly: *"Stage `<X>` is ready. I will not commit until you approve."* User especially validates Hard Gate G1 against the git log.
 
-where `<X>` is `A`, `B`, etc. (or `M[NN]-retrospective.md` for parent milestones small enough to fit one prompt under the 250-line / 12-hour rule in `TEMPLATE.md`).
+### Outcome routing (after user approval)
 
-Copied from `docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md`.
-
-**Per-milestone-as-PR pattern:** stages are commits on one feature branch (`claude/m[nn]-<title>`); the M[NN] PR drafts only at the end of the final stage. Each stage commit lands only after user approval. The PR opens with all stage commits + all stage retrospectives + the parent-milestone summary.
-
-### Workflow within a stage session
-
-1. **Read prior stage retrospectives BEFORE writing code (mandatory for stages B onward).** The first action in any non-first stage is to read every prior stage's retrospective in this milestone. Focus on the `[END] Decisions for the next stage` section and any `[LIVE]` friction events flagged as carrying forward. **Apply those decisions** — that's what they exist for. Also re-read the most recent `docs/gap-analysis.md` entry's Carry-forward section for items targeting this stage (e.g., a Pre-M01 anticipated-friction note about `typify oneOf` should be acted on at Stage B start, not re-discovered the hard way). For Stage A of M01: skip — no prior retrospective exists yet. The CLI prompt for each stage (X.5) embeds this read step explicitly; this protocol rule is the backstop in case a future milestone prompt forgets it.
-2. **At session start (after the prior-retrospective read)**, immediately after stating the deliverable + test plan, copy `RETROSPECTIVE-TEMPLATE.md` to the per-stage path. Set the header (parent-milestone, stage letter, branch, starting commit, estimated effort).
-3. **During the session**, fill in the live observation log AS friction surfaces. Don't summarize at the end — details fade. Specifically:
-   - Add a row to the friction-events table the moment a friction event occurs.
-   - Add a row to the ambiguity-events table when contradictions or unclear guidance is encountered.
-   - Add a row to the surface-events table whenever a decision is surfaced to the user.
-   - Add a row to the protocol-drift table if you almost broke a Hard Rule (§4) — and alert the user immediately, not at session end.
-   - Add a row to the surprise-events table when something unexpected (good or bad) happens.
-4. **At stage end** (when all stage acceptance criteria pass and gates are green):
-   - Score the three-axis retrospective (1–5 per row per `PROCESS-VALIDATION.md`)
-   - Evaluate threshold gates (5 hard + 5 soft)
-   - Mark the outcome (Sound / Sound-but-rough / Friction-heavy / Not-ready)
-   - Fill in the Decisions section with specific updates for the next stage (or next parent milestone if final stage). **Be specific** — these decisions get *read* by the next stage's session, so generic notes ("be careful with X") waste the channel; cite file:line, name the exact change to apply, name the gate to re-run.
-5. **Surface to the user.** For non-final stages: surface the diff stat + gate results + retrospective + draft commit message. For the **final stage** of the milestone: also draft the M[NN] PR description and create `M[NN]-summary.md` aggregating across stages.
-6. **State explicitly:** *"Stage `<X>` is ready. I will not commit until you approve. Please review the retrospective and the diff."* For the final stage: *"M[NN] is ready. I will not commit Stage `<X>`, push, or open the PR until you approve. Please review the retrospective, the M[NN] summary, and the PR description."*
-7. **On approval**, the retrospective is committed alongside the stage's code on the parent-milestone feature branch. Push waits for the final stage; PR opens only on the final stage's approval.
-
-### What the user reviews
-
-Two artifacts:
-
-1. **The PR code diff** — does the milestone deliver?
-2. **The filled-in retrospective** — does Claude's self-assessment match observable evidence?
-
-User especially validates **Hard Gate G1** (do-not-commit-until-approved): if the retrospective claims it passed but the git log shows a commit before the user said "approved," that's a flag. User pushes back; Claude revises.
-
-### Honest self-assessment is mandatory
-
-The retrospective must reflect what actually happened, not a sanitized version. If Claude self-corrected through 4 rounds when 3 was the budget, that goes in the retrospective. If a friction event was severity 4, score it 4 — don't downgrade to make the totals look better.
-
-A retrospective that claims everything was 5/5 with no friction events is itself a flag. Real sessions have friction.
-
-### Per-parent-milestone summary
-
-After the **final stage** of a parent milestone (e.g., after M01 Stage D for M01), Claude creates `docs/build-prompts/retrospectives/M[NN]-summary.md` from `docs/build-prompts/retrospectives/SUMMARY-TEMPLATE.md`. This aggregates findings across the milestone's stage retrospectives and is part of the M[NN] PR alongside all stage commits and stage retrospectives. The summary verdict gates whether the next parent milestone can start.
-
-If a parent milestone is not staged (small enough per the `TEMPLATE.md` scope-split rule), this summary file isn't needed — the single retrospective IS the summary.
-
-### Outcome routing
-
-Per the outcome marked in the retrospective:
-
-- **Sound** — proceed to next stage in a fresh session (or next parent milestone if this was the final stage). Apply `CLAUDE.md` / `TEMPLATE.md` updates from the Decisions section in a follow-up commit if substantive.
-- **Sound but rough** — spend a brief session updating `CLAUDE.md` / `TEMPLATE.md` per Decisions, THEN proceed.
-- **Friction-heavy** — stop. Iterate on protocol before next stage.
-- **Not ready** — a hard gate failed. Diagnose. Recovery session may be needed. May require an ADR if a primitive protocol change is needed.
-
-### Cross-milestone trends
-
-A `docs/build-prompts/retrospectives/TRENDS.md` is optional and grows over time. When patterns emerge across multiple parent milestones (e.g., "Claude consistently asks about X" or "the time-box estimate is always 1.5× off for Rust-heavy milestones"), Claude updates TRENDS.md. This is the project's quality history; future contributors read it to understand how the build pattern evolved.
-
-### Why this is enforced as a project-wide protocol
-
-- **Catches friction early.** A per-stage retrospective surfaces protocol problems after ~5–8 hours of work, not after 30+ hours of compounding error.
-- **Honest about who has context.** Claude logs what Claude saw; user reviews what user can verify.
-- **Builds the project's quality history.** After M11, the chain of retrospectives is part of the project's documentation. Someone reading the project a year from now sees how it actually got built — friction included.
-- **Aligns with CLAUDE-Code's actual capabilities.** Claude can fill in tables in real time as work happens; the user can't. Use the right tool for the job.
-
-See `docs/build-prompts/PROCESS-VALIDATION.md` for the framework reference (axes, scoring rubric, threshold gates) and `docs/build-prompts/retrospectives/` for the templates and accumulated retrospectives.
+- **Sound** → proceed (apply minor `CLAUDE.md` / `TEMPLATE.md` updates from Decisions if substantive).
+- **Sound but rough** → brief protocol-iteration session first, then proceed.
+- **Friction-heavy** → stop; iterate on protocol before next stage.
+- **Not ready** → hard gate failed; diagnose, possibly file ADR, possibly recovery session.
 
 ---
 
 ## 20. Gap Analysis Protocol (append-only, per-milestone)
 
-**Every parent milestone produces a Gap Analysis entry**, separate from the per-stage retrospectives. The retrospectives evaluate the build *process* (did the prompt-driven workflow work?). The gap analysis evaluates the build *product*: does the code match the spec, what did the spec get wrong, what's the prioritized fix backlog?
+**Every parent milestone produces a Gap Analysis entry** in `docs/gap-analysis.md`, separate from per-stage retrospectives. Retrospectives evaluate the build *process*; gap analysis evaluates the build *product* (does code match spec, what did spec get wrong, prioritized fix backlog).
 
-The single source for this is `docs/gap-analysis.md`. It is **append-only**.
+Full entry template, append-only enforcement details, and the running milestone log live in **`docs/gap-analysis.md`**.
 
-### The append-only rule (Hard Rule)
+### The non-negotiable rules
 
-Per §10 Don't-touch zones, **no prior entry in `docs/gap-analysis.md` may be edited, reordered, or deleted.** This is non-negotiable. The file is the project's audit trail of how the codebase and spec evolved together. Editing prior entries would erase that history and turn the file into another cleaned-up doc.
+1. **Append-only — Hard Rule.** Per §10, no prior entry may be edited, reordered, or deleted. Resolution of a prior finding goes in the *current* milestone's Carry-forward section, referencing the prior entry's milestone tag. Example: `M01 critical "X" — resolved at <crate/file.rs:line>`. CI enforces this via diff check (added in M01 Stage E).
+2. **When it runs.** After the final stage of a parent milestone commits and the per-parent-milestone summary lands, but **before** the milestone PR opens. The gap-analysis commit is the **final commit on the parent-milestone branch** and gates the PR push.
+3. **Six sections per entry, none optional** (write "None observed." rather than omit): (1) Codebase deep dive — cumulative, 200–500 words; (2) Adherence to spec — ✅ / ⚠️ / ❌ with file:line; (3) Spec review forward-looking — missing/contradicted/ambiguous; (4) Fix backlog — 🔴 Critical / 🟡 Important / 🟢 Nice-to-have, severity non-elastic; (5) Carry-forward from prior milestones; (6) Sign-off.
+4. **What it is NOT.** Not a retrospective (process). Not the changelog (what shipped). It's product↔spec evaluation, cumulative.
+5. **Three-artifact PR review.** User reviews code diff + retrospectives/summary + gap-analysis entry together. Pushback on any of the three blocks the PR until Claude revises.
 
-If a prior milestone's finding is later resolved or invalidated:
-- Do NOT modify the original entry.
-- The current milestone's "Carry-forward" section states the resolution by referencing the prior entry's milestone tag.
-- Example: an M01 critical fix that lands during M02 work gets a line in M02's Carry-forward section: `M01 critical "X" — resolved at <crate/file.rs:line>`. M01's entry stays as it was at M01 PR time.
+### Why append-only is a Hard Rule
 
-CI enforces this with a diff check (added in M01 Stage E's edit to `.github/workflows/ci.yml`, alongside the first entry): if any line in `docs/gap-analysis.md` that existed on the PR base branch is missing or changed in HEAD, CI fails. New milestones may only add content at the bottom.
-
-### When the gap analysis runs
-
-After the **final stage** of a parent milestone commits (e.g., after M01 Stage D), and after the per-parent-milestone summary lands, but **before** the milestone PR is opened:
-
-1. Claude runs the **Phase Closeout — Gap Analysis** step (Stage E in M01; documented in each milestone's prompt and in `TEMPLATE.md`).
-2. Output: a new entry appended to `docs/gap-analysis.md` per the entry template in that file.
-3. Claude surfaces the new entry alongside the milestone PR description and the parent-milestone summary.
-4. The gap analysis commit is the **final commit on the parent-milestone branch**. The PR pushes only after this commit is approved by the user. This means the gap analysis gates the PR.
-
-### What the entry covers
-
-Every entry has six sections (template lives in `docs/gap-analysis.md`):
-
-1. **Codebase deep dive** — narrative review of the *cumulative* code shipped to date, not just this milestone. 200–500 words. Surface structural concerns that will compound.
-2. **Adherence to spec** — for each area touched, classify ✅ / ⚠️ / ❌ with file:line citations on both spec and code sides.
-3. **Spec review (forward-looking)** — missing items, contradictions, ambiguity, open questions, recommended spec changes. Cumulative; re-read prior sections with fresh eyes.
-4. **Fix backlog** — code AND spec fixes, prioritized 🔴 Critical / 🟡 Important / 🟢 Nice-to-have. Severity is non-elastic — if everything is "important," the prioritization is meaningless.
-5. **Carry-forward from prior milestones** — status of every unresolved fix-backlog item from prior entries. Resolved / still open / deferred to <milestone>. **Never modifies prior entries.**
-6. **Sign-off** — Claude attestation + timestamp.
-
-Sections with nothing to report write **"None observed."** — never omit a section.
-
-### What the entry is NOT
-
-- Not a per-stage retrospective. Stage-level process feedback lives in `docs/build-prompts/retrospectives/M[NN].<X>-retrospective.md`.
-- Not a parent-milestone process summary. That lives in `docs/build-prompts/retrospectives/M[NN]-summary.md` and aggregates the stage retrospectives.
-- Not the changelog. `CHANGELOG.md` lists what shipped; gap analysis evaluates how it relates to the spec and what's still wrong.
-
-### User review and approval
-
-User reviews three artifacts together at PR time:
-
-1. The PR code diff — does the milestone deliver?
-2. The filled-in retrospectives + parent-milestone summary — was the process sound?
-3. The new gap analysis entry — is the cumulative product↔spec assessment honest, and is the fix backlog prioritized correctly?
-
-If user pushes back on any of the three, Claude revises before the PR opens. **The gap analysis cannot be edited after the milestone PR merges** — only future milestones' Carry-forward sections can update its status.
-
-### Why this is a Hard Rule
-
-- **Audit trail integrity.** The chain of M01 → M02 → ... → M11 entries is the project's record of how product↔spec drifted and converged. Editing prior entries breaks that chain.
-- **Honest assessment.** Knowing the entry is permanent forces Claude to assess accurately the first time, not optimistically with the option to "fix it later."
-- **Forces forward-looking carry-forward.** Resolution of a prior finding has to be stated in the *new* milestone's entry, which puts the resolution alongside its date and commit context.
-- **Spec drift detection.** When M07's gap analysis says "spec §3a contradicts §6a" and M03's gap analysis already said "spec §3a is ambiguous about <X>," the through-line is visible and actionable. Editing prior entries hides through-lines.
-
-See `docs/gap-analysis.md` for the entry template and the (initially empty) milestone log.
+Audit trail integrity (the M01→M11 chain documents drift); honest assessment (knowing it's permanent forces accuracy); forces forward-looking carry-forward (resolution lives next to its date and commit context); spec-drift detection across milestones stays visible.

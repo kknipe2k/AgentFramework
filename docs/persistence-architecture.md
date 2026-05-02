@@ -283,8 +283,8 @@ graph TB
 
     subgraph L5["Layer 5 — Stage Outputs (committed)"]
         CODE[Code on parent-milestone branch]
-        RETRO[M&#91;NN&#93;.X-retrospective.md]
-        SUMMARY[M&#91;NN&#93;-summary.md]
+        RETRO["M[NN].X-retrospective.md"]
+        SUMMARY["M[NN]-summary.md"]
         GAP[docs/gap-analysis.md<br/>APPEND-ONLY]
         CHANGELOG[CHANGELOG.md]
     end
@@ -298,7 +298,7 @@ graph TB
     RETROTPL -.shape.-> RETRO
     SUMTPL -.shape.-> SUMMARY
     ADR -.read.-> SESSION
-    M01PROMPT -.read X.1-X.4.-> SESSION
+    M01PROMPT -.read sections.-> SESSION
 
     SESSION ==write==> CODE
     SESSION ==write==> RETRO
