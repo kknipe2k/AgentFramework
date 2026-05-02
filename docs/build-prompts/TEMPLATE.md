@@ -233,6 +233,19 @@ Each stage runs through this exact cycle:
 Read CLAUDE.md for all project rules.
 Read docs/build-prompts/M[NN]-<title>.md Stage A (sections A.1 through A.4).
 
+[For stages B, C, D, ...: also include this block before STEP 1.]
+[For Stage A: skip — no prior retrospective exists yet.]
+
+Read prior stage retrospectives for guidance:
+  docs/build-prompts/retrospectives/M[NN].A-retrospective.md
+  [add rows for each prior stage]
+  Focus: [END] "Decisions for the next stage" sections + any [LIVE]
+  friction events flagged as relevant to this stage. Apply decisions.
+
+Read docs/gap-analysis.md for any Carry-forward items targeting this
+stage (look at the most recent entry's Carry-forward section + any
+prior milestone's Fix backlog items still open).
+
 ═══ STEP 1 — WRITE FAILING TESTS ═══
 
 [Specific instructions: which test files to create, with which content.]

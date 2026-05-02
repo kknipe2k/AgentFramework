@@ -1311,6 +1311,19 @@ Read docs/build-prompts/M01-foundation.md Stage B (sections B.1 through B.4).
 Stage A must be committed on this feature branch before starting Stage B.
 Run `git log --oneline -1` and confirm the previous commit is Stage A.
 
+Read prior stage's retrospective for guidance:
+  docs/build-prompts/retrospectives/M01.A-retrospective.md
+  Focus: [END] "Decisions for the next stage" section + any [LIVE]
+  friction events flagged as relevant to Stage B. Apply the decisions.
+
+Read docs/gap-analysis.md (Pre-M01 + Pre-M01 Addendum entries) for any
+Carry-forward items targeting Stage B. The Pre-M01 baseline already
+flags "typify oneOf clippy noise" as anticipated Stage B friction
+(HookRef 3-variant + sizing 2-variant) — the
+`#[allow(clippy::pedantic, clippy::nursery)]` header on generated/*.rs
+files (B.3, line 626) should suppress; confirm in STEP 3 verification.
+If it doesn't, surface as a friction item in this stage's [LIVE] log.
+
 ═══ STEP 1 — WRITE FAILING TESTS ═══
 
 Create the test files exactly as specified in B.4:
@@ -1663,6 +1676,21 @@ Read agent-runtime-spec.md §1 (Drone), §1c (Multi-session), §1d (IPC).
 
 Stages A and B must already be committed on this feature branch.
 Run: git log --oneline -2  → previous two commits should be Stage A and Stage B.
+
+Read prior stage retrospectives for guidance:
+  docs/build-prompts/retrospectives/M01.A-retrospective.md
+  docs/build-prompts/retrospectives/M01.B-retrospective.md
+  Focus: [END] "Decisions for the next stage" sections + any [LIVE]
+  friction events flagged as relevant to Stage C (e.g., drone-related
+  type concerns surfaced in Stage B's typify work). Apply decisions.
+
+Read docs/gap-analysis.md (Pre-M01 baseline + Addendum) for any
+Carry-forward items targeting Stage C. Pre-M01 specifically flags
+"Windows named pipe spec subsection" — implement Stage C with an
+inline implementer note documenting the path format
+(`\\.\pipe\<name>`), `ServerOptions` choices, and security descriptor
+defaults so the post-M01 docs(spec): PR can fold those details back
+into agent-runtime-spec.md §1d.
 
 ═══ STEP 1 — WRITE FAILING TESTS ═══
 
@@ -2024,6 +2052,20 @@ Read CLAUDE.md for all project rules.
 Read docs/build-prompts/M01-foundation.md Stage D (sections D.1 through D.4).
 Stages A, B, C must already be committed on this feature branch.
 Run: git log --oneline -3  → previous three commits should be Stage A, B, C.
+
+Read prior stage retrospectives for guidance:
+  docs/build-prompts/retrospectives/M01.A-retrospective.md
+  docs/build-prompts/retrospectives/M01.B-retrospective.md
+  docs/build-prompts/retrospectives/M01.C-retrospective.md
+  Focus: [END] "Decisions for the next stage" sections + any [LIVE]
+  friction events flagged as relevant to Stage D (especially
+  fuzz/coverage/CI concerns from Stage C). Apply decisions.
+
+Read docs/gap-analysis.md (Pre-M01 baseline + Addendum) for any
+Carry-forward items targeting Stage D. Stage D will need to surface
+status of these items into the Stage E gap-analysis entry — preview
+the carry-forward checklist now so the per-stage retrospective records
+status as work happens, not retroactively.
 
 ═══ STEP 1 — WRITE FAILING/MISSING ARTIFACTS ═══
 

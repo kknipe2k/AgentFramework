@@ -662,21 +662,22 @@ Copied from `docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md`.
 
 ### Workflow within a stage session
 
-1. **At session start**, immediately after stating the deliverable + test plan, copy `RETROSPECTIVE-TEMPLATE.md` to the per-stage path. Set the header (parent-milestone, stage letter, branch, starting commit, estimated effort).
-2. **During the session**, fill in the live observation log AS friction surfaces. Don't summarize at the end — details fade. Specifically:
+1. **Read prior stage retrospectives BEFORE writing code (mandatory for stages B onward).** The first action in any non-first stage is to read every prior stage's retrospective in this milestone. Focus on the `[END] Decisions for the next stage` section and any `[LIVE]` friction events flagged as carrying forward. **Apply those decisions** — that's what they exist for. Also re-read the most recent `docs/gap-analysis.md` entry's Carry-forward section for items targeting this stage (e.g., a Pre-M01 anticipated-friction note about `typify oneOf` should be acted on at Stage B start, not re-discovered the hard way). For Stage A of M01: skip — no prior retrospective exists yet. The CLI prompt for each stage (X.5) embeds this read step explicitly; this protocol rule is the backstop in case a future milestone prompt forgets it.
+2. **At session start (after the prior-retrospective read)**, immediately after stating the deliverable + test plan, copy `RETROSPECTIVE-TEMPLATE.md` to the per-stage path. Set the header (parent-milestone, stage letter, branch, starting commit, estimated effort).
+3. **During the session**, fill in the live observation log AS friction surfaces. Don't summarize at the end — details fade. Specifically:
    - Add a row to the friction-events table the moment a friction event occurs.
    - Add a row to the ambiguity-events table when contradictions or unclear guidance is encountered.
    - Add a row to the surface-events table whenever a decision is surfaced to the user.
    - Add a row to the protocol-drift table if you almost broke a Hard Rule (§4) — and alert the user immediately, not at session end.
    - Add a row to the surprise-events table when something unexpected (good or bad) happens.
-3. **At stage end** (when all stage acceptance criteria pass and gates are green):
+4. **At stage end** (when all stage acceptance criteria pass and gates are green):
    - Score the three-axis retrospective (1–5 per row per `PROCESS-VALIDATION.md`)
    - Evaluate threshold gates (5 hard + 5 soft)
    - Mark the outcome (Sound / Sound-but-rough / Friction-heavy / Not-ready)
-   - Fill in the Decisions section with specific updates for the next stage (or next parent milestone if final stage)
-4. **Surface to the user.** For non-final stages: surface the diff stat + gate results + retrospective + draft commit message. For the **final stage** of the milestone: also draft the M[NN] PR description and create `M[NN]-summary.md` aggregating across stages.
-5. **State explicitly:** *"Stage `<X>` is ready. I will not commit until you approve. Please review the retrospective and the diff."* For the final stage: *"M[NN] is ready. I will not commit Stage `<X>`, push, or open the PR until you approve. Please review the retrospective, the M[NN] summary, and the PR description."*
-6. **On approval**, the retrospective is committed alongside the stage's code on the parent-milestone feature branch. Push waits for the final stage; PR opens only on the final stage's approval.
+   - Fill in the Decisions section with specific updates for the next stage (or next parent milestone if final stage). **Be specific** — these decisions get *read* by the next stage's session, so generic notes ("be careful with X") waste the channel; cite file:line, name the exact change to apply, name the gate to re-run.
+5. **Surface to the user.** For non-final stages: surface the diff stat + gate results + retrospective + draft commit message. For the **final stage** of the milestone: also draft the M[NN] PR description and create `M[NN]-summary.md` aggregating across stages.
+6. **State explicitly:** *"Stage `<X>` is ready. I will not commit until you approve. Please review the retrospective and the diff."* For the final stage: *"M[NN] is ready. I will not commit Stage `<X>`, push, or open the PR until you approve. Please review the retrospective, the M[NN] summary, and the PR description."*
+7. **On approval**, the retrospective is committed alongside the stage's code on the parent-milestone feature branch. Push waits for the final stage; PR opens only on the final stage's approval.
 
 ### What the user reviews
 
