@@ -15,3 +15,6 @@ __pycache__/
 # ARIA Ralph runtime files
 .aria/ralph/.story_failures
 .aria/ralph/.story_failures.tmp.*
+
+# Claude Code per-user settings (personal allowlist; not committed)
+.claude/settings.local.json
