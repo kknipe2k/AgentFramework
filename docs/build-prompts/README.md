@@ -9,7 +9,7 @@ The project uses a **two-layer prompt structure**:
 | Layer | File | When loaded | Content |
 |---|---|---|---|
 | **Layer 1: Constants** | `CLAUDE.md` (repo root) | Auto-loaded by Claude Code in every session | Protocol — TDD discipline, quality gates, PR workflow, anti-patterns, hard rules, schemas-as-source-of-truth, capability adherence. The "how Claude works in this project" doc. |
-| **Layer 2: Per-milestone scope** | `docs/build-prompts/M[NN]-*.md` | Pasted as the opening message of a fresh session | The "what THIS milestone delivers" doc — scope, reading list, TDD plan specific to the milestone, acceptance criteria, milestone-specific gotchas. |
+| **Layer 2: Per-milestone document** | `docs/build-prompts/M[NN]-*.md` | Read by user end-to-end; per-stage CLI prompts pasted as fresh-session opening messages | The milestone specification + per-stage prompts — header (background, design decisions), stages A–D each with X.1 Problem / X.2 Files / X.3 Detailed Changes / X.4 Tests / X.5 CLI Prompt / X.6 Commit Message, summary table, verification checklist. |
 
 The per-milestone prompt always references `CLAUDE.md` as the protocol; it doesn't repeat the protocol verbatim. This keeps the prompts tight and the protocol DRY.
 
@@ -21,12 +21,9 @@ The per-milestone prompt always references `CLAUDE.md` as the protocol; it doesn
 | `TEMPLATE.md` | Stable | Per-milestone shape; includes the **scope-split rule** for milestones >250 prompt-lines or >12h work |
 | `PROCESS-VALIDATION.md` | Stable | Framework reference for evaluating whether the prompt-driven pattern works (axes, scoring, threshold gates) |
 | `retrospectives/` | Live | Per-session retrospectives Claude fills in during/after every milestone; see `retrospectives/README.md` |
-| **M01 — split into 4 sub-milestones** | | |
-| `M01.1-workspace-skeleton.md` | Authored | M01.1 (~5–8h): Cargo workspace + empty crates + Tauri stub + CI green |
-| `M01.2-type-generation.md` | Authored | M01.2 (~6–10h): xtask + typify + runtime-core types from schemas + drift check |
-| `M01.3-drone-implementation.md` | Authored | M01.3 (~12–18h): runtime-drone Phase 1 — heartbeat + snapshot + IPC + SIGTERM |
-| `M01.4-fuzz-and-polish.md` | Authored | M01.4 (~4–6h): fuzz harness + 100% drone coverage + READMEs + cross-OS verify |
-| **M02–M11 — generated after M01 retrospective** | | |
+| **M01 — staged into A/B/C/D within one document; one PR for the parent milestone** | | |
+| `M01-foundation.md` | Authored | M1 (weeks 1–2; 4 stages, ~27–42h total). Stage A workspace skeleton + Stage B type generation + Stage C drone Phase 1 + Stage D fuzz + polish. Each stage commits on the parent-milestone branch; M1 PR drafts at end of Stage D. |
+| **M02–M11 — generated after M01 summary** | | |
 | `M02-event-pipeline.md` | TODO | M2 (weeks 3–4): SDK + AnthropicProvider + Tauri shell + event flow |
 | `M03-live-graph.md` | TODO | M3 (weeks 5–6): React Flow + node types + VDR projection |
 | `M04-plan-verify-hitl-budget.md` | TODO | M4 (weeks 7–8): §3a + §4a + §6a + §2a + §1b |
@@ -38,16 +35,17 @@ The per-milestone prompt always references `CLAUDE.md` as the protocol; it doesn
 | `M10-first-run-polish.md` | TODO | M10 (weeks 21–22): §14 onboarding + Settings + Help |
 | `M11-ship-prep.md` | TODO | M11 (weeks 23–24): unsigned .msi + SHA-256 + Sigstore + release |
 
-**M01 is the proof-of-concept**, split into 4 sub-milestones to avoid the prompt-too-long failure mode (the original `M01-foundation.md` was 540 lines — too much for a fresh-session opening prompt; see TEMPLATE.md scope-split rule). After all four M01 sub-milestones run, lessons learned go into `CLAUDE.md` (where appropriate) and `TEMPLATE.md`. Many of M02–M11 will themselves split into sub-milestones per the rule; the split happens at authoring time, not run time.
+**M01 is the proof-of-concept**, staged into A/B/C/D within a single milestone document to avoid the prompt-too-long failure mode (an unstaged 540-line prompt is too much for a fresh-session opening message; see TEMPLATE.md scope-split rule). The four stages commit sequentially on one feature branch; the M1 PR drafts only at the end of Stage D, including all stage commits and per-stage retrospectives + parent-milestone summary per `CLAUDE.md` §19. After M1 runs, lessons learned go into `CLAUDE.md` (where appropriate) and `TEMPLATE.md`. Many of M02–M11 will themselves stage per the rule; staging happens at authoring time, not run time.
 
-## How to use a milestone prompt
+## How to use a milestone document
 
-1. Open a **fresh** Claude Code session in this repository (cleared context — don't continue from prior session work).
-2. Copy the entire contents of `M[NN]-<milestone>.md` into the opening message.
-3. Add any session-specific overrides at the top: branch name, time-box if applicable, anything that's true for this run but not the milestone in general. Keep it minimal — the prompt is intentionally complete.
-4. Send. Claude will read `CLAUDE.md` (auto-loaded), the milestone prompt, and the files the milestone prompt names — in that order.
-5. Claude does TDD work, runs gates, drafts the PR description, surfaces it. **Claude does not commit.** You review, approve, and Claude then commits + pushes.
-6. After the milestone PR merges, the next session starts fresh with the next milestone's prompt.
+1. **First**, read the entire `M[NN]-<title>.md` document end-to-end — it's your spec, design rationale, and stage roadmap in one file.
+2. **For each stage**, open a **fresh** Claude Code session (cleared context — don't continue from prior session work).
+3. Copy the **stage's CLI Prompt** (section X.5 of the milestone document, where X is `A`/`B`/...) into the fresh session as the opening message. The stage prompt instructs Claude to read CLAUDE.md (auto-loaded), the stage's X.1–X.4 sections, and any other files the prompt names.
+4. Add any session-specific overrides at the top: branch name (default `claude/m[nn]-<title>`), time-box if applicable. Keep it minimal — the prompt is intentionally complete.
+5. Claude does TDD work for the stage, runs gates, fills in the per-stage retrospective, drafts the stage commit message, surfaces it all. **Claude does not commit.** You review, approve, and Claude then commits the stage on the parent-milestone branch (does NOT push between stages).
+6. **After the final stage**, Claude additionally drafts the M[NN] PR description and creates the parent-milestone summary (`M[NN]-summary.md`). On approval, Claude commits the final stage, pushes the branch, and (if explicitly requested) opens the PR.
+7. After the milestone PR merges, the next milestone starts fresh with its own document and stage prompts.
 
 ## Authoring new milestone prompts
 

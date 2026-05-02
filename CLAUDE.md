@@ -644,38 +644,35 @@ If this file disagrees with the spec or an ADR, the spec/ADR wins; this file is 
 
 This protocol exists because Claude has the live context (friction events, ambiguities, self-correction iterations); the user only sees the final PR. Asking the user to score what they didn't observe is asking them to reconstruct context they never had. Claude self-assessing is more honest about who has the information.
 
-### Per-session deliverable
+### Per-stage deliverable
 
-For every milestone or sub-milestone session, Claude creates a retrospective file at:
+For every milestone-stage session, Claude creates a retrospective file at:
 
-`docs/build-prompts/retrospectives/M[NN].[N]-retrospective.md`
+`docs/build-prompts/retrospectives/M[NN].<X>-retrospective.md`
 
-(or `M[NN]-retrospective.md` for parent milestones not split into sub-milestones).
+where `<X>` is `A`, `B`, etc. (or `M[NN]-retrospective.md` for parent milestones small enough to fit one prompt under the 250-line / 12-hour rule in `TEMPLATE.md`).
 
 Copied from `docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md`.
 
-### Workflow within the session
+**Per-milestone-as-PR pattern:** stages are commits on one feature branch (`claude/m[nn]-<title>`); the M[NN] PR drafts only at the end of the final stage. Each stage commit lands only after user approval. The PR opens with all stage commits + all stage retrospectives + the parent-milestone summary.
 
-1. **At session start**, immediately after stating the deliverable + test plan, copy `RETROSPECTIVE-TEMPLATE.md` to the per-session path. Set the header (sub-milestone ID, branch, starting commit, estimated effort).
+### Workflow within a stage session
+
+1. **At session start**, immediately after stating the deliverable + test plan, copy `RETROSPECTIVE-TEMPLATE.md` to the per-stage path. Set the header (parent-milestone, stage letter, branch, starting commit, estimated effort).
 2. **During the session**, fill in the live observation log AS friction surfaces. Don't summarize at the end — details fade. Specifically:
    - Add a row to the friction-events table the moment a friction event occurs.
    - Add a row to the ambiguity-events table when contradictions or unclear guidance is encountered.
    - Add a row to the surface-events table whenever a decision is surfaced to the user.
    - Add a row to the protocol-drift table if you almost broke a Hard Rule (§4) — and alert the user immediately, not at session end.
    - Add a row to the surprise-events table when something unexpected (good or bad) happens.
-3. **At session end** (when all acceptance criteria pass and gates are green):
+3. **At stage end** (when all stage acceptance criteria pass and gates are green):
    - Score the three-axis retrospective (1–5 per row per `PROCESS-VALIDATION.md`)
    - Evaluate threshold gates (5 hard + 5 soft)
    - Mark the outcome (Sound / Sound-but-rough / Friction-heavy / Not-ready)
-   - Fill in the Decisions section with specific updates for the next sub-milestone
-4. **Surface to the user.** The PR draft now includes:
-   - PR title (Conventional Commits)
-   - PR description (per `.github/PULL_REQUEST_TEMPLATE.md`)
-   - Diff stat
-   - Quality gate results
-   - **The filled-in retrospective** at `docs/build-prompts/retrospectives/M[NN].[N]-retrospective.md`
-5. **State explicitly:** *"I will not commit until you approve. Please review both the PR description and the retrospective."*
-6. **On approval**, the retrospective is committed alongside the milestone code in the same PR.
+   - Fill in the Decisions section with specific updates for the next stage (or next parent milestone if final stage)
+4. **Surface to the user.** For non-final stages: surface the diff stat + gate results + retrospective + draft commit message. For the **final stage** of the milestone: also draft the M[NN] PR description and create `M[NN]-summary.md` aggregating across stages.
+5. **State explicitly:** *"Stage `<X>` is ready. I will not commit until you approve. Please review the retrospective and the diff."* For the final stage: *"M[NN] is ready. I will not commit Stage `<X>`, push, or open the PR until you approve. Please review the retrospective, the M[NN] summary, and the PR description."*
+6. **On approval**, the retrospective is committed alongside the stage's code on the parent-milestone feature branch. Push waits for the final stage; PR opens only on the final stage's approval.
 
 ### What the user reviews
 
@@ -694,17 +691,17 @@ A retrospective that claims everything was 5/5 with no friction events is itself
 
 ### Per-parent-milestone summary
 
-After the **last sub-milestone** of a parent milestone (e.g., after M01.4 for M01), Claude creates `docs/build-prompts/retrospectives/M[NN]-summary.md` from `docs/build-prompts/retrospectives/SUMMARY-TEMPLATE.md`. This aggregates findings across the parent's sub-milestone retrospectives and gates the start of the next parent milestone.
+After the **final stage** of a parent milestone (e.g., after M01 Stage D for M01), Claude creates `docs/build-prompts/retrospectives/M[NN]-summary.md` from `docs/build-prompts/retrospectives/SUMMARY-TEMPLATE.md`. This aggregates findings across the milestone's stage retrospectives and is part of the M[NN] PR alongside all stage commits and stage retrospectives. The summary verdict gates whether the next parent milestone can start.
 
-If a parent milestone is not split, this summary file isn't needed — the single retrospective IS the summary.
+If a parent milestone is not staged (small enough per the `TEMPLATE.md` scope-split rule), this summary file isn't needed — the single retrospective IS the summary.
 
 ### Outcome routing
 
 Per the outcome marked in the retrospective:
 
-- **Sound** — proceed to next sub-milestone in a fresh session. Apply `CLAUDE.md` / `TEMPLATE.md` updates from the Decisions section in a follow-up commit if substantive.
+- **Sound** — proceed to next stage in a fresh session (or next parent milestone if this was the final stage). Apply `CLAUDE.md` / `TEMPLATE.md` updates from the Decisions section in a follow-up commit if substantive.
 - **Sound but rough** — spend a brief session updating `CLAUDE.md` / `TEMPLATE.md` per Decisions, THEN proceed.
-- **Friction-heavy** — stop. Iterate on protocol before next sub-milestone.
+- **Friction-heavy** — stop. Iterate on protocol before next stage.
 - **Not ready** — a hard gate failed. Diagnose. Recovery session may be needed. May require an ADR if a primitive protocol change is needed.
 
 ### Cross-milestone trends
@@ -713,7 +710,7 @@ A `docs/build-prompts/retrospectives/TRENDS.md` is optional and grows over time.
 
 ### Why this is enforced as a project-wide protocol
 
-- **Catches friction early.** A per-sub-milestone retrospective surfaces protocol problems after ~5–8 hours of work, not after 30+ hours of compounding error.
+- **Catches friction early.** A per-stage retrospective surfaces protocol problems after ~5–8 hours of work, not after 30+ hours of compounding error.
 - **Honest about who has context.** Claude logs what Claude saw; user reviews what user can verify.
 - **Builds the project's quality history.** After M11, the chain of retrospectives is part of the project's documentation. Someone reading the project a year from now sees how it actually got built — friction included.
 - **Aligns with CLAUDE-Code's actual capabilities.** Claude can fill in tables in real time as work happens; the user can't. Use the right tool for the job.

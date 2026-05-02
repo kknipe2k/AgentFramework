@@ -1,390 +1,344 @@
-# Template — Per-Milestone Prompt
+# Template — Per-Milestone Specification + Stage Prompts
 
-This file is the **shape** of a milestone prompt. Copy it to `M[NN]-<short-title>.md` and fill in every section. Sections are not optional; if a section doesn't apply, write "N/A — <one-line reason>" rather than deleting.
+This file is the **shape** of a milestone document. Copy it to `M[NN]-<short-title>.md` and fill in every section. Sections are not optional; if a section doesn't apply, write "N/A — <one-line reason>" rather than deleting.
 
-The template is annotated. Annotations live as HTML comments and are stripped from the rendered milestone prompt. Comments explain the *why* of each section so future authors understand the intent and don't accidentally hollow out the structure.
+The shape combines the milestone **specification** (rationale, design decisions) and the **stage prompts** (paste-able CLI prompts that drive Claude through implementation) in one document. Each milestone produces one PR; each stage within a milestone produces one commit on the same feature branch. Each stage produces a retrospective per `CLAUDE.md` §19.
 
 ---
 
-## When to split a milestone
+## When to stage a milestone
 
-> **Rule:** If a milestone's scope estimate exceeds **250 lines of prompt** OR **12 hours of work**, **split it** into sub-milestones.
+> **Rule:** If a milestone's scope estimate exceeds **250 prompt-lines** OR **12 hours of work**, stage it.
 
-A 540-line opening prompt is too much for a fresh Claude Code session — context window pressure, attention dilution, and acceptance-criteria fatigue all compound. The right move is to split the milestone into sequential sub-milestones, each with its own prompt, branch, and PR.
+A 540-line opening prompt is too much for a fresh Claude Code session — context window pressure, attention dilution, and acceptance-criteria fatigue compound. Staging splits the milestone into 2–4 sequential stages on one feature branch:
 
-### Naming convention for sub-milestones
+- **Each stage is its own commit** (sequential ordering enforced by branch history).
+- **Each stage has its own X.5 CLI Prompt** — pasted into a fresh Claude Code session. The fresh session reads the milestone's Background + the specific stage's X.1–X.4 sections from this document, plus the CLI prompt itself.
+- **Each stage has its own retrospective** at `docs/build-prompts/retrospectives/M[NN].<X>-retrospective.md` (where `<X>` is `A`, `B`, etc.).
+- **The parent milestone has one PR** drafted at the end of the last stage. All stage commits + all stage retrospectives + the parent-milestone summary land in that PR.
 
-- `M[NN].1-<short-title>.md`, `M[NN].2-<short-title>.md`, etc.
-- Sequential — M[NN].1's PR must merge to `main` before M[NN].2's session opens
-- Each sub-milestone is its own branch (`claude/m[nn]-<n>-<short-title>`) and its own PR
-- Each sub-milestone has its own retrospective entry in `PROCESS-VALIDATION.md`
+### Naming
 
-### How to split
+- Document file: `docs/build-prompts/M[NN]-<short-title>.md` (one per parent milestone).
+- Branch: `claude/m[nn]-<short-kebab-title>` (one per parent milestone).
+- Stages: `Stage A`, `Stage B`, etc. inside the document.
+- Stage retrospectives: `M[NN].A-retrospective.md`, `M[NN].B-retrospective.md`, etc.
+- Parent-milestone summary: `M[NN]-summary.md`.
+
+### How to stage
 
 Look at the milestone scope and identify natural boundaries. Common axes:
 
-- **Layer boundaries** — e.g., M01 splits into workspace-skeleton / type-generation / drone-implementation / fuzz-and-polish
-- **Subsystem boundaries** — e.g., M04 (Plan + Verify + HITL + Budget) splits into one sub-milestone per primitive
-- **Risk boundaries** — e.g., the highest-risk piece is its own sub-milestone so failure surfaces early
-- **Test-type boundaries** — sometimes implementation is one sub-milestone and the fuzz/coverage closure is another
+- **Layer boundaries** — e.g., M01 stages into workspace-skeleton / type-generation / drone-implementation / fuzz-and-polish.
+- **Subsystem boundaries** — e.g., M04 (Plan + Verify + HITL + Budget) stages into one stage per primitive.
+- **Risk boundaries** — the highest-risk piece is its own stage so failure surfaces early.
+- **Test-type boundaries** — sometimes implementation is one stage and the fuzz/coverage closure is another.
 
-Each sub-milestone should:
-- Be deliverable in one session (≤12 hours; ideally 5–8)
-- Have its own scope, TDD plan, acceptance criteria
-- Build on prior sub-milestones (via dependencies declared in "Prerequisite sub-milestones")
-- Close cleanly — no "we'll wire this up in the next sub-milestone" hand-waves
+Each stage should:
+- Be deliverable in one session (≤12 hours; ideally 5–8).
+- Have its own scope, TDD plan, acceptance criteria.
+- Build on prior stages (declare prerequisite stages explicitly).
+- Close cleanly — no "we'll wire this up in the next stage" hand-waves.
+- End with a tight commit on the feature branch (no push until the parent-milestone PR is approved).
 
-If you find a sub-milestone needs further splitting, recurse: M[NN].2.a, M[NN].2.b. Try to avoid this — three levels of sub-milestone is usually a sign the scope was estimated wrong.
+If a stage needs further substaging, recurse: `Stage A.1`, `Stage A.2`. Try to avoid this — three levels usually means scope was estimated wrong.
 
-### Why split rather than rely on Claude's context window
+### Reference: M01 stages
 
-Even with 200K+ context windows, attention dilutes across long prompts:
-- Acceptance criteria mid-prompt get less weight than ones near the end
-- Mid-flight, Claude can lose track of what was specified earlier
-- Self-correction state gets muddied across unrelated subsystems
-- A single failing test can pull focus from the broader plan
+M01 was originally a 540-line single prompt. It became:
 
-Splitting is the cheap intervention that prevents these failure modes.
+- `M01-foundation.md` Stage A (~290 lines, 5–8h) — Workspace skeleton.
+- `M01-foundation.md` Stage B (~270 lines, 6–10h) — Type generation pipeline.
+- `M01-foundation.md` Stage C (~340 lines, 12–18h) — Drone Phase 1 implementation.
+- `M01-foundation.md` Stage D (~250 lines, 4–6h) — Fuzz + polish + closeout.
 
-### Reference: M01 split
+Stage C is at the upper bound. If it grows, it gets sub-staged.
 
-M01 was originally written as one 540-line prompt. It was split into four sub-milestones:
+### Why stage rather than rely on Claude's context window
 
-- `M01.1-workspace-skeleton.md` (~180 lines, 5–8h)
-- `M01.2-type-generation.md` (~200 lines, 6–10h)
-- `M01.3-drone-implementation.md` (~280 lines, 12–18h)
-- `M01.4-fuzz-and-polish.md` (~150 lines, 4–6h)
+Even with 200K+ context, attention dilutes across long prompts:
+- Acceptance criteria mid-prompt get less weight than ones near the end.
+- Mid-flight, Claude can lose track of what was specified earlier.
+- Self-correction state gets muddied across unrelated subsystems.
+- A single failing test can pull focus from the broader plan.
 
-M01.3 is the largest — it's at the upper bound of the rule. If it grows, split further.
-
----
-
-<!-- ============================================================ -->
-<!-- IDENTITY — who Claude is for this milestone, what they're doing -->
-<!-- ============================================================ -->
-
-# M[NN] — <Milestone title>
-
-> **Milestone:** M[NN] of M11 in `docs/MVP-v0.1.md`
-> **Estimated effort:** [X] hours Claude execution + [Y] hours human direction; [N] weeks elapsed at sustained pace
-> **Branch:** `claude/m[nn]-<short-kebab-title>` (off `main`)
-> **Prerequisite milestones:** [list, or "none — root milestone"]
+Staging is the cheap intervention that prevents these failure modes. Per-stage retrospectives also surface friction early: a Stage A retrospective after ~5–8 hours can catch a pattern problem before Stage B starts, saving 25+ hours of compounding error.
 
 ---
 
-<!-- ============================================================ -->
-<!-- READ FIRST — explicit list, with one-line "why" per file       -->
-<!-- This is what Claude reads before writing any code. Keep it tight; -->
-<!-- if a file isn't strictly needed for THIS milestone, leave it out. -->
-<!-- CLAUDE.md is implicit (auto-loaded) but list it anyway for clarity. -->
-<!-- ============================================================ -->
-
-## Read first
-
-Before writing any code, read in this order:
-
-1. **`CLAUDE.md`** (repo root) — protocol, hard rules, quality gates, PR workflow, anti-patterns. You should already have this auto-loaded; confirm by stating the §4 Hard Rules at the top of your first response.
-2. **`agent-runtime-spec.md`** — read these sections:
-   - §0 Project Positioning, §0a Capability Matrix, §0b Three Concepts, §0c Dev Loop, §0d Release Scope (always)
-   - **[milestone-specific spec sections, named explicitly with anchors]**
-3. **`docs/MVP-v0.1.md`** — read the §M[NN] section in full + the milestone overview table at the top
-4. **`docs/adr/`** — read these ADRs:
-   - **[list ADRs by number with one-line "why each"]**
-5. **`schemas/*.v1.json`** — read these schemas if applicable:
-   - **[list, or "N/A for this milestone"]**
-6. **`examples/aria/`** — read these reference artifacts if applicable:
-   - **[list paths]**
-
-After reading, state in 1-3 sentences what this milestone delivers and the test plan in 3-5 bullets. Wait for confirmation before writing code.
-
----
-
-<!-- ============================================================ -->
-<!-- PROBLEM STATEMENT — what real-world thing is unblocked by this  -->
-<!-- milestone, in user terms not engineering terms                  -->
-<!-- ============================================================ -->
-
-## Problem statement
-
-[One paragraph, user-facing language. What can a user do after this milestone that they couldn't before? What real problem is unblocked?]
-
-[For early milestones (M1, M2) where there's no user yet, frame as "what Claude / contributors / the build can do that they couldn't before."]
-
----
-
-<!-- ============================================================ -->
-<!-- SCOPE — what's IN, what's OUT. Mirror MVP-v0.1.md but more       -->
-<!-- granular. The "out" list is as important as the "in" list —     -->
-<!-- it prevents scope creep mid-milestone.                          -->
-<!-- ============================================================ -->
-
-## Scope
-
-### In scope (deliver these)
-
-- [Specific, testable deliverable 1]
-- [Specific, testable deliverable 2]
-- [...]
-
-### Out of scope (do NOT deliver these)
-
-- [Things that look related but belong to a later milestone — name the milestone]
-- [Things that look like obvious next steps but are explicitly v1.0 or v2.0+ — reference §0d row]
-- [Refactors / improvements that aren't required by acceptance criteria]
-
-If you find yourself wanting to deliver something on the "Out of scope" list, **stop and ask** — never silently expand.
-
----
-
-<!-- ============================================================ -->
-<!-- TDD PLAN — write tests first, in this order. Specifies WHAT     -->
-<!-- tests, not what implementation. The implementation falls out of -->
-<!-- making the tests pass.                                          -->
-<!-- ============================================================ -->
-
-## TDD plan
-
-Before writing any production code, write these tests in this order. Each test should fail when first written; the production code that makes it pass is the implementation.
-
-### Unit tests (Rust — `cargo test`)
-
-1. **[Test name]** — [what it asserts; what production code it drives]
-2. **[Test name]** — [...]
-
-### Property tests (Rust — `proptest`)
-
-1. **[Property]** — [the invariant; the input space]
-
-### Fuzz harnesses (Rust — `cargo-fuzz`)
-
-[List, or "N/A — no parsers introduced this milestone"]
-
-### Integration tests (Rust — `cargo test --features integration`)
-
-[List, or "N/A — milestone is unit-test scope"]
-
-### Frontend unit tests (TypeScript — Vitest)
-
-[List, or "N/A — frontend doesn't exist yet"]
-
-### E2E tests (Playwright)
-
-[List, or "N/A — milestone is below the E2E threshold; renderer doesn't run a session yet"]
-
-### Doc tests
-
-[List public API additions that need doc-comment examples; or "N/A — no public API added"]
-
-### Coverage target
-
-- ≥80% line coverage on all new code
-- 100% on safety primitives if any are touched ([list applicable safety primitive paths])
-
----
-
-<!-- ============================================================ -->
-<!-- ACCEPTANCE CRITERIA — checkbox format, testable, ties back to   -->
-<!-- MVP-v0.1.md M[N] acceptance + adds milestone-prompt detail.    -->
-<!-- Every criterion must be verifiable by running a command or      -->
-<!-- inspecting an artifact. Vague criteria ("works correctly") are -->
-<!-- bugs in the criteria themselves.                                -->
-<!-- ============================================================ -->
-
-## Acceptance criteria
-
-The milestone is "done" only when every criterion below is checked:
-
-- [ ] **[Criterion 1]** — verifiable by [exact command or inspection]
-- [ ] **[Criterion 2]** — verifiable by [...]
-- [ ] [...]
-
-### Quality gates (the must-pass list per CLAUDE.md §6)
-
-- [ ] `cargo fmt --all -- --check` passes
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` passes
-- [ ] `cargo test --workspace` passes
-- [ ] `cargo test --workspace --doc` passes
-- [ ] `cargo doc --workspace --no-deps -- -D rustdoc::missing_docs` passes
-- [ ] `cargo audit` clean (no high/critical)
-- [ ] `cargo deny check` passing
-- [ ] `cargo llvm-cov --workspace` shows coverage ≥80% on lines added/modified
-- [ ] [Frontend gates if applicable]
-- [ ] [E2E gates if applicable]
-- [ ] CI green on Linux/macOS/Windows (manually verify by inspecting CI run after push)
-
----
-
-<!-- ============================================================ -->
-<!-- CODE EXPECTATIONS — patterns to match, anti-patterns to avoid,  -->
-<!-- file/module layout, anything specific to THIS milestone that's  -->
-<!-- not already covered by CLAUDE.md's project-wide rules.          -->
-<!-- ============================================================ -->
-
-## Code expectations
-
-### File / module layout
+## Document Shape
 
 ```
-[show the directory tree this milestone produces]
+# M[NN] <Short Title> — Specification + Stage Prompts
+
+**Date:** YYYY-MM-DD
+**Status:** Design approved — implement one stage at a time, in order
+**Scope:** [one-paragraph summary]
+
+[Background and Design Decision]
+[Document Structure table]
+[Implementation Workflow code block]
+
+## Stage A — <Title>
+### A.1 Problem Statement
+### A.2 Files to Change
+### A.3 Detailed Changes
+### A.4 Tests
+### A.5 CLI Prompt
+### A.6 Commit Message
+
+## Stage B — <Title>
+### B.1 ... B.6 ...
+
+[... additional stages as needed ...]
+
+## Summary Table
+## Verification Checklist
 ```
 
-### Patterns to match
-
-- [Specific pattern other crates/components in the project use that this milestone should follow]
-
-### Naming for this milestone
-
-- [Anything milestone-specific beyond CLAUDE.md §9]
-
-### What NOT to write
-
-- [Things that look like reasonable additions but aren't appropriate for this milestone]
+The header sections (Date through Implementation Workflow) live once at the top. Each stage repeats X.1–X.6. The Summary Table and Verification Checklist live at the bottom.
 
 ---
 
 <!-- ============================================================ -->
-<!-- VERIFICATION COMMANDS — exact commands to run, in order, with   -->
-<!-- pass/fail criteria. Copy-pasteable.                             -->
+<!-- HEADER BLOCK — date, status, scope                            -->
 <!-- ============================================================ -->
 
-## Verification commands
+# M[NN] <Short Title> — Specification + Stage Prompts
 
-Run these in order. All must pass before the milestone is considered done.
+**Date:** YYYY-MM-DD
+**Status:** Design approved — implement one stage at a time, in order
+**Scope:** [One-paragraph summary of what this milestone delivers, in user-facing terms when possible. Reference the spec sections that govern.]
+
+---
+
+<!-- ============================================================ -->
+<!-- BACKGROUND AND DESIGN DECISION — front-load the WHY            -->
+<!-- ============================================================ -->
+
+## Background and Design Decision
+
+**Problem:** [What real-world thing is unblocked by this milestone? In user terms.]
+
+**Solution:** [What this milestone delivers, in 2–4 sentences. Reference the stages by name.]
+
+**Why one PR for the parent milestone (not one PR per stage):** [If the milestone has stages, justify the parent-milestone-as-PR pattern here. Sub-milestone-as-PR was over-engineering; stages-as-commits-on-one-branch gives the same incremental discipline.]
+
+**Why stages, not a single prompt:** [Cite the scope-split rule; note the original prompt size; explain the natural boundaries.]
+
+**Key constraints:** [Bullet list of non-negotiables — scope from §0d, capability adherence, etc.]
+
+**License:** Apache 2.0; DCO sign-off on every commit.
+
+**Existing patterns to mirror:** [List spec sections, ADRs, prior milestone files that codify patterns this milestone follows.]
+
+---
+
+<!-- ============================================================ -->
+<!-- DOCUMENT STRUCTURE — quick stage table                         -->
+<!-- ============================================================ -->
+
+## Document Structure
+
+| Stage | Summary | Estimated effort |
+|---|---|---|
+| **A** | [one-line summary] | ~Xh |
+| **B** | [...] | ~Yh |
+| **C** | [...] | ~Zh |
+| **D** | [...] | ~Wh |
+
+Total: [sum of estimates]. ~10–15 hours human direction.
+
+---
+
+<!-- ============================================================ -->
+<!-- IMPLEMENTATION WORKFLOW — the constant cycle                   -->
+<!-- ============================================================ -->
+
+## Implementation Workflow
+
+Each stage runs through this exact cycle:
+
+```
+1. /clear                     — fresh context (only between stages)
+2. Paste CLI Prompt below     — Claude writes failing tests first, then implements
+3. cargo test --workspace     — confirm new tests fail before any production code
+4. implement                  — Claude makes production changes
+5. cargo test --workspace     — all tests green
+6. cargo clippy + fmt + audit — zero warnings
+7. cargo llvm-cov             — coverage threshold met
+8. fill in retrospective      — docs/build-prompts/retrospectives/M[NN].<X>-retrospective.md
+9. commit (no push)           — exact commit message provided per stage
+10. user reviews + approves   — Claude does NOT push without approval
+11. push (final stage only)   — to PR draft + open the M[NN] PR
+```
+
+**Rule:** If a new test passes before implementation, the test is wrong — stop and fix the test.
+
+**Rule:** Stages are sequential. Stage B does not start until Stage A's commit is on the feature branch (locally is sufficient; push is optional). The parent-milestone PR pushes only at the end of the final stage.
+
+**Rule per `CLAUDE.md` §8:** Claude does not commit without user approval. After tests pass + retrospective filled, Claude surfaces the diff stat + retrospective + draft commit message. User approves; Claude commits.
+
+**Rule per `CLAUDE.md` §19:** Each stage produces a retrospective; the final stage also produces an `M[NN]-summary.md` aggregating across stages.
+
+---
+
+<!-- ============================================================ -->
+<!-- STAGE A (template; repeat for each stage)                      -->
+<!-- ============================================================ -->
+
+## Stage A — <Stage Title>
+
+### A.1 Problem Statement
+
+[What this stage delivers, in 1–2 paragraphs. Reference what's net-new vs what edits an existing file. End with a one-line success criterion.]
+
+**New artifacts:**
+- [List of files this stage creates]
+
+### A.2 Files to Change
+
+| File | Change |
+|---|---|
+| `path/to/file` | **New** — [one-line description] |
+| `other/path` | **Edited** — [one-line description] |
+
+### A.3 Detailed Changes
+
+[Surgical edit instructions. For new files: full content (or template). For edits: Find / Replace blocks with exact OLD code and exact NEW code.]
+
+#### `path/to/file` (new) or (edited)
+
+```<lang>
+<exact content or surgical Find/Replace>
+```
+
+[Implementer notes inline where the spec leaves room for judgment.]
+
+### A.4 Tests
+
+[Test plan as embedded code, not just descriptions. For unit tests, full test file content. For property tests, the proptest! block. For integration tests, the test function body.]
+
+```<lang>
+<test file content>
+```
+
+#### Coverage target
+
+- [Specific crates/modules and their thresholds]
+
+### A.5 CLI Prompt
+
+```
+Read CLAUDE.md for all project rules.
+Read docs/build-prompts/M[NN]-<title>.md Stage A (sections A.1 through A.4).
+
+═══ STEP 1 — WRITE FAILING TESTS ═══
+
+[Specific instructions: which test files to create, with which content.]
+
+Run: <exact command>
+Confirm: <exact failure mode>
+
+If any test passes before implementation, the test is wrong — stop and fix it.
+
+═══ STEP 2 — IMPLEMENT ═══
+
+[Numbered steps: 1, 2, 3, ... Each step is a single change with the file path
+and a description of what to put in it. For complex changes, reference back to
+A.3 ("see A.3 for the exact content").]
+
+═══ STEP 3 — VERIFY ═══
+
+Run each gate; all must pass:
+  <exact commands one per line>
+
+If any gate fails, follow CLAUDE.md §7 self-correction. Max 3 iterations
+then surface.
+
+═══ STEP 4 — RETROSPECTIVE ═══
+
+Per CLAUDE.md §19, copy retrospectives/RETROSPECTIVE-TEMPLATE.md to:
+  docs/build-prompts/retrospectives/M[NN].A-retrospective.md
+
+Fill in [LIVE] sections, [END] scoring, threshold gates, decisions for Stage B.
+
+═══ STEP 5 — SURFACE TO USER ═══
+
+Run: git status, git diff --stat HEAD
+Re-run all gates one final time.
+
+Surface: diff stat, gate results, M[NN].A retrospective, draft commit from A.6.
+State: "Stage A is ready. I will NOT commit until you approve."
+Wait for explicit approval. Do NOT push (push waits for final stage).
+```
+
+### A.6 Commit Message
 
 ```bash
-[exact command 1]
-# Expected: [pass criterion]
-# On failure: [where to look first]
+git commit -s -m "$(cat <<'EOF'
+<type>(<scope>): M[NN] Stage A — <one-line summary>
 
-[exact command 2]
-# Expected: [pass criterion]
-# On failure: [where to look first]
+<paragraph describing what shipped in this stage>
+
+Refs: M[NN]-<title>.md §A
+Retrospective: docs/build-prompts/retrospectives/M[NN].A-retrospective.md
+
+https://claude.ai/code/session_<id>
+EOF
+)"
 ```
 
 ---
 
 <!-- ============================================================ -->
-<!-- SELF-CORRECTION — milestone-specific guidance that augments      -->
-<!-- CLAUDE.md §7. Common failure modes for THIS milestone and how   -->
-<!-- to triage them.                                                 -->
+<!-- (Repeat Stage B / C / D using the same X.1–X.6 structure)      -->
 <!-- ============================================================ -->
 
-## Self-correction guidance
+## Stage B — <Stage Title>
 
-### Likely failure modes for this milestone
-
-| Failure | Likely cause | First thing to check |
-|---|---|---|
-| [Specific test failure] | [Hypothesis] | [Diagnostic command or file] |
-| [Specific build failure] | [...] | [...] |
-| [Lint or coverage failure] | [...] | [...] |
-
-### Escalate if
-
-- After 3 self-correction iterations, any gate is still failing
-- The work requires a dependency or schema change not in scope
-- A decision is needed that touches §0a primitives or capability enforcement
-
-Per CLAUDE.md §12, escalation surfaces:
-- What you tried (1 line per attempt)
-- Current failures (full output, not summarized)
-- Best current hypothesis
-- What you would try next, if anything
+[X.1 ... X.6, same shape as Stage A]
 
 ---
 
-<!-- ============================================================ -->
-<!-- DELIVERABLES — concrete list of files/artifacts produced. The   -->
-<!-- PR description's "What this PR does" maps directly to this list. -->
-<!-- ============================================================ -->
+## Summary Table
 
-## Deliverables
-
-After the milestone, these files exist and are committed:
-
-- [Specific file 1] — [purpose]
-- [Specific file 2] — [...]
-- [...]
-
-These files are updated:
-
-- [`CHANGELOG.md`] — entry under `[Unreleased]`
-- [`docs/MVP-v0.1.md`] — milestone status updated (if format calls for it)
-- [Other docs that reference what this milestone delivers]
+| Stage | New Files | Edited Files | Tests Added | Effort |
+|---|---|---|---|---|
+| **A** [title] | [count or list] | [count or list] | [count + summary] | ~Xh |
+| **B** [title] | [...] | [...] | [...] | ~Yh |
+| **Total** | [sum] | [sum] | [sum + summary] | ~Total h |
 
 ---
 
-<!-- ============================================================ -->
-<!-- PR + COMMIT RULE — explicit reminder. CLAUDE.md §8 covers the   -->
-<!-- workflow; this section pulls out the do-not-commit rule and any -->
-<!-- milestone-specific PR notes (e.g., expected reviewer count).    -->
-<!-- ============================================================ -->
+## Verification Checklist
 
-## PR + commit rule
+Before approving the M[NN] PR (final stage's surface), verify:
 
-Per **`CLAUDE.md` §8 PR + commit workflow** — Claude does not commit until the user explicitly approves.
+### Automated (gates)
 
-When all acceptance criteria are checked and all gates pass:
+- [ ] `cargo fmt --all -- --check` — zero diff
+- [ ] `cargo clippy --workspace --all-targets -- -D warnings` — zero warnings
+- [ ] `cargo build --workspace` — succeeds on Linux/macOS/Windows × stable + MSRV
+- [ ] `cargo test --workspace` — all tests pass
+- [ ] [Other gates per milestone]
+- [ ] CI green on all OS × toolchain cells
 
-1. Run a final `git status` and `git diff --stat HEAD`.
-2. Re-run all quality gates and capture exact results.
-3. Draft the PR description following `.github/PULL_REQUEST_TEMPLATE.md`. Include all required sections.
-4. **Surface to the user** — PR title, PR description (markdown), diff stat, gate results.
-5. State explicitly: *"I will not commit until you approve."*
-6. Wait for explicit approval before any `git commit` or `git push`.
+### Manual
 
-PR notes specific to this milestone:
+- [ ] [Manual checks specific to this milestone — e.g., drone smoke, framework load, etc.]
+- [ ] All stage retrospectives present and filled in
+- [ ] `M[NN]-summary.md` aggregates across stages with verdict
+- [ ] M[NN] PR description references all stage commits + retrospectives
+- [ ] CHANGELOG `[Unreleased]` reflects what M[NN] actually delivered
+- [ ] `docs/MVP-v0.1.md` §M[N] acceptance criteria all `- [x]`
 
-- [Anything unusual about the merge — e.g., "this milestone has 5 logical commits worth preserving as merge-commit, not squash"]
-- [Reviewer expectations — e.g., "CODEOWNERS-flagged paths touched: capability/, sandbox/"]
-- [Anything else]
+### Approval gate (per CLAUDE.md §19)
 
----
-
-<!-- ============================================================ -->
-<!-- COMMON GOTCHAS — milestone-specific traps. CLAUDE.md §15 has     -->
-<!-- project-wide ones; this section adds what's specific to THIS     -->
-<!-- milestone (e.g., M1's WAL pragma order matters; M5's L2a vs L2b -->
-<!-- distinction; M9's tier-gated review).                           -->
-<!-- ============================================================ -->
-
-## Milestone-specific gotchas
-
-1. [Gotcha 1 — what trips people up at this stage]
-2. [Gotcha 2 — ...]
-3. [...]
+- [ ] **Hard Gate G1: do-not-commit-until-approved held** — every stage commit happened only after explicit user approval
+- [ ] User has reviewed each stage retrospective; scoring matches observable evidence
+- [ ] M[NN]-summary verdict is "Pattern held" (sound) or "Pattern held with friction"; not "Pattern strained"
 
 ---
 
-<!-- ============================================================ -->
-<!-- ANTI-PATTERNS — milestone-specific "do not do this." Augments    -->
-<!-- CLAUDE.md §9 anti-patterns with milestone-scoped traps.         -->
-<!-- ============================================================ -->
-
-## Milestone-specific anti-patterns
-
-- [Specific thing that looks reasonable but breaks the milestone's intent]
-- [...]
-
----
-
-<!-- ============================================================ -->
-<!-- ESTIMATED TIME-BOX — soft guidance for the human; not binding   -->
-<!-- on the work, but useful for "is this off the rails?" check.     -->
-<!-- ============================================================ -->
-
-## Time-box (soft)
-
-- **Reading + planning:** [N] minutes
-- **TDD red phase (write all failing tests):** [N] hours
-- **TDD green phase (make tests pass):** [N] hours
-- **Refactor + polish:** [N] hours
-- **Gate verification + PR drafting:** [N] minutes
-
-If actual time exceeds 2× the estimate, surface it. Estimate may be wrong, scope may have grown, or there's a blocker that needs to be named.
-
----
-
-<!-- ============================================================ -->
-<!-- END OF TEMPLATE                                                 -->
-<!-- ============================================================ -->
+*End of template. Replace placeholders, repeat the stage block per stage, fill in summary + verification checklist for the milestone.*

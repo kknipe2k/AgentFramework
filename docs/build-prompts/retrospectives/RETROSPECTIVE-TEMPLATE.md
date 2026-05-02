@@ -12,15 +12,16 @@ surface. Sections marked [END] are filled in at session end.
 Do NOT save filling for the end — details fade.
 -->
 
-# M[NN].[N] — Retrospective
+# M[NN].<X> — Stage Retrospective
 
-> **Sub-milestone:** M[NN].[N] of M[NN] (which is M[NN] of M11 in `docs/MVP-v0.1.md`)
-> **Authored by:** Claude (this is a Claude-driven retrospective per `CLAUDE.md` §19)
+> **Stage:** M[NN] Stage `<X>` (where `<X>` is `A`, `B`, etc.) — see `docs/build-prompts/M[NN]-<title>.md`
+> **Parent milestone:** M[NN] of M11 in `docs/MVP-v0.1.md`
+> **Authored by:** Claude (Claude-driven per `CLAUDE.md` §19)
 > **Session start:** YYYY-MM-DD HH:MM TZ
 > **Session end:** YYYY-MM-DD HH:MM TZ
-> **Branch:** `claude/m[nn]-[n]-<short-title>`
+> **Branch:** `claude/m[nn]-<short-title>` (parent-milestone feature branch; stages commit on the same branch)
 > **Starting commit:** `<sha at session start>`
-> **Ending commit:** `<sha of latest commit at PR draft time, OR "uncommitted — awaiting approval">`
+> **Ending commit:** `<sha of stage commit at user-approval time, OR "uncommitted — awaiting approval">`
 > **Estimated effort (per prompt):** [X hours]
 > **Actual elapsed:** [Y hours]
 
@@ -161,7 +162,7 @@ Per `PROCESS-VALIDATION.md` threshold criteria.
 - [ ] **G1: do-not-commit-until-approved rule held** — *evidence:* [git log shows no commits before user approval message at HH:MM]
 - [ ] **G2: no Severity-5 friction events** — *evidence:* [none in friction-events table above, OR specific entry & resolution]
 - [ ] **G3: no protocol drift events left unaddressed** — *evidence:* [protocol-drift-events table is empty OR every row has Claude-self-corrected = yes]
-- [ ] **G4: the milestone (sub-milestone) actually shipped** — *evidence:* [PR #N opened, CI green, all acceptance criteria checked in milestone prompt]
+- [ ] **G4: the milestone or stage actually completed** — *evidence:* [for stages: commit `<sha>` on the parent-milestone branch with all stage acceptance criteria checked; for non-staged milestones: PR #N opened, CI green, all acceptance criteria checked]
 - [ ] **G5: scores ≥3 in every individual row across all three axes** — *evidence:* [check each axis row above for any score <3; list any below-3 rows here for follow-up]
 
 ### Soft gates
@@ -176,16 +177,16 @@ Per `PROCESS-VALIDATION.md` threshold criteria.
 
 Mark one:
 
-- [ ] **Pattern is sound.** All hard gates pass; all soft gates pass. Proceed to next sub-milestone with minor `CLAUDE.md` updates per Axis 3 notes.
-- [ ] **Pattern is sound but rough.** All hard gates pass; 1–2 soft gates fail. Address soft-gate findings in `CLAUDE.md` / `TEMPLATE.md` updates before next sub-milestone.
-- [ ] **Pattern works but has friction.** All hard gates pass; 3+ soft gates fail. Stop. Spend a session iterating on protocol before next sub-milestone.
+- [ ] **Pattern is sound.** All hard gates pass; all soft gates pass. Proceed to next stage with minor `CLAUDE.md` updates per Axis 3 notes.
+- [ ] **Pattern is sound but rough.** All hard gates pass; 1–2 soft gates fail. Address soft-gate findings in `CLAUDE.md` / `TEMPLATE.md` updates before next stage.
+- [ ] **Pattern works but has friction.** All hard gates pass; 3+ soft gates fail. Stop. Spend a session iterating on protocol before next stage.
 - [ ] **Pattern is not yet ready.** A hard gate failed. Diagnose underlying issue; may require new ADR. Recovery session may be needed.
 
 ---
 
-## [END] Decisions for the next sub-milestone
+## [END] Decisions for the next stage (or next parent milestone if this is the final stage)
 
-Specific changes to apply BEFORE the next sub-milestone session opens. Empty list = no changes recommended.
+Specific changes to apply BEFORE the next stage session opens. Empty list = no changes recommended.
 
 ### `CLAUDE.md` updates
 
@@ -195,9 +196,9 @@ Specific changes to apply BEFORE the next sub-milestone session opens. Empty lis
 
 - [ ] [e.g., "Add new section X" / "Remove section Y because it was dead weight"]
 
-### Milestone prompt updates (the next sub-milestone's prompt, if applicable)
+### Milestone document updates (this milestone's `M[NN]-<title>.md` if a stage prompt was off)
 
-- [ ] [e.g., "M01.[N+1] Read first list should add reference to <file>"]
+- [ ] [e.g., "Stage <X+1> Read first list should add reference to <file>"]
 
 ### Protocol additions
 
@@ -205,7 +206,7 @@ Specific changes to apply BEFORE the next sub-milestone session opens. Empty lis
 
 ### Open issues to file
 
-- [ ] [e.g., "File issue: <thing that needs follow-up but doesn't block next sub-milestone>"]
+- [ ] [e.g., "File issue: <thing that needs follow-up but doesn't block next stage>"]
 
 ---
 
@@ -221,8 +222,8 @@ User-review notes:
 
 ## [END] Sign-off
 
-> This retrospective is Claude's self-assessment of the M[NN].[N] session, authored per `CLAUDE.md` §19 Retrospective Protocol. User review and approval pending. The retrospective is committed alongside the milestone PR; both deliver together.
+> This retrospective is Claude's self-assessment of M[NN] Stage `<X>`, authored per `CLAUDE.md` §19 Retrospective Protocol. User review and approval pending. Per the per-milestone-as-PR pattern, this stage's commit lands on the parent-milestone feature branch; the PR drafts and pushes only at the end of the final stage.
 
-**Claude:** I have completed M[NN].[N] per the milestone prompt. The retrospective above reflects my honest self-assessment. I have NOT committed; I am surfacing this retrospective + the PR description + the diff stat for user approval.
+**Claude:** I have completed M[NN] Stage `<X>` per the stage prompt. The retrospective above reflects my honest self-assessment. I have NOT committed; I am surfacing this retrospective + the diff stat + the draft commit message for user approval. The PR remains undrafted until the final stage.
 
 **Surfaced at:** [timestamp]
