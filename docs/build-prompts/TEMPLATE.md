@@ -233,6 +233,19 @@ Each stage runs through this exact cycle:
 Read CLAUDE.md for all project rules.
 Read docs/build-prompts/M[NN]-<title>.md Stage A (sections A.1 through A.4).
 
+[For stages B, C, D, ...: also include this block before STEP 1.]
+[For Stage A: skip — no prior retrospective exists yet.]
+
+Read prior stage retrospectives for guidance:
+  docs/build-prompts/retrospectives/M[NN].A-retrospective.md
+  [add rows for each prior stage]
+  Focus: [END] "Decisions for the next stage" sections + any [LIVE]
+  friction events flagged as relevant to this stage. Apply decisions.
+
+Read docs/gap-analysis.md for any Carry-forward items targeting this
+stage (look at the most recent entry's Carry-forward section + any
+prior milestone's Fix backlog items still open).
+
 ═══ STEP 1 — WRITE FAILING TESTS ═══
 
 [Specific instructions: which test files to create, with which content.]
@@ -298,6 +311,128 @@ EOF
 ## Stage B — <Stage Title>
 
 [X.1 ... X.6, same shape as Stage A]
+
+---
+
+<!-- ============================================================ -->
+<!-- Phase Closeout — Gap Analysis (always the FINAL stage,         -->
+<!-- regardless of how many work stages preceded it). Per           -->
+<!-- CLAUDE.md §20, every parent milestone produces an              -->
+<!-- append-only entry in docs/gap-analysis.md.                     -->
+<!-- ============================================================ -->
+
+## Stage <last letter> — Phase Closeout: Gap Analysis
+
+> **Per CLAUDE.md §20.** This stage runs after all prior stages commit and the parent-milestone summary lands. It produces one new entry in `docs/gap-analysis.md`. The gap analysis commit is the final commit on the parent-milestone branch — it gates the PR push.
+
+### <X>.1 Problem Statement
+
+Generate the M[NN] entry in `docs/gap-analysis.md`. Cumulative review of code-vs-spec across all milestones to date (not just this one). Append-only — never edit prior entries.
+
+### <X>.2 Files to Change
+
+| File | Change |
+|---|---|
+| `docs/gap-analysis.md` | **Edited (append-only)** — new section appended at the bottom per the entry template in the file's header |
+| `CHANGELOG.md` | **Edited** — `[Unreleased]` notes that M[NN] gap analysis entry was added |
+
+### <X>.3 Detailed Changes
+
+The entry follows the six-section template defined at the top of `docs/gap-analysis.md`. Do NOT diverge from the template; do NOT skip sections (write "None observed." if a section truly has nothing to report).
+
+**Process:**
+
+1. Re-read `agent-runtime-spec.md` end-to-end (yes, all of it — at least skim with focus on sections this milestone touched).
+2. Read every file produced or edited across all stages of this milestone (and prior milestones if cumulative review surfaces issues there).
+3. Read the prior `docs/gap-analysis.md` entries in full to know what's outstanding.
+4. Draft the new entry per the template.
+5. Run the append-only check locally before surfacing: `git show origin/main:docs/gap-analysis.md > /tmp/gap-base.md && diff /tmp/gap-base.md <(head -n "$(wc -l < /tmp/gap-base.md)" docs/gap-analysis.md)` — must be empty.
+
+### <X>.4 Tests
+
+No new code tests. Verification is the append-only check (CI-enforced) plus user review of the entry's substance.
+
+#### Coverage target
+
+N/A — documentation stage.
+
+### <X>.5 CLI Prompt
+
+```
+Read CLAUDE.md §20 (Gap Analysis Protocol) and docs/gap-analysis.md
+header (entry template).
+Read docs/build-prompts/M[NN]-<title>.md Stage <last letter> sections
+<X>.1 through <X>.4.
+
+═══ STEP 1 — INGEST ═══
+
+Read in order:
+  1. agent-runtime-spec.md (skim; focus on sections this milestone touched)
+  2. All files produced/edited across this milestone's prior stages
+     (commit list: git log --oneline main..HEAD)
+  3. Prior gap-analysis.md entries in full (every one — short for early
+     milestones, longer for late ones)
+  4. This milestone's per-stage retrospectives + the M[NN]-summary
+
+═══ STEP 2 — DRAFT THE ENTRY ═══
+
+Append to docs/gap-analysis.md a new section following the six-section
+template at the top of that file:
+
+  ## M[NN] — <Title> (<YYYY-MM-DD>, commit `<sha-of-prior-stage-commit>`)
+  ### Codebase deep dive
+  ### Adherence to spec
+  ### Spec review (forward-looking)
+  ### Fix backlog
+  ### Carry-forward from prior milestones
+  ### Sign-off
+
+Severity in the Fix backlog is non-elastic. If everything is "Important,"
+re-prioritize. Critical = "must fix before next milestone starts." A pile
+of Criticals is a signal the milestone shouldn't have shipped; surface
+that honestly.
+
+═══ STEP 3 — VERIFY APPEND-ONLY ═══
+
+Run locally:
+  git show origin/main:docs/gap-analysis.md > /tmp/gap-base.md
+  base_lines=$(wc -l < /tmp/gap-base.md)
+  diff /tmp/gap-base.md <(head -n "$base_lines" docs/gap-analysis.md)
+
+Output must be empty. If it isn't, prior content was modified; revert and
+re-edit by APPENDING ONLY at the bottom.
+
+═══ STEP 4 — SURFACE TO USER ═══
+
+Run: git status, git diff docs/gap-analysis.md
+Surface: the new entry (full text), the diff, draft commit message from
+<X>.6.
+
+State: "M[NN] Gap Analysis is ready. I will NOT commit until you approve.
+Please review the entry — once committed, prior entries are immutable
+forever per CLAUDE.md §20."
+
+Wait for explicit approval. After approval, commit, then push the parent-
+milestone feature branch with all stage commits + this final commit, then
+draft the PR per CLAUDE.md §8 (do not open the PR unless explicitly asked).
+```
+
+### <X>.6 Commit Message
+
+```bash
+git commit -s -m "$(cat <<'EOF'
+docs(gap-analysis): M[NN] — append cumulative product+spec audit
+
+Per CLAUDE.md §20. Reviews codebase to date against agent-runtime-spec.md;
+records adherence findings, spec gaps, and prioritized fix backlog. This
+entry is immutable — future milestones report status via Carry-forward.
+
+Refs: M[NN]-<title>.md Stage <last letter>
+
+https://claude.ai/code/session_<id>
+EOF
+)"
+```
 
 ---
 

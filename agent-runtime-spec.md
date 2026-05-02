@@ -467,7 +467,7 @@ The matrix is referenced from `docs/MVP-v0.1.md` (the build checklist) and from 
 |Graph Renderer|React Flow                            |Production-grade, extensible, live updates                 |
 |Styling       |Tailwind CSS                          |Utility-first, consistent design system                    |
 |LLM client    |Direct HTTP + SSE via reqwest + eventsource-stream | Anthropic API is small/stable; direct HTTP avoids SDK churn and a maintenance shim |
-|MCP client    |rmcp (official Rust MCP) or direct JSON-RPC over stdio | Official crate when feature-complete; fallback is straightforward |
+|MCP client    |rmcp (official Rust MCP); fallback to direct JSON-RPC over stdio if a feature gap surfaces during M06 | Decision deferred to M06 prep per `docs/MVP-v0.1.md` §M6 |
 |Persistence   |SQLite via rusqlite (WAL mode)        |Local, zero server, fast, embedded                         |
 |PTY           |portable-pty                          |Cross-platform PTY, CLI bridge fallback                    |
 |IPC (renderer↔main)|Tauri typed IPC commands + events |Secure, allowlist-enforced, capability-checked             |
@@ -581,7 +581,10 @@ pub enum DroneCommand {
 
 #[derive(Serialize, Deserialize)]
 pub enum ActivityState { Active, Idle, Stalled, TimedOut, UserAborted, Recovering }
-type StopReason = 'graceful' | 'crash' | 'timeout' | 'user_abort' | 'force_kill'
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopReason { Graceful, Crash, Timeout, UserAbort, ForceKill }
 ```
 
 ### Drone Error Matrix
@@ -657,7 +660,7 @@ For v1: resume continues; replay does not exist.
 
 #### Drone-per-session
 
-Each session spawns its own drone process (`child_process.fork('drone.ts', ['--session-id', s])`). Drones do not share state in memory; coordination happens through the shared SQLite database.
+Each session spawns its own drone process (`tokio::process::Command::new("runtime-drone").args(["--session-id", &s, "--db-path", &db, "--ipc-socket", &sock]).spawn()`). Drones do not share state in memory; coordination happens through the shared SQLite database.
 
 Rationale:
 - Crash isolation — one drone dying cannot corrupt another session.
@@ -1045,9 +1048,8 @@ CREATE INDEX idx_signals_session_time ON signals(session_id, timestamp);
 CREATE INDEX idx_signals_type ON signals(type);
 CREATE INDEX idx_signals_correlation ON signals(pre_signal_id, parent_signal_id, retry_of);
 
--- VDR remains as defined (Phase 2) but adds:
-ALTER TABLE vdr ADD COLUMN signal_ids TEXT;     -- JSON array of contributing signal IDs
-ALTER TABLE vdr ADD COLUMN context_type TEXT;
+-- VDR table is defined in the Persistence Layer section with `signal_ids`
+-- and `context_type` columns already present (consolidated from this section).
 ```
 
 #### Importer for existing ARIA traces
@@ -2279,7 +2281,7 @@ Auto-accept toast example (Promoted tier):
 
 ### Phase 9: Visual Canvas and Tester
 
-> **Defers to v1.0** per §0d release scope. v0.1 users edit `framework.json` by hand; the Canvas is added in v1.0 alongside the Generators (Phase 8a/b/c).
+> **Ships in v0.1** per §0d release scope (Workbench-MVP). The Canvas + sandboxed Tester land in v0.1 alongside the Phase 8a/b/c Generators; v1.0 adds multi-framework comparison.
 
 The Canvas is a build-time tool that lets users compose runtime primitives (Tools / Skills / Agents per §0b) visually instead of hand-editing JSON. It generates valid `framework.json` against `schemas/framework.v1.json`; output is the source of truth, the canvas is the editor.
 
@@ -2358,7 +2360,36 @@ CREATE TABLE snapshots (
   FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 
--- Verified Decision Records
+-- Signals (write-heavy, append-only forensic event log per §2b / Signal Schema v2)
+CREATE TABLE signals (
+  id TEXT PRIMARY KEY,
+  session_id TEXT,
+  type TEXT,                  -- tool | skill | agent | decision | verify | error | hitl | session
+  event TEXT,                 -- pre | post | started | completed | failed | etc.
+  timestamp TEXT,
+  duration_ms INTEGER,
+  payload_json TEXT,          -- full signal record per Signal Schema v2
+  pre_signal_id TEXT,         -- correlation: post -> pre
+  parent_signal_id TEXT,      -- correlation: child -> parent
+  retry_of TEXT,              -- correlation: retry chain
+  context_type TEXT,          -- skill | framework | code | search | verify | commit | subagent
+  FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+CREATE INDEX idx_signals_session_time ON signals(session_id, timestamp);
+CREATE INDEX idx_signals_type ON signals(type);
+CREATE INDEX idx_signals_correlation ON signals(pre_signal_id, parent_signal_id, retry_of);
+
+-- Heartbeats (drone written; one row per heartbeat tick)
+CREATE TABLE heartbeats (
+  id TEXT PRIMARY KEY,
+  session_id TEXT,
+  timestamp INTEGER,
+  status TEXT,                -- ok | degraded | stalled
+  FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+CREATE INDEX idx_heartbeats_session_time ON heartbeats(session_id, timestamp);
+
+-- Verified Decision Records (decision-level projection of signals; see §2b)
 CREATE TABLE vdr (
   id TEXT PRIMARY KEY,
   session_id TEXT,
@@ -2372,6 +2403,8 @@ CREATE TABLE vdr (
   token_cost_usd REAL,
   outcome TEXT,
   snapshot_id TEXT,
+  signal_ids TEXT,            -- JSON array of contributing signal IDs (correlation back to signals)
+  context_type TEXT,          -- skill | framework | code | search | verify | commit | subagent
   FOREIGN KEY (session_id) REFERENCES sessions(id),
   FOREIGN KEY (snapshot_id) REFERENCES snapshots(id)
 );
@@ -2538,6 +2571,7 @@ Recovery is never destructive. Discarded sessions are archived, not deleted.
 │   └── PROVIDERS.md            # How to add a new LLMProvider
 │
 ├── schemas/                    # JSON Schemas (source of truth)
+│   ├── common.v1.json          # Shared definitions (HookRef, etc.)
 │   ├── framework.v1.json
 │   ├── skill.v1.json
 │   ├── tool.v1.json
@@ -2687,7 +2721,7 @@ What the UI shows when a critical subsystem is unavailable.
 | **Renderer (window closed)** | Main detects renderer disconnect | N/A (no UI) | Drone + main continue; on relaunch, renderer reattaches to running session via session_id; full graph reconstructed from signals |
 | **Hook command unavailable** (e.g., `npm` not installed) | Hook exec fails with ENOENT | HookNode shows red with "command not found"; rail violation if hook is `block` | Per `on_failure` policy: warn (continue) or block (suspend) or rollback |
 | **Registry upstream** (Anthropic skills repo unreachable) | Fetch fails | Builder search shows "Upstream unavailable; local-only results"; install button disabled for upstream items | Local artifacts unaffected; existing installs continue working |
-| **Secrets vault** (keychain access denied) | keytar throws | Settings shows "Cannot access keychain"; affected MCPs cannot connect | Sessions using those MCPs route through gap flow |
+| **Secrets vault** (keychain access denied) | `keyring` crate returns `Error::PlatformFailure` | Settings shows "Cannot access keychain"; affected MCPs cannot connect | Sessions using those MCPs route through gap flow |
 | **Budget exceeded** (cap hit) | `budget_exceeded` event | Session header red badge "Budget exceeded"; agents killed | Session marked `budget_exceeded`; user must reset cap or end session |
 
 ### Reconciliation rule

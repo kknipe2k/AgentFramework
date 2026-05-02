@@ -114,6 +114,7 @@ The success criterion is "CI is green on a real Cargo workspace and Stage B can 
 | `crates/runtime-sandbox/src/lib.rs` | **New** — placeholder + test (overrides workspace `unsafe_code = "warn"`) |
 | `crates/xtask/Cargo.toml` | **New** |
 | `crates/xtask/src/main.rs` | **New** — placeholder; real implementation in Stage B |
+| `lefthook.yml` | **New** — pre-commit hook config (resolves CLAUDE.md §12 TBD) |
 | `src-tauri/Cargo.toml` | **New** |
 | `src-tauri/tauri.conf.json` | **New** — empty allowlist, minimal config |
 | `src-tauri/build.rs` | **New** — Tauri build script |
@@ -336,12 +337,37 @@ Use Tauri's default placeholder icon (32×32 PNG). The `cargo tauri build` invoc
 
 > **Implementer note:** Tauri's `cargo tauri init` scaffolding generates appropriate icons. Easiest path: run `cargo install create-tauri-app && cargo create-tauri-app` in a temp directory, copy the generated `src-tauri/icons/` to ours.
 
+#### `lefthook.yml` (resolves CLAUDE.md §12 pre-commit TBD)
+
+`lefthook` is the chosen pre-commit hook tool — single Go binary, no Python dependency, no language-specific runtime required (vs. `pre-commit` framework). Stage A wires `cargo fmt --check` and `cargo clippy` only; Stage B wires the schema drift-check; Stage D wires the full gate set.
+
+```yaml
+# Pre-commit hook configuration. Install once locally: `lefthook install`.
+# CI mirrors the same gates so `--no-verify` is never a shortcut.
+pre-commit:
+  parallel: true
+  commands:
+    fmt:
+      glob: "*.rs"
+      run: cargo fmt --all -- --check
+    clippy:
+      glob: "*.rs"
+      run: cargo clippy --workspace --all-targets -- -D warnings
+```
+
+Install instruction (added to repo root README in a later stage):
+
+```bash
+# Once per clone:
+lefthook install
+```
+
 #### `CHANGELOG.md` `[Unreleased]` entry
 
 Append under existing `[Unreleased] / Added`:
 
 ```markdown
-- M01 Stage A: Cargo workspace skeleton — five member crates (runtime-core, runtime-main, runtime-drone, runtime-sandbox, xtask), Tauri stub (src-tauri/), workspace lints (deny warnings, forbid unsafe except sandbox, clippy pedantic + nursery), cargo-deny policy. CI's gated Rust jobs activate. No real implementation; trivial placeholder per crate. (Stage B onward adds real code.)
+- M01 Stage A: Cargo workspace skeleton — five member crates (runtime-core, runtime-main, runtime-drone, runtime-sandbox, xtask), Tauri stub (src-tauri/), workspace lints (deny warnings, forbid unsafe except sandbox, clippy pedantic + nursery), cargo-deny policy, lefthook pre-commit config. CI's gated Rust jobs activate. No real implementation; trivial placeholder per crate. (Stage B onward adds real code.)
 ```
 
 ### A.4 Tests
@@ -1285,6 +1311,19 @@ Read docs/build-prompts/M01-foundation.md Stage B (sections B.1 through B.4).
 Stage A must be committed on this feature branch before starting Stage B.
 Run `git log --oneline -1` and confirm the previous commit is Stage A.
 
+Read prior stage's retrospective for guidance:
+  docs/build-prompts/retrospectives/M01.A-retrospective.md
+  Focus: [END] "Decisions for the next stage" section + any [LIVE]
+  friction events flagged as relevant to Stage B. Apply the decisions.
+
+Read docs/gap-analysis.md (Pre-M01 + Pre-M01 Addendum entries) for any
+Carry-forward items targeting Stage B. The Pre-M01 baseline already
+flags "typify oneOf clippy noise" as anticipated Stage B friction
+(HookRef 3-variant + sizing 2-variant) — the
+`#[allow(clippy::pedantic, clippy::nursery)]` header on generated/*.rs
+files (B.3, line 626) should suppress; confirm in STEP 3 verification.
+If it doesn't, surface as a friction item in this stage's [LIVE] log.
+
 ═══ STEP 1 — WRITE FAILING TESTS ═══
 
 Create the test files exactly as specified in B.4:
@@ -1637,6 +1676,21 @@ Read agent-runtime-spec.md §1 (Drone), §1c (Multi-session), §1d (IPC).
 
 Stages A and B must already be committed on this feature branch.
 Run: git log --oneline -2  → previous two commits should be Stage A and Stage B.
+
+Read prior stage retrospectives for guidance:
+  docs/build-prompts/retrospectives/M01.A-retrospective.md
+  docs/build-prompts/retrospectives/M01.B-retrospective.md
+  Focus: [END] "Decisions for the next stage" sections + any [LIVE]
+  friction events flagged as relevant to Stage C (e.g., drone-related
+  type concerns surfaced in Stage B's typify work). Apply decisions.
+
+Read docs/gap-analysis.md (Pre-M01 baseline + Addendum) for any
+Carry-forward items targeting Stage C. Pre-M01 specifically flags
+"Windows named pipe spec subsection" — implement Stage C with an
+inline implementer note documenting the path format
+(`\\.\pipe\<name>`), `ServerOptions` choices, and security descriptor
+defaults so the post-M01 docs(spec): PR can fold those details back
+into agent-runtime-spec.md §1d.
 
 ═══ STEP 1 — WRITE FAILING TESTS ═══
 
@@ -1999,6 +2053,20 @@ Read docs/build-prompts/M01-foundation.md Stage D (sections D.1 through D.4).
 Stages A, B, C must already be committed on this feature branch.
 Run: git log --oneline -3  → previous three commits should be Stage A, B, C.
 
+Read prior stage retrospectives for guidance:
+  docs/build-prompts/retrospectives/M01.A-retrospective.md
+  docs/build-prompts/retrospectives/M01.B-retrospective.md
+  docs/build-prompts/retrospectives/M01.C-retrospective.md
+  Focus: [END] "Decisions for the next stage" sections + any [LIVE]
+  friction events flagged as relevant to Stage D (especially
+  fuzz/coverage/CI concerns from Stage C). Apply decisions.
+
+Read docs/gap-analysis.md (Pre-M01 baseline + Addendum) for any
+Carry-forward items targeting Stage D. Stage D will need to surface
+status of these items into the Stage E gap-analysis entry — preview
+the carry-forward checklist now so the per-stage retrospective records
+status as work happens, not retroactively.
+
 ═══ STEP 1 — WRITE FAILING/MISSING ARTIFACTS ═══
 
 The fuzz harness package, nightly workflow, and per-crate READMEs don't
@@ -2142,8 +2210,10 @@ Closes M01 Foundation:
 - CHANGELOG.md [Unreleased] reorganized per Keep-a-Changelog
 - docs/MVP-v0.1.md §M1 acceptance criteria fully checked
 
-M01 Foundation milestone complete. After this PR merges, M02 (event
-pipeline + AnthropicProvider + Tauri shell) starts on a fresh branch.
+M01 implementation work complete. Stage E (Phase Closeout: Gap Analysis,
+per CLAUDE.md §20) is the final commit on this branch before the PR is
+drafted. After PR merges, M02 (event pipeline + AnthropicProvider + Tauri
+shell) starts on a fresh branch.
 
 Per-stage retrospectives:
 - docs/build-prompts/retrospectives/M01.A-retrospective.md
@@ -2161,6 +2231,252 @@ EOF
 
 ---
 
+## Stage E — Phase Closeout: Gap Analysis
+
+> **Per CLAUDE.md §20.** Final stage of M01. Runs after Stage D commits and the parent-milestone summary lands. Produces one new entry in `docs/gap-analysis.md`. **Append-only** — no prior entry may be edited. The gap analysis commit is the final commit on the parent-milestone branch — it gates the PR push.
+
+### E.1 Problem Statement
+
+Generate the M01 entry in `docs/gap-analysis.md` per the entry template at the top of that file. Cumulative review of code-vs-spec across all M01 work to date. Six sections, all required: codebase deep dive, adherence to spec, spec review (forward-looking), fix backlog (🔴/🟡/🟢), carry-forward (N/A — first milestone), sign-off.
+
+This is the first gap analysis entry. M01 sets the precedent for honesty, specificity, and prioritization. If everything is rated "Important," the prioritization is meaningless.
+
+### E.2 Files to Change
+
+| File | Change |
+|---|---|
+| `docs/gap-analysis.md` | **Edited (append-only)** — new section appended at the bottom; placeholder line `*No entries yet. M01 will be the first.*` removed and replaced with the M01 entry |
+| `CHANGELOG.md` | **Edited** — `[Unreleased]` notes that the M01 gap analysis entry was added |
+
+### E.3 Detailed Changes
+
+The entry follows the six-section template defined at the top of `docs/gap-analysis.md`. Do NOT diverge from the template. Do NOT skip a section — write **"None observed."** if a section truly has nothing to report.
+
+**Process:**
+
+1. Re-read `agent-runtime-spec.md` end-to-end (skim with focus on §1, §1b, §1c, §1d, §2 + §11 — the sections M01 actually touched).
+2. Read every file produced or edited across M01 stages A → D (use `git log --oneline main..HEAD` to enumerate commits, then `git show --stat` per commit).
+3. Read M01.A / M01.B / M01.C / M01.D retrospectives + M01-summary.
+4. Draft the entry against the template.
+5. Run the append-only check locally (see E.4 Tests).
+6. Surface for user review per E.5.
+
+**Header for the new entry:**
+
+```markdown
+## M01 — Foundation (<YYYY-MM-DD>, commit `<sha-of-stage-D-commit>`)
+
+> Author: Claude (per `CLAUDE.md` §20)
+> Stages aggregated: M01.A (workspace), M01.B (types), M01.C (drone), M01.D (fuzz + polish)
+> Reviewed against: agent-runtime-spec.md §1 §1b §1c §1d §2 §11 §12, schemas/*.v1.json, M01.A–D retrospectives + M01-summary.
+```
+
+The placeholder line `*No entries yet. M01 will be the first.*` at the bottom of `docs/gap-analysis.md` is removed and replaced with the M01 entry. This is the only "edit" to existing content allowed — it's a placeholder removal, not a finding revision.
+
+**`CHANGELOG.md` `[Unreleased]` addition:**
+
+```markdown
+- M01 Phase Closeout: cumulative gap analysis appended to docs/gap-analysis.md
+  per CLAUDE.md §20 (append-only living document). Gates the M01 PR.
+```
+
+### E.4 Tests
+
+No new code tests. Verification is the **append-only check** plus user review of the entry's substance.
+
+#### Append-only check (run locally before surfacing)
+
+```bash
+# Compare gap-analysis.md against the PR base (origin/main).
+# Prior content must be a literal prefix of the new file.
+git fetch origin main
+git show origin/main:docs/gap-analysis.md > /tmp/gap-base.md 2>/dev/null
+if [ -s /tmp/gap-base.md ]; then
+  base_lines=$(wc -l < /tmp/gap-base.md)
+  if ! diff -q /tmp/gap-base.md <(head -n "$base_lines" docs/gap-analysis.md) > /dev/null; then
+    echo "FAIL: prior content was modified."
+    diff /tmp/gap-base.md <(head -n "$base_lines" docs/gap-analysis.md)
+    exit 1
+  fi
+  echo "OK: append-only invariant holds."
+else
+  echo "Note: gap-analysis.md is new on this branch (first entry); skipping append-only check."
+fi
+```
+
+#### CI append-only gate (added to `.github/workflows/ci.yml` in this stage)
+
+```yaml
+  gap-analysis-append-only:
+    name: gap-analysis.md append-only check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify prior content is unchanged
+        run: |
+          set -euo pipefail
+          BASE_REF="${{ github.event.pull_request.base.ref || 'main' }}"
+          git fetch origin "$BASE_REF":"$BASE_REF" 2>/dev/null || git fetch origin "$BASE_REF"
+          if git show "$BASE_REF":docs/gap-analysis.md > /tmp/gap-base.md 2>/dev/null; then
+            base_lines=$(wc -l < /tmp/gap-base.md)
+            if [ "$base_lines" -gt 0 ]; then
+              if ! diff -q /tmp/gap-base.md <(head -n "$base_lines" docs/gap-analysis.md) > /dev/null; then
+                echo "::error::docs/gap-analysis.md is append-only per CLAUDE.md §20."
+                echo "Prior content was modified or deleted. Diff:"
+                diff /tmp/gap-base.md <(head -n "$base_lines" docs/gap-analysis.md) || true
+                exit 1
+              fi
+            fi
+          fi
+          echo "Append-only invariant holds."
+```
+
+This job is added to the same `ci.yml` Stage D edits (the fuzz-smoke job's neighbor). It runs on every PR regardless of which files changed; it's cheap (no toolchain install).
+
+#### Coverage target
+
+N/A — documentation stage; no Rust code changes.
+
+### E.5 CLI Prompt
+
+```
+Read CLAUDE.md (focus: §10 Don't-touch zones, §17 Reference Index, §20 Gap
+Analysis Protocol).
+Read docs/gap-analysis.md header in full (entry template + append-only rule).
+Read docs/build-prompts/M01-foundation.md Stage E sections E.1 through E.4.
+
+═══ STEP 1 — INGEST ═══
+
+Read in this order:
+
+  1. agent-runtime-spec.md — full skim, focused read on §1, §1b, §1c, §1d,
+     §2, §11, §12 (the sections M01 touched)
+  2. Every file changed in M01 — enumerate commits:
+       git log --oneline main..HEAD
+     For each commit:
+       git show --stat <sha>
+  3. Per-stage retrospectives:
+       docs/build-prompts/retrospectives/M01.A-retrospective.md
+       docs/build-prompts/retrospectives/M01.B-retrospective.md
+       docs/build-prompts/retrospectives/M01.C-retrospective.md
+       docs/build-prompts/retrospectives/M01.D-retrospective.md
+       docs/build-prompts/retrospectives/M01-summary.md
+  4. schemas/*.v1.json — confirm what's been generated vs hand-curated
+  5. docs/gap-analysis.md — header + entry template (currently no prior
+     entries; M01 is the first)
+
+═══ STEP 2 — DRAFT THE ENTRY ═══
+
+Append a new section to docs/gap-analysis.md immediately above the
+placeholder line:
+
+  *No entries yet. M01 will be the first.*
+
+Remove that placeholder line as part of the same edit. Use the exact six-
+section template from the file's header. Header:
+
+  ## M01 — Foundation (<YYYY-MM-DD>, commit `<sha-of-stage-D-commit>`)
+
+  > Author: Claude (per `CLAUDE.md` §20)
+  > Stages aggregated: M01.A, M01.B, M01.C, M01.D
+  > Reviewed against: agent-runtime-spec.md §1 §1b §1c §1d §2 §11 §12,
+  > schemas/*.v1.json, M01.A–D retrospectives + M01-summary.
+
+Then the six required sections. Specifics:
+
+- **Codebase deep dive** (200–500 words): cumulative narrative. What's
+  solid, what's structurally weak, what surprised. Specific files.
+- **Adherence to spec**: ✅ / ⚠️ / ❌ with file:line on BOTH sides
+  (spec section + crate/file.rs:line).
+- **Spec review (forward-looking)**: missing items, contradictions,
+  ambiguity, open questions, recommended spec changes — each with
+  file:line where the gap surfaces. Re-read prior sections with fresh
+  eyes; surface things the M01 audit caught even if they don't bite
+  M01 directly.
+- **Fix backlog**: 🔴 Critical / 🟡 Important / 🟢 Nice-to-have. Be
+  honest. If you're tempted to mark everything Important, re-prioritize.
+- **Carry-forward**: write "N/A — first milestone." (M01 is the first
+  entry; nothing to carry forward yet.)
+- **Sign-off**: timestamp + Claude attestation per template.
+
+═══ STEP 3 — ADD CI APPEND-ONLY GATE ═══
+
+Edit .github/workflows/ci.yml: add the gap-analysis-append-only job per
+E.4. Place it after the existing fuzz-smoke job. No new toolchain install
+required.
+
+═══ STEP 4 — VERIFY APPEND-ONLY (LOCAL) ═══
+
+Note: on M01 the file is NEW on this branch (no entry on main yet), so
+the local check will print "skipping append-only check" — that's expected.
+For M02+ it will be a hard check.
+
+Run:
+  git fetch origin main
+  git show origin/main:docs/gap-analysis.md > /tmp/gap-base.md 2>/dev/null
+  if [ -s /tmp/gap-base.md ]; then
+    base_lines=$(wc -l < /tmp/gap-base.md)
+    diff -q /tmp/gap-base.md <(head -n "$base_lines" docs/gap-analysis.md) \
+      && echo "OK: append-only holds." \
+      || (echo "FAIL"; diff /tmp/gap-base.md <(head -n "$base_lines" docs/gap-analysis.md); exit 1)
+  else
+    echo "First entry on this branch — append-only check skipped."
+  fi
+
+═══ STEP 5 — UPDATE CHANGELOG ═══
+
+Append to CHANGELOG.md [Unreleased] / Added per E.3.
+
+═══ STEP 6 — SURFACE TO USER ═══
+
+Run: git status, git diff docs/gap-analysis.md
+Print the full new entry text (so the user can read it without scrolling
+git diff output).
+
+State explicitly:
+
+  "M01 Stage E (Gap Analysis) is ready. I will NOT commit until you
+  approve. Per CLAUDE.md §20, once committed this entry is IMMUTABLE —
+  future milestones may only update its status via their Carry-forward
+  sections. Please review the entry's substance carefully before
+  approving."
+
+Wait for explicit approval. After approval:
+  1. Commit per E.6.
+  2. Push the parent-milestone branch (origin/claude/m01-foundation),
+     which now contains stage A/B/C/D commits + this Stage E commit.
+  3. Draft the M01 PR description per CLAUDE.md §8 (do NOT open the PR
+     unless explicitly asked — surface the description for user review).
+```
+
+### E.6 Commit Message
+
+```bash
+git commit -s -m "$(cat <<'EOF'
+docs(gap-analysis): M01 — append cumulative product+spec audit
+
+Per CLAUDE.md §20. First entry in docs/gap-analysis.md. Reviews codebase
+shipped across M01.A–D against agent-runtime-spec.md; records adherence
+findings, spec gaps, and prioritized fix backlog (🔴 Critical / 🟡
+Important / 🟢 Nice-to-have).
+
+Also adds the CI gap-analysis-append-only job that enforces the
+immutability of prior entries on every PR.
+
+This entry is immutable. Future milestones report status updates via
+their Carry-forward sections; M01's findings stay as written.
+
+Refs: M01-foundation.md §E, CLAUDE.md §20
+
+https://claude.ai/code/session_<id>
+EOF
+)"
+```
+
+---
+
 ## Summary Table
 
 | Stage | New Files | Edited Files | Tests Added | Effort |
@@ -2169,7 +2485,8 @@ EOF
 | **B** Type generation | xtask main + 5 generated/*.rs + event.rs + drone.rs + error.rs + runtime-core README + xtask Cargo.toml + tests/round_trip.rs | `Cargo.toml`, `runtime-core/Cargo.toml`, `runtime-core/lib.rs`, `xtask/Cargo.toml`, `.github/workflows/ci.yml`, `CHANGELOG.md` | 11+ (8 round-trip + proptests + 3 xtask drift) | ~6–10h |
 | **C** Drone Phase 1 | 7 drone modules (db/snapshot/heartbeat/ipc/shutdown/command_handler/lib.rs replacement) + integration.rs + drone README | `Cargo.toml`, `runtime-drone/Cargo.toml`, `runtime-drone/main.rs`, `CHANGELOG.md` | 14+ unit + 2 proptest + 1 integration | ~12–18h |
 | **D** Fuzz + polish | Fuzz package + fuzz target + 6 corpus seeds + nightly workflow + xtask README | `runtime-core/README.md`, `runtime-drone/README.md`, `.github/workflows/ci.yml`, `CHANGELOG.md`, `MVP-v0.1.md` | Fuzz harness (3 implicit checks at gate time) | ~4–6h |
-| **Total** | **~45 new files** | **~15 edited files** | **30+ tests + fuzz harness** | **~27–42h** |
+| **E** Phase Closeout: Gap Analysis | — | `docs/gap-analysis.md` (append M01 entry + remove placeholder), `.github/workflows/ci.yml` (add append-only gate), `CHANGELOG.md` | CI append-only gate (1 new job) | ~2–4h |
+| **Total** | **~45 new files** | **~16 edited files** | **30+ tests + fuzz harness + append-only gate** | **~29–46h** |
 
 ---
 
@@ -2193,15 +2510,17 @@ Before approving the M01 PR (Stage D's surface), verify:
 - [ ] `cargo llvm-cov report --package runtime-drone --fail-under-lines 100` — drone at 100%
 - [ ] `cargo llvm-cov report --workspace --fail-under-lines 80` — workspace ≥80%
 - [ ] `cargo +nightly fuzz run drone_command_decode -- -max_total_time=30` — no panic
+- [ ] `gap-analysis-append-only` CI job — passes (Stage E adds; first run on Stage E's commit)
 - [ ] CI green on all OS × toolchain cells (visually inspect after push)
 
 ### Manual
 
 - [ ] Manual drone smoke (Linux/macOS): drone starts, heartbeat fires, SIGTERM produces emergency snapshot row in SQLite
 - [ ] Tauri stub builds: `cargo tauri build --no-bundle` succeeds (full bundle deferred to M11)
-- [ ] All 4 stage retrospectives present and filled in
-- [ ] `M01-summary.md` aggregates across the 4 stages with verdict
-- [ ] M01 PR description references all 4 stage commits + retrospectives
+- [ ] All 4 stage retrospectives present and filled in (M01.A–D)
+- [ ] `M01-summary.md` aggregates across the 4 work stages with verdict
+- [ ] **`docs/gap-analysis.md` M01 entry appended (Stage E)** — six sections complete, none omitted; severity levels honestly applied
+- [ ] M01 PR description references all 5 stage commits (A/B/C/D + E) + retrospectives + gap-analysis entry
 - [ ] CHANGELOG `[Unreleased]` reflects what M01 actually delivered
 - [ ] `docs/MVP-v0.1.md` §M1 acceptance criteria all `- [x]`
 - [ ] No leftover TODOs without linked issues
