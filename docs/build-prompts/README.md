@@ -21,8 +21,9 @@ The per-milestone prompt always references `CLAUDE.md` as the protocol; it doesn
 | `TEMPLATE.md` | Stable | Per-milestone shape; includes the **scope-split rule** for milestones >250 prompt-lines or >12h work |
 | `PROCESS-VALIDATION.md` | Stable | Framework reference for evaluating whether the prompt-driven pattern works (axes, scoring, threshold gates) |
 | `retrospectives/` | Live | Per-session retrospectives Claude fills in during/after every milestone; see `retrospectives/README.md` |
-| **M01 — staged into A/B/C/D within one document; one PR for the parent milestone** | | |
-| `M01-foundation.md` | Authored | M1 (weeks 1–2; 4 stages, ~27–42h total). Stage A workspace skeleton + Stage B type generation + Stage C drone Phase 1 + Stage D fuzz + polish. Each stage commits on the parent-milestone branch; M1 PR drafts at end of Stage D. |
+| `../gap-analysis.md` | **Live, append-only** | Cumulative product↔spec audit. Every parent milestone appends one entry in its Phase Closeout (final stage) per `CLAUDE.md` §20. **Prior entries are immutable** — CI enforces. |
+| **M01 — staged into A/B/C/D plus E (Phase Closeout); one PR for the parent milestone** | | |
+| `M01-foundation.md` | Authored | M1 (weeks 1–2; 5 stages, ~29–46h total). Stage A workspace skeleton + Stage B type generation + Stage C drone Phase 1 + Stage D fuzz + polish + Stage E gap analysis. Each stage commits on the parent-milestone branch; M1 PR drafts at end of Stage E. |
 | **M02–M11 — generated after M01 summary** | | |
 | `M02-event-pipeline.md` | TODO | M2 (weeks 3–4): SDK + AnthropicProvider + Tauri shell + event flow |
 | `M03-live-graph.md` | TODO | M3 (weeks 5–6): React Flow + node types + VDR projection |
@@ -44,8 +45,10 @@ The per-milestone prompt always references `CLAUDE.md` as the protocol; it doesn
 3. Copy the **stage's CLI Prompt** (section X.5 of the milestone document, where X is `A`/`B`/...) into the fresh session as the opening message. The stage prompt instructs Claude to read CLAUDE.md (auto-loaded), the stage's X.1–X.4 sections, and any other files the prompt names.
 4. Add any session-specific overrides at the top: branch name (default `claude/m[nn]-<title>`), time-box if applicable. Keep it minimal — the prompt is intentionally complete.
 5. Claude does TDD work for the stage, runs gates, fills in the per-stage retrospective, drafts the stage commit message, surfaces it all. **Claude does not commit.** You review, approve, and Claude then commits the stage on the parent-milestone branch (does NOT push between stages).
-6. **After the final stage**, Claude additionally drafts the M[NN] PR description and creates the parent-milestone summary (`M[NN]-summary.md`). On approval, Claude commits the final stage, pushes the branch, and (if explicitly requested) opens the PR.
-7. After the milestone PR merges, the next milestone starts fresh with its own document and stage prompts.
+6. **After the final WORK stage** (e.g., Stage D in M01), Claude creates the parent-milestone summary (`M[NN]-summary.md`).
+7. **Phase Closeout (final stage; Stage E in M01)** runs the gap analysis pass per `CLAUDE.md` §20: append a new entry to `docs/gap-analysis.md` (append-only — prior entries immutable). This commit is the final commit on the parent-milestone branch and gates the PR push.
+8. On approval of the Phase Closeout commit, Claude pushes the branch and (if explicitly requested) drafts the M[NN] PR description.
+9. After the milestone PR merges, the next milestone starts fresh with its own document and stage prompts.
 
 ## Authoring new milestone prompts
 

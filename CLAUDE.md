@@ -98,6 +98,7 @@ A micro-cycle should take 5–15 minutes. If a cycle is longer, the test is too 
 - **Asserts something specific.** A test that calls a function and doesn't assert anything is decoration, not a test.
 - **Fails when the production code is wrong.** If you delete a key invariant from the production code and the test still passes, the test is missing the assertion that matters. Verify by mutation: try breaking the production code and confirm tests fail.
 - **Doesn't tautologically restate the implementation.** `fn add(a, b) { a + b }` paired with `assert_eq!(add(2, 2), 4)` is a tautology test if the production code is just `a + b`. Tests should assert behavior the user observes — error cases, edge inputs, boundary conditions, integration outcomes — not internal structure.
+- **Hard-fails on missing exports / dependencies.** A behavioral test must fail loudly when a required production export, function, or fixture is missing — **never silently skip, never tautologically pass via mocking around the gap.** First run after writing the test should fail with `cannot find function X` / `unresolved import` / `module not found`, not pass-by-skip. Skipping a behavioral test because "the function isn't implemented yet" defeats TDD's red phase. Use real imports; if the import is wrong, surface it immediately.
 - **Reproducible.** No reliance on wall-clock time, network, or random seeds without explicit seeding. Use `tokio::time::pause()` for time-dependent tests.
 
 ### Coverage thresholds (per §12)
@@ -177,7 +178,7 @@ npm run test:e2e   # Playwright against the built Tauri app
 
 ### Pre-commit hook
 
-Install once: `pre-commit install` (uses `lefthook` or `pre-commit` framework — TBD which at M1, follow ADR if added).
+Install once: `lefthook install` (configured via `lefthook.yml`; chosen for single-binary deployment with no Python dependency — see `docs/build-prompts/M01-foundation.md` Stage A).
 
 The hook runs the fast subset of gates locally on every `git commit`. CI mirrors the hook to prevent `--no-verify` bypass.
 
@@ -399,6 +400,7 @@ When unsure: `git status`. State what you see. Wait.
 - Other contributors' open PRs — don't rebase or rewrite without their explicit ask.
 - `schemas/*.v1.json` — changes require schema versioning bump (new file `*.v2.json`) + ADR. Don't edit existing `v1` files except for clarification that doesn't change validation behavior.
 - `examples/aria/framework.json` and `examples/ralph/framework.json` — these are the archetype proofs. Changes here should be reviewed against §0a Capability Matrix; if a change makes a matrix row no longer reconstructible, that's a regression that blocks v0.1.
+- `docs/gap-analysis.md` **prior entries** — append-only per §20. Never edit, reorder, or delete an entry once committed. New milestones add a section at the bottom only; status updates on prior findings go in the current milestone's "Carry-forward" section. CI enforces this via diff check (added M01 Stage E alongside the first entry).
 
 ### Capability adherence
 
@@ -603,6 +605,8 @@ This checklist is the orientation before TDD's "Red" phase. Skip it and you'll d
 | Current scope and milestones | `docs/MVP-v0.1.md` |
 | Per-milestone prompt | `docs/build-prompts/M[NN]-*.md` |
 | Per-milestone template | `docs/build-prompts/TEMPLATE.md` |
+| Per-stage retrospectives | `docs/build-prompts/retrospectives/` |
+| Cumulative gap analysis (append-only) | `docs/gap-analysis.md` (per §20) |
 | Architecture decisions | `docs/adr/` |
 | Schemas (source of truth) | `schemas/*.v1.json` |
 | Reference framework (archetype proof) | `examples/aria/` |
@@ -658,21 +662,22 @@ Copied from `docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md`.
 
 ### Workflow within a stage session
 
-1. **At session start**, immediately after stating the deliverable + test plan, copy `RETROSPECTIVE-TEMPLATE.md` to the per-stage path. Set the header (parent-milestone, stage letter, branch, starting commit, estimated effort).
-2. **During the session**, fill in the live observation log AS friction surfaces. Don't summarize at the end — details fade. Specifically:
+1. **Read prior stage retrospectives BEFORE writing code (mandatory for stages B onward).** The first action in any non-first stage is to read every prior stage's retrospective in this milestone. Focus on the `[END] Decisions for the next stage` section and any `[LIVE]` friction events flagged as carrying forward. **Apply those decisions** — that's what they exist for. Also re-read the most recent `docs/gap-analysis.md` entry's Carry-forward section for items targeting this stage (e.g., a Pre-M01 anticipated-friction note about `typify oneOf` should be acted on at Stage B start, not re-discovered the hard way). For Stage A of M01: skip — no prior retrospective exists yet. The CLI prompt for each stage (X.5) embeds this read step explicitly; this protocol rule is the backstop in case a future milestone prompt forgets it.
+2. **At session start (after the prior-retrospective read)**, immediately after stating the deliverable + test plan, copy `RETROSPECTIVE-TEMPLATE.md` to the per-stage path. Set the header (parent-milestone, stage letter, branch, starting commit, estimated effort).
+3. **During the session**, fill in the live observation log AS friction surfaces. Don't summarize at the end — details fade. Specifically:
    - Add a row to the friction-events table the moment a friction event occurs.
    - Add a row to the ambiguity-events table when contradictions or unclear guidance is encountered.
    - Add a row to the surface-events table whenever a decision is surfaced to the user.
    - Add a row to the protocol-drift table if you almost broke a Hard Rule (§4) — and alert the user immediately, not at session end.
    - Add a row to the surprise-events table when something unexpected (good or bad) happens.
-3. **At stage end** (when all stage acceptance criteria pass and gates are green):
+4. **At stage end** (when all stage acceptance criteria pass and gates are green):
    - Score the three-axis retrospective (1–5 per row per `PROCESS-VALIDATION.md`)
    - Evaluate threshold gates (5 hard + 5 soft)
    - Mark the outcome (Sound / Sound-but-rough / Friction-heavy / Not-ready)
-   - Fill in the Decisions section with specific updates for the next stage (or next parent milestone if final stage)
-4. **Surface to the user.** For non-final stages: surface the diff stat + gate results + retrospective + draft commit message. For the **final stage** of the milestone: also draft the M[NN] PR description and create `M[NN]-summary.md` aggregating across stages.
-5. **State explicitly:** *"Stage `<X>` is ready. I will not commit until you approve. Please review the retrospective and the diff."* For the final stage: *"M[NN] is ready. I will not commit Stage `<X>`, push, or open the PR until you approve. Please review the retrospective, the M[NN] summary, and the PR description."*
-6. **On approval**, the retrospective is committed alongside the stage's code on the parent-milestone feature branch. Push waits for the final stage; PR opens only on the final stage's approval.
+   - Fill in the Decisions section with specific updates for the next stage (or next parent milestone if final stage). **Be specific** — these decisions get *read* by the next stage's session, so generic notes ("be careful with X") waste the channel; cite file:line, name the exact change to apply, name the gate to re-run.
+5. **Surface to the user.** For non-final stages: surface the diff stat + gate results + retrospective + draft commit message. For the **final stage** of the milestone: also draft the M[NN] PR description and create `M[NN]-summary.md` aggregating across stages.
+6. **State explicitly:** *"Stage `<X>` is ready. I will not commit until you approve. Please review the retrospective and the diff."* For the final stage: *"M[NN] is ready. I will not commit Stage `<X>`, push, or open the PR until you approve. Please review the retrospective, the M[NN] summary, and the PR description."*
+7. **On approval**, the retrospective is committed alongside the stage's code on the parent-milestone feature branch. Push waits for the final stage; PR opens only on the final stage's approval.
 
 ### What the user reviews
 
@@ -716,3 +721,69 @@ A `docs/build-prompts/retrospectives/TRENDS.md` is optional and grows over time.
 - **Aligns with CLAUDE-Code's actual capabilities.** Claude can fill in tables in real time as work happens; the user can't. Use the right tool for the job.
 
 See `docs/build-prompts/PROCESS-VALIDATION.md` for the framework reference (axes, scoring rubric, threshold gates) and `docs/build-prompts/retrospectives/` for the templates and accumulated retrospectives.
+
+---
+
+## 20. Gap Analysis Protocol (append-only, per-milestone)
+
+**Every parent milestone produces a Gap Analysis entry**, separate from the per-stage retrospectives. The retrospectives evaluate the build *process* (did the prompt-driven workflow work?). The gap analysis evaluates the build *product*: does the code match the spec, what did the spec get wrong, what's the prioritized fix backlog?
+
+The single source for this is `docs/gap-analysis.md`. It is **append-only**.
+
+### The append-only rule (Hard Rule)
+
+Per §10 Don't-touch zones, **no prior entry in `docs/gap-analysis.md` may be edited, reordered, or deleted.** This is non-negotiable. The file is the project's audit trail of how the codebase and spec evolved together. Editing prior entries would erase that history and turn the file into another cleaned-up doc.
+
+If a prior milestone's finding is later resolved or invalidated:
+- Do NOT modify the original entry.
+- The current milestone's "Carry-forward" section states the resolution by referencing the prior entry's milestone tag.
+- Example: an M01 critical fix that lands during M02 work gets a line in M02's Carry-forward section: `M01 critical "X" — resolved at <crate/file.rs:line>`. M01's entry stays as it was at M01 PR time.
+
+CI enforces this with a diff check (added in M01 Stage E's edit to `.github/workflows/ci.yml`, alongside the first entry): if any line in `docs/gap-analysis.md` that existed on the PR base branch is missing or changed in HEAD, CI fails. New milestones may only add content at the bottom.
+
+### When the gap analysis runs
+
+After the **final stage** of a parent milestone commits (e.g., after M01 Stage D), and after the per-parent-milestone summary lands, but **before** the milestone PR is opened:
+
+1. Claude runs the **Phase Closeout — Gap Analysis** step (Stage E in M01; documented in each milestone's prompt and in `TEMPLATE.md`).
+2. Output: a new entry appended to `docs/gap-analysis.md` per the entry template in that file.
+3. Claude surfaces the new entry alongside the milestone PR description and the parent-milestone summary.
+4. The gap analysis commit is the **final commit on the parent-milestone branch**. The PR pushes only after this commit is approved by the user. This means the gap analysis gates the PR.
+
+### What the entry covers
+
+Every entry has six sections (template lives in `docs/gap-analysis.md`):
+
+1. **Codebase deep dive** — narrative review of the *cumulative* code shipped to date, not just this milestone. 200–500 words. Surface structural concerns that will compound.
+2. **Adherence to spec** — for each area touched, classify ✅ / ⚠️ / ❌ with file:line citations on both spec and code sides.
+3. **Spec review (forward-looking)** — missing items, contradictions, ambiguity, open questions, recommended spec changes. Cumulative; re-read prior sections with fresh eyes.
+4. **Fix backlog** — code AND spec fixes, prioritized 🔴 Critical / 🟡 Important / 🟢 Nice-to-have. Severity is non-elastic — if everything is "important," the prioritization is meaningless.
+5. **Carry-forward from prior milestones** — status of every unresolved fix-backlog item from prior entries. Resolved / still open / deferred to <milestone>. **Never modifies prior entries.**
+6. **Sign-off** — Claude attestation + timestamp.
+
+Sections with nothing to report write **"None observed."** — never omit a section.
+
+### What the entry is NOT
+
+- Not a per-stage retrospective. Stage-level process feedback lives in `docs/build-prompts/retrospectives/M[NN].<X>-retrospective.md`.
+- Not a parent-milestone process summary. That lives in `docs/build-prompts/retrospectives/M[NN]-summary.md` and aggregates the stage retrospectives.
+- Not the changelog. `CHANGELOG.md` lists what shipped; gap analysis evaluates how it relates to the spec and what's still wrong.
+
+### User review and approval
+
+User reviews three artifacts together at PR time:
+
+1. The PR code diff — does the milestone deliver?
+2. The filled-in retrospectives + parent-milestone summary — was the process sound?
+3. The new gap analysis entry — is the cumulative product↔spec assessment honest, and is the fix backlog prioritized correctly?
+
+If user pushes back on any of the three, Claude revises before the PR opens. **The gap analysis cannot be edited after the milestone PR merges** — only future milestones' Carry-forward sections can update its status.
+
+### Why this is a Hard Rule
+
+- **Audit trail integrity.** The chain of M01 → M02 → ... → M11 entries is the project's record of how product↔spec drifted and converged. Editing prior entries breaks that chain.
+- **Honest assessment.** Knowing the entry is permanent forces Claude to assess accurately the first time, not optimistically with the option to "fix it later."
+- **Forces forward-looking carry-forward.** Resolution of a prior finding has to be stated in the *new* milestone's entry, which puts the resolution alongside its date and commit context.
+- **Spec drift detection.** When M07's gap analysis says "spec §3a contradicts §6a" and M03's gap analysis already said "spec §3a is ambiguous about <X>," the through-line is visible and actionable. Editing prior entries hides through-lines.
+
+See `docs/gap-analysis.md` for the entry template and the (initially empty) milestone log.

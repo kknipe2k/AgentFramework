@@ -2,6 +2,18 @@
 
 > **Purpose:** This is the **reference framework** for evaluating whether the prompt-driven build pattern works — not the test for what each milestone ships. Each milestone's acceptance criteria verify that milestone shipped; this framework verifies the **build pattern** is sound enough to apply across M02–M11.
 
+## Process retrospectives vs. product gap analysis
+
+This file and the per-stage retrospectives evaluate the **build process** — did Claude have what it needed, did the workflow surface decisions at the right time, did the do-not-commit rule hold. The product itself — does the code match the spec, what did the spec get wrong, what's the prioritized fix backlog — is evaluated separately in `docs/gap-analysis.md` (append-only) per `CLAUDE.md` §20. The two artifacts have different audiences and different change rules:
+
+| Artifact | What it evaluates | Author | Mutability |
+|---|---|---|---|
+| `retrospectives/M[NN].<X>-retrospective.md` | Build *process* per stage | Claude during/after stage | Live during stage; finalized at stage end |
+| `retrospectives/M[NN]-summary.md` | Aggregated process across stages | Claude at end of final stage | Once written, not edited |
+| `docs/gap-analysis.md` | Build *product* — code↔spec, cumulatively | Claude in Phase Closeout (final stage) | **Append-only forever** per §20; prior entries immutable |
+
+User reviews all three at PR time. This document defines the gates for the first two; `CLAUDE.md` §20 defines the protocol for the third.
+
 ## Roles — who does what
 
 The validation is **Claude-driven**, not user-driven. Claude has the live context (friction events, ambiguities, self-correction iterations); the user only sees the final PR. Asking the user to score a session they only partially observed asks them to reconstruct context they never had.
