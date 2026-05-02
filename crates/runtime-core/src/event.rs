@@ -382,5 +382,15 @@ mod proptest_round_trip {
             let back: AgentEvent = serde_json::from_value(json).unwrap();
             prop_assert_eq!(event, back);
         }
+
+        // Newline-delimited JSON codec round trip — the wire format used by
+        // the SSE event pipeline (`tokio_util::codec::LinesCodec`).
+        #[test]
+        fn agent_event_codec_round_trip_proptest(event in arb_session_start()) {
+            let line = serde_json::to_string(&event).unwrap();
+            prop_assert!(!line.contains('\n'));
+            let back: AgentEvent = serde_json::from_str(&line).unwrap();
+            prop_assert_eq!(event, back);
+        }
     }
 }

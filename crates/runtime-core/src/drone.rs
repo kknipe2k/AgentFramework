@@ -229,5 +229,23 @@ mod proptest_round_trip {
             let back: DroneCommand = serde_json::from_value(json).unwrap();
             prop_assert_eq!(cmd, back);
         }
+
+        // Newline-delimited JSON codec round trip — the wire format used by
+        // the main↔drone IPC channel (`tokio_util::codec::LinesCodec`).
+        #[test]
+        fn drone_event_codec_round_trip_proptest(event in arb_heartbeat()) {
+            let line = serde_json::to_string(&event).unwrap();
+            prop_assert!(!line.contains('\n'), "encoded line must not contain a newline");
+            let back: DroneEvent = serde_json::from_str(&line).unwrap();
+            prop_assert_eq!(event, back);
+        }
+
+        #[test]
+        fn drone_command_codec_round_trip_proptest(cmd in arb_graceful_shutdown()) {
+            let line = serde_json::to_string(&cmd).unwrap();
+            prop_assert!(!line.contains('\n'));
+            let back: DroneCommand = serde_json::from_str(&line).unwrap();
+            prop_assert_eq!(cmd, back);
+        }
     }
 }
