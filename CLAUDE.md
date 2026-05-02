@@ -619,6 +619,7 @@ This checklist is the orientation before TDD's "Red" phase. Skip it and you'll d
 | Per-milestone template | `docs/build-prompts/TEMPLATE.md` |
 | Per-stage retrospectives | `docs/build-prompts/retrospectives/` |
 | Cumulative gap analysis (append-only) | `docs/gap-analysis.md` (per §20) |
+| Persistence architecture (HLA) | `docs/persistence-architecture.md` |
 | Architecture decisions | `docs/adr/` |
 | Schemas (source of truth) | `schemas/*.v1.json` |
 | Reference framework (archetype proof) | `examples/aria/` |
