@@ -177,7 +177,7 @@ npm run test:e2e   # Playwright against the built Tauri app
 
 ### Pre-commit hook
 
-Install once: `pre-commit install` (uses `lefthook` or `pre-commit` framework — TBD which at M1, follow ADR if added).
+Install once: `lefthook install` (configured via `lefthook.yml`; chosen for single-binary deployment with no Python dependency — see `docs/build-prompts/M01-foundation.md` Stage A).
 
 The hook runs the fast subset of gates locally on every `git commit`. CI mirrors the hook to prevent `--no-verify` bypass.
 

@@ -114,6 +114,7 @@ The success criterion is "CI is green on a real Cargo workspace and Stage B can 
 | `crates/runtime-sandbox/src/lib.rs` | **New** — placeholder + test (overrides workspace `unsafe_code = "warn"`) |
 | `crates/xtask/Cargo.toml` | **New** |
 | `crates/xtask/src/main.rs` | **New** — placeholder; real implementation in Stage B |
+| `lefthook.yml` | **New** — pre-commit hook config (resolves CLAUDE.md §12 TBD) |
 | `src-tauri/Cargo.toml` | **New** |
 | `src-tauri/tauri.conf.json` | **New** — empty allowlist, minimal config |
 | `src-tauri/build.rs` | **New** — Tauri build script |
@@ -336,12 +337,37 @@ Use Tauri's default placeholder icon (32×32 PNG). The `cargo tauri build` invoc
 
 > **Implementer note:** Tauri's `cargo tauri init` scaffolding generates appropriate icons. Easiest path: run `cargo install create-tauri-app && cargo create-tauri-app` in a temp directory, copy the generated `src-tauri/icons/` to ours.
 
+#### `lefthook.yml` (resolves CLAUDE.md §12 pre-commit TBD)
+
+`lefthook` is the chosen pre-commit hook tool — single Go binary, no Python dependency, no language-specific runtime required (vs. `pre-commit` framework). Stage A wires `cargo fmt --check` and `cargo clippy` only; Stage B wires the schema drift-check; Stage D wires the full gate set.
+
+```yaml
+# Pre-commit hook configuration. Install once locally: `lefthook install`.
+# CI mirrors the same gates so `--no-verify` is never a shortcut.
+pre-commit:
+  parallel: true
+  commands:
+    fmt:
+      glob: "*.rs"
+      run: cargo fmt --all -- --check
+    clippy:
+      glob: "*.rs"
+      run: cargo clippy --workspace --all-targets -- -D warnings
+```
+
+Install instruction (added to repo root README in a later stage):
+
+```bash
+# Once per clone:
+lefthook install
+```
+
 #### `CHANGELOG.md` `[Unreleased]` entry
 
 Append under existing `[Unreleased] / Added`:
 
 ```markdown
-- M01 Stage A: Cargo workspace skeleton — five member crates (runtime-core, runtime-main, runtime-drone, runtime-sandbox, xtask), Tauri stub (src-tauri/), workspace lints (deny warnings, forbid unsafe except sandbox, clippy pedantic + nursery), cargo-deny policy. CI's gated Rust jobs activate. No real implementation; trivial placeholder per crate. (Stage B onward adds real code.)
+- M01 Stage A: Cargo workspace skeleton — five member crates (runtime-core, runtime-main, runtime-drone, runtime-sandbox, xtask), Tauri stub (src-tauri/), workspace lints (deny warnings, forbid unsafe except sandbox, clippy pedantic + nursery), cargo-deny policy, lefthook pre-commit config. CI's gated Rust jobs activate. No real implementation; trivial placeholder per crate. (Stage B onward adds real code.)
 ```
 
 ### A.4 Tests
