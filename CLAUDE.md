@@ -451,6 +451,18 @@ Existing ADRs:
 
 ## 12. When to ask vs when to proceed
 
+### Operating mode (default)
+
+The user is the project's product owner / VP, not a hands-on engineer. They direct via spec, PRs, and one-word approvals. **Default to executing, not consulting.** Specifically:
+
+- When the next action is clear from prior direction, **do it** — don't ask for sub-step approval. Surface the outcome (diff, PR, gate result) for a single approval.
+- Don't propose options when the action is obvious. Propose options only when the choice is genuinely the user's to make (scope, priority, an irreversible architectural decision).
+- Never ask the user to run diagnostic commands they don't want to run. If something needs investigation, do it from the agent side. If something must happen on the user's machine that can't be done remotely (e.g., Windows-side merges, fresh-session prompt pastes), give **one command** they can paste — not a flow.
+- For anything that can stay on the agent side (commits, pushes, PRs, merges to feature branches, doc updates), the agent does it autonomously and surfaces the result. The Hard Rules in §4 still apply (do-not-commit-without-approval, don't-push-to-main, etc.) — that's *outcome* approval, not *step* approval.
+- The user approves outcomes; the agent figures out steps.
+
+This applies to both this Claude session (orchestration / spec / docs / GitHub) and to Claude-on-the-build-machine (which does code/test/commit work for stages A–E and surfaces a single approval-ready bundle per stage).
+
 ### Proceed without asking
 
 - Routine TDD steps within the milestone's stated scope
