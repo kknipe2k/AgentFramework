@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Persistence Architecture — Agent Runtime</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #fafafa;
+    --fg: #1a1a1a;
+    --muted: #555;
+    --card: #ffffff;
+    --border: #d0d0d0;
+    --accent: #0366d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --fg: #e6edf3;
+      --muted: #8b949e;
+      --card: #161b22;
+      --border: #30363d;
+      --accent: #58a6ff;
+    }
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    line-height: 1.5;
+  }
+  .wrap {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+  }
+  h1 {
+    margin: 0 0 0.5rem;
+    font-size: 1.6rem;
+  }
+  .subtitle {
+    color: var(--muted);
+    margin: 0 0 1.5rem;
+    font-size: 0.95rem;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    overflow-x: auto;
+  }
+  .card h2 {
+    margin: 0 0 1rem;
+    font-size: 1.15rem;
+    color: var(--fg);
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .swatch {
+    display: inline-block;
+    width: 1rem;
+    height: 1rem;
+    border: 1px solid #333;
+    border-radius: 2px;
+  }
+  .swatch.immutable { background: #ff8888; }
+  .swatch.append { background: #ffcc66; }
+  .swatch.normal { background: #ECECFF; }
+  .mermaid {
+    text-align: center;
+  }
+  footer {
+    margin-top: 2rem;
+    color: var(--muted);
+    font-size: 0.85rem;
+    text-align: center;
+  }
+  footer a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  footer a:hover {
+    text-decoration: underline;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Persistence Architecture — Agent Runtime</h1>
+  <p class="subtitle">How memory and instructions flow across the build process. Five layers, one diagram.</p>
+
+  <div class="card">
+    <h2>Legend</h2>
+    <div class="legend">
+      <div class="legend-item"><span class="swatch immutable"></span>Immutable (changes via ADR only)</div>
+      <div class="legend-item"><span class="swatch append"></span>Append-only (prior entries cannot be edited)</div>
+      <div class="legend-item"><span class="swatch normal"></span>Slow-evolving / per-milestone / ephemeral</div>
+    </div>
+    <p style="margin: 1rem 0 0; font-size: 0.9rem; color: var(--muted);">
+      Dotted edges = read-only flow. Thick edges = write/append flow.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Full picture</h2>
+    <div class="mermaid">
+graph TB
+    subgraph L1["Layer 1 — Static Contract (ADR-gated)"]
+        SPEC[agent-runtime-spec.md]
+        SCHEMA[schemas/*.v1.json]
+        EX[examples/aria/, ralph/]
+    end
+
+    subgraph L2["Layer 2 — Slow-Evolving Protocol (auto-loaded every session)"]
+        CLAUDE[CLAUDE.md]
+        MVP[docs/MVP-v0.1.md]
+        TEMPLATE[TEMPLATE.md]
+        PV[PROCESS-VALIDATION.md]
+        RETROTPL[RETROSPECTIVE-TEMPLATE.md]
+        SUMTPL[SUMMARY-TEMPLATE.md]
+        ADR[docs/adr/]
+    end
+
+    subgraph L3["Layer 3 — Per-Milestone Prompt"]
+        M01PROMPT[M01-foundation.md<br/>Stages A-E]
+        M02PROMPT[M02-event-pipeline.md]
+        MNN[...M11]
+    end
+
+    subgraph L4["Layer 4 — Per-Session Memory (ephemeral)"]
+        SESSION[Stage X<br/>Claude Code session]
+    end
+
+    subgraph L5["Layer 5 — Stage Outputs (committed)"]
+        CODE[Code on parent-milestone branch]
+        RETRO[M&#91;NN&#93;.X-retrospective.md]
+        SUMMARY[M&#91;NN&#93;-summary.md]
+        GAP[docs/gap-analysis.md<br/>APPEND-ONLY]
+        CHANGELOG[CHANGELOG.md]
+    end
+
+    SPEC -.read.-> SESSION
+    SCHEMA -.read.-> SESSION
+    CLAUDE -.auto-load.-> SESSION
+    MVP -.read.-> SESSION
+    TEMPLATE -.shape.-> M01PROMPT
+    TEMPLATE -.shape.-> M02PROMPT
+    RETROTPL -.shape.-> RETRO
+    SUMTPL -.shape.-> SUMMARY
+    ADR -.read.-> SESSION
+    M01PROMPT -.read sections.-> SESSION
+
+    SESSION ==write==> CODE
+    SESSION ==write==> RETRO
+    SESSION ==write Stage E only==> SUMMARY
+    SESSION ==append Stage E only==> GAP
+    SESSION ==write==> CHANGELOG
+
+    RETRO -.next stage reads.-> SESSION
+    GAP -.carry-forward read by next milestone.-> SESSION
+
+    classDef immutable fill:#ff8888,stroke:#333,color:#000
+    classDef append fill:#ffcc66,stroke:#333,color:#000
+    class ADR,GAP append
+    class SPEC immutable
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>How to read it</h2>
+    <ul>
+      <li><strong>Layer 1 — Static Contract.</strong> The spec, schemas, and reference frameworks. Changes only via an ADR.</li>
+      <li><strong>Layer 2 — Slow-Evolving Protocol.</strong> CLAUDE.md, MVP doc, templates. Auto-loaded every session; updated when the protocol itself shifts.</li>
+      <li><strong>Layer 3 — Per-Milestone Prompt.</strong> One document per parent milestone (M01, M02, …, M11). Stages A–E live inside.</li>
+      <li><strong>Layer 4 — Per-Session Memory.</strong> Ephemeral. The Claude Code context window for one stage. Cleared between stages.</li>
+      <li><strong>Layer 5 — Stage Outputs.</strong> What survives the stage and feeds the next: code commits, retrospectives, gap-analysis entries (append-only), changelog.</li>
+    </ul>
+    <p>Every layer below reads from the layers above. The session is the only mutable layer; outputs (Layer 5) get committed and become the next session's read material.</p>
+  </div>
+
+  <footer>
+    Source: <code>docs/persistence-architecture.md</code> in the
+    <a href="https://github.com/kknipe2k/AgentFramework" target="_blank" rel="noopener">kknipe2k/AgentFramework</a> repo.
+    Diagram rendered via Mermaid.js loaded from CDN.
+  </footer>
+</div>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: isDark ? 'dark' : 'default',
+    flowchart: {
+      curve: 'basis',
+      htmlLabels: true,
+      padding: 20
+    },
+    securityLevel: 'loose'
+  });
+</script>
+</body>
+</html>
