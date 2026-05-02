@@ -62,7 +62,8 @@ async fn drone_lifecycle_end_to_end() {
     assert!(sock.exists(), "drone never created its socket");
 
     // Send SIGTERM via nix.
-    let pid = nix::unistd::Pid::from_raw(child.id().expect("pid") as i32);
+    let raw_pid = i32::try_from(child.id().expect("pid")).expect("pid fits in i32");
+    let pid = nix::unistd::Pid::from_raw(raw_pid);
     nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM).expect("sigterm");
 
     let exit = tokio::time::timeout(Duration::from_secs(5), child.wait())
