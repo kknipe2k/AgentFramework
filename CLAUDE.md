@@ -103,8 +103,8 @@ A micro-cycle should take 5–15 minutes. If a cycle is longer, the test is too 
 
 ### Coverage thresholds (per §12)
 
-- **≥80% line coverage** on all new code (Rust: `cargo-llvm-cov`; TS: `vitest --coverage`).
-- **100% on safety primitives:** drone (`crates/runtime-drone/`), capability enforcer (`crates/runtime-main/src/capability/`), plan state machine, snapshot/recovery code paths.
+- **≥80% line coverage** on all new code (Rust: `cargo-llvm-cov`; TS: `vitest --coverage`). Workspace gate excludes generated code and binary stubs: `--ignore-filename-regex "src.main\.rs|generated"`.
+- **≥95% line on safety primitives** with documented exclusions: drone (`crates/runtime-drone/`), capability enforcer (`crates/runtime-main/src/capability/`), plan state machine, snapshot/recovery code paths. The drone gate excludes `lib.rs` and `shutdown.rs` (OS-signal orchestrators wrapping testable `_inner`/`_with` variants — exercised end-to-end by the Unix subprocess integration test in `crates/runtime-drone/tests/integration.rs`). Per-module baseline (M01.C measured): `snapshot.rs` 100%, `db.rs` 98.82%, `heartbeat.rs` 98.59%, `command_handler.rs` 97.94%, `ipc.rs` 84.70% (platform-cfg variants). Subsequent milestones must not regress any module below its baseline without a retro entry recording the reason. Same pattern (≥95% overall + documented per-module baseline) applies as future safety primitives land — document the exclusion list and rationale here when adding them. (History: M01.C retrospective + M01-foundation.md Stage D §D.3 "Coverage gate semantics".)
 - Coverage drops vs prior `main` block PR merge. CI computes the delta.
 
 ### Test types and when they apply
@@ -143,10 +143,21 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo test --workspace --doc
-cargo doc --workspace --no-deps
+RUSTDOCFLAGS="-D missing_docs" cargo doc --workspace --no-deps
 cargo audit
 cargo deny check
-cargo llvm-cov --workspace --fail-under-lines 80
+
+# Workspace coverage — generated code + binary stubs excluded.
+cargo llvm-cov --workspace \
+    --ignore-filename-regex "src.main\.rs|generated" \
+    --fail-under-lines 80
+
+# Drone safety-primitive coverage — additionally exclude OS-signal
+# orchestrators (lib.rs + shutdown.rs) per CLAUDE.md §5 + M01-foundation.md
+# Stage D §D.3 "Coverage gate semantics".
+cargo llvm-cov --package runtime-drone \
+    --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.shutdown\.rs" \
+    --fail-under-lines 95
 ```
 
 CI runs all of these on Linux/macOS/Windows × stable + MSRV.

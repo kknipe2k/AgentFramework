@@ -1,0 +1,21 @@
+[package]
+name         = "runtime-core"
+version      = { workspace = true }
+edition      = { workspace = true }
+license      = { workspace = true }
+repository   = { workspace = true }
+rust-version = { workspace = true }
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono      = { version = "0.4", default-features = false, features = ["serde"] }
+regress     = "0.10"
+serde       = { workspace = true, features = ["derive"] }
+serde_json  = { workspace = true }
+serde_yaml  = { workspace = true }
+thiserror   = { workspace = true }
+
+[dev-dependencies]
+proptest    = { workspace = true }

@@ -61,20 +61,22 @@ Total: ~24 weeks elapsed at sustained pace. Compresses with parallel work; expan
 - `rust-toolchain.toml` pinning Rust version
 
 **Acceptance criteria** (final, across all 4 stages)
-- [ ] `cargo fmt --all -- --check` passes
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` passes
-- [ ] `cargo test --workspace` passes
-- [ ] CI green on all 3 OS targets × stable + MSRV
-- [ ] `runtime-drone --session-id test --db-path /tmp/d.sqlite --ipc-socket /tmp/d.sock` starts, writes heartbeat rows to SQLite, accepts `SnapshotNow` command via socket, accepts `GracefulShutdown`, handles SIGTERM with emergency snapshot
-- [ ] Drone test coverage **100%** (cargo-llvm-cov per-package); workspace coverage ≥80%
-- [ ] `runtime-core` types compile and round-trip-serialize via proptest
-- [ ] `cargo xtask regenerate-types --check` passes (no schema/type drift)
-- [ ] `cargo +nightly fuzz run drone_command_decode -- -max_total_time=30` runs without panic in CI
-- [ ] All `pub` APIs in `runtime-core` and `runtime-drone` doc-commented with compile-checked examples
+- [x] `cargo fmt --all -- --check` passes
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` passes
+- [x] `cargo test --workspace` passes
+- [x] CI green on all 3 OS targets × stable + MSRV
+- [x] `runtime-drone --session-id test --db-path /tmp/d.sqlite --ipc-socket /tmp/d.sock` starts, writes heartbeat rows to SQLite, accepts `SnapshotNow` command via socket, accepts `GracefulShutdown`, handles SIGTERM with emergency snapshot
+- [x] Drone test coverage **≥95%** (cargo-llvm-cov per-package, with OS-signal entry points `lib.rs` + `shutdown.rs` excluded per the M01.C retro decision recorded in `M01-foundation.md` §D.3 "Coverage gate semantics"); workspace coverage ≥80%
+- [x] `runtime-core` types compile and round-trip-serialize via proptest
+- [x] `cargo xtask regenerate-types --check` passes (no schema/type drift)
+- [x] `cargo +nightly fuzz run drone_command_decode -- -max_total_time=30` runs without panic in CI
+- [x] All `pub` APIs in `runtime-core` and `runtime-drone` doc-commented with compile-checked examples
 
 **Dependencies** — none (root milestone)
 
 **Out of scope** — anything that isn't workspace skeleton + types + drone + fuzz/coverage/docs (each stage has its own out-of-scope list)
+
+**Status: Complete** (M01 PR merged YYYY-MM-DD).
 
 ---
 

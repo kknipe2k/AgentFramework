@@ -1,4 +1,14 @@
 
+# Rust build artifacts
+/target/
+# cargo-fuzz build artifacts and crash artifacts (fuzz/Cargo.lock is committed)
+crates/*/fuzz/target/
+crates/*/fuzz/artifacts/
+
+# Node.js
+/node_modules/
+/dist/
+
 # ARIA runtime directories
 .aria/checkpoints/
 .aria/logs/

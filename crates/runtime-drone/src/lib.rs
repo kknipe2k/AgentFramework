@@ -1,0 +1,249 @@
+//! Drone library — exposes orchestration for binary + tests.
+//!
+//! Implements spec §1 (The Drone): heartbeat, snapshot, IPC server, signal
+//! handling. The `run` function ties them together; see `main.rs` for the
+//! binary entry point.
+
+pub mod command_handler;
+pub mod db;
+pub mod heartbeat;
+pub mod ipc;
+pub mod shutdown;
+pub mod snapshot;
+
+use std::future::Future;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+use thiserror::Error;
+use tokio::sync::{broadcast, mpsc, Mutex};
+
+/// Heartbeat interval per `agent-runtime-spec.md` §1 (Heartbeat).
+pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Top-level drone error.
+#[derive(Debug, Error)]
+pub enum DroneError {
+    /// Database error.
+    #[error(transparent)]
+    Db(#[from] db::DbError),
+
+    /// IPC server error.
+    #[error(transparent)]
+    Ipc(#[from] ipc::IpcError),
+
+    /// Snapshot writer error.
+    #[error(transparent)]
+    Snapshot(#[from] snapshot::SnapshotError),
+
+    /// Shutdown handler error.
+    #[error(transparent)]
+    Shutdown(#[from] shutdown::ShutdownError),
+
+    /// Heartbeat task error.
+    #[error(transparent)]
+    Heartbeat(#[from] heartbeat::HeartbeatError),
+}
+
+/// Run the drone main loop until shutdown or fatal error.
+///
+/// Spawns the heartbeat, IPC server, and command-handler tasks, then awaits
+/// a shutdown signal. On shutdown, the IPC server and heartbeat are
+/// aborted; the shutdown handler writes a final snapshot before returning.
+///
+/// # Errors
+///
+/// Returns `DroneError` if database initialization or the shutdown handler
+/// fail.
+pub async fn run(
+    session_id: String,
+    db_path: PathBuf,
+    ipc_socket: PathBuf,
+) -> Result<(), DroneError> {
+    let conn = bootstrap(&session_id, &db_path)?;
+    run_inner(conn, session_id, ipc_socket, shutdown_signal_future()).await
+}
+
+/// Test-friendly variant of `run`.
+///
+/// Takes an already-bootstrapped connection and an injectable shutdown
+/// future. Used by both production (with the OS signal future) and unit
+/// tests (with a deterministic future).
+///
+/// # Errors
+///
+/// Returns `DroneError` if the shutdown handler fails.
+pub async fn run_inner<F>(
+    conn: Arc<Mutex<rusqlite::Connection>>,
+    session_id: String,
+    ipc_socket: PathBuf,
+    shutdown_source: F,
+) -> Result<(), DroneError>
+where
+    F: Future<Output = &'static str>,
+{
+    let (event_tx, _event_rx) = broadcast::channel(64);
+    let (cmd_tx, cmd_rx) = mpsc::channel(64);
+
+    let hb_handle = tokio::spawn(heartbeat::run(
+        session_id.clone(),
+        conn.clone(),
+        event_tx.clone(),
+    ));
+    let ipc_handle = tokio::spawn(ipc::serve(ipc_socket, cmd_tx, event_tx.clone()));
+    let ch_handle = tokio::spawn(command_handler::run(
+        session_id.clone(),
+        conn.clone(),
+        cmd_rx,
+        event_tx.clone(),
+    ));
+
+    shutdown::wait_and_handle_with(shutdown_source, conn, session_id, event_tx).await?;
+
+    hb_handle.abort();
+    ipc_handle.abort();
+    ch_handle.abort();
+    Ok(())
+}
+
+/// Open the database at `db_path`, ensure a row exists in `sessions` for
+/// `session_id`, and return the wrapped connection.
+///
+/// Extracted from `run` so the bootstrap path is unit-testable without
+/// actually spawning the heartbeat / IPC / command-handler tasks.
+///
+/// # Errors
+///
+/// Returns `DroneError::Db` if the database cannot be opened or the
+/// session row cannot be inserted.
+pub fn bootstrap(
+    session_id: &str,
+    db_path: &std::path::Path,
+) -> Result<Arc<Mutex<rusqlite::Connection>>, DroneError> {
+    let conn = db::init(db_path)?;
+    seed_session(&conn, session_id)?;
+    Ok(Arc::new(Mutex::new(conn)))
+}
+
+fn seed_session(conn: &rusqlite::Connection, session_id: &str) -> Result<(), db::DbError> {
+    conn.execute(
+        "INSERT OR IGNORE INTO sessions (id, status) VALUES (?1, 'active')",
+        rusqlite::params![session_id],
+    )?;
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn shutdown_signal_future() -> &'static str {
+    use tokio::signal::unix::{signal, SignalKind};
+    let mut term = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+    let mut int = signal(SignalKind::interrupt()).expect("install SIGINT handler");
+    tokio::select! {
+        _ = term.recv() => "sigterm",
+        _ = int.recv()  => "sigint",
+    }
+}
+
+#[cfg(windows)]
+async fn shutdown_signal_future() -> &'static str {
+    use tokio::signal::windows::{ctrl_break, ctrl_c};
+    let mut br = ctrl_break().expect("install ctrl_break handler");
+    let mut ci = ctrl_c().expect("install ctrl_c handler");
+    tokio::select! {
+        _ = br.recv() => "ctrl_break",
+        _ = ci.recv() => "ctrl_c",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+    use tokio::time::{timeout, Duration};
+
+    #[test]
+    fn bootstrap_creates_database_and_seeds_session() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("d.sqlite");
+
+        let conn = bootstrap("session-x", &path).expect("bootstrap");
+
+        let count: i64 = conn
+            .blocking_lock()
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE id = 'session-x'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(count, 1, "bootstrap must seed the session row");
+    }
+
+    #[test]
+    fn bootstrap_is_idempotent_for_same_session() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("d.sqlite");
+
+        let _conn1 = bootstrap("s1", &path).expect("first");
+        let conn2 = bootstrap("s1", &path).expect("second");
+
+        let count: i64 = conn2
+            .blocking_lock()
+            .query_row("SELECT COUNT(*) FROM sessions WHERE id = 's1'", [], |r| {
+                r.get(0)
+            })
+            .expect("count");
+        assert_eq!(count, 1, "duplicate bootstrap must not create extra rows");
+    }
+
+    #[test]
+    fn drone_error_wraps_db_error() {
+        let err = db::DbError::Sqlite(rusqlite::Error::QueryReturnedNoRows);
+        let top: DroneError = err.into();
+        assert!(matches!(top, DroneError::Db(_)));
+    }
+
+    fn temp_socket_path() -> PathBuf {
+        #[cfg(unix)]
+        {
+            let dir = TempDir::new().expect("tempdir");
+            let p = dir.path().join("d.sock");
+            std::mem::forget(dir);
+            p
+        }
+        #[cfg(windows)]
+        {
+            let suffix = uuid::Uuid::new_v4();
+            PathBuf::from(format!(r"\\.\pipe\drone-run-test-{suffix}"))
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn run_inner_drives_full_orchestration() {
+        let dir = TempDir::new().expect("tempdir");
+        let db_path = dir.path().join("d.sqlite");
+        let socket = temp_socket_path();
+
+        let conn = bootstrap("s1", &db_path).expect("bootstrap");
+        let signal = async { "shutdown" };
+
+        let result = timeout(
+            Duration::from_secs(3),
+            run_inner(conn.clone(), "s1".to_string(), socket, signal),
+        )
+        .await
+        .expect("run_inner did not return");
+        result.expect("run_inner returned an error");
+
+        let count: i64 = conn
+            .lock()
+            .await
+            .query_row(
+                "SELECT COUNT(*) FROM snapshots WHERE event_type = 'shutdown'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(count, 1, "shutdown must produce one emergency snapshot");
+    }
+}
