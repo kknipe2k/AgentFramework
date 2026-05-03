@@ -1,16 +1,16 @@
-Stage Prompt Protocol
+# Stage Prompt Protocol
 > XML schema for stage CLI prompts. Defines required and optional slots, the two schemas (work-stage and closeout-stage), where prompts live, and how they're extracted and validated. Companion to `BUILD-PLAYBOOK.md`.
 ---
-1. Purpose
+## 1. Purpose
 Stage CLI prompts are the structured input pasted into a fresh agent session at the start of each stage. They orient the agent, constrain scope, name the gates, and reference the protocols (retrospective, commit, gate matrix) the stage must follow.
 This document defines the schema. It is the canonical reference for how stage prompts are written; the bare templates derived from it live at `prompts/WORK-STAGE-TEMPLATE.md` and `prompts/CLOSEOUT-STAGE-TEMPLATE.md`.
-2. Why XML inside markdown
+## 2. Why XML inside markdown
 The Phase doc has two distinct audiences with different needs.
 The human reads it for planning, scope review, and navigation. Markdown is what humans read — headers, tables, links, prose narrative for the milestone.
 The agent in a fresh session consumes the structured prompt portion. It benefits from explicit slots (`<context>`, `<deliverable>`, `<gates>`) so nothing required gets dropped, parsing is unambiguous, and stage prompts can be diffed cleanly across milestones to see exactly what evolved.
 Pure-markdown prompts lose the slot discipline that makes them parseable and diffable. Pure-XML phase docs become unreadable for the planning purpose. The hybrid — markdown wrapper, XML inside fenced code blocks — gives both audiences what they need.
 A second-order benefit: every prompt across all milestones can be extracted programmatically with a single regex over fenced ```xml blocks. This is the bridge to ARIA (or any orchestrator) running phases later without rewriting the prompts.
-3. Where prompts live
+## 3. Where prompts live
 Inside fenced ````xml` code blocks within `docs/build-prompts/M[NN]-<title>.md`. One fenced block per stage. The Phase doc's markdown wrapper is for human planning and review; the XML inside the fenced blocks is what gets pasted into a fresh agent session.
 The Phase doc looks roughly like this:
 ```markdown
@@ -51,7 +51,7 @@ The Phase doc looks roughly like this:
 </closeout_stage_prompt>
 \`\`\`
 ```
-4. Programmatic extraction
+## 4. Programmatic extraction
 The contract for extraction is simple and stable:
 Every stage prompt is inside a fenced ````xml` block.
 Exactly one root element per block: `<work_stage_prompt>` or `<closeout_stage_prompt>`.
@@ -63,16 +63,16 @@ Confirm the root tag is one of the two valid schemas
 Confirm `id` attribute matches the format
 Confirm all required tags for the schema are present
 Confirm no foreign tags appear (every tag must be in the protocol)
-5. The two schemas
+## 5. The two schemas
 There are exactly two stage prompt schemas. They share most tags but the closeout adds requirements that don't apply to work stages.
 Schema	Used for	Distinct requirements
 `<work_stage_prompt>`	Work stages (A, B, C, D, …)	Concrete deliverable, test plan required, acceptance criteria
 `<closeout_stage_prompt>`	Closeout stage (E, the final stage of every milestone)	Cumulative reads, gap-analysis entry, append-only verification, three-artifact review
 The closeout is genuinely a different ceremony — it does cumulative review and writes the immutable ledger entry that gates the milestone PR. Forcing it into the work-stage schema with optional tags would lose enforcement: a closeout missing `<cumulative_reads>` is broken; a work stage missing `<cumulative_reads>` is fine. Two schemas make this difference enforceable.
-6. Common tags (used by both schemas)
-Root attribute: `id`
+## 6. Common tags (used by both schemas)
+### Root attribute: `id`
 Required. Format `M[NN].<X>`. Examples: `M01.A`, `M01.E`, `M11.D`. Used for retrospective filenames, session register entries, and cross-references.
-`<context>`
+### `<context>`
 Required. Two to four sentences. Why this stage exists, what it builds on, what's about to happen. The orientation paragraph the agent reads first after expanding the prompt.
 ```xml
 <context>
@@ -82,7 +82,7 @@ Required. Two to four sentences. Why this stage exists, what it builds on, what'
   first stage of the project.
 </context>
 ```
-`<read_first>`
+### `<read_first>`
 Required. Ordered list of files to read before any code. Cardinality: usually 4–8 files. Always includes the playbook, project identity, relevant spec sections, and the gate matrix.
 ```xml
 <read_first>
@@ -95,7 +95,7 @@ Required. Ordered list of files to read before any code. Cardinality: usually 4�
   <file>docs/gotchas.md</file>
 </read_first>
 ```
-`<read_prior_milestones>`
+### `<read_prior_milestones>`
 Optional. Used by Stage A of any non-first milestone that absorbs carry-forward work from prior milestones (the canonical pattern: Stage A closes 🟡 Important items from the prior milestone's gap-analysis entry before opening the milestone's real deliverables). Distinct from `<read_first>` (general orientation) and from `<read_prior_stages>` (within-milestone retrospectives, used by Stage B+).
 ```xml
 <read_prior_milestones>
@@ -112,7 +112,7 @@ Multiple prior milestones can be referenced:
 </read_prior_milestones>
 ```
 Omit this tag for Stage A of the first milestone (no prior to absorb) and for Stage B+ (which uses `<read_prior_stages>` for within-milestone reads).
-`<scope_locks>`
+### `<scope_locks>`
 Required. Constraints from spec or ADRs that apply across this stage. These are the things the agent must not do even if locally tempting. Contrasts with `<acceptance_criteria>` (what must be done) — `<scope_locks>` is what must not.
 Inline form (use when no Phase doc section exists for stage scope — e.g., a single-stage milestone or a stage whose locks are uniquely stage-specific):
 ```xml
@@ -128,7 +128,7 @@ Reference form (required when the Phase doc has a "Key constraints" or equivalen
 <scope_locks ref="docs/build-prompts/M02-event-pipeline.md" section="Key constraints"/>
 ```
 Use one form or the other, never both. Validator rejects inline content if the named section exists in the Phase doc (strict reference-first; v1.2 hardening).
-`<gates milestone="M[NN]"/>`
+### `<gates milestone="M[NN]"/>`
 Required. Reference to the gate matrix. The agent looks up the milestone row in `docs/gates.md` to see which gates are live. Self-closing tag with `milestone` attribute.
 ```xml
 <gates milestone="M01"/>
@@ -139,12 +139,12 @@ If a stage temporarily relaxes a gate (rare; requires ADR), use the override for
   <override gate="coverage_threshold" reason="ADR-0007: M01.A produces no testable code; coverage gate activates at M01.B"/>
 </gates>
 ```
-`<self_correction_budget>`
+### `<self_correction_budget>`
 Optional; defaults to 3 per `BUILD-PLAYBOOK.md` §4.3. Override only when the work genuinely warrants it (e.g., a debugging stage where iteration is the deliverable).
 ```xml
 <self_correction_budget>3</self_correction_budget>
 ```
-`<retrospective_requirements>`
+### `<retrospective_requirements>`
 Required. Reference to the per-stage retrospective template. Self-closing.
 ```xml
 <retrospective_requirements ref="prompts/RETROSPECTIVE-TEMPLATE.md"/>
@@ -155,12 +155,12 @@ If the stage has retrospective items beyond the template (e.g., specific frictio
   <special_log>Time spent on Cargo.toml feature flag debugging — flag if &gt;30 min</special_log>
 </retrospective_requirements>
 ```
-`<commit_protocol>`
+### `<commit_protocol>`
 Required. Reference to the playbook section. Self-closing. The agent re-reads §4.7 to refresh on the do-not-commit rule.
 ```xml
 <commit_protocol ref="BUILD-PLAYBOOK.md#4.7"/>
 ```
-`<commit_message>`
+### `<commit_message>`
 Required. Reference to the pre-authored commit message in the Phase doc (each stage's `X.6 Commit Message` section). Self-closing. Section names are resolved by markdown-AST heading lookup, not URI fragments — drop the URL anchor form entirely (renderer-dependent slugification: `### A.6 Commit Message` → `#a6-commit-message` on GitHub, `#a-6-commit-message` on GitLab/mdBook, etc.).
 ```xml
 <commit_message ref="docs/build-prompts/M02-event-pipeline.md" section="A.6 Commit Message"/>
@@ -177,7 +177,7 @@ If a stage genuinely cannot have a pre-authored commit message (rare; usually on
 ```
 Default to the reference form. Inline is the exception.
 
-`<read_reference>`
+### `<read_reference>`
 Optional. Files the agent should read for **archetypal pattern reference** (not orientation, not decisions). Distinct from `<read_first>` (general orientation files) and `<read_prior_stages>` (within-milestone retrospectives' Decisions sections). Use when the stage's implementation should mirror a pattern that already exists in the codebase.
 ```xml
 <read_reference>
@@ -187,7 +187,7 @@ Optional. Files the agent should read for **archetypal pattern reference** (not 
 ```
 The `purpose` attribute is required — names *why* the file is being referenced. Without it, the slot degrades into "miscellaneous reads" and loses its discriminator value. Validator warns if `purpose` is missing (warning, not error, in v1.2; promote to error in v1.3 once usage stabilizes).
 
-`<execution_warnings>`
+### `<execution_warnings>`
 Optional. Inline operational warnings — workflow-time guardrails that apply during stage execution (cost concerns, side-effecting commands, environment-dependent behavior). Distinct from `<gotchas>` (pre-flight implementation traps) and `<scope_locks>` (deliverable-shape constraints).
 ```xml
 <execution_warnings>
@@ -196,7 +196,7 @@ Optional. Inline operational warnings — workflow-time guardrails that apply du
 </execution_warnings>
 ```
 The distinction matters: a `<gotchas>` entry warns about a code-shape trap the agent might write into a file; an `<execution_warnings>` entry warns about a *command* the agent might run during the stage. Mixing them in `<gotchas>` (the v1.0/v1.1 pattern) loses the action-vs-artifact discriminator.
-`<approval_surface>`
+### `<approval_surface>`
 Required. Enumerates what the agent surfaces to the human at stage end and in what order. The order matters — the human reads top-down.
 For work stages, default order: diff stat → gate results → retrospective → draft commit message → "I will not commit until you approve."
 ```xml
@@ -208,9 +208,9 @@ For work stages, default order: diff stat → gate results → retrospective →
   <item>explicit statement: "I will not commit until you approve."</item>
 </approval_surface>
 ```
-7. Work-stage-only tags
+## 7. Work-stage-only tags
 These tags are valid only inside `<work_stage_prompt>`.
-`<deliverable>`
+### `<deliverable>`
 Required. What this stage produces. Concrete: files, modules, capabilities. Not aspirational. If you can't enumerate it, the stage isn't ready to start.
 Inline form (use only when no Phase doc section enumerates the deliverable — e.g., a stage with a one-or-two-item produce-list that doesn't warrant a Phase doc section):
 ```xml
@@ -228,7 +228,7 @@ Reference form (required when the Phase doc has a detailed `X.2 Files to Change`
 ```
 Use one form or the other, never both. Items in inline form are implicitly ordered (top-to-bottom = implementation order); items in the referenced section are ordered by their position in that section. Validator rejects inline content if the named section exists in the Phase doc.
 
-`<execution_steps>`
+### `<execution_steps>`
 Required. Procedural anchor: the named sequence the agent walks during the stage. Provides the work-cycle skeleton without restating the playbook's internal rules. Each `<step>` names a phase the agent moves through; the playbook (`BUILD-PLAYBOOK.md`) defines what each named step entails.
 ```xml
 <execution_steps>
@@ -242,12 +242,12 @@ Required. Procedural anchor: the named sequence the agent walks during the stage
 Standard step names (validator warns on unrecognized names): `write_failing_tests`, `implement`, `verify_gates`, `fill_retrospective`, `surface`. Stages with non-standard cycles (e.g., a debugging stage where iteration is the deliverable) may add custom steps with explicit `name` attributes; document them in the Phase doc's stage section.
 The `budget` / `budget_iterations` attributes are advisory — if a stage budgets `verify_gates` at 3 iterations and the agent hits 4, the agent surfaces per `BUILD-PLAYBOOK.md` §4.3 escalation rule rather than silently continuing.
 Why this slot exists: in v1.0/v1.1, the procedural sequence lived in inline STEP 1–5 prose inside each prompt. That worked but duplicated playbook content into every prompt and risked drift. The slot replaces the prose with named anchors that resolve to playbook sections.
-`<test_plan_required>`
+### `<test_plan_required>`
 Required. Almost always `true`. The agent must state the test plan before writing code per `BUILD-PLAYBOOK.md` §3.3. Setting `false` means the stage produces no testable code (rare; usually only the very first scaffolding stage of a project).
 ```xml
 <test_plan_required>true</test_plan_required>
 ```
-`<acceptance_criteria>`
+### `<acceptance_criteria>`
 Required. The stage's exit conditions as a checklist. The agent verifies each before surfacing for approval. Distinct from gates (which are CI-style automated checks) and from `<deliverable>` (which is what files exist) — acceptance criteria are behavioral checks the deliverable must satisfy.
 Inline form (use only when no Phase doc section enumerates the criteria):
 ```xml
@@ -265,7 +265,7 @@ Reference form (required when the Phase doc has a `X.4 Tests` or equivalent sect
 <acceptance_criteria ref="docs/build-prompts/M02-event-pipeline.md" section="A.4 Tests"/>
 ```
 Use one form or the other, never both. Validator rejects inline content if the named section exists in the Phase doc.
-`<read_prior_stages>`
+### `<read_prior_stages>`
 Required for Stage B onward; omitted for Stage A. References to prior stage retrospectives' "Decisions for next stage" sections. The agent reads these as the first action in the stage and applies the decisions.
 ```xml
 <read_prior_stages>
@@ -279,9 +279,9 @@ For Stage C+, list all prior stages of the same milestone:
   <retrospective section="decisions">retrospectives/M01.B-retrospective.md</retrospective>
 </read_prior_stages>
 ```
-8. Closeout-only tags
+## 8. Closeout-only tags
 These tags are valid only inside `<closeout_stage_prompt>`.
-`<cumulative_reads>`
+### `<cumulative_reads>`
 Required. Enumerates what must be read before drafting the closeout artifacts. Distinct from `<read_first>` (orientation files for any stage) — cumulative reads are the body of work the closeout reviews.
 ```xml
 <cumulative_reads>
@@ -292,7 +292,7 @@ Required. Enumerates what must be read before drafting the closeout artifacts. D
   <summary>retrospectives/M01-summary.md (will be authored as part of this stage)</summary>
 </cumulative_reads>
 ```
-`<deliverables>`
+### `<deliverables>`
 Required. The closeout produces three artifacts. Plural form distinguishes from work-stage `<deliverable>`.
 ```xml
 <deliverables>
@@ -301,7 +301,7 @@ Required. The closeout produces three artifacts. Plural form distinguishes from 
   <pr_description>draft only; do not open PR until explicitly asked</pr_description>
 </deliverables>
 ```
-`<gap_analysis_requirements>`
+### `<gap_analysis_requirements>`
 Required. Reference to the playbook section that defines the six-section structure, plus a required `<gotchas_graduation>` subsection that audits per-stage `<gotchas>` entries across the milestone (v1.2 enforcement; see Authoring Rules §10 graduation rule).
 ```xml
 <gap_analysis_requirements ref="BUILD-PLAYBOOK.md" section="3.4 Gap Analysis Entry">
@@ -339,7 +339,7 @@ Validator rules for `<gotchas_graduation>`:
 - Each `<stage_review>` must contain at least one `<gotcha>` + `<disposition>` pair
 - `<disposition>` must be one of the four enum values
 - The validator does **not** semantically check correctness of the disposition (author judgment); it only checks the structural shape
-`<append_only_verification>`
+### `<append_only_verification>`
 Required. Names the two append-only checks: local diff and CI job.
 ```xml
 <append_only_verification>
@@ -347,7 +347,7 @@ Required. Names the two append-only checks: local diff and CI job.
   <ci_check name="gap-analysis-append-only">fails if any prior line is modified</ci_check>
 </append_only_verification>
 ```
-`<three_artifact_review>`
+### `<three_artifact_review>`
 Required. Names the three artifacts the human reviews at PR time and the immutability flag for the ledger entry.
 ```xml
 <three_artifact_review>
@@ -357,8 +357,8 @@ Required. Names the three artifacts the human reviews at PR time and the immutab
   <pushback_blocks_pr>true</pushback_blocks_pr>
 </three_artifact_review>
 ```
-9. Optional tags (valid in both schemas)
-`<adr_triggers>`
+## 9. Optional tags (valid in both schemas)
+### `<adr_triggers>`
 Use when the stage's planned work might trip ADR requirements (per `BUILD-PLAYBOOK.md` §4.8). Pre-flagging keeps the agent from discovering the requirement mid-stage.
 ```xml
 <adr_triggers>
@@ -366,7 +366,7 @@ Use when the stage's planned work might trip ADR requirements (per `BUILD-PLAYBO
   <trigger>If any new core dependency is added beyond those named in spec, file ADR</trigger>
 </adr_triggers>
 ```
-`<gotchas>`
+### `<gotchas>`
 Stage-specific traps. Project-wide gotchas live in `docs/gotchas.md` and are read via `<read_first>`. Use this tag only for traps unique to this stage that don't generalize.
 ```xml
 <gotchas>
@@ -374,19 +374,19 @@ Stage-specific traps. Project-wide gotchas live in `docs/gotchas.md` and are rea
   <trap>cargo workspace inheritance for lints requires Cargo.toml [workspace.lints], not [lints]</trap>
 </gotchas>
 ```
-`<dependencies>`
+### `<dependencies>`
 Use when a stage depends on artifacts outside the obvious prior-stage chain (e.g., depends on an external review, an upstream branch, an ADR not yet accepted).
 ```xml
 <dependencies>
   <dependency>ADR-0004 (code-signing deferral) must be Accepted before Stage D</dependency>
 </dependencies>
 ```
-`<time_box>`
+### `<time_box>`
 Estimated wall-clock duration. Informs staging boundaries, not deliverable size (per `BUILD-PLAYBOOK.md` §1.2). Reviewed at retrospective for soft gate S4 (within 2× of actual).
 ```xml
 <time_box estimate_hours="6"/>
 ```
-10. Authoring rules
+## 10. Authoring rules
 One stage per fenced block. Don't combine stages. The Phase doc may have many fenced blocks but each contains exactly one root element.
 No foreign tags. Every tag inside a stage prompt must be in this protocol. Adding a new tag means updating this doc first (and bumping the protocol version per Part 13). Drift is a bug.
 No HTML escaping inside `<context>` or prose tags unless required. XML inside fenced markdown blocks parses cleanly with literal angle brackets in attribute values via `&lt;` and `&gt;`. Use them only when the text contains XML-meaningful characters (e.g., "<30 min").
@@ -404,7 +404,7 @@ Validator behavior:
 Section-name resolution (drops URI fragments — v1.2 anchor-stability fix). Reference tags use the `section="..."` attribute, not URL fragment notation. The validator parses the referenced markdown file's AST, finds the heading whose text matches the `section` attribute (case-sensitive, exact match), and confirms the heading exists. Renderer-dependent slugification (`### A.6 Commit Message` → `#a6-commit-message` on GitHub vs `#a-6-commit-message` on GitLab/mdBook vs different again on VS Code preview) becomes irrelevant.
 Never use both forms in the same tag. A tag with `ref="..."` must be self-closing (or contain only nested allowed children like `<gotchas_graduation>` for `<gap_analysis_requirements>`); a tag with inline list-content must not have a `ref` attribute. Validation enforces this.
 Gotchas graduation rule (v1.2 enforcement). Stage-specific `<gotchas>` are **per-stage scratch space**. Across a milestone, every per-stage `<gotchas>` entry must be evaluated at closeout via `<gotchas_graduation>` (see Section 8) and assigned a disposition: `kept | graduated | resolved | expired`. If a trap recurs in 2+ stages of the same milestone (or across milestones), promote it to `docs/gotchas.md` and remove it from per-stage tags. The closeout `<gotchas_graduation>` slot is the forcing function — without it, per-stage `<gotchas>` would accumulate as discipline decay sets in.
-11. Validation
+## 11. Validation
 A validation script lives at `scripts/validate-stage-prompts.py` (or your preferred language). It runs in CI on every PR that touches `docs/build-prompts/M[NN]-*.md`.
 **v1.2 ships lean.** Structural checks are errors (block CI); cross-file resolution checks are warnings (surface in PR check output, do not block). Cross-checks promote to errors in v1.3 once the cross-check logic survives 3+ milestones without false positives.
 **Errors (block CI):**
@@ -426,9 +426,9 @@ A validation script lives at `scripts/validate-stage-prompts.py` (or your prefer
 - Recognized `<execution_steps>` step names (`write_failing_tests`, `implement`, `verify_gates`, `fill_retrospective`, `surface`); custom step names emit a warning encouraging Phase doc documentation
 **Section-name resolution (replaces URI-fragment lookup — v1.2 anchor-stability fix).** The validator parses the referenced markdown file's AST, finds the heading whose text matches the `section="..."` attribute (case-sensitive, exact match), and confirms the heading exists. Renderer-agnostic. The fragment notation (e.g., `ref="...md#A.6"`) is no longer recognized; v1.2 prompts must use `ref="...md" section="A.6 Commit Message"`. v1.0-grandfathered prompts (M01-M02) skip this check via the version banner in the Phase doc header (see Authoring Rules §10 grandfathering).
 CI fails on any error; warnings are surfaced in the PR check output.
-12. Worked examples
+## 12. Worked examples
 **Note:** these examples illustrate v1.2 syntax (section-name refs, `<execution_steps>`, `<read_reference>`, `<execution_warnings>`, closeout `<gotchas_graduation>`). The actual M01-foundation.md and M02-event-pipeline.md prompts in the repo are v1.0-grandfathered and use the older syntax — see Authoring Rules §10 grandfathering. v1.2 applies to M03 forward.
-12.1 Work-stage prompt — M03.A (hypothetical, Live Graph milestone)
+### 12.1 Work-stage prompt — M03.A (hypothetical, Live Graph milestone)
 A non-first milestone, Stage A — absorbs M02 carry-forward and references the Phase doc's `A.3 Detailed Changes` + `A.4 Tests` + milestone-level `Key constraints` sections via the strict reference-first pattern.
 ```xml
 <work_stage_prompt id="M03.A">
@@ -508,7 +508,7 @@ A non-first milestone, Stage A — absorbs M02 carry-forward and references the 
   </approval_surface>
 </work_stage_prompt>
 ```
-12.2 Closeout-stage prompt — M03.F (hypothetical)
+### 12.2 Closeout-stage prompt — M03.F (hypothetical)
 Demonstrates the v1.2 closeout shape, including the required `<gotchas_graduation>` subsection inside `<gap_analysis_requirements>`.
 ```xml
 <closeout_stage_prompt id="M03.F">
@@ -614,7 +614,7 @@ Demonstrates the v1.2 closeout shape, including the required `<gotchas_graduatio
   </approval_surface>
 </closeout_stage_prompt>
 ```
-13. Anti-patterns
+## 13. Anti-patterns
 Stage prompts that look right but aren't. These are the failure modes worth naming.
 Vague `<context>`. "Build foundation stuff." Prompt is unusable; agent has to invent the framing. Two to four sentences naming the milestone, the stage, what builds on it.
 Aspirational `<deliverable>`. "A great Cargo workspace." If you can't enumerate the items, the stage isn't ready to start. Either decompose the work first or split into more stages.
@@ -640,7 +640,7 @@ Foreign `<disposition>` value. The enum is exhaustive: `kept | graduated | resol
 `<disposition>` of `expired` without rationale in `<target>`. The `expired` disposition is the safety valve for stage-local traps with no forward applicability — but it's also the easiest disposition to abuse ("expire" everything to skip the work of evaluating `kept`/`graduated`). The validator requires `<target>` to contain text beyond bare `n/a` (a single line of rationale minimum). Authors who can't articulate why a trap doesn't apply forward probably haven't actually evaluated it.
 `<read_reference>` without `purpose` attribute. Each `<file>` inside `<read_reference>` must have a `purpose="..."` attribute naming *why* the agent reads it. Without `purpose`, the slot degrades into "miscellaneous reads" and loses its discriminator value vs `<read_first>`. Validator warns in v1.2; promotes to error in v1.3.
 `<execution_warnings>` used for `<gotchas>` content (or vice versa). The distinction matters: `<gotchas>` warns about code-shape traps the agent might write into a file; `<execution_warnings>` warns about *commands* the agent might run during the stage. "Use `[workspace.lints.rust]` not `[lints]`" is a `<gotchas>` entry (artifact-shape trap). "Don't run `cargo test --features integration` — hits live API" is an `<execution_warnings>` entry (command-time guardrail). Mixing them loses the action-vs-artifact discriminator.
-14. Versioning this protocol
+## 14. Versioning this protocol
 This protocol changes when:
 A new tag is needed across all stages (additive)
 A tag's semantics change (breaking; requires migration of in-flight Phase docs)
@@ -648,7 +648,7 @@ The two-schema split needs revision (e.g., a third schema for a new stage type �
 Validation rules change (e.g., a previously-warning becomes an error)
 Substantive changes get clear `docs(stage-prompt-protocol): ...` commit messages and a CHANGELOG entry. The commit history of this file is itself an audit of how stage prompts evolved.
 If this protocol disagrees with `BUILD-PLAYBOOK.md`, the playbook wins. This protocol is the schema; the playbook is the authority on what stages are and how they run.
-Changelog
+### Changelog
 v1.2 — Eight additive/hardening changes informed by M01 + M02 retrospective + opinion review (M02 Phase Closeout). Anchor stability, procedural slot, two new content slots, strict reference-first, lean validator, gotchas-graduation enforcement, grandfathering of M01 + M02:
 1. **Anchor stability fix.** Reference tags use `section="..."` attribute instead of URI fragment notation (e.g., `ref="...md" section="A.6 Commit Message"` not `ref="...md#A.6"`). Renderer-agnostic, slugifier-agnostic. Validator resolves headings by markdown-AST lookup. Applies to `<commit_message>`, `<deliverable>`, `<acceptance_criteria>`, `<scope_locks>`, `<gap_analysis_requirements>`, `<commit_protocol>`. Old fragment form no longer recognized by the validator (v1.0-grandfathered prompts exempt via header banner).
 2. **New required slot `<execution_steps>`** in work stages. Named procedural anchor — `write_failing_tests → implement → verify_gates → fill_retrospective → surface`. Replaces inline STEP 1–5 prose that previously lived in each prompt; the slot resolves to playbook sections rather than restating them.
