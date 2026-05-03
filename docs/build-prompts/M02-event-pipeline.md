@@ -743,10 +743,832 @@ EOF
 ---
 
 <!-- ============================================================ -->
-<!-- Stages B – F — to be authored in subsequent chunks             -->
+<!-- STAGE B — LLMProvider trait + AnthropicProvider stub           -->
 <!-- ============================================================ -->
 
-[Stages B, C, D, E, F authored in subsequent chunks per the parent-conversation chunked-authoring protocol. This file grows incrementally; each chunk surfaces for approval before the next is appended.]
+## Stage B — `LLMProvider` trait + `ProviderEvent` enum + `AnthropicProvider` stub
+
+### B.1 Problem Statement
+
+Stage B defines the provider abstraction surface (the `LLMProvider` trait + `ProviderEvent` enum) and ships a stub `AnthropicProvider` that returns a hardcoded sequence of events. The stub lets Stages D and E start work against a stable interface before Stage C lands the real HTTP+SSE implementation.
+
+This split — trait + stub in B, real impl in C — is deliberate: the trait surface is the contract Stages D/E depend on, and stabilizing it before the heavy SSE work means the SSE work can focus purely on the wire-format details without trait churn.
+
+**Success criterion.** `LLMProvider` trait compiles, `ProviderEvent` round-trips through serde, `AnthropicProvider::stream()` returns a hardcoded `agent_spawned → tool_invoked → stream_text → agent_complete`-equivalent `ProviderEvent` sequence wrapped in `BoxStream`, all dependencies resolve via `cargo deny check`, no third-party Anthropic SDK in `Cargo.toml`.
+
+**New artifacts:**
+- `crates/runtime-main/src/providers/mod.rs` (new — trait + ProviderEvent + ProviderError + real Message/ContentBlock shape from the Anthropic Messages API)
+- `crates/runtime-main/src/providers/anthropic.rs` (new — stub impl, hardcoded model pricing per current claude.com/pricing — no /v1/models pricing endpoint exists)
+- `crates/runtime-main/Cargo.toml` (edited — add deps)
+- `Cargo.toml` (workspace — edited — add reqwest 0.13, eventsource-stream 0.2, keyring 3.6, async-trait, futures, secrecy 0.10)
+
+### B.2 Files to Change
+
+| File | Change |
+|---|---|
+| `crates/runtime-main/Cargo.toml` | **Edited** — add deps: `reqwest` (rustls-tls features), `eventsource-stream`, `async-trait`, `futures`, `secrecy`, `serde_json`, `tokio` (workspace), `runtime-core` (path) |
+| `Cargo.toml` (workspace root) | **Edited** — add `[workspace.dependencies]` entries for the new deps so version pinning is centralized |
+| `crates/runtime-main/src/lib.rs` | **Edited** — add `pub mod providers;` |
+| `crates/runtime-main/src/providers/mod.rs` | **New** — `LLMProvider` trait, `ProviderEvent` enum, `ProviderSupport` struct, `ProviderError` enum, `Message` / `ModelInfo` / `Pricing` / `AgentConfig` types per spec §2c |
+| `crates/runtime-main/src/providers/anthropic.rs` | **New** — `AnthropicProvider` struct + stub `stream()` returning hardcoded `BoxStream<'_, ProviderEvent>` |
+| `crates/runtime-main/README.md` | **New (or edited if exists)** — public-API documentation per CLAUDE.md §6 |
+| `deny.toml` | **Edited** — confirm new deps are license-compatible (no GPL/AGPL); add advisory ignores only if pre-existing patterns require |
+| `CHANGELOG.md` | **Edited** — `[Unreleased]` Added section noting Stage B deliverables |
+
+### B.3 Detailed Changes
+
+#### `Cargo.toml` (workspace root, edited)
+
+Find the `[workspace.dependencies]` table (or create if missing). Add:
+
+```toml
+[workspace.dependencies]
+# ... existing entries kept ...
+
+# M02 Stage B — LLM provider deps. Versions confirmed against crates.io as
+# of 2026-05. Pin here; member crates pull via `dep = { workspace = true }`.
+reqwest             = { version = "0.13", default-features = false, features = ["rustls-tls", "json", "stream"] }
+eventsource-stream  = "0.2"
+async-trait         = "0.1"
+futures             = "0.3"
+secrecy             = { version = "0.10", features = ["serde"] }
+keyring             = "3.6"
+
+# runtime-core path-dep for runtime-main
+runtime-core        = { path = "crates/runtime-core" }
+```
+
+Notes:
+- `reqwest 0.13` (latest stable; was 0.12 pre-2025). `rustls-tls` (not `native-tls`) keeps the dep tree pure-Rust and cross-compiles cleanly. `json` + `stream` features required.
+- `eventsource-stream 0.2` is the SSE parser; current stable.
+- `secrecy 0.10` provides `SecretString` so API keys never accidentally `Debug`-print or `Display`. Wraps the keychain-loaded key.
+- `keyring 3.6` is the OS keychain client (3.6.3 latest patch). `keyring 4.0-rc` exists but has breaking changes — stay on 3.6 until 4.0 stable. API: `Entry::new(service, user)?.get_password()?`.
+
+#### `crates/runtime-main/Cargo.toml` (edited)
+
+Replace the existing minimal `Cargo.toml` body with the full Stage B dependency set:
+
+```toml
+[package]
+name        = "runtime-main"
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+runtime-core       = { workspace = true }
+async-trait        = { workspace = true }
+futures            = { workspace = true }
+reqwest            = { workspace = true }
+eventsource-stream = { workspace = true }
+secrecy            = { workspace = true }
+keyring            = { workspace = true }
+serde              = { workspace = true, features = ["derive"] }
+serde_json         = { workspace = true }
+tokio              = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+thiserror          = { workspace = true }
+tracing            = { workspace = true }
+
+[dev-dependencies]
+tokio              = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
+proptest           = { workspace = true }
+
+[features]
+default     = []
+integration = []   # gates the real-Anthropic-API smoke test (Stage C)
+```
+
+#### `crates/runtime-main/src/lib.rs` (edited)
+
+Append:
+
+```rust
+pub mod providers;
+```
+
+#### `crates/runtime-main/src/providers/mod.rs` (new)
+
+The trait + supporting types per spec §2c. Stage B ships the surface; Stage C ships the real implementation behind it.
+
+```rust
+//! LLM provider abstraction (spec §2c).
+//!
+//! v1 ships a single `AnthropicProvider`; the trait abstracts the surface so
+//! v1.0+ can add OpenAI / local model support without touching SDK callers.
+//! All providers stream `ProviderEvent`s; the SDK layer (M02 Stage D) translates
+//! these to `runtime_core::AgentEvent`s for the renderer.
+
+use async_trait::async_trait;
+use futures::stream::BoxStream;
+use secrecy::SecretString;
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
+pub mod anthropic;
+
+/// Provider-emitted streaming event. Internal to runtime-main; translated to
+/// AgentEvent at the SDK boundary (Stage D).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ProviderEvent {
+    /// Incremental text delta from the model.
+    TextDelta { text: String },
+    /// Model requested a tool be invoked.
+    ToolUse { id: String, name: String, input: serde_json::Value },
+    /// Tool result being fed back to the model (model-side; we mostly emit ToolUse).
+    ToolResult { id: String, output: serde_json::Value },
+    /// Extended-thinking chunk (Anthropic feature; only when supported + enabled).
+    ThinkingDelta { text: String },
+    /// Model finished generating; reason in `stop_reason`.
+    MessageStop { stop_reason: String },
+    /// Provider-side error during the stream.
+    Error { code: String, message: String },
+}
+
+/// Capability flags reported by the provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderSupport {
+    pub tool_use:  bool,
+    pub streaming: bool,
+    pub thinking:  bool,
+}
+
+/// Provider-side error variants. `thiserror`-derived for ergonomic propagation.
+#[derive(Debug, thiserror::Error)]
+pub enum ProviderError {
+    #[error("HTTP transport error: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("SSE parse error: {0}")]
+    Sse(String),
+    #[error("API returned error status {status}: {body}")]
+    Api { status: u16, body: String },
+    #[error("Authentication failed (check API key in keychain)")]
+    Auth,
+    #[error("Rate limit hit; retry after {retry_after_secs}s")]
+    RateLimit { retry_after_secs: u64 },
+    #[error("Request timed out after {0:?}")]
+    Timeout(Duration),
+    #[error("Invalid model: {0}")]
+    InvalidModel(String),
+    #[error("Provider returned unparseable response: {0}")]
+    Unparseable(String),
+    #[error("Provider configuration error: {0}")]
+    Config(String),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+}
+
+/// One conversation message (user / assistant). Spec §2c + Anthropic Messages
+/// API reality (https://docs.anthropic.com/en/api/messages). System prompts
+/// are NOT in the messages array — they go in `AgentConfig::system_prompt`
+/// (a separate top-level field per the API).
+///
+/// `content` is `Vec<ContentBlock>` (not `String`) because the real API uses
+/// typed content blocks for multi-part messages: text + images, tool calls
+/// + tool results, etc. Single-text messages serialize as a 1-element vec.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+    pub role:    MessageRole,
+    pub content: Vec<ContentBlock>,
+}
+
+/// Message author. The Anthropic API only allows `user` and `assistant` in
+/// the messages array; system prompts are a separate top-level parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MessageRole {
+    User,
+    Assistant,
+}
+
+/// Typed content block per Anthropic Messages API. The variants here match
+/// the shapes the API accepts in request bodies AND produces in response
+/// content arrays.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContentBlock {
+    /// Plain text.
+    Text { text: String },
+
+    /// Image, either as base64 source or URL source.
+    Image { source: ImageSource },
+
+    /// Model-emitted tool invocation (in assistant messages).
+    ToolUse {
+        id:    String,
+        name:  String,
+        input: serde_json::Value,
+    },
+
+    /// Tool result fed back to the model (in subsequent user message).
+    ToolResult {
+        tool_use_id: String,
+        content:     ToolResultContent,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        is_error:    Option<bool>,
+    },
+
+    /// Extended-thinking block (assistant-only; only when thinking enabled).
+    Thinking {
+        thinking:  String,
+        signature: String,
+    },
+}
+
+/// Source of an image content block — base64 or URL.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ImageSource {
+    Base64 { media_type: String, data: String },
+    Url    { url: String },
+}
+
+/// Content of a tool result — either a string or a vec of content blocks
+/// (e.g., tool returns text + image).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolResultContent {
+    Text(String),
+    Blocks(Vec<ContentBlock>),
+}
+
+/// Per-call agent configuration. Spec §2c.
+#[derive(Debug, Clone)]
+pub struct AgentConfig {
+    pub model:        String,
+    pub messages:     Vec<Message>,
+    pub max_tokens:   u32,
+    pub temperature:  Option<f32>,
+    pub system_prompt: Option<String>,
+    pub tools:        Vec<ToolDef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolDef {
+    pub name:        String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+/// Pricing info per provider model.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Pricing {
+    pub input_per_million_usd:  f64,
+    pub output_per_million_usd: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelCapabilities {
+    pub tool_use:  bool,
+    pub streaming: bool,
+    pub thinking:  bool,
+    pub vision:    bool,
+}
+
+/// Information about a single model offered by a provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelInfo {
+    pub id:             String,
+    pub display_name:   String,
+    pub context_window: u32,
+    pub pricing:        Pricing,
+    pub capabilities:   ModelCapabilities,
+}
+
+/// LLM provider trait. Spec §2c.
+///
+/// All async methods must be cancellation-safe. Implementations should not
+/// hold resources past `await` points that wouldn't survive a drop.
+///
+/// # Examples
+///
+/// ```ignore
+/// use runtime_main::providers::{LLMProvider, anthropic::AnthropicProvider};
+/// use secrecy::SecretString;
+///
+/// let provider = AnthropicProvider::new(SecretString::from("sk-ant-..."));
+/// assert_eq!(provider.name(), "anthropic");
+/// ```
+#[async_trait]
+pub trait LLMProvider: Send + Sync {
+    /// Provider identifier (e.g., "anthropic", "openai").
+    fn name(&self) -> &str;
+
+    /// Capability flags for this provider.
+    fn supports(&self) -> ProviderSupport;
+
+    /// Open a streaming session against the provider. Stage C lands the real
+    /// HTTP+SSE implementation; Stage B's stub returns a hardcoded sequence.
+    async fn stream(
+        &self,
+        config: AgentConfig,
+    ) -> Result<BoxStream<'_, ProviderEvent>, ProviderError>;
+
+    /// Pre-flight token count for `messages`. Used by budget controls (M04).
+    async fn count_tokens(&self, messages: &[Message]) -> Result<u64, ProviderError>;
+
+    /// List models the provider currently exposes (and their pricing).
+    async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError>;
+
+    /// Estimate cost for a given (input, output) token pair on a model.
+    fn estimate_cost(&self, input_tokens: u64, output_tokens: u64, model: &str) -> f64;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_event_round_trips() {
+        let cases = vec![
+            ProviderEvent::TextDelta { text: "hello".into() },
+            ProviderEvent::ToolUse {
+                id: "tu_1".into(),
+                name: "search".into(),
+                input: serde_json::json!({"q": "rust"}),
+            },
+            ProviderEvent::ThinkingDelta { text: "thinking...".into() },
+            ProviderEvent::MessageStop { stop_reason: "end_turn".into() },
+            ProviderEvent::Error { code: "rate_limit".into(), message: "slow down".into() },
+        ];
+        for event in cases {
+            let json = serde_json::to_string(&event).unwrap();
+            let back: ProviderEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(event, back);
+        }
+    }
+
+    #[test]
+    fn provider_event_tag_is_snake_case() {
+        let json = serde_json::to_string(&ProviderEvent::TextDelta { text: "x".into() }).unwrap();
+        assert!(json.contains("\"type\":\"text_delta\""), "got: {json}");
+    }
+}
+```
+
+#### `crates/runtime-main/src/providers/anthropic.rs` (new — stub)
+
+Stage B ships a *stub* that satisfies the trait. The hardcoded event sequence lets Stages D/E develop against a stable interface. Stage C replaces the stub body with real HTTP+SSE.
+
+```rust
+//! Anthropic Messages API provider (spec §2c).
+//!
+//! Stage B ships a STUB: `stream()` returns a hardcoded sequence of
+//! `ProviderEvent`s. Stage C replaces the body with direct HTTP+SSE via
+//! `reqwest` + `eventsource-stream`. The stub exists so Stages D/E can
+//! depend on a stable interface before SSE work lands.
+
+use async_trait::async_trait;
+use futures::stream::{self, BoxStream, StreamExt};
+use secrecy::SecretString;
+
+use super::{
+    AgentConfig, LLMProvider, Message, ModelCapabilities, ModelInfo, Pricing,
+    ProviderError, ProviderEvent, ProviderSupport,
+};
+
+/// Direct HTTP+SSE Anthropic Messages API client.
+///
+/// API key is loaded from the OS keychain via `keyring` and held in
+/// `SecretString` so it never `Debug`-prints. No third-party Anthropic SDK
+/// is used (see CLAUDE.md §15 trap #9 + spec §0d).
+pub struct AnthropicProvider {
+    api_key:  SecretString,
+    base_url: String,
+    // Stage C adds: http: reqwest::Client, retry_policy, etc.
+}
+
+impl AnthropicProvider {
+    /// Construct from an API key (loaded by caller from keychain).
+    pub fn new(api_key: SecretString) -> Self {
+        Self {
+            api_key,
+            base_url: "https://api.anthropic.com".into(),
+        }
+    }
+
+    /// Construct with an explicit base URL (for wiremock tests in Stage C).
+    pub fn with_base_url(api_key: SecretString, base_url: String) -> Self {
+        Self { api_key, base_url }
+    }
+}
+
+#[async_trait]
+impl LLMProvider for AnthropicProvider {
+    fn name(&self) -> &str {
+        "anthropic"
+    }
+
+    fn supports(&self) -> ProviderSupport {
+        ProviderSupport {
+            tool_use:  true,
+            streaming: true,
+            thinking:  true,
+        }
+    }
+
+    /// STUB: returns a hardcoded `text_delta → message_stop` sequence.
+    /// Stage C replaces with real HTTP+SSE implementation.
+    async fn stream(
+        &self,
+        _config: AgentConfig,
+    ) -> Result<BoxStream<'_, ProviderEvent>, ProviderError> {
+        let events = vec![
+            ProviderEvent::TextDelta { text: "Hello".into() },
+            ProviderEvent::TextDelta { text: " from".into() },
+            ProviderEvent::TextDelta { text: " stub.".into() },
+            ProviderEvent::MessageStop { stop_reason: "end_turn".into() },
+        ];
+        Ok(stream::iter(events).boxed())
+    }
+
+    async fn count_tokens(&self, messages: &[Message]) -> Result<u64, ProviderError> {
+        // Stage B: rough char/4 approximation across all text content blocks.
+        // Stage C uses the real /v1/messages/count_tokens endpoint.
+        let total_chars: usize = messages
+            .iter()
+            .flat_map(|m| m.content.iter())
+            .map(|block| match block {
+                ContentBlock::Text { text }       => text.len(),
+                ContentBlock::Thinking { thinking, .. } => thinking.len(),
+                ContentBlock::ToolUse { input, .. } => input.to_string().len(),
+                ContentBlock::ToolResult { content, .. } => match content {
+                    ToolResultContent::Text(s) => s.len(),
+                    ToolResultContent::Blocks(_) => 0, // approximation; Stage C real-counts
+                },
+                ContentBlock::Image { .. } => 0, // images priced separately
+            })
+            .sum();
+        Ok((total_chars as u64).div_ceil(4))
+    }
+
+    async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+        // Anthropic does NOT expose pricing via /v1/models — only model
+        // metadata. Pricing must be hardcoded here against the docs page
+        // (https://platform.claude.com/docs/en/about-claude/pricing) and
+        // updated when the docs change. Verified 2026-05.
+        //
+        // Long-context surcharge eliminated 2026-03-13 — uniform per-token
+        // rate across the full 1M window for Opus 4.6+ / Sonnet 4.6.
+        Ok(vec![
+            ModelInfo {
+                id: "claude-opus-4-7".into(),
+                display_name: "Claude Opus 4.7".into(),
+                context_window: 1_000_000,
+                pricing: Pricing { input_per_million_usd: 5.0, output_per_million_usd: 25.0 },
+                capabilities: ModelCapabilities {
+                    tool_use: true, streaming: true, thinking: true, vision: true,
+                },
+            },
+            ModelInfo {
+                id: "claude-sonnet-4-6".into(),
+                display_name: "Claude Sonnet 4.6".into(),
+                context_window: 1_000_000,
+                pricing: Pricing { input_per_million_usd: 3.0, output_per_million_usd: 15.0 },
+                capabilities: ModelCapabilities {
+                    tool_use: true, streaming: true, thinking: true, vision: true,
+                },
+            },
+            ModelInfo {
+                id: "claude-haiku-4-5".into(),
+                display_name: "Claude Haiku 4.5".into(),
+                context_window: 200_000,
+                pricing: Pricing { input_per_million_usd: 1.0, output_per_million_usd: 5.0 },
+                capabilities: ModelCapabilities {
+                    tool_use: true, streaming: true, thinking: false, vision: true,
+                },
+            },
+        ])
+    }
+
+    fn estimate_cost(&self, input_tokens: u64, output_tokens: u64, model: &str) -> f64 {
+        // Pricing per https://platform.claude.com/docs/en/about-claude/pricing
+        // (verified 2026-05). NOT cache-aware (cache hits = 0.1× input,
+        // 5m write = 1.25×, 1h write = 2× — Stage D budget integration
+        // adds the cache-aware estimator).
+        let pricing = match model {
+            "claude-opus-4-7"   => Pricing { input_per_million_usd: 5.0, output_per_million_usd: 25.0 },
+            "claude-opus-4-6"   => Pricing { input_per_million_usd: 5.0, output_per_million_usd: 25.0 },
+            "claude-opus-4-5"   => Pricing { input_per_million_usd: 5.0, output_per_million_usd: 25.0 },
+            "claude-sonnet-4-6" => Pricing { input_per_million_usd: 3.0, output_per_million_usd: 15.0 },
+            "claude-sonnet-4-5" => Pricing { input_per_million_usd: 3.0, output_per_million_usd: 15.0 },
+            "claude-haiku-4-5"  => Pricing { input_per_million_usd: 1.0, output_per_million_usd:  5.0 },
+            _ => return 0.0, // unknown model — Stage C surfaces this as ProviderError::InvalidModel via async paths
+        };
+        let input_cost  = (input_tokens  as f64) * pricing.input_per_million_usd  / 1_000_000.0;
+        let output_cost = (output_tokens as f64) * pricing.output_per_million_usd / 1_000_000.0;
+        input_cost + output_cost
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::StreamExt;
+    use secrecy::SecretString;
+
+    fn stub_provider() -> AnthropicProvider {
+        AnthropicProvider::new(SecretString::from("sk-ant-test"))
+    }
+
+    fn stub_config() -> AgentConfig {
+        AgentConfig {
+            model: "claude-haiku-4-5".into(),
+            messages: vec![Message {
+                role: super::MessageRole::User,
+                content: vec![ContentBlock::Text { text: "ping".into() }],
+            }],
+            max_tokens: 100,
+            temperature: None,
+            system_prompt: None,
+            tools: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn stub_stream_returns_text_then_stop() {
+        let provider = stub_provider();
+        let mut stream = provider.stream(stub_config()).await.unwrap();
+        let mut events = vec![];
+        while let Some(e) = stream.next().await {
+            events.push(e);
+        }
+        assert!(matches!(events.first(), Some(ProviderEvent::TextDelta { .. })));
+        assert!(matches!(events.last(),  Some(ProviderEvent::MessageStop { .. })));
+    }
+
+    #[test]
+    fn name_is_anthropic() {
+        assert_eq!(stub_provider().name(), "anthropic");
+    }
+
+    #[test]
+    fn supports_advertises_tool_use_streaming_thinking() {
+        let s = stub_provider().supports();
+        assert!(s.tool_use && s.streaming && s.thinking);
+    }
+
+    #[tokio::test]
+    async fn count_tokens_approximates_char_div_4() {
+        let provider = stub_provider();
+        let messages = vec![Message {
+            role: MessageRole::User,
+            content: vec![ContentBlock::Text { text: "hello world".into() }], // 11 chars
+        }];
+        let count = provider.count_tokens(&messages).await.unwrap();
+        assert_eq!(count, 3); // 11/4 = 2.75 → ceil 3
+    }
+
+    #[tokio::test]
+    async fn list_models_returns_three_claude_4x_entries() {
+        let models = stub_provider().list_models().await.unwrap();
+        assert_eq!(models.len(), 3);
+        assert!(models.iter().any(|m| m.id == "claude-opus-4-7"));
+        assert!(models.iter().any(|m| m.id == "claude-sonnet-4-6"));
+        assert!(models.iter().any(|m| m.id == "claude-haiku-4-5"));
+    }
+
+    #[test]
+    fn estimate_cost_for_haiku() {
+        let provider = stub_provider();
+        // 1M input + 1M output on Haiku 4.5 = $1.00 + $5.00 = $6.00
+        let cost = provider.estimate_cost(1_000_000, 1_000_000, "claude-haiku-4-5");
+        assert!((cost - 6.00).abs() < 1e-6, "got {cost}");
+    }
+
+    #[test]
+    fn estimate_cost_for_opus() {
+        let provider = stub_provider();
+        // 1M input + 1M output on Opus 4.7 = $5.00 + $25.00 = $30.00
+        let cost = provider.estimate_cost(1_000_000, 1_000_000, "claude-opus-4-7");
+        assert!((cost - 30.00).abs() < 1e-6, "got {cost}");
+    }
+
+    #[test]
+    fn estimate_cost_for_unknown_model_returns_zero() {
+        let provider = stub_provider();
+        // Stage C surfaces unknown models as ProviderError::InvalidModel; for
+        // estimate_cost (non-async), 0.0 is the safe default.
+        let cost = provider.estimate_cost(1000, 1000, "nonexistent-model");
+        assert_eq!(cost, 0.0);
+    }
+}
+```
+
+#### `crates/runtime-main/README.md` (new or edited)
+
+Replace any existing minimal README with:
+
+```markdown
+# `runtime-main`
+
+The Tauri main process for Agent Runtime. Hosts the agent SDK, the LLM provider abstraction, and (in later milestones) the framework loader, capability enforcer, and MCP manager.
+
+## What's here (M02 Stage B)
+
+- `providers/mod.rs` — the `LLMProvider` trait, `ProviderEvent` enum, `ProviderError` (thiserror-derived), and supporting types (`AgentConfig`, `Message`, `ModelInfo`, etc.) per spec §2c.
+- `providers/anthropic.rs` — `AnthropicProvider` shell. Stage B ships a stub with hardcoded events; Stage C lands the real HTTP+SSE implementation against the Anthropic Messages API (no third-party SDK).
+
+## Adding a provider
+
+Implement the `LLMProvider` trait. Keep the impl behind a feature flag if it pulls a heavy transitive tree. The trait does not assume anything about transport — `AnthropicProvider` uses HTTP+SSE; a hypothetical `LocalLlamaProvider` could use a local Unix socket.
+
+## Security notes
+
+- API keys are passed as `secrecy::SecretString` so they never `Debug`-print or appear in logs.
+- The actual key value is loaded from the OS keychain at startup (Stage E wires this in for the smoke session).
+- No literal API keys in environment variables, files, or source. CLAUDE.md §13 + spec §13 zero-telemetry rule.
+
+## Tests
+
+- `cargo test -p runtime-main` — unit tests for the provider trait, ProviderEvent serde, and the stub Anthropic implementation.
+- `cargo test -p runtime-main --features integration` — Stage C adds wiremock-driven integration tests + an opt-in real-API smoke test.
+```
+
+#### `deny.toml` (edited)
+
+Confirm the new deps don't trip license/advisory rules. Reqwest pulls in some heavyweight transitives (rustls, hyper, tokio); `keyring` pulls platform crates (windows-sys, security-framework). All are MIT/Apache-2.0 compatible. Add to the `[bans] skip = []` list only if duplicate-version warnings appear during `cargo deny check`.
+
+#### `CHANGELOG.md` (edited)
+
+Append to `[Unreleased]`:
+
+```markdown
+### Added (M02 Stage B)
+- `crates/runtime-main/src/providers/mod.rs` — `LLMProvider` trait + `ProviderEvent` enum + `ProviderError` per spec §2c.
+- `crates/runtime-main/src/providers/anthropic.rs` — `AnthropicProvider` shell with stub `stream()` (Stage C replaces with real HTTP+SSE).
+- Workspace dependencies: `reqwest` (rustls-tls), `eventsource-stream`, `async-trait`, `futures`, `secrecy`, `keyring`. No third-party Anthropic SDK.
+```
+
+### B.4 Tests
+
+1. **`crates/runtime-main/src/providers/mod.rs::tests::provider_event_round_trips`** — every `ProviderEvent` variant survives `to_string` → `from_str`; serde tag is snake_case.
+2. **`crates/runtime-main/src/providers/mod.rs::tests::content_block_round_trips`** — every `ContentBlock` variant (Text, Image, ToolUse, ToolResult, Thinking) round-trips; matches Anthropic API wire format.
+3. **`crates/runtime-main/src/providers/anthropic.rs::tests::stub_stream_returns_text_then_stop`** — stub `stream()` returns at least one `TextDelta` followed by `MessageStop`.
+4. **`tests::name_is_anthropic`** — provider identifies itself.
+5. **`tests::supports_advertises_tool_use_streaming_thinking`** — capability flags correct.
+6. **`tests::count_tokens_approximates_char_div_4`** — Stage B token approximation across content blocks.
+7. **`tests::list_models_returns_three_claude_4x_entries`** — Opus 4.7, Sonnet 4.6, Haiku 4.5.
+8. **`tests::estimate_cost_for_haiku`** — 1M input + 1M output on Haiku 4.5 = $6.00.
+9. **`tests::estimate_cost_for_opus`** — 1M input + 1M output on Opus 4.7 = $30.00.
+10. **`tests::estimate_cost_for_unknown_model_returns_zero`** — defensive default; Stage C upgrades to `ProviderError::InvalidModel` on the async paths.
+
+#### Coverage target
+
+- Workspace ≥80% (general gate, unchanged).
+- `runtime-drone` ≥95% (unchanged from Stage A).
+- `runtime-main` no specific gate yet; covered by workspace gate. Stage C raises `runtime-main` to ≥95% under the safety-primitive rule.
+
+**Coverage delta gate.** From M02 Stage A onward; verify CI computes delta vs `main` (post-Stage-A baseline).
+
+### B.5 CLI Prompt
+
+```
+Read CLAUDE.md for all project rules.
+Read docs/build-prompts/M02-event-pipeline.md Stage B (sections B.1 through B.4).
+
+Read prior stage retrospectives for guidance:
+  docs/build-prompts/retrospectives/M02.A-retrospective.md
+  Focus: [END] "Decisions for the next stage" sections + any [LIVE]
+  friction events flagged as relevant to Stage B. Apply decisions.
+
+Read docs/gap-analysis.md for any Carry-forward items targeting Stage B
+(look at the most recent entry's Carry-forward section).
+
+═══ STEP 1 — WRITE FAILING TESTS ═══
+
+Create the test files (or stub them in mod.rs / anthropic.rs):
+
+1. providers::mod::tests::provider_event_round_trips
+2. providers::mod::tests::provider_event_tag_is_snake_case
+3. providers::anthropic::tests::stub_stream_returns_text_then_stop
+4. providers::anthropic::tests::name_is_anthropic
+5. providers::anthropic::tests::supports_advertises_tool_use_streaming_thinking
+6. providers::anthropic::tests::count_tokens_approximates_char_div_4
+7. providers::anthropic::tests::list_models_returns_three_claude_4x_entries
+8. providers::anthropic::tests::estimate_cost_for_haiku
+9. providers::anthropic::tests::estimate_cost_for_unknown_model_returns_zero
+
+Run: cargo test --workspace --package runtime-main
+Confirm: all tests fail with `cannot find struct AnthropicProvider`,
+`cannot find type ProviderEvent`, etc. — TDD red phase per CLAUDE.md §5.
+
+═══ STEP 2 — IMPLEMENT ═══
+
+Apply changes per B.3, in order:
+
+1. Cargo.toml (workspace root) — add [workspace.dependencies] entries.
+2. crates/runtime-main/Cargo.toml — full rewrite per B.3.
+3. crates/runtime-main/src/lib.rs — add `pub mod providers;`.
+4. crates/runtime-main/src/providers/mod.rs (NEW) — full content per B.3.
+5. crates/runtime-main/src/providers/anthropic.rs (NEW) — full content per B.3.
+6. crates/runtime-main/README.md (new or edited) — public API doc per B.3.
+7. CHANGELOG.md [Unreleased] — append Added section.
+8. deny.toml — re-run cargo deny check; add ban exceptions only if needed.
+
+═══ STEP 3 — VERIFY ═══
+
+Run each gate; all must pass:
+
+  cargo fmt --all -- --check
+  cargo clippy --workspace --all-targets -- -D warnings
+  cargo build --workspace
+  cargo test --workspace
+  cargo test --workspace --doc
+  RUSTDOCFLAGS="-D missing_docs" cargo doc --workspace --no-deps
+  cargo audit
+  cargo deny check
+  cargo llvm-cov --workspace --ignore-filename-regex "src.main\.rs|generated" --fail-under-lines 80
+
+If any gate fails, follow CLAUDE.md §7 self-correction. Max 3 iterations
+then surface.
+
+═══ STEP 4 — RETROSPECTIVE ═══
+
+Per CLAUDE.md §19, copy retrospectives/RETROSPECTIVE-TEMPLATE.md to:
+  docs/build-prompts/retrospectives/M02.B-retrospective.md
+
+Fill in [LIVE] sections during work, then [END] scoring + threshold gates +
+decisions for Stage C (specifically: did the trait surface feel right; any
+type names or signatures Stage C should change before the real SSE
+implementation lands; was the stub event sequence sufficient for downstream
+stages to work against).
+
+═══ STEP 5 — SURFACE TO USER ═══
+
+Run: git status, git diff --stat HEAD
+Re-run all gates one final time.
+
+Surface: diff stat, gate results, M02.B retrospective, draft commit from B.6.
+
+State: "Stage B is ready. I will NOT commit until you approve."
+
+Wait for explicit approval. Do NOT push (push waits for Stage F per CLAUDE.md §20).
+
+On approval (Stage B — work stage; not the final stage of a parent milestone):
+1. Commit Stage B on the parent-milestone branch claude/m02-event-pipeline
+   (do NOT push).
+2. Stop. Surface the commit. Stage C is opened in a fresh session.
+```
+
+### B.6 Commit Message
+
+```bash
+git commit -s -m "$(cat <<'EOF'
+feat(runtime-main): M02 Stage B — LLMProvider trait + AnthropicProvider stub
+
+Defines the provider abstraction surface per spec §2c. Stage B ships the
+trait and a stub AnthropicProvider with hardcoded events so Stages D/E
+can develop against a stable interface; Stage C replaces the stub with
+real HTTP+SSE.
+
+New:
+- crates/runtime-main/src/providers/mod.rs — LLMProvider trait,
+  ProviderEvent enum (TextDelta / ToolUse / ToolResult / ThinkingDelta /
+  MessageStop / Error), ProviderError (thiserror-derived), and supporting
+  types (AgentConfig, Message, ModelInfo, ProviderSupport, Pricing).
+- crates/runtime-main/src/providers/anthropic.rs — AnthropicProvider
+  shell with SecretString-wrapped key, stub stream() returning hardcoded
+  TextDelta+MessageStop sequence, hardcoded list_models()
+  (Opus 4.7, Sonnet 4.6, Haiku 4.5), char-based count_tokens(), and
+  pricing-table estimate_cost().
+- crates/runtime-main/README.md — public API documentation.
+
+Workspace dependencies added (no third-party Anthropic SDK):
+- reqwest (rustls-tls + json + stream)
+- eventsource-stream (SSE parser)
+- async-trait, futures, secrecy, keyring
+
+Tests:
+- 9 unit tests covering ProviderEvent serde round-trip, snake_case tag
+  format, stub stream behavior, identity + capability flags, token
+  approximation, model listing, cost estimation, and unknown-model
+  defensive default.
+
+Refs: M02-event-pipeline.md §B; agent-runtime-spec.md §2c.
+
+Retrospective: docs/build-prompts/retrospectives/M02.B-retrospective.md
+
+https://claude.ai/code/session_<id>
+EOF
+)"
+```
+
+---
+
+<!-- ============================================================ -->
+<!-- Stages C – F — to be authored in subsequent chunks             -->
+<!-- ============================================================ -->
+
+[Stages C, D, E, F authored in subsequent chunks. This file grows incrementally; each chunk surfaces for approval before the next is appended.]
 
 ---
 

@@ -427,6 +427,7 @@ The user is the project's product owner / VP, not a hands-on engineer. They dire
 - Never ask the user to run diagnostic commands they don't want to run. If something needs investigation, do it from the agent side. If something must happen on the user's machine that can't be done remotely (e.g., Windows-side merges, fresh-session prompt pastes), give **one command** they can paste — not a flow.
 - For anything that can stay on the agent side (commits, pushes, PRs, merges to feature branches, doc updates), the agent does it autonomously and surfaces the result. The Hard Rules in §4 still apply (do-not-commit-without-approval, don't-push-to-main, etc.) — that's *outcome* approval, not *step* approval.
 - The user approves outcomes; the agent figures out steps.
+- **Always check the web before asking the user about externally-knowable facts.** Pricing, API shapes, crate versions, library best practices, third-party schemas (MCP, OAuth, etc.) — these change over time and have authoritative sources. Use `WebSearch` + `WebFetch` to confirm current state before drafting code or asking the user. Plan and build for the **current** version, not a placeholder. Only escalate to the user when the choice is genuinely theirs (scope, priority, irreversible architectural decisions). Don't waste tokens on placeholder values that will need correction.
 
 This applies to both this Claude session (orchestration / spec / docs / GitHub) and to Claude-on-the-build-machine (which does code/test/commit work for stages A–E and surfaces a single approval-ready bundle per stage).
 
