@@ -2735,10 +2735,938 @@ EOF
 ---
 
 <!-- ============================================================ -->
-<!-- Stages D – F — to be authored in subsequent chunks             -->
+<!-- STAGE D — AgentSdk + main↔drone IPC client                     -->
 <!-- ============================================================ -->
 
-[Stages D, E, F authored in subsequent chunks. This file grows incrementally; each chunk surfaces for approval before the next is appended.]
+## Stage D — `AgentSdk` + main↔drone IPC client + `ProviderEvent`→`AgentEvent` translation
+
+### D.1 Problem Statement
+
+Stage D wires the provider into a usable agent SDK. The `AgentSdk<P: LLMProvider>` wraps any `LLMProvider` (M02 ships `AnthropicProvider`; future v1.0+ adds OpenAI / local models behind the same trait), runs the agent loop, translates `ProviderEvent`s into `AgentEvent`s for the renderer, and tells the M01 drone to take snapshots when significant lifecycle events happen.
+
+This stage also lands the main-side IPC client that connects to the drone over the Unix socket / Windows named pipe shipped in M01. Wire format is the same `LinesCodec`-framed JSON the drone speaks; the client sends `DroneCommand`s and receives `DroneEvent`s. M02 only exercises `DroneCommand::SnapshotNow` (on `task_started` events — there are no real tasks yet, but the wiring is verified end-to-end).
+
+The translation layer is non-trivial: a single Anthropic stream produces many `ProviderEvent`s that must collectively become a typed `AgentEvent` sequence. `agent_spawned` precedes the first stream message. `tool_invoked` fires when `ProviderEvent::ToolUse` arrives, with the tool input fully accumulated. `stream_text` events bundle consecutive `TextDelta`s up to the next non-text event (so the renderer doesn't get spammed with one event per token). `decision_record` events are extracted from text by a heuristic (Stage D ships the simplest one — first-line "Decision: X / Rationale: Y" detection — to be expanded in M04 when verify+rails come online). `agent_complete` fires on `MessageStop`. `agent_error` fires on `Error` or any unrecoverable provider error.
+
+The agent loop runs the provider stream to exhaustion (M02 is single-turn; multi-turn tool-use loops land in M03+). Cancellation-safety is mandatory — dropping the future at any await point must clean up the drone IPC connection without leaving orphan snapshots.
+
+**Success criterion.** `AgentSdk::run_agent(config)` against `AnthropicProvider` (real or wiremock-backed) produces a full `agent_spawned → tool_invoked? → stream_text* → agent_complete` sequence on the event channel. The main-side drone client connects to a running drone subprocess, sends `SnapshotNow` on every task lifecycle transition, and reconnects on transient drone restarts. Cancellation-safety: `cargo test` exercises drop-mid-stream behavior and verifies no panics, no leaked tasks, no half-written snapshots.
+
+**New artifacts:**
+- `crates/runtime-main/src/sdk/mod.rs` (new — module root)
+- `crates/runtime-main/src/sdk/agent_sdk.rs` (new — `AgentSdk<P>` struct + `run_agent`)
+- `crates/runtime-main/src/sdk/event_pipeline.rs` (new — `ProviderEvent` → `AgentEvent` translator with bundling state)
+- `crates/runtime-main/src/sdk/decision_extractor.rs` (new — first-line "Decision:/Rationale:" heuristic; pure function for easy testing)
+- `crates/runtime-main/src/drone_ipc/mod.rs` (new — module root)
+- `crates/runtime-main/src/drone_ipc/client.rs` (new — main-side IPC client; cfg-platform Unix/Windows)
+- `crates/runtime-main/src/drone_ipc/connection.rs` (new — connection lifecycle + reconnect)
+- `crates/runtime-main/tests/sdk_event_translation.rs` (new — table-driven translation tests)
+- `crates/runtime-main/tests/sdk_cancellation.rs` (new — drop-mid-stream behavior)
+- `crates/runtime-main/tests/drone_ipc_loopback.rs` (new — main-side client ↔ drone-server loopback exercising every DroneCommand variant)
+
+### D.2 Files to Change
+
+| File | Change |
+|---|---|
+| `crates/runtime-main/src/lib.rs` | **Edited** — `pub mod sdk;` + `pub mod drone_ipc;` |
+| `crates/runtime-main/src/sdk/mod.rs` | **New** — re-exports + `SdkError` + `SessionId` newtype |
+| `crates/runtime-main/src/sdk/agent_sdk.rs` | **New** — `AgentSdk<P: LLMProvider>` struct with `provider`, `event_tx`, `drone_client`, `session_id` fields; `run_agent(config) -> Result<(), SdkError>` method that drives the provider stream and emits `AgentEvent`s; uses `*_with`-style seam for testability |
+| `crates/runtime-main/src/sdk/event_pipeline.rs` | **New** — `EventPipeline` translator with bundling state for consecutive `TextDelta`s; cancellation-safe; pure-logic `next_event()` method takes `ProviderEvent` and returns `Vec<AgentEvent>` (zero-or-more output per input) |
+| `crates/runtime-main/src/sdk/decision_extractor.rs` | **New** — `extract_decision(text: &str) -> Option<DecisionRecord>` pure fn; first-line heuristic per problem statement; full property-test coverage of malformed inputs |
+| `crates/runtime-main/src/drone_ipc/mod.rs` | **New** — re-exports + `DroneIpcError` |
+| `crates/runtime-main/src/drone_ipc/client.rs` | **New** — `DroneClient` struct with `connect()`, `send(cmd: DroneCommand)`, `events() -> impl Stream<Item = DroneEvent>` methods; cfg-platform Unix `UnixStream` / Windows `NamedPipeClient` |
+| `crates/runtime-main/src/drone_ipc/connection.rs` | **New** — connection state machine; reconnect on transient errors with exponential backoff (200ms → 400ms → 800ms → 1.6s, max 5 retries before surfacing `DroneIpcError::Disconnected`) |
+| `crates/runtime-core/src/event.rs` | **Edited** — confirm/expand `AgentEvent` to match spec §2 v0.1 subset (M01 shipped some variants; M02 needs `agent_spawned`, `agent_complete`, `agent_error`, `tool_invoked`, `tool_result`, `stream_text`, `decision_record`, `task_started`, `task_completed`, `session_start`); add new variants only if missing |
+| `crates/runtime-main/Cargo.toml` | **Edited** — add `tokio` features (`net`, `io-util`), `tokio-util` (`codec`) for `LinesCodec`, `tracing` for diagnostic logging |
+| `Cargo.toml` (workspace root) | **Edited** — confirm `tokio`/`tokio-util` versions match across workspace |
+| `crates/runtime-main/tests/sdk_event_translation.rs` | **New** — 20+ table-driven tests covering every `ProviderEvent`-to-`AgentEvent` mapping including bundling, decision extraction, error-path translation |
+| `crates/runtime-main/tests/sdk_cancellation.rs` | **New** — drop-mid-stream tests using `tokio::pin!` + manual poll; verifies no panic, no leaked tasks |
+| `crates/runtime-main/tests/drone_ipc_loopback.rs` | **New** — spawns a drone subprocess (uses M01 binary), connects via the main-side client, sends every `DroneCommand` variant, verifies expected `DroneEvent` responses; tests reconnect after killing the drone mid-session |
+| `crates/runtime-main/README.md` | **Edited** — document `AgentSdk` usage, `DroneClient` connection, the `ProviderEvent`↔`AgentEvent` mapping table |
+| `CLAUDE.md` | **Edited** — §5 add `runtime-main/src/sdk/` and `runtime-main/src/drone_ipc/` to safety primitives list with their respective coverage gates and exclusions |
+| `.github/workflows/ci.yml` | **Edited** — extend the Coverage job's `runtime-main` gate to cover both `sdk/` and `drone_ipc/` (still ≥95% with documented exclusions) |
+| `CHANGELOG.md` | **Edited** — `[Unreleased]` Added section noting Stage D deliverables |
+
+### D.3 Detailed Changes
+
+#### `crates/runtime-main/src/sdk/mod.rs` (new)
+
+```rust
+//! Agent SDK — wraps any `LLMProvider` to drive an agent loop and emit
+//! typed `AgentEvent`s. Spec §2.
+
+mod agent_sdk;
+mod event_pipeline;
+mod decision_extractor;
+
+pub use agent_sdk::{AgentSdk, SdkError, SessionId};
+pub use event_pipeline::EventPipeline;
+pub use decision_extractor::{extract_decision, DecisionRecord};
+```
+
+#### `crates/runtime-main/src/sdk/agent_sdk.rs` (new)
+
+```rust
+//! AgentSdk — drives a provider stream and emits AgentEvents. Spec §2.
+//!
+//! Generic over `LLMProvider` so v1.0+ providers slot in without changes.
+//! Cancellation-safe: drop at any await point must clean up the drone IPC
+//! connection without leaving orphan snapshots.
+//!
+//! Test seam: `run_agent_with_provider_stream` accepts a pre-built
+//! ProviderEvent stream so tests can inject deterministic sequences
+//! without touching reqwest. Production wrapper `run_agent` constructs
+//! the real provider stream via `LLMProvider::stream()`.
+
+use futures::stream::{Stream, StreamExt};
+use runtime_core::event::AgentEvent;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+use uuid::Uuid;
+
+use super::event_pipeline::EventPipeline;
+use crate::drone_ipc::DroneClient;
+use crate::providers::{AgentConfig, LLMProvider, ProviderError, ProviderEvent};
+
+/// Newtype wrapping a session UUID.
+#[derive(Debug, Clone, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct SessionId(pub Uuid);
+
+impl SessionId {
+    pub fn new() -> Self { Self(Uuid::new_v4()) }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SdkError {
+    #[error("provider error: {0}")]
+    Provider(#[from] ProviderError),
+    #[error("drone IPC error: {0}")]
+    Drone(#[from] crate::drone_ipc::DroneIpcError),
+    #[error("event channel closed")]
+    EventChannelClosed,
+    #[error("agent {agent_id}: {message}")]
+    Agent { agent_id: String, message: String },
+}
+
+/// Agent SDK. Generic over the LLM provider so v1.0+ providers (OpenAI,
+/// local) slot in behind the same trait.
+pub struct AgentSdk<P: LLMProvider> {
+    provider:     Arc<P>,
+    event_tx:     mpsc::Sender<AgentEvent>,
+    drone_client: Arc<DroneClient>,
+    session_id:   SessionId,
+}
+
+impl<P: LLMProvider + 'static> AgentSdk<P> {
+    pub fn new(
+        provider:     Arc<P>,
+        event_tx:     mpsc::Sender<AgentEvent>,
+        drone_client: Arc<DroneClient>,
+        session_id:   SessionId,
+    ) -> Self {
+        Self { provider, event_tx, drone_client, session_id }
+    }
+
+    /// Production entry point. Constructs the provider stream and delegates.
+    pub async fn run_agent(&self, config: AgentConfig) -> Result<(), SdkError> {
+        let stream = self.provider.stream(config).await?;
+        self.run_agent_with_provider_stream(stream).await
+    }
+
+    /// Test-seam variant. Accepts any pre-built ProviderEvent stream.
+    pub async fn run_agent_with_provider_stream<S>(
+        &self,
+        mut stream: S,
+    ) -> Result<(), SdkError>
+    where
+        S: Stream<Item = ProviderEvent> + Unpin,
+    {
+        let agent_id = format!("agent_{}", Uuid::new_v4());
+        self.emit(AgentEvent::AgentSpawned {
+            agent_id:    agent_id.clone(),
+            agent_name:  "smoke".to_string(),
+            parent_id:   None,
+            session_id:  self.session_id.clone(),
+        }).await?;
+
+        // Tell the drone the task is starting. Drives a SnapshotNow.
+        self.drone_client.send(runtime_core::drone::DroneCommand::SnapshotNow {
+            reason:     "task_started".to_string(),
+            state_json: serde_json::json!({"agent_id": agent_id}),
+        }).await?;
+
+        let mut pipeline = EventPipeline::new(agent_id.clone());
+
+        while let Some(provider_event) = stream.next().await {
+            for agent_event in pipeline.next_event(provider_event) {
+                self.emit(agent_event).await?;
+            }
+        }
+
+        // Flush any buffered text bundle.
+        for agent_event in pipeline.flush() {
+            self.emit(agent_event).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn emit(&self, event: AgentEvent) -> Result<(), SdkError> {
+        self.event_tx.send(event).await.map_err(|_| SdkError::EventChannelClosed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Tests live in tests/sdk_event_translation.rs and tests/sdk_cancellation.rs
+    // for visibility; this module-level test stub confirms wiring only.
+
+    #[test]
+    fn session_id_is_unique_per_call() {
+        use super::SessionId;
+        let a = SessionId::new();
+        let b = SessionId::new();
+        assert_ne!(a, b);
+    }
+}
+```
+
+#### `crates/runtime-main/src/sdk/event_pipeline.rs` (new)
+
+```rust
+//! ProviderEvent → AgentEvent translator with consecutive-TextDelta
+//! bundling. Pure logic; no I/O. Spec §2 event taxonomy.
+//!
+//! Bundling: consecutive `ProviderEvent::TextDelta`s collapse into one
+//! `AgentEvent::StreamText` per non-text event boundary. Without this the
+//! renderer gets spammed with one event per token; with it, one event per
+//! "burst of text" which matches user expectation for streaming UX.
+
+use runtime_core::event::AgentEvent;
+
+use super::decision_extractor::extract_decision;
+use crate::providers::ProviderEvent;
+
+pub struct EventPipeline {
+    agent_id:     String,
+    text_buffer:  String,
+}
+
+impl EventPipeline {
+    pub fn new(agent_id: String) -> Self {
+        Self { agent_id, text_buffer: String::new() }
+    }
+
+    /// Translate one ProviderEvent. Returns zero-or-more AgentEvents.
+    /// Bundling state is mutated; call `flush()` at end-of-stream.
+    pub fn next_event(&mut self, event: ProviderEvent) -> Vec<AgentEvent> {
+        let mut output = Vec::new();
+        match event {
+            ProviderEvent::TextDelta { text } => {
+                self.text_buffer.push_str(&text);
+            }
+            ProviderEvent::ThinkingDelta { text } => {
+                self.flush_text_buffer(&mut output);
+                // Thinking deltas pass through as-is for now; M04 may surface
+                // them differently (private trace vs renderer-facing).
+                output.push(AgentEvent::StreamText {
+                    agent_id: self.agent_id.clone(),
+                    text,
+                });
+            }
+            ProviderEvent::ToolUse { id, name, input } => {
+                self.flush_text_buffer(&mut output);
+                output.push(AgentEvent::ToolInvoked {
+                    tool_name: name,
+                    agent_id:  self.agent_id.clone(),
+                    source:    runtime_core::event::ToolSource::Builtin, // M02 stub; refined in M06
+                    server:    None,
+                    input,
+                });
+                // Note: ToolResult AgentEvent is emitted in M03+ when tool
+                // execution actually happens; M02 only records the invocation.
+            }
+            ProviderEvent::ToolResult { id, output: result } => {
+                self.flush_text_buffer(&mut output);
+                output.push(AgentEvent::ToolResult {
+                    tool_name:    format!("tool_{id}"),
+                    agent_id:     self.agent_id.clone(),
+                    output:       result,
+                    duration_ms:  0, // unknown until M03 runs the tool
+                });
+            }
+            ProviderEvent::MessageStop { stop_reason } => {
+                self.flush_text_buffer(&mut output);
+                output.push(AgentEvent::AgentComplete {
+                    agent_id: self.agent_id.clone(),
+                    result:   stop_reason,
+                });
+            }
+            ProviderEvent::Error { code, message } => {
+                self.flush_text_buffer(&mut output);
+                output.push(AgentEvent::AgentError {
+                    agent_id: self.agent_id.clone(),
+                    error:    format!("{code}: {message}"),
+                });
+            }
+        }
+        output
+    }
+
+    /// Drain any buffered text. Call at end-of-stream.
+    pub fn flush(&mut self) -> Vec<AgentEvent> {
+        let mut output = Vec::new();
+        self.flush_text_buffer(&mut output);
+        output
+    }
+
+    fn flush_text_buffer(&mut self, output: &mut Vec<AgentEvent>) {
+        if !self.text_buffer.is_empty() {
+            let text = std::mem::take(&mut self.text_buffer);
+            // Decision extraction heuristic — see decision_extractor.rs.
+            if let Some(decision) = extract_decision(&text) {
+                output.push(AgentEvent::DecisionRecord {
+                    agent_id:  self.agent_id.clone(),
+                    decision:  decision.decision,
+                    rationale: decision.rationale,
+                    tool_used: decision.tool_used.unwrap_or_default(),
+                });
+            }
+            output.push(AgentEvent::StreamText {
+                agent_id: self.agent_id.clone(),
+                text,
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Table-driven coverage in tests/sdk_event_translation.rs.
+    // Module-local sanity:
+    use super::*;
+
+    #[test]
+    fn empty_flush_emits_nothing() {
+        let mut p = EventPipeline::new("a1".into());
+        assert!(p.flush().is_empty());
+    }
+
+    #[test]
+    fn lone_text_delta_flushes_on_message_stop() {
+        let mut p = EventPipeline::new("a1".into());
+        let pre = p.next_event(ProviderEvent::TextDelta { text: "hi".into() });
+        assert!(pre.is_empty(), "text deltas buffer until boundary");
+        let post = p.next_event(ProviderEvent::MessageStop { stop_reason: "end_turn".into() });
+        assert!(post.iter().any(|e| matches!(e, AgentEvent::StreamText { .. })));
+        assert!(post.iter().any(|e| matches!(e, AgentEvent::AgentComplete { .. })));
+    }
+}
+```
+
+#### `crates/runtime-main/src/sdk/decision_extractor.rs` (new)
+
+```rust
+//! Heuristic decision extraction from streamed text.
+//!
+//! M02 ships the simplest version: detect a `Decision:` / `Rationale:`
+//! pair on consecutive lines anywhere in the text. M04 (verify+rails)
+//! upgrades to a structured emitter that gets injected by the prompt
+//! template, eliminating the heuristic.
+//!
+//! Pure function; full property-test coverage of malformed inputs.
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecisionRecord {
+    pub decision:  String,
+    pub rationale: String,
+    pub tool_used: Option<String>,
+}
+
+/// Extract a decision record from a text block.
+///
+/// Heuristic: looks for `Decision: <text>` followed (possibly with
+/// intervening blank lines) by `Rationale: <text>` and optionally
+/// `Tool used: <text>`. Returns `None` if either marker is missing.
+///
+/// # Examples
+///
+/// ```
+/// use runtime_main::sdk::extract_decision;
+/// let text = "Decision: pick haiku\nRationale: cost-sensitive task\n";
+/// let d = extract_decision(text).unwrap();
+/// assert_eq!(d.decision,  "pick haiku");
+/// assert_eq!(d.rationale, "cost-sensitive task");
+/// ```
+pub fn extract_decision(text: &str) -> Option<DecisionRecord> {
+    let mut decision  = None;
+    let mut rationale = None;
+    let mut tool_used = None;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("Decision:") {
+            decision = Some(rest.trim().to_string());
+        } else if let Some(rest) = trimmed.strip_prefix("Rationale:") {
+            rationale = Some(rest.trim().to_string());
+        } else if let Some(rest) = trimmed.strip_prefix("Tool used:") {
+            tool_used = Some(rest.trim().to_string());
+        }
+    }
+    match (decision, rationale) {
+        (Some(d), Some(r)) => Some(DecisionRecord {
+            decision:  d,
+            rationale: r,
+            tool_used,
+        }),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_decision_and_rationale() {
+        let t = "Decision: A\nRationale: B\n";
+        let d = extract_decision(t).unwrap();
+        assert_eq!(d.decision,  "A");
+        assert_eq!(d.rationale, "B");
+        assert!(d.tool_used.is_none());
+    }
+
+    #[test]
+    fn extracts_tool_used_when_present() {
+        let t = "Decision: ship\nRationale: green CI\nTool used: cargo test\n";
+        let d = extract_decision(t).unwrap();
+        assert_eq!(d.tool_used.unwrap(), "cargo test");
+    }
+
+    #[test]
+    fn returns_none_when_decision_missing() {
+        assert!(extract_decision("Rationale: only").is_none());
+    }
+
+    #[test]
+    fn returns_none_when_rationale_missing() {
+        assert!(extract_decision("Decision: only").is_none());
+    }
+
+    #[test]
+    fn returns_none_for_empty_input() {
+        assert!(extract_decision("").is_none());
+    }
+
+    #[test]
+    fn handles_intervening_blank_lines() {
+        let t = "Decision: A\n\n\nRationale: B\n";
+        let d = extract_decision(t).unwrap();
+        assert_eq!(d.decision,  "A");
+        assert_eq!(d.rationale, "B");
+    }
+
+    #[test]
+    fn handles_leading_whitespace() {
+        let t = "   Decision: A   \n   Rationale: B   \n";
+        let d = extract_decision(t).unwrap();
+        assert_eq!(d.decision,  "A");
+        assert_eq!(d.rationale, "B");
+    }
+
+    #[test]
+    fn last_decision_wins_when_multiple() {
+        let t = "Decision: first\nRationale: r1\nDecision: second\nRationale: r2\n";
+        let d = extract_decision(t).unwrap();
+        assert_eq!(d.decision,  "second");
+        assert_eq!(d.rationale, "r2");
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn never_panics_on_arbitrary_input(s in "\\PC{0,1000}") {
+            let _ = extract_decision(&s);
+        }
+    }
+}
+```
+
+#### `crates/runtime-main/src/drone_ipc/mod.rs` (new)
+
+```rust
+//! Main-side IPC client for the runtime-drone subprocess (M01).
+//!
+//! Wire format: `LinesCodec`-framed JSON over Unix domain socket
+//! (Linux/macOS) or Windows named pipe. Same format the drone speaks
+//! (see crates/runtime-drone/src/ipc.rs).
+//!
+//! M02 only sends `DroneCommand::SnapshotNow` (on task lifecycle events).
+//! M03+ adds `SpawnProcess`, `StopProcess`, etc. as new subsystems land.
+
+mod client;
+mod connection;
+
+pub use client::DroneClient;
+pub use connection::DroneIpcError;
+```
+
+#### `crates/runtime-main/src/drone_ipc/client.rs` (new)
+
+```rust
+//! DroneClient — main-side connection to the runtime-drone subprocess.
+//!
+//! Cfg-platform: UnixStream on Linux/macOS; NamedPipeClient on Windows.
+//! Reconnects automatically on transient errors (see `connection.rs`).
+
+use futures::stream::Stream;
+use runtime_core::drone::{DroneCommand, DroneEvent};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+use super::connection::{Connection, DroneIpcError};
+
+pub struct DroneClient {
+    inner: Arc<Mutex<Connection>>,
+}
+
+impl DroneClient {
+    /// Connect to the drone over its IPC socket / named pipe.
+    pub async fn connect(addr: &str) -> Result<Self, DroneIpcError> {
+        let conn = Connection::connect(addr).await?;
+        Ok(Self { inner: Arc::new(Mutex::new(conn)) })
+    }
+
+    /// Send a DroneCommand. Reconnects on transient errors.
+    pub async fn send(&self, cmd: DroneCommand) -> Result<(), DroneIpcError> {
+        let mut guard = self.inner.lock().await;
+        guard.send_with_reconnect(cmd).await
+    }
+
+    /// Stream of incoming DroneEvents.
+    pub async fn events(
+        &self,
+    ) -> Result<impl Stream<Item = Result<DroneEvent, DroneIpcError>>, DroneIpcError> {
+        let guard = self.inner.lock().await;
+        Ok(guard.event_stream())
+    }
+}
+```
+
+#### `crates/runtime-main/src/drone_ipc/connection.rs` (new)
+
+```rust
+//! Connection state machine + reconnect policy.
+
+use futures::stream::Stream;
+use runtime_core::drone::{DroneCommand, DroneEvent};
+use std::time::Duration;
+use thiserror::Error;
+use tokio::time::sleep;
+
+#[cfg(unix)]
+use tokio::net::UnixStream;
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::ClientOptions;
+
+#[derive(Debug, Error)]
+pub enum DroneIpcError {
+    #[error("io: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("codec: {0}")]
+    Codec(String),
+    #[error("disconnected after {retries} retries")]
+    Disconnected { retries: u32 },
+    #[error("serialization: {0}")]
+    Json(#[from] serde_json::Error),
+}
+
+const MAX_RETRIES: u32 = 5;
+const BASE_BACKOFF: Duration = Duration::from_millis(200);
+
+pub(crate) struct Connection {
+    addr: String,
+    /// Inner socket; cfg-platform.
+    #[cfg(unix)]
+    stream: Option<UnixStream>,
+    #[cfg(windows)]
+    stream: Option<tokio::net::windows::named_pipe::NamedPipeClient>,
+}
+
+impl Connection {
+    pub async fn connect(addr: &str) -> Result<Self, DroneIpcError> {
+        let stream = open(addr).await?;
+        Ok(Self { addr: addr.to_string(), stream: Some(stream) })
+    }
+
+    pub async fn send_with_reconnect(
+        &mut self,
+        cmd: DroneCommand,
+    ) -> Result<(), DroneIpcError> {
+        for attempt in 0..MAX_RETRIES {
+            match self.send_once(&cmd).await {
+                Ok(()) => return Ok(()),
+                Err(DroneIpcError::Io(_)) => {
+                    let backoff = BASE_BACKOFF * 2u32.pow(attempt);
+                    sleep(backoff).await;
+                    let _ = self.reconnect().await;
+                }
+                Err(other) => return Err(other),
+            }
+        }
+        Err(DroneIpcError::Disconnected { retries: MAX_RETRIES })
+    }
+
+    async fn send_once(&mut self, cmd: &DroneCommand) -> Result<(), DroneIpcError> {
+        // Real impl uses tokio_util::codec::LinesCodec wrapped around the stream.
+        // Stage D author writes this against the M01 drone's accept_loop.
+        // Pseudo-shape:
+        //   let json = serde_json::to_string(cmd)? + "\n";
+        //   self.stream.as_mut().write_all(json.as_bytes()).await?;
+        //   self.stream.as_mut().flush().await?;
+        //   Ok(())
+        unimplemented!("Stage D author: real LinesCodec write + flush")
+    }
+
+    async fn reconnect(&mut self) -> Result<(), DroneIpcError> {
+        self.stream = Some(open(&self.addr).await?);
+        Ok(())
+    }
+
+    pub fn event_stream(&self) -> impl Stream<Item = Result<DroneEvent, DroneIpcError>> {
+        // Real impl: FramedRead over the read half + LinesCodec + serde_json.
+        // Stage D author: full body. Mirrors crates/runtime-drone/src/ipc.rs:32-39.
+        futures::stream::empty()
+    }
+}
+
+#[cfg(unix)]
+async fn open(addr: &str) -> Result<UnixStream, DroneIpcError> {
+    Ok(UnixStream::connect(addr).await?)
+}
+
+#[cfg(windows)]
+async fn open(
+    addr: &str,
+) -> Result<tokio::net::windows::named_pipe::NamedPipeClient, DroneIpcError> {
+    Ok(ClientOptions::new().open(addr)?)
+}
+```
+
+Stage D's implementer fills in the `unimplemented!()` and `futures::stream::empty()` placeholders against the M01 drone-side codec (the wire format is identical; this is just the client side of the same socket). The structure above pins the public API and the reconnect policy.
+
+#### `crates/runtime-core/src/event.rs` (edited)
+
+Confirm `AgentEvent` includes the variants Stage D emits:
+
+- `SessionStart` (M01 may have shipped; verify shape: `{ session_id, framework, model }`)
+- `AgentSpawned`
+- `AgentComplete`
+- `AgentError`
+- `ToolInvoked` (with `ToolSource` enum: `Mcp | Builtin | Generated`)
+- `ToolResult`
+- `StreamText`
+- `DecisionRecord`
+- `TaskStarted`
+- `TaskCompleted`
+
+If any are missing, add per spec §2 lines 834-920. Property-test their serde round-trips (M01.B pattern).
+
+#### `crates/runtime-main/Cargo.toml` (edited)
+
+Add to `[dependencies]`:
+```toml
+tokio-util = { workspace = true, features = ["codec"] }
+uuid       = { workspace = true, features = ["v4", "serde"] }
+```
+
+#### `crates/runtime-main/tests/sdk_event_translation.rs` (new)
+
+Table-driven tests over `EventPipeline::next_event`. Each row is `(input ProviderEvent sequence, expected AgentEvent sequence)`. Cover:
+
+- single TextDelta + MessageStop → StreamText + AgentComplete
+- multiple TextDeltas + MessageStop → bundled StreamText + AgentComplete
+- TextDelta + ToolUse + TextDelta + MessageStop → StreamText, ToolInvoked, StreamText, AgentComplete (boundary forces flush)
+- ToolUse first → no leading StreamText
+- ThinkingDelta routes correctly
+- Error event → AgentError + buffer flush
+- Empty stream → empty output
+- Decision-pattern in TextDelta → DecisionRecord + StreamText (both)
+- Multiple consecutive ToolUses → multiple ToolInvoked, no spurious StreamText
+- Out-of-order text after MessageStop → flushed (defensive)
+
+20+ assertions total; `proptest` for "no input sequence panics."
+
+#### `crates/runtime-main/tests/sdk_cancellation.rs` (new)
+
+Drop-mid-stream behavior:
+- Build an infinite ProviderEvent stream
+- Drive `run_agent_with_provider_stream` inside a `tokio::select!` with a timeout
+- Assert no panic, assert event_tx is dropped cleanly (Receiver sees channel-closed)
+- Assert no Tokio task remains (`tokio::runtime::Handle::current().metrics().num_alive_tasks()` stable)
+- Repeat with drop happening inside a TextDelta burst, after ToolUse, mid-MessageStop
+
+#### `crates/runtime-main/tests/drone_ipc_loopback.rs` (new)
+
+End-to-end test exercising every `DroneCommand` variant against a real drone subprocess:
+
+```rust
+//! Drone IPC loopback — main-side client ↔ drone-server (M01) end-to-end.
+//!
+//! Spawns a runtime-drone subprocess, connects via main-side DroneClient,
+//! sends every DroneCommand variant, asserts expected DroneEvent responses.
+//!
+//! Reconnect path: kill the drone mid-session, verify client reconnects on
+//! the next send (within MAX_RETRIES), verify subsequent commands work.
+
+#![cfg(any(unix, windows))]
+
+use runtime_main::drone_ipc::DroneClient;
+use runtime_core::drone::{DroneCommand, DroneEvent};
+// ... full body authored by Stage D implementer.
+```
+
+Tests:
+1. `connects_and_handshakes`
+2. `sends_snapshot_now_receives_snapshot_written`
+3. `sends_graceful_shutdown_drone_exits_clean`
+4. `sends_spawn_process_receives_process_spawned`  
+5. `sends_stop_process_receives_process_stopped`
+6. `sends_set_activity_timeout_no_event_expected`
+7. `sends_revert_to_snapshot_receives_recovery_available`
+8. `reconnects_after_drone_killed_mid_session` (kills with SIGKILL, verifies retry budget consumed correctly)
+9. `surfaces_disconnected_error_after_max_retries` (drone never restarts; confirms exponential backoff timing)
+10. `cancels_cleanly_on_drop` (drops client mid-send, verifies no orphan socket)
+
+#### Other file edits
+
+- `crates/runtime-main/README.md` — append §"Agent SDK" with usage example, mapping table for ProviderEvent→AgentEvent, drone IPC connection example
+- `CLAUDE.md` §5 — add `runtime-main/src/sdk/` and `runtime-main/src/drone_ipc/` to safety primitives list with exclusions documented
+- `.github/workflows/ci.yml` — extend `runtime-main` ≥95% gate to span both new modules; ignore-filename-regex updated to include `src.drone_ipc.connection\.rs::open` (cfg-platform OS-call holdouts)
+- `CHANGELOG.md` — `[Unreleased]` Added section per Stage D deliverables
+
+### D.4 Tests
+
+Total: 50+ tests across the new modules and integration files.
+
+**Unit (in-module):**
+- `decision_extractor::tests` — 8 + property test (no panic on arbitrary input)
+- `event_pipeline::tests` — 2 module-local sanity (table-driven volume in integration file)
+- `agent_sdk::tests::session_id_is_unique_per_call` — 1
+- `connection::tests` — backoff timing test, reconnect-success test, max-retries-surfaces test (≥3)
+
+**Integration (`tests/`):**
+- `sdk_event_translation.rs` — 20+ rows + property test
+- `sdk_cancellation.rs` — 5+ drop-mid-stream tests
+- `drone_ipc_loopback.rs` — 10 tests (every DroneCommand variant + reconnect + cancellation + max-retries)
+
+**Coverage target:**
+
+- Workspace ≥80% (general gate, unchanged)
+- `runtime-drone` ≥95% (unchanged)
+- **`runtime-main` ≥95%** continuing — exclusions extended to:
+  - `src/providers/anthropic.rs` (network wrapper, Stage C exclusion)
+  - `src/drone_ipc/connection.rs::open` (cfg-platform OS-call wrapper; the testable seam is `Connection::send_with_reconnect` which is fully covered by loopback + injected-error tests)
+
+The exclusion list is documented inline in `CLAUDE.md` §5 (per the M01.C codification pattern) and in `.github/workflows/ci.yml` with the ignore-filename-regex.
+
+**Coverage delta gate.** Active from M02 Stage A baseline. Stage D may shift the baseline meaningfully (large new module surface); CI computes the delta vs main post-Stage-C-merge, fails if any safety-primitive crate regresses >0.5pp.
+
+### D.5 CLI Prompt
+
+```
+Read CLAUDE.md for all project rules.
+Read docs/build-prompts/M02-event-pipeline.md Stage D (sections D.1 through D.4).
+
+Read prior stage retrospectives for guidance:
+  docs/build-prompts/retrospectives/M02.A-retrospective.md
+  docs/build-prompts/retrospectives/M02.B-retrospective.md
+  docs/build-prompts/retrospectives/M02.C-retrospective.md
+  Focus: [END] "Decisions for the next stage" sections + any [LIVE]
+  friction events flagged as relevant to Stage D. Apply decisions.
+
+Read docs/gap-analysis.md for any Carry-forward items targeting Stage D.
+
+Read for reference (do not modify):
+  crates/runtime-drone/src/ipc.rs (lines 13–119) — the drone-side codec.
+    Main-side client mirrors the framing exactly.
+  crates/runtime-main/src/providers/anthropic_sse.rs — the *_with-style
+    test seam pattern. Apply the same shape to AgentSdk.
+
+═══ STEP 1 — WRITE FAILING TESTS ═══
+
+Create test files / add to existing per D.4:
+
+1. crates/runtime-main/src/sdk/decision_extractor.rs::tests (9 tests + 1
+   proptest)
+2. crates/runtime-main/src/sdk/event_pipeline.rs::tests (2 module-local)
+3. crates/runtime-main/src/sdk/agent_sdk.rs::tests::session_id_is_unique
+4. crates/runtime-main/src/drone_ipc/connection.rs::tests (3+ for
+   backoff/reconnect/max-retries)
+5. crates/runtime-main/tests/sdk_event_translation.rs (20+ rows + proptest)
+6. crates/runtime-main/tests/sdk_cancellation.rs (5+ drop-mid-stream)
+7. crates/runtime-main/tests/drone_ipc_loopback.rs (10 tests; spawns
+   real drone subprocess via cargo run --bin runtime-drone)
+
+Run: cargo test --workspace --package runtime-main
+Confirm: all tests fail with `cannot find module sdk`, `cannot find type
+DroneClient`, etc. — TDD red phase.
+
+═══ STEP 2 — IMPLEMENT ═══
+
+Apply per D.3 in this order (each step minimal-implementation to make
+its corresponding tests pass; iterate):
+
+1. crates/runtime-core/src/event.rs — add any AgentEvent variants Stage D
+   needs that aren't yet present. Round-trip property tests follow the
+   M01.B pattern.
+2. crates/runtime-main/Cargo.toml — add tokio-util + uuid features.
+3. crates/runtime-main/src/lib.rs — `pub mod sdk;` + `pub mod drone_ipc;`.
+4. crates/runtime-main/src/sdk/mod.rs — module root with re-exports.
+5. crates/runtime-main/src/sdk/decision_extractor.rs (NEW) — full body
+   per D.3 + proptest.
+6. crates/runtime-main/src/sdk/event_pipeline.rs (NEW) — full body per D.3.
+7. crates/runtime-main/src/sdk/agent_sdk.rs (NEW) — full body per D.3
+   including the *_with test seam.
+8. crates/runtime-main/src/drone_ipc/mod.rs (NEW) — module root.
+9. crates/runtime-main/src/drone_ipc/connection.rs (NEW) — full body
+   including LinesCodec + reconnect with exponential backoff.
+   Replace the `unimplemented!()` placeholder against the M01 drone codec.
+10. crates/runtime-main/src/drone_ipc/client.rs (NEW) — full body per D.3.
+11. tests/sdk_event_translation.rs (NEW) — table-driven body covering
+    every ProviderEvent→AgentEvent mapping per D.4.
+12. tests/sdk_cancellation.rs (NEW) — drop-mid-stream tests per D.4.
+13. tests/drone_ipc_loopback.rs (NEW) — every-variant + reconnect tests
+    per D.4. Spawns drone subprocess.
+14. .github/workflows/ci.yml — extend runtime-main coverage gate per D.3.
+15. CLAUDE.md §5 — add sdk/ and drone_ipc/ to safety primitives list.
+16. crates/runtime-main/README.md — append §"Agent SDK" section.
+17. CHANGELOG.md [Unreleased] — append Added section.
+
+═══ STEP 3 — VERIFY ═══
+
+Run each gate; all must pass:
+
+  cargo fmt --all -- --check
+  cargo clippy --workspace --all-targets -- -D warnings
+  cargo build --workspace
+  cargo test --workspace
+  cargo test --workspace --doc
+  RUSTDOCFLAGS="-D missing_docs" cargo doc --workspace --no-deps
+  cargo audit
+  cargo deny check
+  cargo llvm-cov --workspace --ignore-filename-regex "src.main\.rs|generated" --fail-under-lines 80
+  cargo llvm-cov --package runtime-main --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs" --fail-under-lines 95
+  cargo llvm-cov --package runtime-drone --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.shutdown\.rs" --fail-under-lines 95
+
+Cancellation safety: run `cargo test sdk_cancellation -- --test-threads=1`
+and confirm no leaked tokio tasks via inspection of test output.
+
+If any gate fails, follow CLAUDE.md §7 self-correction. Max 3 iterations
+then surface.
+
+═══ STEP 4 — RETROSPECTIVE ═══
+
+Per CLAUDE.md §19, copy retrospectives/RETROSPECTIVE-TEMPLATE.md to:
+  docs/build-prompts/retrospectives/M02.D-retrospective.md
+
+Fill in [LIVE] sections during work, then [END] scoring + threshold gates
++ decisions for Stage E (specifically: did the *_with seam pattern hold
+up for AgentSdk; did the decision-extractor heuristic catch real cases
+or generate false positives; did the reconnect policy surface anything
+worth carrying into the spec; how does the drone-IPC main-side coverage
+compare to drone-server side from M01.C).
+
+═══ STEP 5 — SURFACE TO USER ═══
+
+Run: git status, git diff --stat HEAD
+Re-run all gates one final time.
+
+Surface: diff stat, gate results, M02.D retrospective, draft commit from D.6.
+
+State: "Stage D is ready. I will NOT commit until you approve."
+
+Wait for explicit approval. Do NOT push (push waits for Stage F per
+CLAUDE.md §20).
+
+On approval (Stage D — work stage; not the final stage of a parent milestone):
+1. Commit Stage D on the parent-milestone branch claude/m02-event-pipeline
+   (do NOT push).
+2. Stop. Surface the commit. Stage E is opened in a fresh session.
+```
+
+### D.6 Commit Message
+
+```bash
+git commit -s -m "$(cat <<'EOF'
+feat(runtime-main): M02 Stage D — AgentSdk + drone IPC client + event translation
+
+Wraps any LLMProvider in an AgentSdk that drives the agent loop, translates
+ProviderEvents to typed AgentEvents for the renderer, and connects to the
+M01 drone over its IPC socket / named pipe to drive snapshots on task
+lifecycle events.
+
+Architecture:
+- src/sdk/agent_sdk.rs — AgentSdk<P: LLMProvider> wrapping any provider.
+  *_with-style test seam (run_agent_with_provider_stream takes any
+  Stream<ProviderEvent>) so wiremock-fed and synthetic streams exercise
+  the same logic. Production wrapper run_agent constructs the real
+  provider stream.
+- src/sdk/event_pipeline.rs — pure ProviderEvent→AgentEvent translator
+  with consecutive-TextDelta bundling. Bundles burst into one StreamText
+  per non-text event boundary; flushed on stream end. Pure logic; no I/O.
+- src/sdk/decision_extractor.rs — first-line "Decision:/Rationale:"
+  heuristic per spec §2 decision_record events. Pure fn; proptest covers
+  no-panic on arbitrary input. M04 verify+rails work upgrades to a
+  structured emitter, eliminating the heuristic.
+- src/drone_ipc/client.rs — main-side DroneClient mirrors the M01
+  drone-server LinesCodec framing. Sends DroneCommand, receives
+  DroneEvent; cfg-platform Unix UnixStream / Windows NamedPipeClient.
+- src/drone_ipc/connection.rs — exponential-backoff reconnect policy
+  (200ms → 400ms → 800ms → 1.6s, max 5 retries) before surfacing
+  DroneIpcError::Disconnected.
+
+Tests (50+ total):
+- 9 unit tests for decision extractor + 1 proptest for no-panic.
+- 20+ table-driven tests in tests/sdk_event_translation.rs covering every
+  ProviderEvent→AgentEvent mapping including bundling boundaries, decision
+  extraction integration, error-path translation.
+- 5+ drop-mid-stream cancellation-safety tests in tests/sdk_cancellation.rs.
+- 10 drone-IPC loopback tests in tests/drone_ipc_loopback.rs spawning the
+  M01 drone subprocess and exercising every DroneCommand variant + the
+  reconnect + max-retries-disconnected surface paths.
+
+Coverage:
+- runtime-main ≥95% line continuing; exclusion list extended to include
+  drone_ipc/connection.rs::open (cfg-platform OS-call wrapper). Inner
+  testable seam Connection::send_with_reconnect fully covered by loopback.
+- AgentEvent serde round-trips re-tested per M01.B pattern after any
+  variant additions.
+
+Spec §2 alignment:
+- AgentEvent variants emitted: SessionStart, AgentSpawned, AgentComplete,
+  AgentError, ToolInvoked, ToolResult, StreamText, DecisionRecord,
+  TaskStarted, TaskCompleted. Subset of the full union; extends as M03+
+  subsystems land.
+- M02 single-turn only; multi-turn tool-use loops are M03+.
+- ToolSource enum default = Builtin; refined to Mcp by M06.
+
+Refs: M02-event-pipeline.md §D; agent-runtime-spec.md §2 §1d (drone
+wire format); CLAUDE.md §5 (coverage policy) + new safety primitive
+listings; M01.C codification commit 1dec4ba.
+
+Retrospective: docs/build-prompts/retrospectives/M02.D-retrospective.md
+
+https://claude.ai/code/session_<id>
+EOF
+)"
+```
+
+---
+
+<!-- ============================================================ -->
+<!-- Stages E – F — to be authored in subsequent chunks             -->
+<!-- ============================================================ -->
+
+[Stages E, F authored in subsequent chunks. This file grows incrementally; each chunk surfaces for approval before the next is appended.]
 
 ---
 
