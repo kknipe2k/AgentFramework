@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 /// Heartbeat interval per `agent-runtime-spec.md` §1 (Heartbeat).
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -84,6 +84,7 @@ where
 {
     let (event_tx, _event_rx) = broadcast::channel(64);
     let (cmd_tx, cmd_rx) = mpsc::channel(64);
+    let (ipc_shutdown_tx, ipc_shutdown_rx) = oneshot::channel::<&'static str>();
 
     let hb_handle = tokio::spawn(heartbeat::run(
         session_id.clone(),
@@ -96,9 +97,17 @@ where
         conn.clone(),
         cmd_rx,
         event_tx.clone(),
+        Some(ipc_shutdown_tx),
     ));
 
-    shutdown::wait_and_handle_with(shutdown_source, conn, session_id, event_tx).await?;
+    let combined_shutdown = async move {
+        tokio::select! {
+            reason = shutdown_source => reason,
+            ipc = ipc_shutdown_rx => ipc.unwrap_or("ipc_graceful"),
+        }
+    };
+
+    shutdown::wait_and_handle_with(combined_shutdown, conn, session_id, event_tx).await?;
 
     hb_handle.abort();
     ipc_handle.abort();
@@ -245,5 +254,95 @@ mod tests {
             )
             .expect("count");
         assert_eq!(count, 1, "shutdown must produce one emergency snapshot");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn run_inner_exits_on_ipc_graceful_shutdown() {
+        use runtime_core::DroneCommand;
+        use std::time::Instant;
+
+        let dir = TempDir::new().expect("tempdir");
+        let db_path = dir.path().join("d.sqlite");
+        let socket = temp_socket_path();
+
+        let conn = bootstrap("s2", &db_path).expect("bootstrap");
+        // Pending OS signal — never fires; only IPC shutdown should drive exit.
+        let never_signal = std::future::pending::<&'static str>();
+
+        let conn_clone = conn.clone();
+        let socket_clone = socket.clone();
+        let join = tokio::spawn(async move {
+            run_inner(conn_clone, "s2".to_string(), socket_clone, never_signal).await
+        });
+
+        // Give the IPC server a moment to bind.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Drive shutdown via the IPC channel by talking through the pipe.
+        let cmd = DroneCommand::GracefulShutdown { timeout_ms: 50 };
+        send_command_over_pipe(&socket, &cmd).await;
+
+        let started = Instant::now();
+        let outcome = timeout(Duration::from_secs(3), join)
+            .await
+            .expect("run_inner did not exit on IPC GracefulShutdown")
+            .expect("join failed");
+        outcome.expect("run_inner returned an error");
+        assert!(started.elapsed() < Duration::from_secs(3));
+
+        let count: i64 = conn
+            .lock()
+            .await
+            .query_row(
+                "SELECT COUNT(*) FROM snapshots WHERE event_type = 'ipc_graceful'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(
+            count, 1,
+            "IPC graceful shutdown must produce exactly one emergency snapshot"
+        );
+    }
+
+    async fn send_command_over_pipe(socket: &std::path::Path, cmd: &runtime_core::DroneCommand) {
+        use tokio::io::AsyncWriteExt;
+        let line = format!("{}\n", serde_json::to_string(cmd).expect("encode"));
+
+        #[cfg(unix)]
+        {
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            loop {
+                match tokio::net::UnixStream::connect(socket).await {
+                    Ok(mut s) => {
+                        s.write_all(line.as_bytes()).await.expect("write");
+                        s.flush().await.expect("flush");
+                        return;
+                    }
+                    Err(_) if std::time::Instant::now() < deadline => {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                    Err(e) => panic!("connect: {e}"),
+                }
+            }
+        }
+        #[cfg(windows)]
+        {
+            use tokio::net::windows::named_pipe::ClientOptions;
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            loop {
+                match ClientOptions::new().open(socket) {
+                    Ok(mut s) => {
+                        s.write_all(line.as_bytes()).await.expect("write");
+                        s.flush().await.expect("flush");
+                        return;
+                    }
+                    Err(_) if std::time::Instant::now() < deadline => {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                    Err(e) => panic!("client connect: {e}"),
+                }
+            }
+        }
     }
 }

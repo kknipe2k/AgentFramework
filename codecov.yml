@@ -1,0 +1,42 @@
+# Codecov coverage gating. Flips from advisory (M01 commit c04aac5)
+# to required (M02 Stage A). Project + patch checks both blocking.
+# Absolute thresholds (cargo llvm-cov --fail-under-lines) remain
+# authoritative for hard floors; Codecov gates the *delta* vs main.
+
+coverage:
+  status:
+    project:
+      default:
+        target:        auto
+        threshold:     0.5%
+        base:          auto
+        if_no_uploads: error
+        informational: false
+      runtime-drone:
+        target:    95%
+        threshold: 0.5%
+        flags:     [runtime-drone]
+        informational: false
+      runtime-main:
+        target:    95%
+        threshold: 0.5%
+        flags:     [runtime-main]
+        informational: false
+    patch:
+      default:
+        target:        80%
+        threshold:     0%
+        informational: false
+
+comment:
+  layout:           "reach, diff, flags, files"
+  behavior:         default
+  require_changes:  true
+  require_base:     true
+  require_head:     true
+
+ignore:
+  - "**/generated/**"
+  - "**/src/main.rs"
+  - "**/build.rs"
+  - "src-tauri/gen/**"

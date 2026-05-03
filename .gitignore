@@ -21,3 +21,9 @@ __pycache__/
 
 # Claude Code per-user settings (personal allowlist; not committed)
 .claude/settings.local.json
+
+# Tauri build-time generated schemas. Regenerated on every cargo build of
+# src-tauri; not source-of-truth and platform-specific. M01 carry-forward —
+# see docs/gap-analysis.md M01 entry Important "src-tauri/gen/schemas/
+# should be gitignored to prevent future drift" (surfaced in PR #36).
+src-tauri/gen/schemas/

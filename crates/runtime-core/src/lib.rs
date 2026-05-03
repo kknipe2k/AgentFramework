@@ -13,10 +13,12 @@ pub mod error;
 pub mod event;
 /// Types generated from JSON schemas via typify.
 pub mod generated;
+/// Signal Schema v2 — forensic event log types (spec §2b).
+pub mod signal;
 
 pub use drone::{
-    ActivityState, AlertLevel, DroneCommand, DroneEvent, ProcessConfig, ProcessType, RevertReason,
-    StopReason,
+    ActivityState, AlertLevel, DroneCommand, DroneEvent, HeartbeatStatus, ProcessConfig,
+    ProcessType, RevertReason, StopReason,
 };
 pub use error::RuntimeError;
 pub use event::AgentEvent;

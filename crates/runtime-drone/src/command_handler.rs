@@ -9,7 +9,7 @@ use runtime_core::{AlertLevel, DroneCommand, DroneEvent, ProcessConfig, ProcessT
 use rusqlite::Connection;
 use std::sync::Arc;
 use thiserror::Error;
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use tokio::time::{timeout, Duration};
 use tracing::warn;
 
@@ -28,6 +28,11 @@ pub enum CommandError {
 /// Run the command-dispatch loop until `cmd_rx` closes or
 /// `GracefulShutdown` is received.
 ///
+/// On `GracefulShutdown`, the handler fires `shutdown_tx` (if provided) to
+/// signal the drone's top-level shutdown source, then returns. Callers that
+/// don't need IPC-driven shutdown (e.g., unit tests for individual command
+/// behaviors) may pass `None`.
+///
 /// # Errors
 ///
 /// Returns `CommandError::Snapshot` if a `SnapshotNow` write fails, or
@@ -37,7 +42,9 @@ pub async fn run(
     conn: Arc<Mutex<Connection>>,
     mut cmd_rx: mpsc::Receiver<DroneCommand>,
     event_tx: broadcast::Sender<DroneEvent>,
+    shutdown_tx: Option<oneshot::Sender<&'static str>>,
 ) -> Result<(), CommandError> {
+    let mut shutdown_tx = shutdown_tx;
     while let Some(cmd) = cmd_rx.recv().await {
         match cmd {
             DroneCommand::SnapshotNow { reason, state_json } => {
@@ -45,6 +52,9 @@ pub async fn run(
             }
             DroneCommand::GracefulShutdown { timeout_ms } => {
                 let _ = timeout(Duration::from_millis(timeout_ms), async {}).await;
+                if let Some(tx) = shutdown_tx.take() {
+                    let _ = tx.send("ipc_graceful");
+                }
                 return Ok(());
             }
             DroneCommand::RevertToSnapshot {
@@ -152,7 +162,7 @@ mod tests {
     };
     use std::sync::Arc;
     use tempfile::TempDir;
-    use tokio::sync::{broadcast, mpsc, Mutex};
+    use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
     use tokio::time::{timeout, Duration};
 
     fn open() -> (TempDir, Arc<Mutex<rusqlite::Connection>>) {
@@ -174,7 +184,7 @@ mod tests {
         let (event_tx, _event_rx) = broadcast::channel::<DroneEvent>(8);
 
         let conn_clone = conn.clone();
-        let task = tokio::spawn(run("s1".to_string(), conn_clone, cmd_rx, event_tx));
+        let task = tokio::spawn(run("s1".to_string(), conn_clone, cmd_rx, event_tx, None));
 
         cmd_tx
             .send(DroneCommand::SnapshotNow {
@@ -212,7 +222,7 @@ mod tests {
         let (event_tx, mut event_rx) = broadcast::channel::<DroneEvent>(16);
 
         let conn_clone = conn.clone();
-        let task = tokio::spawn(run("s1".to_string(), conn_clone, cmd_rx, event_tx));
+        let task = tokio::spawn(run("s1".to_string(), conn_clone, cmd_rx, event_tx, None));
 
         cmd_tx
             .send(DroneCommand::RevertToSnapshot {
@@ -251,7 +261,7 @@ mod tests {
         let (cmd_tx, cmd_rx) = mpsc::channel::<DroneCommand>(8);
         let (event_tx, mut event_rx) = broadcast::channel::<DroneEvent>(16);
 
-        let task = tokio::spawn(run("s1".to_string(), conn, cmd_rx, event_tx));
+        let task = tokio::spawn(run("s1".to_string(), conn, cmd_rx, event_tx, None));
 
         cmd_tx
             .send(DroneCommand::RevertToSnapshot {
@@ -287,7 +297,7 @@ mod tests {
         let (cmd_tx, cmd_rx) = mpsc::channel::<DroneCommand>(8);
         let (event_tx, mut event_rx) = broadcast::channel::<DroneEvent>(16);
 
-        let task = tokio::spawn(run("s1".to_string(), conn, cmd_rx, event_tx));
+        let task = tokio::spawn(run("s1".to_string(), conn, cmd_rx, event_tx, None));
 
         cmd_tx
             .send(DroneCommand::SpawnProcess {
@@ -334,6 +344,29 @@ mod tests {
             .send(DroneCommand::GracefulShutdown { timeout_ms: 100 })
             .await
             .expect("shutdown");
+        let _ = timeout(Duration::from_secs(1), task).await;
+    }
+
+    #[tokio::test]
+    async fn graceful_shutdown_fires_shutdown_signal() {
+        let (_dir, conn) = open();
+        let (cmd_tx, cmd_rx) = mpsc::channel::<DroneCommand>(8);
+        let (event_tx, _event_rx) = broadcast::channel::<DroneEvent>(8);
+        let (sd_tx, sd_rx) = oneshot::channel::<&'static str>();
+
+        let task = tokio::spawn(run("s1".to_string(), conn, cmd_rx, event_tx, Some(sd_tx)));
+
+        cmd_tx
+            .send(DroneCommand::GracefulShutdown { timeout_ms: 50 })
+            .await
+            .expect("send shutdown");
+
+        let signal = timeout(Duration::from_secs(2), sd_rx)
+            .await
+            .expect("shutdown signal timed out")
+            .expect("shutdown channel closed");
+        assert_eq!(signal, "ipc_graceful");
+
         let _ = timeout(Duration::from_secs(1), task).await;
     }
 }

@@ -342,21 +342,52 @@ jobs:
           cargo llvm-cov --package runtime-drone \
             --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.shutdown\.rs" \
             --fail-under-lines 95
-      # lcov export for Codecov — workspace exclusion only.
-      - name: Generate lcov for Codecov
+      # lcov export for Codecov — workspace + per-crate uploads. The
+      # cargo-llvm-cov --fail-under-lines gates above remain authoritative
+      # for absolute floors. Codecov gates the *delta* vs main per
+      # codecov.yml (project: 0.5pp, patch: ≥80% on touched lines).
+      # Per-crate flag uploads let codecov.yml's `runtime-drone` /
+      # `runtime-main` per-flag targets enforce 95% absolute coverage.
+      - name: Generate workspace lcov
         run: |
           cargo llvm-cov --workspace --lcov --output-path lcov.info \
             --ignore-filename-regex "src.main\.rs|generated"
-      # Codecov upload is advisory — the cargo-llvm-cov --fail-under-lines
-      # gates above are the authoritative quality check (per spec §12).
-      # Codecov requires CODECOV_TOKEN on protected branches; until that
-      # secret is configured (repo-level), upload failures must not red
-      # the build because the coverage thresholds already passed.
-      - uses: codecov/codecov-action@v4
+      - name: Generate runtime-drone lcov
+        run: |
+          cargo llvm-cov --package runtime-drone --lcov \
+            --output-path lcov-drone.info \
+            --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.shutdown\.rs"
+      - name: Generate runtime-main lcov
+        run: |
+          cargo llvm-cov --package runtime-main --lcov \
+            --output-path lcov-main.info \
+            --ignore-filename-regex "src.main\.rs|generated"
+      # Codecov uploads — required from M02 onward (per CLAUDE.md §5
+      # "Coverage delta gating (from M02 onward) — Codecov-enforced").
+      # The codecov.yml `informational: false` flags make Codecov status
+      # checks blocking; this CI step's `fail_ci_if_error` ensures upload
+      # failures themselves also red the build.
+      - name: Upload workspace coverage to Codecov
+        uses: codecov/codecov-action@v4
         with:
-          files: lcov.info
-          fail_ci_if_error: false
-          token: ${{ secrets.CODECOV_TOKEN }}
+          files:            lcov.info
+          flags:            workspace
+          fail_ci_if_error: true
+          token:            ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload runtime-drone coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files:            lcov-drone.info
+          flags:            runtime-drone
+          fail_ci_if_error: true
+          token:            ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload runtime-main coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files:            lcov-main.info
+          flags:            runtime-main
+          fail_ci_if_error: true
+          token:            ${{ secrets.CODECOV_TOKEN }}
 
   frontend:
     name: Frontend (TypeScript)

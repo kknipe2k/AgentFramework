@@ -107,6 +107,30 @@ A micro-cycle should take 5–15 minutes. If a cycle is longer, the test is too 
 - **≥95% line on safety primitives** with documented exclusions: drone (`crates/runtime-drone/`), capability enforcer (`crates/runtime-main/src/capability/`), plan state machine, snapshot/recovery code paths. The drone gate excludes `lib.rs` and `shutdown.rs` (OS-signal orchestrators wrapping testable `_inner`/`_with` variants — exercised end-to-end by the Unix subprocess integration test in `crates/runtime-drone/tests/integration.rs`). Per-module baseline (M01.C measured): `snapshot.rs` 100%, `db.rs` 98.82%, `heartbeat.rs` 98.59%, `command_handler.rs` 97.94%, `ipc.rs` 84.70% (platform-cfg variants). Subsequent milestones must not regress any module below its baseline without a retro entry recording the reason. Same pattern (≥95% overall + documented per-module baseline) applies as future safety primitives land — document the exclusion list and rationale here when adding them. (History: M01.C retrospective + M01-foundation.md Stage D §D.3 "Coverage gate semantics".)
 - Coverage drops vs prior `main` block PR merge. CI computes the delta.
 
+**Coverage delta gating (from M02 onward) — Codecov-enforced.** M01 used
+absolute thresholds (workspace ≥80%, drone ≥95%) because no baseline
+existed. Starting M02, every PR also passes a delta-gate via Codecov:
+project + patch coverage thresholds set in `codecov.yml` (`target: auto`,
+`threshold: 0.5%`, `base: auto`). Codecov pulls the LCOV uploaded by the
+existing `cargo-llvm-cov` step in `.github/workflows/ci.yml`, compares
+to `main`'s last green build, and fails the PR check if any gated crate
+regresses by >0.5 percentage points (absolute) OR if patch coverage on
+the changed lines drops below the project floor.
+
+Codecov was advisory in M01 (commit `c04aac5`); M02 Stage A flips
+required-on for the project + patch checks via:
+- New `codecov.yml` at repo root with the project + patch rules.
+- `.github/workflows/ci.yml` keeps the existing upload step plus
+  per-crate flag uploads (`workspace`, `runtime-drone`, `runtime-main`);
+  the `informational: false` flag in `codecov.yml` makes the check
+  blocking and `fail_ci_if_error: true` reds the build on upload failure.
+- The absolute-threshold gates (`cargo llvm-cov --fail-under-lines`)
+  remain authoritative for hard floors; Codecov gates the *delta*.
+- No custom bash scripts to maintain.
+
+Pre-M01 carry-forward; resolved per the M01 gap-analysis Important
+"Coverage delta gating mechanism" item.
+
 ### Test types and when they apply
 
 | Type | Tool | Required from |

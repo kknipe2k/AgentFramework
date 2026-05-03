@@ -6,6 +6,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M02.A (Build hygiene + scaffolding)
+
+- `crates/runtime-core/src/signal.rs` — Signal Schema v2 type scaffold per
+  spec §2b (8-variant `Signal` enum + `ContextType` + correlation field
+  types `PreSignalId` / `ParentSignalId` / `RetryOfSignalId`). Emission
+  integration is M04+ work; M02.A ships the type surface so M03+ work can
+  import without churn.
+- `crates/runtime-core/src/drone.rs::HeartbeatStatus` typed enum
+  (`Ok`/`Degraded`/`Stalled`) replaces the prior `String`. Implements
+  `Display` + `FromStr` so SQLite text storage round-trips through the
+  enum. Closes M01 gap-analysis Important "HeartbeatStatus typed enum"
+  per spec §1d (PR #36 closeout).
+- `crates/runtime-drone/src/db.rs::init_schema` — 8th SQLite table
+  `mcp_servers` per spec §11:2435-2444 + MCP best-practice (Claude Code
+  / Claude Desktop / VS Code MCP client schemas). 22 columns covering
+  identity, transport-specific config (stdio/http/sse/streamable_http),
+  authentication (keychain refs, never literal secrets), connection
+  lifecycle, timeouts, scope tracking, capability cache; SQL CHECK
+  constraints enforce the stdio-vs-remote mutual exclusion. Schema only;
+  MCP client lands in M06.
+- `crates/runtime-drone/tests/integration_windows.rs` — Windows-platform
+  end-to-end test exercising `ipc::accept_loop` over named pipe: spawns
+  drone, sends `SnapshotNow`, verifies SQLite row, sends
+  `GracefulShutdown`, verifies clean exit. Sister to the existing
+  `tests/integration.rs` Unix SIGTERM lifecycle test; together they
+  cover §0d Windows-only release scope.
+
+### Changed — M02.A
+
+- `crates/runtime-drone/src/command_handler.rs::run` accepts an optional
+  `oneshot::Sender<&'static str>` and signals it on `GracefulShutdown`,
+  driving full drone-process exit through the IPC channel. `run_inner`
+  selects between the OS-signal future and the IPC-shutdown future to
+  unify cross-platform graceful shutdown.
+- Workspace coverage gate adds delta-gating from M02 onward (Codecov
+  project: `target: auto`, `threshold: 0.5%`; patch: `target: 80%`).
+  Per-crate Codecov flag uploads added for `runtime-drone` and
+  `runtime-main`. Documented in `CLAUDE.md` §5 "Coverage delta gating
+  (from M02 onward)".
+
+### Documentation — M02.A
+
+- `docs/style.md` — `*_with` / `*_inner` test-seam pattern documented
+  as the canonical TDD-friendly approach to OS-driven async functions.
+  Cites M01.C archetype at `crates/runtime-drone/src/{lib,shutdown}.rs`
+  and codification commit `1dec4ba`.
+- `.gitattributes` — explicit LF normalization for `*.rs`, `*.toml`,
+  `*.json`, `*.md`, `*.yml`, `*.sh`, `*.bash`, `*.py`, `*.html`, `*.css`,
+  `*.js`. Closes M01 gap-analysis Important "line-ending normalization".
+- `.gitignore` — `src-tauri/gen/schemas/` excluded; the four
+  Tauri-generated files (`acl-manifests.json`, `capabilities.json`,
+  `desktop-schema.json`, `windows-schema.json`) untracked but kept on
+  disk. Closes M01 PR #36 follow-up "src-tauri/gen/schemas/ should be
+  gitignored to prevent future drift".
+
 ### Added
 
 - **Spec §15 Sharing & Distribution + ADR-0005** — three sharing tiers
