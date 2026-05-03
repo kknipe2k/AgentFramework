@@ -560,7 +560,8 @@ Session Recovery
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DroneEvent {
     Heartbeat            { status: HeartbeatStatus, timestamp: i64 },
-    SnapshotWritten      { snapshot_id: String,    session_id: String },
+    SnapshotWritten      { snapshot_id: String,    session_id: String,
+                           reason: String,         timestamp: chrono::DateTime<Utc> },
     ActivityStateChange  { from: ActivityState,    to: ActivityState },
     ProcessSpawned       { pid: u32,               process_type: ProcessType },
     ProcessStopped       { pid: u32,               reason: StopReason },
@@ -568,10 +569,14 @@ pub enum DroneEvent {
     Alert                { level: AlertLevel,      message: String },
 }
 
+// `SnapshotWritten.reason` and `.timestamp` are duplicated from the source
+// `SnapshotNow` command so downstream consumers (dashboard, audit log)
+// don't need to join against the snapshots table to render an event row.
+
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DroneCommand {
-    SnapshotNow         { reason: String },
+    SnapshotNow         { reason: String, state_json: serde_json::Value },
     GracefulShutdown    { timeout_ms: u64 },
     SpawnProcess        { process_type: ProcessType, config: ProcessConfig },
     StopProcess         { pid: u32, force: bool },
@@ -579,12 +584,26 @@ pub enum DroneCommand {
     RevertToSnapshot    { snapshot_id: String, reason: RevertReason },  // §1b / WI-14
 }
 
+// `SnapshotNow.state_json` is provided by main; the drone is the snapshot
+// persister, not the state owner. Main serializes the full session state
+// into a `serde_json::Value` and hands it to the drone, which writes it
+// (with a SHA-256 `state_hash`) to the snapshots table.
+
 #[derive(Serialize, Deserialize)]
 pub enum ActivityState { Active, Idle, Stalled, TimedOut, UserAborted, Recovering }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason { Graceful, Crash, Timeout, UserAbort, ForceKill }
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeartbeatStatus { Ok, Degraded, Stalled }
+
+// Matches the text values written by `runtime-drone::heartbeat::run` to the
+// `heartbeats.status` column. After this spec entry the typed enum becomes
+// the source-of-truth — `runtime-core` adopts it in M02 prep (currently
+// typed as `String` at `crates/runtime-core/src/drone.rs:13-18`).
 ```
 
 ### Drone Error Matrix
@@ -740,21 +759,35 @@ let drone = tokio::process::Command::new("runtime-drone")
     .stderr(Stdio::piped())                      // captured to log file
     .spawn()?;
 
+use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
+
 let listener = UnixListener::bind(&socket_path)?;
 let (sock, _) = listener.accept().await?;
 let (read, write) = sock.into_split();
-let mut events = FramedRead::new(read, JsonCodec::<DroneEvent>::new());
-let mut commands = FramedWrite::new(write, JsonCodec::<DroneCommand>::new());
+let mut events = FramedRead::new(read, LinesCodec::new());
+let mut commands = FramedWrite::new(write, LinesCodec::new());
 
-// Drone heartbeats arrive on `events`; main sends commands via `commands`.
+while let Some(line) = events.next().await {
+    let event: DroneEvent = serde_json::from_str(&line?)?;
+    // ... dispatch event ...
+}
+
+// To send: commands.send(serde_json::to_string(&cmd)?).await?;
 ```
 
 ```rust
 // Drone connects back to main's socket
 let stream = UnixStream::connect(&args.ipc_socket).await?;
 let (read, write) = stream.into_split();
-// Mirror codec on the drone side; receive DroneCommand, emit DroneEvent.
+// Mirror codec on the drone side: LinesCodec + manual serde_json
+// (de)serialization. Drone receives DroneCommand, emits DroneEvent.
 ```
+
+`tokio_util::codec` does not provide a `JsonCodec<T>`; framed JSON-newline
+is implemented with `LinesCodec` plus per-line `serde_json::to_string` /
+`from_str`. Reference implementation:
+`crates/runtime-drone/src/ipc.rs` (lines 32-39 for the codec wiring,
+lines 68-119 for the per-platform accept loop).
 
 Why not stdio:
 - Library warnings to stdout corrupt JSON streams.
@@ -765,6 +798,32 @@ Why a socket per session:
 - Trivially supports multi-session (`§1c`) — each session pair (main, drone) has its own socket path under `$RUNTIME_DATA_DIR/sockets/{session_id}.sock`.
 - Permission-restricted: socket created with mode 0600, owner-only.
 - Easy to mock in tests (point at a `tempfile`-backed socket).
+
+#### Windows named-pipe specifics
+
+v0.1 ships Windows-only per §0d. The Windows side of the IPC channel uses
+named pipes via `tokio::net::windows::named_pipe`:
+
+- **Path format:** `\\.\pipe\agent-runtime-drone-<session_id>` (one pipe
+  per session, mirroring the per-session Unix-socket-path scheme).
+- **Server creation (main):**
+  ```rust
+  use tokio::net::windows::named_pipe::{ServerOptions, PipeMode};
+  let server = ServerOptions::new()
+      .pipe_mode(PipeMode::Byte)
+      .create(&pipe_name)?;
+  server.connect().await?;
+  ```
+- **Client connection (drone):** `ClientOptions::new().open(&pipe_name)?`.
+- **Security:** the default DACL is used (no explicit security descriptor);
+  this relies on Windows per-user process isolation. Future hardening pass
+  (post-v0.1) should add an explicit DACL restricting the pipe to the
+  current user's SID. Documented as a known gap.
+- **Codec:** same `LinesCodec` + `serde_json` pattern as the Unix path.
+
+Reference implementation: `crates/runtime-drone/src/ipc.rs` (lines 13-30
+for the platform-specific bindings) and the platform-specific notes in
+`crates/runtime-drone/README.md`.
 
 -----
 
@@ -2331,7 +2390,7 @@ Tester (modal — opens from Inspector)
 
 -----
 
-## Persistence Layer
+## §10 Persistence Layer
 
 All state lives in SQLite. Schema:
 
@@ -2490,8 +2549,8 @@ Recovery is never destructive. Discarded sessions are archived, not deleted.
 │   │   ├── src/lib.rs
 │   │   ├── src/event.rs        # AgentEvent enum (canonical)
 │   │   ├── src/framework.rs    # Framework JSON schema types
-│   │   ├── src/capability.rs   # Capability declaration + enforcement types
-│   │   └── src/signal.rs       # Signal Schema v2 types
+│   │   ├── src/capability.rs * # Capability declaration + enforcement types
+│   │   └── src/signal.rs     * # Signal Schema v2 types
 │   │
 │   ├── runtime-main/           # Tauri main process
 │   │   ├── src/main.rs
@@ -2511,13 +2570,15 @@ Recovery is never destructive. Discarded sessions are archived, not deleted.
 │   │   ├── src/db/session_store.rs
 │   │   └── src/capability/enforcer.rs        # L2a application-level
 │   │
-│   ├── runtime-drone/          # Drone binary
-│   │   ├── src/main.rs         # Entry: --session-id --db-path --ipc-socket
-│   │   ├── src/protocol.rs     # DroneEvent / DroneCommand
-│   │   ├── src/heartbeat.rs
-│   │   ├── src/snapshot.rs
-│   │   ├── src/recovery.rs
-│   │   └── src/process_manager.rs
+│   ├── runtime-drone/          # Drone binary (M01)
+│   │   ├── src/main.rs            # clap CLI + tracing init
+│   │   ├── src/lib.rs             # orchestration: run / run_inner / bootstrap
+│   │   ├── src/db.rs              # SQLite + WAL pragmas + 8-table schema init
+│   │   ├── src/snapshot.rs        # append-only snapshot writer + state_hash
+│   │   ├── src/heartbeat.rs       # 5s tokio interval + heartbeats table writes
+│   │   ├── src/ipc.rs             # UnixListener / NamedPipeServer + LinesCodec
+│   │   ├── src/command_handler.rs # DroneCommand dispatch
+│   │   └── src/shutdown.rs        # SIGTERM/SIGINT/CTRL_BREAK emergency snapshot
 │   │
 │   └── runtime-sandbox/        # Per-artifact sandbox host (L2b OS-level)
 │       ├── src/main.rs
@@ -2591,6 +2652,13 @@ Recovery is never destructive. Discarded sessions are archived, not deleted.
 ├── agent-runtime-spec.md       # This document
 └── package.json                # Frontend deps only
 ```
+
+> Files marked `*` arrive in their owning phase and are not present in
+> M01: `runtime-core/src/capability.rs` lands in M05; `runtime-core/src/signal.rs`
+> lands in M02. The drone module shape above reflects the as-shipped M01
+> decomposition (8 modules; single responsibility per file). Earlier drafts
+> of this listing showed `protocol.rs / recovery.rs / process_manager.rs`;
+> those names were illustrative and were superseded by the M01 build.
 
 -----
 
