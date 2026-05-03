@@ -1,5 +1,6 @@
 # M01 Foundation — Specification + Stage Prompts
 
+**Protocol version:** v1.0 (pre-XML-schema; grandfathered per `STAGE-PROMPT-PROTOCOL.md` v1.2 changelog item #8). Exempt from v1.2 validator rules (URI-fragment refs, missing `<execution_steps>`, inline content in tags whose Phase doc sections exist). M03 onward uses v1.2.
 **Date:** 2026-04-28
 **Status:** Design approved — implement one stage at a time, in order
 **Scope:** Cargo workspace + empty crates + Tauri stub + type-generation pipeline + drone Phase 1 + fuzz harness + 100% drone coverage + per-crate READMEs + CI green on Linux/macOS/Windows × stable + MSRV.

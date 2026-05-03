@@ -1,5 +1,7 @@
 # Template — Per-Milestone Specification + Stage Prompts
 
+> **Protocol version:** v1.0 grandfathered shape. The current authoring shape for M03 onward is the XML stage-prompt schema in `STAGE-PROMPT-PROTOCOL.md` v1.2 (repo root). This template stays as the canonical reference for the v1.0 markdown structure used by M01-foundation.md and M02-event-pipeline.md, and as the source for the milestone-level outline (Background, Document Structure, Implementation Workflow, per-stage X.1–X.6 sections) that the v1.2 prompts still reference via `section="..."` lookups.
+
 This file is the **shape** of a milestone document. Copy it to `M[NN]-<short-title>.md` and fill in every section. Sections are not optional; if a section doesn't apply, write "N/A — <one-line reason>" rather than deleting.
 
 The shape combines the milestone **specification** (rationale, design decisions) and the **stage prompts** (paste-able CLI prompts that drive Claude through implementation) in one document. Each milestone produces one PR; each stage within a milestone produces one commit on the same feature branch. Each stage produces a retrospective per `CLAUDE.md` §19.

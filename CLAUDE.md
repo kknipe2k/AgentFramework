@@ -574,7 +574,8 @@ This checklist is the orientation before TDD's "Red" phase. Skip it and you'll d
 | What we're building | `agent-runtime-spec.md` (especially §0–§0d) |
 | Current scope and milestones | `docs/MVP-v0.1.md` |
 | Per-milestone prompt | `docs/build-prompts/M[NN]-*.md` |
-| Per-milestone template | `docs/build-prompts/TEMPLATE.md` |
+| Per-milestone template (v1.0 grandfathered) | `docs/build-prompts/TEMPLATE.md` |
+| Stage prompt XML schema (v1.2; M03 onward) | `STAGE-PROMPT-PROTOCOL.md` (repo root) |
 | Per-stage retrospectives | `docs/build-prompts/retrospectives/` |
 | Cumulative gap analysis (append-only) | `docs/gap-analysis.md` (per §20) |
 | Persistence architecture (HLA) | `docs/persistence-architecture.md` |

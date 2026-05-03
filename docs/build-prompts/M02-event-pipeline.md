@@ -1,5 +1,6 @@
 # M02 Event Pipeline — Specification + Stage Prompts
 
+**Protocol version:** v1.0 (pre-XML-schema; grandfathered per `STAGE-PROMPT-PROTOCOL.md` v1.2 changelog item #8). Exempt from v1.2 validator rules (URI-fragment refs, missing `<execution_steps>`, inline content in tags whose Phase doc sections exist). M03 onward uses v1.2.
 **Date:** 2026-05-02
 **Status:** Design approved — implement one stage at a time, in order
 **Scope:** Bring the event pipeline alive. Stand up `runtime-main` with the `LLMProvider` trait + `AnthropicProvider` (direct HTTP+SSE), wire it through an `AgentSdk` that emits `AgentEvent`s, connect main↔drone IPC over the Unix socket / Windows named pipe shipped in M01, and surface events to a skeleton React renderer through Tauri's typed IPC. End state: user clicks "Run smoke test" in the renderer, main calls Anthropic with a hardcoded prompt, the renderer lists `agent_spawned → tool_invoked → stream_text → agent_complete` events as they arrive. Spec §2 + §M2 acceptance criteria.
