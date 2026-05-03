@@ -347,10 +347,16 @@ jobs:
         run: |
           cargo llvm-cov --workspace --lcov --output-path lcov.info \
             --ignore-filename-regex "src.main\.rs|generated"
+      # Codecov upload is advisory — the cargo-llvm-cov --fail-under-lines
+      # gates above are the authoritative quality check (per spec §12).
+      # Codecov requires CODECOV_TOKEN on protected branches; until that
+      # secret is configured (repo-level), upload failures must not red
+      # the build because the coverage thresholds already passed.
       - uses: codecov/codecov-action@v4
         with:
           files: lcov.info
-          fail_ci_if_error: true
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   frontend:
     name: Frontend (TypeScript)
