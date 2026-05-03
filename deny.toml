@@ -27,7 +27,10 @@ ignore     = [
 ]
 
 [licenses]
-allow                       = ["Apache-2.0", "Apache-2.0 WITH LLVM-exception", "MIT", "MPL-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0", "Unicode-DFS-2016", "Zlib"]
+# CDLA-Permissive-2.0 enters via webpki-root-certs (transitive: reqwest →
+# rustls-platform-verifier → webpki-root-certs). Permissive Linux-Foundation
+# license used for distributing CA root cert data; safe to allow.
+allow                       = ["Apache-2.0", "Apache-2.0 WITH LLVM-exception", "MIT", "MPL-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0", "Unicode-DFS-2016", "Zlib", "CDLA-Permissive-2.0"]
 confidence-threshold        = 0.9
 unused-allowed-license      = "allow"
 

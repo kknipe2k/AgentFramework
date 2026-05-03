@@ -2,6 +2,8 @@
 //!
 //! Real implementation lands in subsequent stages of M01 and later milestones.
 
+pub mod providers;
+
 /// Returns the string `"ok"`. Placeholder for Stage A; real exports come later.
 ///
 /// # Examples

@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M02.B (LLMProvider trait + AnthropicProvider stub)
+
+- `crates/runtime-main/src/providers/mod.rs` — `LLMProvider` trait,
+  `ProviderEvent` enum (`TextDelta` / `ToolUse` / `ToolResult` /
+  `ThinkingDelta` / `MessageStop` / `Error`), `ProviderError`
+  (thiserror-derived), and supporting types (`AgentConfig`, `Message`,
+  `ContentBlock`, `ImageSource`, `ToolResultContent`, `ModelInfo`,
+  `Pricing`, `CostBreakdown`, `ProviderSupport`, `ModelCapabilities`)
+  per spec §2c.
+- `crates/runtime-main/src/providers/anthropic.rs` — `AnthropicProvider`
+  shell. `SecretString`-wrapped API key; stub `stream()` returning
+  hardcoded `TextDelta + MessageStop` sequence; hardcoded `list_models()`
+  (Opus 4.7, Sonnet 4.6, Haiku 4.5); char-based `count_tokens()`;
+  cache-aware `estimate_cost()` (5m write 1.25× / 1h write 2× / read
+  0.1× input). Stage C replaces the stub body with real HTTP+SSE.
+- `crates/runtime-main/README.md` — public API documentation per
+  CLAUDE.md §6.
+- Workspace dependencies (no third-party Anthropic SDK): `reqwest`
+  (rustls-tls + json + stream), `eventsource-stream`, `async-trait`,
+  `secrecy`, `keyring`, plus a path-dep entry for `runtime-core`.
+
 ### Added — M02.A (Build hygiene + scaffolding)
 
 - `crates/runtime-core/src/signal.rs` — Signal Schema v2 type scaffold per
