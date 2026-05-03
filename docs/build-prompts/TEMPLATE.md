@@ -149,6 +149,15 @@ The header sections (Date through Implementation Workflow) live once at the top.
 
 Total: [sum of estimates]. ~10–15 hours human direction.
 
+**Estimation calibration.** When authoring this milestone, recalibrate effort
+estimates against the prior milestone's actual elapsed time per the
+retrospectives. M01's method overestimated by ~3× (estimated 29–46h, ran
+9–14h, ratio 0.3×). For each stage, name the analogous M01/prior-milestone
+stage and use that stage's actual elapsed time as the floor; add complexity
+multipliers for new domain (e.g., adding LLM provider work in M02 vs purely
+Rust workspace setup in M01) but base the number on observed prior-stage
+time, not intuition.
+
 ---
 
 <!-- ============================================================ -->
@@ -227,6 +236,20 @@ Each stage runs through this exact cycle:
 
 - [Specific crates/modules and their thresholds]
 
+**Safety primitive coverage gate.** When a stage delivers a safety primitive
+(per CLAUDE.md §5: drone, capability enforcer, plan state machine,
+snapshot/recovery), the dual-gate policy applies:
+
+- Workspace ≥80% (general)
+- Safety primitive crate ≥95% line / region (with documented OS-signal-
+  orchestrator exclusions via `--ignore-filename-regex` if cross-platform
+  100% is structurally infeasible)
+
+The exclusion list goes inline in the crate's coverage configuration
+(`Cargo.toml` or `coverage.toml`) with a one-line rationale per excluded
+function. See M01.C codification at commit `1dec4ba` for the established
+pattern.
+
 ### A.5 CLI Prompt
 
 ```
@@ -284,6 +307,17 @@ Re-run all gates one final time.
 Surface: diff stat, gate results, M[NN].A retrospective, draft commit from A.6.
 State: "Stage A is ready. I will NOT commit until you approve."
 Wait for explicit approval. Do NOT push (push waits for final stage).
+
+On approval (Stage A — work stage; not the final stage of a parent milestone):
+1. Commit Stage A on the parent-milestone branch (do NOT push).
+2. Stop. Surface the commit. The next stage (Stage B, or Phase Closeout
+   if A was the last work stage) is opened in a fresh session.
+3. Per CLAUDE.md §20, the Phase Closeout stage (Gap Analysis) is the
+   final commit on the parent-milestone branch and gates the PR push.
+
+The same "On approval" sequence applies verbatim to every non-final
+work stage (Stage B, Stage C, Stage D, ...). Do NOT push and do NOT
+open a PR from a work stage — those happen only after Phase Closeout.
 ```
 
 ### A.6 Commit Message
@@ -412,9 +446,15 @@ State: "M[NN] Gap Analysis is ready. I will NOT commit until you approve.
 Please review the entry — once committed, prior entries are immutable
 forever per CLAUDE.md §20."
 
-Wait for explicit approval. After approval, commit, then push the parent-
-milestone feature branch with all stage commits + this final commit, then
-draft the PR per CLAUDE.md §8 (do not open the PR unless explicitly asked).
+Wait for explicit approval.
+
+On approval (Stage <last letter> — Phase Closeout: Gap Analysis; final stage):
+1. Commit Stage <last letter> on the parent-milestone branch.
+2. Push the branch (first push for the milestone — push waits until
+   after Stage <last letter> per CLAUDE.md §20).
+3. Draft the parent-milestone PR description. Surface for approval.
+4. On approval to open: use mcp__github__create_pull_request to open
+   the PR. Do NOT merge.
 ```
 
 ### <X>.6 Commit Message
