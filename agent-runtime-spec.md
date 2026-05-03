@@ -3125,6 +3125,139 @@ Power users (especially future contributors testing the build) can skip via `cmd
 
 -----
 
+## §15 Sharing & Distribution
+
+A built, tested, signed agentic framework is the **unit of share**. The product identity treats frameworks as portable artifacts that can be moved between users — not coupled to one machine, one runtime install, or one OS. This section defines the three sharing tiers, the metadata frameworks must declare to support them, the cross-OS portability rules, and the "Share It" module that consumes this metadata to produce share-ready bundles.
+
+### §15a Three sharing tiers
+
+| Tier | Recipient | Runtime required | Ships in | Bundle size |
+|---|---|---|---|---|
+| **Runtime-to-runtime** | Another runtime user (has full Tauri runtime installed) | Yes — full runtime | **v0.1 (M07)** — registry import/export | Artifact only (~100–500 KB depending on framework) |
+| **Headless CLI** | Anyone — colleague, CI job, automation, server | No — single static binary `agent-runtime-cli` (~10 MB) | **v1.0** — new milestone | Artifact + per-OS CLI binary (~5–15 MB per OS variant) |
+| **WASM runtime** | Anyone — runs in browser, Node, any WASM host | No — embedded in host | **v2.0+** stretch | Artifact + WASM module (variable; depends on host) |
+
+The runtime-to-runtime tier is the v0.1 baseline (already covered by §7 Registry import). The headless CLI tier is the v1.0 commitment that this section primarily exists to scope. The WASM tier is forward-looking; it requires a separate research effort and is not committed to a specific milestone.
+
+### §15b Headless CLI execution model
+
+The `agent-runtime-cli` binary is a single static executable, distributed per OS, that runs a framework end-to-end without the desktop UI. It reuses the runtime crates (`runtime-core`, `runtime-main`, `runtime-drone`, `runtime-providers`, capability enforcer, plan executor, MCP client) and replaces only the renderer + workbench layers. The agentic execution semantics are identical to the desktop runtime: plan/verify/HITL/budget all execute the same way; the only difference is that events stream to NDJSON (stdout or `--events <path>`) instead of rendering in the live graph.
+
+Recipient flow:
+
+```
+1. Receive a framework bundle (zip or directory)
+2. Unzip to a local directory
+3. cd into the directory
+4. agent-runtime-cli run .
+```
+
+The CLI auto-discovers `framework.json` in the current directory, reads the `model`, `provider`, `requires_secrets`, `runtime_dependency_class`, and `compatible_os` fields, prompts for any missing secrets via secure input (stored in OS keychain on first entry), and executes. Subsequent runs in any directory reuse keychain-stored secrets without re-prompting.
+
+Configurable at run time via flags or env (the **superficial-edit surface**):
+- `--workdir <path>` — working directory for the agent (default: current dir)
+- `--model <model-id>` — override the framework's declared model (e.g., to swap Opus 4.7 → Sonnet 4.6 for cost reasons)
+- `--max-tokens <n>` — override budget caps
+- `--events <path>` — write events as NDJSON to a file instead of stdout
+- `--secret <name>=<value>` — pass a secret inline (not recommended; prefer keychain)
+- `agent-runtime-cli set-secret <name>` — interactive secret entry (stored in keychain)
+
+What the recipient **cannot edit** without re-export from the workbench:
+- Skills/agents/tools logic
+- Capability declarations (locked via `skills.lock` per §7)
+- Plan structure
+- Charter rules (per §12)
+
+This is the boundary between **superficial config** (CLI-editable) and **semantic content** (workbench-only). It keeps shared artifacts integrity-preserving while making them trivially re-runnable.
+
+### §15c Cross-OS portability rules
+
+Framework artifacts are designed to be portable across Windows, macOS, and Linux. The `agent-runtime-cli` binary is per-OS, but the same framework artifact runs on any OS where the recipient has the matching binary. Two design rules in `schemas/framework.v1.json` enforce this:
+
+1. **POSIX-style relative paths only.** No `C:\Users\...`, no `/Users/foo/...`, no backslashes in framework metadata, skill frontmatter, tool configs, or any artifact field that names a file. Schema validates. Without this rule, a Windows-authored agent breaks immediately on macOS/Linux.
+
+2. **`compatible_os` declaration in framework metadata.** Array of `"windows" | "macos" | "linux"`. Default is all three (assume portable). If the framework uses an OS-specific tool (e.g., a tool that shells out to `powershell.exe`), the schema requires the framework to narrow `compatible_os` to the supported subset. The CLI refuses to run a framework on an unsupported OS — fail loudly, do not silently misbehave. The desktop runtime applies the same check at framework load.
+
+Enforcement via the runtime sandbox (§8.security L4 forbidden — capability primitives) is per-OS by implementation (seccomp/landlock on Linux, sandbox-exec on macOS, Job Objects on Windows), but the **declarations** in the artifact are uniform across OSes. Only the enforcement implementation differs; the capability surface the framework declares is portable.
+
+### §15d Required framework metadata for sharing
+
+Beyond the v1.0 framework schema's existing fields (`model`, `tools`, `skills`, `agents`, etc.), four additional fields support sharing without scope bloat in the v0.1 runtime. They are added to `schemas/framework.v1.json` as additive, optional-with-defaults properties (minor in-place schema bump per `schemas/README.md` versioning policy):
+
+| Field | Type | Default | Purpose |
+|---|---|---|---|
+| `requires_secrets` | array of strings (env-var-style names: `^[A-Z][A-Z0-9_]*$`) | `[]` | Named secrets the recipient must provide before running. Values never embedded. CLI prompts for any missing entry; desktop runtime surfaces in API-key dialog. |
+| `runtime_dependency_class` | enum: `"desktop_runtime"` \| `"headless_compatible"` | `"desktop_runtime"` (safe default — explicit opt-in to headless) | Whether the framework can run on `agent-runtime-cli` (`headless_compatible`) or requires the live graph / workbench / canvas (`desktop_runtime`). The Share It module computes the correct value via static analysis at export time. |
+| `compatible_os` | array of enum: `"windows"` \| `"macos"` \| `"linux"` | `["windows", "macos", "linux"]` | OSes the framework supports. The Share It module narrows this if any tool/skill is OS-specific. |
+| `share_provenance` | object — see below | absent (only populated by Share It module at export time) | When the framework was last exported and what version of the Share It module emitted it. Used by the recipient runtime/CLI to surface "shared on YYYY-MM-DD by ..." in the install dialog. |
+
+`share_provenance` shape (set automatically; not authored by hand):
+
+```json
+{
+  "exported_at": "2026-08-15T14:23:00Z",
+  "exported_by": "share-it@1.0.0",
+  "for_runtime_class": "headless_compatible",
+  "for_os": ["windows", "macos", "linux"],
+  "rebake_changes": [
+    "Substituted tool/run-shell.json (PowerShell-only) with tool/run-bash.sh (cross-platform)"
+  ]
+}
+```
+
+These fields land in v0.1 as schema groundwork. The v0.1 runtime reads them but does not yet act on them in user-facing UI (no Share It module yet; no headless CLI yet). M03–M07 ship with the right artifact shape so that when M08+ lands the Share It module and v1.0 lands the headless CLI, both have data to work with — no schema migration required at that point.
+
+### §15e The "Share It" module (v1.0 deliverable)
+
+A workbench module that consumes the metadata above to produce share-ready bundles. The module is itself agentic: a meta-agent inspects the framework, surfaces portability issues, proposes substitutions, computes the correct `compatible_os` and `runtime_dependency_class` values, runs the M08 Tester on each target variant, and emits signed bundles per OS.
+
+Recipient-side experience (per §15b): unzip, cd, run.
+
+Author-side experience (Share It dialog):
+
+```
+[Share It]
+  Who's it for?
+    ○ Runtime user      ● No runtime (CLI only)
+  Target OS?
+    ○ Windows  ○ macOS  ○ Linux  ● All three
+  Recipient skill level?
+    ○ Will customize    ● Just runs it as-is
+
+  [Inspector — meta-agent runs static analysis]
+    ✓ All tools portable
+    ⚠ tool/run-shell.json uses PowerShell (Windows-only)
+       Suggested substitution: tool/run-bash.sh (equivalent for macOS/Linux)
+       [Apply] [Skip — ship Windows-only] [Cancel]
+    ✓ Required secrets: ANTHROPIC_API_KEY (recipient provides)
+    ✓ Required model: claude-opus-4-7
+    ✓ Capability declarations: 4 file_read, 1 net_http (Anthropic only)
+
+  [Tester — runs rebaked agent on each target OS via CI smoke]
+    ✓ Linux: pass     ✓ macOS: pass     ⚠ Windows: untested locally
+
+  [Bundle outputs]
+    my-agent-linux.zip    (5.2 MB)
+    my-agent-macos.zip    (5.4 MB)
+    my-agent-windows.zip  (5.8 MB)
+    my-agent-runtime.zip  (180 KB — for recipients with full runtime)
+    SHA-256 checksums + sigstore signatures + auto-generated README.md
+```
+
+The author stays in control: the module **proposes** changes (tool substitutions, narrowed `compatible_os`, etc.) and the author approves each diff before it's applied. The rebaked framework re-runs through the M08 Tester before bundling — shipped artifacts are verified, not just packaged.
+
+The Share It module lands in M08 (Workbench) or as a slim follow-up milestone (M08.5) — sequencing decided when M08 begins. The module **requires** the §15d metadata fields to inspect; that's why they ship in v0.1 even though the module itself is v1.0.
+
+### §15f Out of scope for v0.1 and v1.0
+
+- **Hosted "runtime as a service" web app** — would conflict with §13 zero-telemetry-zero-phone-home identity unless pivoted to "BYO server"; deferred indefinitely
+- **Pluggable share targets** (e.g., share to a specific Slack channel, share via email with auto-install link) — v2.0+
+- **Cross-version migration** (sharing a v1.0 framework to a v2.0 runtime) — defined when v2.0 schema lands
+- **WASM bundle generation by the Share It module** — bundled with the WASM tier (v2.0+)
+- **Marketplace / community discovery of shared frameworks** — out of v0.1/v1.0 scope; if it ships, it's a separate product
+
+-----
+
 ## What This Is Not
 
 - Not a chatbot interface

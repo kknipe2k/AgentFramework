@@ -18,6 +18,43 @@
     "model":           { "$ref": "common.v1.json#/$defs/ModelRef" },
     "fallback_models": { "type": "array", "items": { "$ref": "common.v1.json#/$defs/ModelRef" }, "default": [] },
 
+    "requires_secrets": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+      "uniqueItems": true,
+      "default": [],
+      "description": "Per spec §15d. Named secrets the recipient must provide before running this framework. Values are never embedded — only names. Example: [\"ANTHROPIC_API_KEY\", \"GITHUB_TOKEN\"]. The runtime / CLI prompts for any missing entry on first run; subsequent runs reuse keychain-stored values. Names must match the env-var-style pattern; case-sensitive."
+    },
+
+    "runtime_dependency_class": {
+      "type": "string",
+      "enum": ["desktop_runtime", "headless_compatible"],
+      "default": "desktop_runtime",
+      "description": "Per spec §15d. Whether the framework can run on the v1.0 headless `agent-runtime-cli` (`headless_compatible`) or requires the desktop runtime's live graph / workbench / canvas (`desktop_runtime`). Default is `desktop_runtime` (safe default — explicit opt-in required for headless). The Share It module (v1.0; spec §15e) computes the correct value via static analysis at export time."
+    },
+
+    "compatible_os": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["windows", "macos", "linux"] },
+      "uniqueItems": true,
+      "minItems": 1,
+      "default": ["windows", "macos", "linux"],
+      "description": "Per spec §15c. OSes the framework supports. Default is all three (assume portable). If the framework uses an OS-specific tool (e.g., a tool that shells out to `powershell.exe`), narrow to the supported subset. The CLI / desktop runtime refuses to run a framework on an unsupported OS — fail loudly, do not silently misbehave. The Share It module narrows automatically based on tool/skill inspection."
+    },
+
+    "share_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Per spec §15d. Set automatically by the Share It module at export time; not authored by hand. Surfaces `shared on YYYY-MM-DD by ...` in the recipient runtime/CLI install dialog and provides an audit trail of any rebaking decisions.",
+      "properties": {
+        "exported_at":      { "type": "string", "format": "date-time", "description": "ISO 8601 UTC timestamp when the bundle was emitted." },
+        "exported_by":      { "type": "string", "pattern": "^share-it@[0-9]+\\.[0-9]+\\.[0-9]+$", "description": "Share It module identifier and SemVer (e.g., \"share-it@1.0.0\")." },
+        "for_runtime_class": { "type": "string", "enum": ["desktop_runtime", "headless_compatible"], "description": "The `runtime_dependency_class` value the bundle was prepared for." },
+        "for_os":           { "type": "array", "items": { "type": "string", "enum": ["windows", "macos", "linux"] }, "uniqueItems": true, "minItems": 1, "description": "The OS subset the bundle was prepared for." },
+        "rebake_changes":   { "type": "array", "items": { "type": "string" }, "default": [], "description": "Human-readable list of substitutions / narrowings the Share It module applied at export time. Empty if no rebake was needed." }
+      }
+    },
+
     "modes": {
       "type": "object",
       "additionalProperties": false,
