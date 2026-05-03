@@ -123,7 +123,8 @@ Stage A also stands up two scaffolds M02 work depends on: `runtime-core/src/sign
 | `crates/runtime-core/src/lib.rs` | **Edited** — add `pub mod signal;` |
 | `crates/runtime-core/src/drone.rs` | **Edited** — replace `Heartbeat { status: String, ... }` with `Heartbeat { status: HeartbeatStatus, ... }`; define `HeartbeatStatus` enum per spec §1d |
 | `crates/runtime-drone/src/heartbeat.rs` | **Edited** — emit `HeartbeatStatus::Ok` (typed) instead of `"ok"` (string); update tests |
-| `CLAUDE.md` | **Edited** — §5 add "Coverage delta gating mechanism" subsection (M02 baseline; subsequent milestones gate on delta vs `main`) |
+| `codecov.yml` | **New** — Codecov project + patch coverage rules (`target: auto`, `threshold: 0.5%`, `base: auto`); flips Codecov from advisory (M01) to required (M02+) |
+| `CLAUDE.md` | **Edited** — §5 add "Coverage delta gating mechanism" subsection (Codecov-enforced; M02 baseline; subsequent milestones gate on delta vs `main`) |
 | `docs/style.md` | **Edited** — add "*_with / _inner test-seam pattern" subsection under "Function design"; cite M01.C `lib.rs` + `shutdown.rs` archetype |
 | `CHANGELOG.md` | **Edited** — `[Unreleased]` Added/Tests/Documentation sections noting Stage A deliverables |
 
@@ -410,18 +411,133 @@ pub enum Signal {
 mod tests {
     use super::*;
 
-    #[test]
-    fn signal_round_trip_preserves_all_fields() {
-        // Round-trip test for one variant; expand in M04 when emission integrates.
-        let s = Signal::Session {
-            signal_id: "sig-1".into(),
-            event: "start".into(),
-            payload_json: serde_json::json!({"session_id": "s-1"}),
-            context_type: ContextType::SessionLifecycle,
-        };
+    fn check_round_trip(s: Signal) {
         let json = serde_json::to_string(&s).unwrap();
         let back: Signal = serde_json::from_str(&json).unwrap();
         assert_eq!(s, back);
+    }
+
+    fn payload() -> serde_json::Value {
+        serde_json::json!({"k": "v", "n": 42})
+    }
+
+    #[test]
+    fn round_trip_tool() {
+        check_round_trip(Signal::Tool {
+            signal_id: "sig-1".into(),
+            agent_id:  "agent-1".into(),
+            tool_name: "search".into(),
+            payload_json: payload(),
+            pre_signal_id: Some(PreSignalId("sig-prev".into())),
+            parent_signal_id: Some(ParentSignalId("sig-parent".into())),
+            retry_of: None,
+            context_type: ContextType::ToolInvoke,
+        });
+    }
+
+    #[test]
+    fn round_trip_skill() {
+        check_round_trip(Signal::Skill {
+            signal_id: "sig-2".into(),
+            agent_id:  "agent-1".into(),
+            skill_name: "skim-skill".into(),
+            skill_version: "1.0.0".into(),
+            payload_json: payload(),
+            parent_signal_id: None,
+            context_type: ContextType::SkillLoad,
+        });
+    }
+
+    #[test]
+    fn round_trip_agent() {
+        check_round_trip(Signal::Agent {
+            signal_id: "sig-3".into(),
+            agent_id:  "agent-1".into(),
+            event: "spawned".into(),
+            payload_json: payload(),
+            parent_signal_id: None,
+            context_type: ContextType::AgentLoop,
+        });
+    }
+
+    #[test]
+    fn round_trip_decision() {
+        check_round_trip(Signal::Decision {
+            signal_id: "sig-4".into(),
+            agent_id:  "agent-1".into(),
+            decision: "pick haiku".into(),
+            rationale: "cost-sensitive".into(),
+            tool_used: Some("estimate_cost".into()),
+            payload_json: payload(),
+            parent_signal_id: None,
+            context_type: ContextType::AgentLoop,
+        });
+    }
+
+    #[test]
+    fn round_trip_verify() {
+        check_round_trip(Signal::Verify {
+            signal_id: "sig-5".into(),
+            agent_id:  "agent-1".into(),
+            hook_id: "test-suite".into(),
+            passed: true,
+            payload_json: payload(),
+            parent_signal_id: None,
+            context_type: ContextType::HookExecute,
+        });
+    }
+
+    #[test]
+    fn round_trip_error() {
+        check_round_trip(Signal::Error {
+            signal_id: "sig-6".into(),
+            agent_id:  Some("agent-1".into()),
+            error_kind: "timeout".into(),
+            message: "tool exceeded 60s".into(),
+            payload_json: payload(),
+            parent_signal_id: None,
+            retry_of: Some(RetryOfSignalId("sig-orig".into())),
+            context_type: ContextType::ToolInvoke,
+        });
+    }
+
+    #[test]
+    fn round_trip_hitl() {
+        check_round_trip(Signal::Hitl {
+            signal_id: "sig-7".into(),
+            agent_id:  "agent-1".into(),
+            prompt: "approve plan?".into(),
+            response: Some("yes".into()),
+            payload_json: payload(),
+            parent_signal_id: None,
+            context_type: ContextType::HitlPrompt,
+        });
+    }
+
+    #[test]
+    fn round_trip_session() {
+        check_round_trip(Signal::Session {
+            signal_id: "sig-8".into(),
+            event: "start".into(),
+            payload_json: payload(),
+            context_type: ContextType::SessionLifecycle,
+        });
+    }
+
+    #[test]
+    fn tag_serialization_is_snake_case() {
+        let s = Signal::Tool {
+            signal_id: "x".into(),
+            agent_id:  "x".into(),
+            tool_name: "x".into(),
+            payload_json: payload(),
+            pre_signal_id: None,
+            parent_signal_id: None,
+            retry_of: None,
+            context_type: ContextType::ToolInvoke,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("\"kind\":\"tool\""), "got: {json}");
     }
 }
 ```
@@ -471,20 +587,114 @@ Also update SQLite column writes — `heartbeats.status` is `TEXT`, so serialize
 
 Update existing unit tests in `heartbeat.rs` to use the typed enum.
 
+#### `codecov.yml` (new)
+
+```yaml
+# Codecov coverage gating. Flips from advisory (M01 commit c04aac5)
+# to required (M02 Stage A). Project + patch checks both blocking.
+# Absolute thresholds (cargo llvm-cov --fail-under-lines) remain
+# authoritative for hard floors; Codecov gates the *delta* vs main.
+
+coverage:
+  status:
+    project:
+      default:
+        target:        auto       # match base branch coverage
+        threshold:     0.5%       # allow ≤0.5pp regression
+        base:          auto       # compare against main
+        if_no_uploads: error
+        informational: false      # block PR check on regression
+      runtime-drone:
+        target:    95%
+        threshold: 0.5%
+        flags:     [runtime-drone]
+        informational: false
+      runtime-main:
+        target:    95%
+        threshold: 0.5%
+        flags:     [runtime-main]
+        informational: false
+    patch:
+      default:
+        target:        80%
+        threshold:     0%
+        informational: false      # PR-touched lines must hit project floor
+
+comment:
+  layout:  "reach, diff, flags, files"
+  behavior: default
+  require_changes: true
+  require_base:    true
+  require_head:    true
+
+ignore:
+  - "**/generated/**"
+  - "**/src/main.rs"
+  - "**/build.rs"
+  - "src-tauri/gen/**"
+```
+
+The `runtime-drone` and `runtime-main` flag entries inherit the absolute floors from `cargo llvm-cov --fail-under-lines` and add the 0.5pp delta gate on top. `flags` reference uploads tagged in the CI workflow (extend `.github/workflows/ci.yml` upload step with `flags: runtime-drone`/`runtime-main`).
+
+#### `.github/workflows/ci.yml` (edited — Codecov step)
+
+Locate the existing `Coverage (Rust)` job's `codecov-action` invocation. Confirm:
+
+```yaml
+      - uses: codecov/codecov-action@v4
+        with:
+          files:    lcov.info
+          flags:    workspace
+          fail_ci_if_error: true
+```
+
+Add per-crate flag uploads after the workspace one (separate runs of `cargo llvm-cov --package <crate>`):
+
+```yaml
+      - name: Upload runtime-drone coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files:    lcov-drone.info
+          flags:    runtime-drone
+          fail_ci_if_error: true
+
+      - name: Upload runtime-main coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files:    lcov-main.info
+          flags:    runtime-main
+          fail_ci_if_error: true
+```
+
+(The `cargo llvm-cov --package <crate> --lcov --output-path lcov-<crate>.info` invocations are added before each upload.)
+
 #### `CLAUDE.md` §5 (edited)
 
 Locate the "Coverage thresholds" subsection. After the existing safety-primitive policy paragraph, add:
 
 ```
-**Coverage delta gating (from M02 onward).** M01 used absolute thresholds
-(workspace ≥80%, drone ≥95%) because no baseline existed. Starting M02, every
-PR also passes a delta-gate: workspace and per-safety-primitive coverage must
-not regress vs `main`'s last green build. CI computes the delta via
-`cargo-llvm-cov --json` for both PR HEAD and `origin/main`, fails the job if
-any gated crate's line coverage drops by >0.5 percentage points (absolute).
-The script lives at `.github/workflows/scripts/coverage-delta.sh` (added in
-M02 Stage A). Pre-M01 carry-forward; resolved per the M01 gap-analysis
-Important "Coverage delta gating mechanism" item.
+**Coverage delta gating (from M02 onward) — Codecov-enforced.** M01 used
+absolute thresholds (workspace ≥80%, drone ≥95%) because no baseline
+existed. Starting M02, every PR also passes a delta-gate via Codecov:
+project + patch coverage thresholds set in `codecov.yml` (`target: auto`,
+`threshold: 0.5%`, `base: auto`). Codecov pulls the LCOV uploaded by the
+existing `cargo-llvm-cov` step in `.github/workflows/ci.yml`, compares
+to `main`'s last green build, and fails the PR check if any gated crate
+regresses by >0.5 percentage points (absolute) OR if patch coverage on
+the changed lines drops below the project floor.
+
+Codecov was advisory in M01 (commit `c04aac5`); M02 Stage A flips
+required-on for the project + patch checks via:
+- New `codecov.yml` at repo root with the project + patch rules.
+- `.github/workflows/ci.yml` keeps the existing upload step; the
+  `informational: false` flag in `codecov.yml` makes the check
+  blocking.
+- The absolute-threshold gates (`cargo llvm-cov --fail-under-lines`)
+  remain authoritative for hard floors; Codecov gates the *delta*.
+- No custom bash scripts to maintain.
+
+Pre-M01 carry-forward; resolved per the M01 gap-analysis Important
+"Coverage delta gating mechanism" item.
 ```
 
 #### `docs/style.md` (edited)
@@ -560,16 +770,32 @@ In the `[Unreleased]` section, under existing categories, append:
 
 ### A.4 Tests
 
-Stage A is mostly hygiene + scaffolding; new tests cover schema invariants and type round-trips:
+Stage A is mostly hygiene + scaffolding; tests cover the full type surface (signal.rs all 8 variants), every schema invariant on the new mcp_servers table (UNIQUE name, default values, CHECK constraints on transport/auth_kind/scope/status, mutual-exclusion stdio-vs-remote), and the heartbeat status typed-enum round-trip:
 
-1. **`crates/runtime-core/src/signal.rs::tests::signal_round_trip_preserves_all_fields`** — round-trip for one `Signal` variant (the others are M04 emission-integration concerns; testing all 8 here would be premature).
-2. **`crates/runtime-drone/src/heartbeat.rs::tests::heartbeat_writes_typed_status_to_db`** — update existing tests if any string literals appear; verify the `heartbeats.status` column now receives the snake_case enum string from `HeartbeatStatus::Ok`.
-3. **`crates/runtime-drone/src/db.rs::tests::init_schema_creates_mcp_servers_table`** — extend the existing schema-init tests to verify the 8th table exists with all 22 expected columns, check constraints, and indexes.
+1. **`crates/runtime-drone/src/heartbeat.rs::tests::heartbeat_writes_typed_status_to_db`** — update existing tests if any string literals appear; verify the `heartbeats.status` column now receives the snake_case enum string from `HeartbeatStatus::Ok`.
+2. *(reserved — was the single-variant signal test; now 14–22 below cover all 8 variants explicitly)*
+3. **`crates/runtime-drone/src/db.rs::tests::init_schema_creates_mcp_servers_table`** — extend the existing schema-init tests to verify the 8th table exists with all 22 expected columns, all 4 CHECK constraints, and all 3 indexes (status / enabled / scope).
 4. **`crates/runtime-drone/src/db.rs::tests::mcp_servers_stdio_invariant_enforced`** — insert a stdio row WITHOUT command (or WITH url) → expect SQL CHECK constraint failure.
 5. **`crates/runtime-drone/src/db.rs::tests::mcp_servers_remote_invariant_enforced`** — insert an http/sse row WITHOUT url (or WITH command) → expect SQL CHECK constraint failure.
 6. **`crates/runtime-drone/src/db.rs::tests::mcp_servers_status_transitions`** — insert with default status, update to 'connected', update to 'errored' with last_error → all transitions allowed; invalid status string → CHECK failure.
-7. **`crates/runtime-drone/tests/integration_windows.rs`** — full subprocess test (per A.3 above): spawn drone, connect to named pipe, send `SnapshotNow`, verify snapshot row, send `GracefulShutdown`, verify clean exit. Gated `#[cfg(windows)]` only.
-8. **`crates/runtime-drone/src/db.rs::tests::heartbeat_status_roundtrip_via_db`** — write `HeartbeatStatus::Degraded`, read back, assert equal.
+7. **`crates/runtime-drone/src/db.rs::tests::mcp_servers_unique_name_enforced`** — insert two rows with the same `name` → expect UNIQUE constraint failure on the second.
+8. **`crates/runtime-drone/src/db.rs::tests::mcp_servers_default_values_applied`** — insert a stdio row with only required fields (`name`, `transport`, `command`, `added_at`, `updated_at`) → SELECT confirms `status='configured'`, `enabled=1`, `scope='user'`, `retry_count=0`, `startup_timeout_ms=10000`, `tool_timeout_ms=60000`.
+9. **`crates/runtime-drone/src/db.rs::tests::mcp_servers_invalid_auth_kind_rejected`** — insert with `auth_kind='ssh-key'` → expect CHECK constraint failure (only 'none', 'bearer', 'oauth', 'custom' allowed).
+10. **`crates/runtime-drone/src/db.rs::tests::mcp_servers_invalid_scope_rejected`** — insert with `scope='enterprise'` → expect CHECK constraint failure (only 'user', 'project', 'plugin', 'local' allowed).
+11. **`crates/runtime-drone/src/db.rs::tests::mcp_servers_invalid_transport_rejected`** — insert with `transport='websocket'` → expect CHECK constraint failure (only 'stdio', 'http', 'sse', 'streamable_http' allowed).
+12. **`crates/runtime-drone/tests/integration_windows.rs`** — full subprocess test (per A.3 above): spawn drone, connect to named pipe, send `SnapshotNow`, verify snapshot row, send `GracefulShutdown`, verify clean exit. Gated `#[cfg(windows)]` only.
+13. **`crates/runtime-drone/src/db.rs::tests::heartbeat_status_roundtrip_via_db`** — write `HeartbeatStatus::Degraded`, read back, assert equal.
+
+**`crates/runtime-core/src/signal.rs::tests`** — 8 round-trip tests + 1 tag-format test (per A.3 expanded test module):
+14. `round_trip_tool` — Signal::Tool with all correlation fields set
+15. `round_trip_skill` — Signal::Skill
+16. `round_trip_agent` — Signal::Agent
+17. `round_trip_decision` — Signal::Decision with tool_used
+18. `round_trip_verify` — Signal::Verify
+19. `round_trip_error` — Signal::Error with retry_of
+20. `round_trip_hitl` — Signal::Hitl with response set
+21. `round_trip_session` — Signal::Session
+22. `tag_serialization_is_snake_case` — `kind: "tool"` not `"Tool"`
 
 #### Coverage target
 
@@ -1025,6 +1251,36 @@ pub struct Pricing {
     pub output_per_million_usd: f64,
 }
 
+/// Token-usage breakdown for `estimate_cost`. Cache-aware so M04 budget
+/// integration just plumbs the values; no trait refactor needed.
+///
+/// Cache rates per Anthropic docs (verified 2026-05):
+/// - 5-minute cache write: 1.25× input price
+/// - 1-hour cache write:   2.0× input price
+/// - Cache read:           0.1× input price
+///
+/// Unknown / unused cache fields default to 0 via `CostBreakdown::simple`.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct CostBreakdown {
+    pub input_tokens:    u64,
+    pub output_tokens:   u64,
+    pub cache_5m_writes: u64,
+    pub cache_1h_writes: u64,
+    pub cache_reads:     u64,
+}
+
+impl CostBreakdown {
+    /// Simple constructor for callers without cache awareness.
+    /// All cache fields zero.
+    pub fn simple(input_tokens: u64, output_tokens: u64) -> Self {
+        Self {
+            input_tokens,
+            output_tokens,
+            ..Self::default()
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelCapabilities {
     pub tool_use:  bool,
@@ -1078,8 +1334,10 @@ pub trait LLMProvider: Send + Sync {
     /// List models the provider currently exposes (and their pricing).
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError>;
 
-    /// Estimate cost for a given (input, output) token pair on a model.
-    fn estimate_cost(&self, input_tokens: u64, output_tokens: u64, model: &str) -> f64;
+    /// Estimate cost for a token-usage breakdown on a model. Cache-aware
+    /// per Anthropic docs (5m write 1.25×, 1h write 2×, read 0.1× input).
+    /// Callers without cache awareness use `CostBreakdown::simple(in, out)`.
+    fn estimate_cost(&self, breakdown: &CostBreakdown, model: &str) -> f64;
 }
 
 #[cfg(test)]
@@ -1249,11 +1507,10 @@ impl LLMProvider for AnthropicProvider {
         ])
     }
 
-    fn estimate_cost(&self, input_tokens: u64, output_tokens: u64, model: &str) -> f64 {
-        // Pricing per https://platform.claude.com/docs/en/about-claude/pricing
-        // (verified 2026-05). NOT cache-aware (cache hits = 0.1× input,
-        // 5m write = 1.25×, 1h write = 2× — Stage D budget integration
-        // adds the cache-aware estimator).
+    fn estimate_cost(&self, b: &CostBreakdown, model: &str) -> f64 {
+        // Cache-aware pricing per https://platform.claude.com/docs/en/about-claude/pricing
+        // (verified 2026-05).
+        // Cache multipliers: 5m write 1.25× input, 1h write 2× input, read 0.1× input.
         let pricing = match model {
             "claude-opus-4-7"   => Pricing { input_per_million_usd: 5.0, output_per_million_usd: 25.0 },
             "claude-opus-4-6"   => Pricing { input_per_million_usd: 5.0, output_per_million_usd: 25.0 },
@@ -1263,9 +1520,14 @@ impl LLMProvider for AnthropicProvider {
             "claude-haiku-4-5"  => Pricing { input_per_million_usd: 1.0, output_per_million_usd:  5.0 },
             _ => return 0.0, // unknown model — Stage C surfaces this as ProviderError::InvalidModel via async paths
         };
-        let input_cost  = (input_tokens  as f64) * pricing.input_per_million_usd  / 1_000_000.0;
-        let output_cost = (output_tokens as f64) * pricing.output_per_million_usd / 1_000_000.0;
-        input_cost + output_cost
+        let input_rate  = pricing.input_per_million_usd  / 1_000_000.0;
+        let output_rate = pricing.output_per_million_usd / 1_000_000.0;
+
+        (b.input_tokens    as f64) * input_rate
+      + (b.output_tokens   as f64) * output_rate
+      + (b.cache_5m_writes as f64) * input_rate * 1.25
+      + (b.cache_1h_writes as f64) * input_rate * 2.0
+      + (b.cache_reads     as f64) * input_rate * 0.1
     }
 }
 
@@ -1336,20 +1598,98 @@ mod tests {
         assert!(models.iter().any(|m| m.id == "claude-haiku-4-5"));
     }
 
+    #[tokio::test]
+    async fn list_models_pricing_values_correct() {
+        let models = stub_provider().list_models().await.unwrap();
+        let opus   = models.iter().find(|m| m.id == "claude-opus-4-7").unwrap();
+        let sonnet = models.iter().find(|m| m.id == "claude-sonnet-4-6").unwrap();
+        let haiku  = models.iter().find(|m| m.id == "claude-haiku-4-5").unwrap();
+        assert_eq!(opus.pricing,   Pricing { input_per_million_usd: 5.0, output_per_million_usd: 25.0 });
+        assert_eq!(sonnet.pricing, Pricing { input_per_million_usd: 3.0, output_per_million_usd: 15.0 });
+        assert_eq!(haiku.pricing,  Pricing { input_per_million_usd: 1.0, output_per_million_usd:  5.0 });
+    }
+
     #[test]
-    fn estimate_cost_for_haiku() {
+    fn estimate_cost_simple_for_haiku() {
         let provider = stub_provider();
         // 1M input + 1M output on Haiku 4.5 = $1.00 + $5.00 = $6.00
-        let cost = provider.estimate_cost(1_000_000, 1_000_000, "claude-haiku-4-5");
+        let b = CostBreakdown::simple(1_000_000, 1_000_000);
+        let cost = provider.estimate_cost(&b, "claude-haiku-4-5");
         assert!((cost - 6.00).abs() < 1e-6, "got {cost}");
     }
 
     #[test]
-    fn estimate_cost_for_opus() {
+    fn estimate_cost_simple_for_sonnet() {
+        let provider = stub_provider();
+        // 1M input + 1M output on Sonnet 4.6 = $3.00 + $15.00 = $18.00
+        let b = CostBreakdown::simple(1_000_000, 1_000_000);
+        let cost = provider.estimate_cost(&b, "claude-sonnet-4-6");
+        assert!((cost - 18.00).abs() < 1e-6, "got {cost}");
+    }
+
+    #[test]
+    fn estimate_cost_simple_for_opus() {
         let provider = stub_provider();
         // 1M input + 1M output on Opus 4.7 = $5.00 + $25.00 = $30.00
-        let cost = provider.estimate_cost(1_000_000, 1_000_000, "claude-opus-4-7");
+        let b = CostBreakdown::simple(1_000_000, 1_000_000);
+        let cost = provider.estimate_cost(&b, "claude-opus-4-7");
         assert!((cost - 30.00).abs() < 1e-6, "got {cost}");
+    }
+
+    #[test]
+    fn estimate_cost_with_cache_writes_5m() {
+        let provider = stub_provider();
+        // 1M cache_5m_writes on Haiku 4.5 = 1M × $1 × 1.25 = $1.25
+        let b = CostBreakdown {
+            input_tokens:    0,
+            output_tokens:   0,
+            cache_5m_writes: 1_000_000,
+            cache_1h_writes: 0,
+            cache_reads:     0,
+        };
+        let cost = provider.estimate_cost(&b, "claude-haiku-4-5");
+        assert!((cost - 1.25).abs() < 1e-6, "got {cost}");
+    }
+
+    #[test]
+    fn estimate_cost_with_cache_writes_1h() {
+        let provider = stub_provider();
+        // 1M cache_1h_writes on Haiku 4.5 = 1M × $1 × 2.0 = $2.00
+        let b = CostBreakdown {
+            cache_1h_writes: 1_000_000,
+            ..Default::default()
+        };
+        let cost = provider.estimate_cost(&b, "claude-haiku-4-5");
+        assert!((cost - 2.00).abs() < 1e-6, "got {cost}");
+    }
+
+    #[test]
+    fn estimate_cost_with_cache_reads() {
+        let provider = stub_provider();
+        // 1M cache_reads on Haiku 4.5 = 1M × $1 × 0.1 = $0.10
+        let b = CostBreakdown {
+            cache_reads: 1_000_000,
+            ..Default::default()
+        };
+        let cost = provider.estimate_cost(&b, "claude-haiku-4-5");
+        assert!((cost - 0.10).abs() < 1e-6, "got {cost}");
+    }
+
+    #[test]
+    fn estimate_cost_combined_cache_and_io() {
+        let provider = stub_provider();
+        // Realistic scenario: 1M output, 100K input, 500K cache_reads, 50K cache_5m_writes on Haiku 4.5
+        // = (1M × $5/M) + (100K × $1/M) + (500K × $1/M × 0.1) + (50K × $1/M × 1.25)
+        // = $5.00 + $0.10 + $0.05 + $0.0625 = $5.2125
+        let b = CostBreakdown {
+            input_tokens:    100_000,
+            output_tokens:   1_000_000,
+            cache_5m_writes: 50_000,
+            cache_1h_writes: 0,
+            cache_reads:     500_000,
+        };
+        let cost = provider.estimate_cost(&b, "claude-haiku-4-5");
+        assert!((cost - 5.2125).abs() < 1e-6, "got {cost}");
     }
 
     #[test]
@@ -1357,7 +1697,8 @@ mod tests {
         let provider = stub_provider();
         // Stage C surfaces unknown models as ProviderError::InvalidModel; for
         // estimate_cost (non-async), 0.0 is the safe default.
-        let cost = provider.estimate_cost(1000, 1000, "nonexistent-model");
+        let b = CostBreakdown::simple(1000, 1000);
+        let cost = provider.estimate_cost(&b, "nonexistent-model");
         assert_eq!(cost, 0.0);
     }
 }
@@ -1411,15 +1752,22 @@ Append to `[Unreleased]`:
 ### B.4 Tests
 
 1. **`crates/runtime-main/src/providers/mod.rs::tests::provider_event_round_trips`** — every `ProviderEvent` variant survives `to_string` → `from_str`; serde tag is snake_case.
-2. **`crates/runtime-main/src/providers/mod.rs::tests::content_block_round_trips`** — every `ContentBlock` variant (Text, Image, ToolUse, ToolResult, Thinking) round-trips; matches Anthropic API wire format.
-3. **`crates/runtime-main/src/providers/anthropic.rs::tests::stub_stream_returns_text_then_stop`** — stub `stream()` returns at least one `TextDelta` followed by `MessageStop`.
-4. **`tests::name_is_anthropic`** — provider identifies itself.
-5. **`tests::supports_advertises_tool_use_streaming_thinking`** — capability flags correct.
-6. **`tests::count_tokens_approximates_char_div_4`** — Stage B token approximation across content blocks.
-7. **`tests::list_models_returns_three_claude_4x_entries`** — Opus 4.7, Sonnet 4.6, Haiku 4.5.
-8. **`tests::estimate_cost_for_haiku`** — 1M input + 1M output on Haiku 4.5 = $6.00.
-9. **`tests::estimate_cost_for_opus`** — 1M input + 1M output on Opus 4.7 = $30.00.
-10. **`tests::estimate_cost_for_unknown_model_returns_zero`** — defensive default; Stage C upgrades to `ProviderError::InvalidModel` on the async paths.
+2. **`crates/runtime-main/src/providers/mod.rs::tests::provider_event_tag_is_snake_case`** — `"type":"text_delta"` not `"TextDelta"`.
+3. **`crates/runtime-main/src/providers/mod.rs::tests::content_block_round_trips`** — every `ContentBlock` variant (Text, Image, ToolUse, ToolResult, Thinking) round-trips; matches Anthropic API wire format.
+4. **`crates/runtime-main/src/providers/anthropic.rs::tests::stub_stream_returns_text_then_stop`** — stub `stream()` returns at least one `TextDelta` followed by `MessageStop`.
+5. **`tests::name_is_anthropic`** — provider identifies itself.
+6. **`tests::supports_advertises_tool_use_streaming_thinking`** — capability flags correct.
+7. **`tests::count_tokens_approximates_char_div_4`** — Stage B token approximation across content blocks.
+8. **`tests::list_models_returns_three_claude_4x_entries`** — Opus 4.7, Sonnet 4.6, Haiku 4.5 IDs present.
+9. **`tests::list_models_pricing_values_correct`** — verify each `ModelInfo.pricing` struct has correct $5/$25 (Opus), $3/$15 (Sonnet), $1/$5 (Haiku) values.
+10. **`tests::estimate_cost_simple_for_haiku`** — `CostBreakdown::simple(1M, 1M)` on Haiku 4.5 = $6.00.
+11. **`tests::estimate_cost_simple_for_sonnet`** — `CostBreakdown::simple(1M, 1M)` on Sonnet 4.6 = $18.00.
+12. **`tests::estimate_cost_simple_for_opus`** — `CostBreakdown::simple(1M, 1M)` on Opus 4.7 = $30.00.
+13. **`tests::estimate_cost_with_cache_writes_5m`** — 1M `cache_5m_writes` on Haiku 4.5 = $1.25 (1M × $1 × 1.25 multiplier).
+14. **`tests::estimate_cost_with_cache_writes_1h`** — 1M `cache_1h_writes` on Haiku 4.5 = $2.00 (1M × $1 × 2.0 multiplier).
+15. **`tests::estimate_cost_with_cache_reads`** — 1M `cache_reads` on Haiku 4.5 = $0.10 (1M × $1 × 0.1 multiplier).
+16. **`tests::estimate_cost_combined_cache_and_io`** — realistic scenario: input 100K + output 1M + cache_reads 500K + cache_5m_writes 50K on Haiku 4.5 = $5.2125.
+17. **`tests::estimate_cost_for_unknown_model_returns_zero`** — defensive default; Stage C upgrades to `ProviderError::InvalidModel` on the async paths.
 
 #### Coverage target
 
@@ -1445,17 +1793,25 @@ Read docs/gap-analysis.md for any Carry-forward items targeting Stage B
 
 ═══ STEP 1 — WRITE FAILING TESTS ═══
 
-Create the test files (or stub them in mod.rs / anthropic.rs):
+Create the test files (or stub them in mod.rs / anthropic.rs) per B.4:
 
-1. providers::mod::tests::provider_event_round_trips
+1. providers::mod::tests::provider_event_round_trips (all variants)
 2. providers::mod::tests::provider_event_tag_is_snake_case
-3. providers::anthropic::tests::stub_stream_returns_text_then_stop
-4. providers::anthropic::tests::name_is_anthropic
-5. providers::anthropic::tests::supports_advertises_tool_use_streaming_thinking
-6. providers::anthropic::tests::count_tokens_approximates_char_div_4
-7. providers::anthropic::tests::list_models_returns_three_claude_4x_entries
-8. providers::anthropic::tests::estimate_cost_for_haiku
-9. providers::anthropic::tests::estimate_cost_for_unknown_model_returns_zero
+3. providers::mod::tests::content_block_round_trips (all 5 ContentBlock variants)
+4. providers::anthropic::tests::stub_stream_returns_text_then_stop
+5. providers::anthropic::tests::name_is_anthropic
+6. providers::anthropic::tests::supports_advertises_tool_use_streaming_thinking
+7. providers::anthropic::tests::count_tokens_approximates_char_div_4
+8. providers::anthropic::tests::list_models_returns_three_claude_4x_entries
+9. providers::anthropic::tests::list_models_pricing_values_correct
+10. providers::anthropic::tests::estimate_cost_simple_for_haiku
+11. providers::anthropic::tests::estimate_cost_simple_for_sonnet
+12. providers::anthropic::tests::estimate_cost_simple_for_opus
+13. providers::anthropic::tests::estimate_cost_with_cache_writes_5m
+14. providers::anthropic::tests::estimate_cost_with_cache_writes_1h
+15. providers::anthropic::tests::estimate_cost_with_cache_reads
+16. providers::anthropic::tests::estimate_cost_combined_cache_and_io
+17. providers::anthropic::tests::estimate_cost_for_unknown_model_returns_zero
 
 Run: cargo test --workspace --package runtime-main
 Confirm: all tests fail with `cannot find struct AnthropicProvider`,
@@ -2193,7 +2549,8 @@ impl LLMProvider for AnthropicProvider {
         ])
     }
 
-    fn estimate_cost(&self, input_tokens: u64, output_tokens: u64, model: &str) -> f64 {
+    fn estimate_cost(&self, b: &CostBreakdown, model: &str) -> f64 {
+        // Cache-aware. Implementation matches the Stage B trait signature.
         let pricing = match model {
             "claude-opus-4-7" | "claude-opus-4-6" | "claude-opus-4-5"
                 => Pricing { input_per_million_usd: 5.0, output_per_million_usd: 25.0 },
@@ -2203,9 +2560,13 @@ impl LLMProvider for AnthropicProvider {
                 => Pricing { input_per_million_usd: 1.0, output_per_million_usd:  5.0 },
             _ => return 0.0,
         };
-        let input_cost  = (input_tokens  as f64) * pricing.input_per_million_usd  / 1_000_000.0;
-        let output_cost = (output_tokens as f64) * pricing.output_per_million_usd / 1_000_000.0;
-        input_cost + output_cost
+        let input_rate  = pricing.input_per_million_usd  / 1_000_000.0;
+        let output_rate = pricing.output_per_million_usd / 1_000_000.0;
+        (b.input_tokens    as f64) * input_rate
+      + (b.output_tokens   as f64) * output_rate
+      + (b.cache_5m_writes as f64) * input_rate * 1.25
+      + (b.cache_1h_writes as f64) * input_rate * 2.0
+      + (b.cache_reads     as f64) * input_rate * 0.1
     }
 }
 
@@ -4958,13 +5319,13 @@ EOF
 
 | Stage | New Files | Edited Files | Tests Added | Effort (calibrated) |
 |---|---|---|---|---|
-| **A** Build hygiene + scaffolding | 3 (.gitattributes, signal.rs, integration_windows.rs) | 8 (.gitignore, db.rs, drone.rs, heartbeat.rs, lib.rs, CLAUDE.md, style.md, CHANGELOG.md) | 5 + extended schema-init coverage | ~1.5h |
-| **B** LLMProvider trait + provider scaffolding | 2 (providers/mod.rs, anthropic.rs stub) | 6 (Cargo.toml workspace + crate, lib.rs, README, deny.toml, CHANGELOG.md) | 10 unit | ~1.5h |
+| **A** Build hygiene + scaffolding | 4 (.gitattributes, codecov.yml, signal.rs, integration_windows.rs) | 8 (.gitignore, db.rs, drone.rs, heartbeat.rs, lib.rs, CLAUDE.md, style.md, CHANGELOG.md) | 22 (1 heartbeat + 9 mcp_servers schema invariants + 9 signal.rs round-trips + 1 tag format + 1 Windows IPC integration + extended init_schema coverage) | ~1.5h |
+| **B** LLMProvider trait + provider scaffolding | 2 (providers/mod.rs, anthropic.rs stub) | 6 (Cargo.toml workspace + crate, lib.rs, README, deny.toml, CHANGELOG.md) | 17 unit (cache-aware estimate_cost coverage: simple + 5m + 1h + read + combined; +sonnet test; +pricing-values test; +ContentBlock round-trip) | ~1.5h |
 | **C** AnthropicProvider real HTTP+SSE | 3 (anthropic_sse.rs, anthropic_wiremock.rs, anthropic_smoke.rs) | 7 (Cargo.toml workspace + crate, anthropic.rs, mod.rs, README, ci.yml, CLAUDE.md, CHANGELOG.md) | 21 (12 unit + 8 wiremock + 1 smoke gated) | ~3h |
 | **D** AgentSdk + drone IPC client | 9 (sdk/{mod, agent_sdk, event_pipeline, decision_extractor}, drone_ipc/{mod, client, connection}, sdk_event_translation.rs, sdk_cancellation.rs, drone_ipc_loopback.rs) | 6 (event.rs, lib.rs, Cargo.toml, README, ci.yml, CLAUDE.md, CHANGELOG.md) | 50+ (9+1 unit decision, 20+ table-driven, 5+ cancellation, 10 IPC loopback) | ~2.5h |
 | **E** Tauri shell + renderer + E2E | 18 (frontend full surface + commands.rs + capabilities/default.json + key_store.rs + tests) | 8 (main.rs, Cargo.toml, tauri.conf.json, ci.yml, .gitignore, CLAUDE.md, MVP-v0.1.md, CHANGELOG.md) | 30+ (14 Vitest + 4 Rust + 8 Playwright + 2 wiremock E2E) | ~3h |
 | **F** Phase Closeout: Gap Analysis | 1 (M02-summary.md) | 2 (gap-analysis.md append-only, CHANGELOG.md) | 0 (documentation stage; append-only check is CI gate) | ~1.5h |
-| **Total** | 36 new | 37 edited | 116+ tests | **~13h actual** |
+| **Total** | 37 new | 37 edited | 140+ tests | **~13h actual** |
 
 Estimates calibrated against M01's 0.3× ratio. M02 is ~3× M01's scope by file count (provider, SDK, IPC, frontend, all-new vs M01's mostly-scaffolding). Per the calibration, M01's 30–40h human-time-equivalent estimate ran in 10.5h actual; M02's 30–40h-equivalent estimate runs ~13h actual.
 
