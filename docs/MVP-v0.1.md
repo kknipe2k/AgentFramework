@@ -82,9 +82,11 @@ Total: ~24 weeks elapsed at sustained pace. Compresses with parallel work; expan
 
 ## M2 — Event pipeline alive (weeks 3–4)
 
+> **Build prompt:** `docs/build-prompts/M02-event-pipeline.md` (6 stages A–F; ~13h calibrated actual).
+
 **Deliverable**
 - `runtime-main` crate with `AgentSdk` + `LLMProvider` trait + `AnthropicProvider` (direct HTTP+SSE)
-- Tauri shell (`src-tauri/`) with allowlisted command `run_smoke_session`
+- Tauri shell (`src-tauri/`) with allowlisted commands `run_smoke_session` + `set_api_key`
 - Skeleton renderer (`src/`) — single page that lists `AgentEvent`s as they arrive
 - Tauri typed IPC: `app.emit("agent_event", ...)` flowing to renderer
 - Main↔drone IPC over Unix socket (Linux/macOS dev) or Windows named pipe

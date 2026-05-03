@@ -26,7 +26,7 @@ The per-milestone prompt always references `CLAUDE.md` as the protocol; it doesn
 | **M01 — staged into A/B/C/D plus E (Phase Closeout); one PR for the parent milestone** | | |
 | `M01-foundation.md` | Authored | M1 (weeks 1–2; 5 stages, ~29–46h total). Stage A workspace skeleton + Stage B type generation + Stage C drone Phase 1 + Stage D fuzz + polish + Stage E gap analysis. Each stage commits on the parent-milestone branch; M1 PR drafts at end of Stage E. |
 | **M02–M11 — generated after M01 summary** | | |
-| `M02-event-pipeline.md` | TODO | M2 (weeks 3–4): SDK + AnthropicProvider + Tauri shell + event flow |
+| `M02-event-pipeline.md` | Authored | M2 (weeks 3–4; 6 stages, ~13h actual calibrated): Stage A build hygiene + scaffolding (M01 carry-forward + signal.rs + HeartbeatStatus + mcp_servers); Stage B LLMProvider trait + AnthropicProvider stub; Stage C real HTTP+SSE impl with `*_with` SSE pattern + wiremock + ≥95% coverage; Stage D AgentSdk + main↔drone IPC client + ProviderEvent→AgentEvent translation; Stage E Tauri shell + skeleton React renderer + frontend CI gates + Playwright; Stage F Phase Closeout. Each stage commits on parent-milestone branch; M2 PR drafts at end of Stage F. |
 | `M03-live-graph.md` | TODO | M3 (weeks 5–6): React Flow + node types + VDR projection |
 | `M04-plan-verify-hitl-budget.md` | TODO | M4 (weeks 7–8): §3a + §4a + §6a + §2a + §1b |
 | `M05-gap-and-capability.md` | TODO | M5 (weeks 9–10): §4b + §8.security L1+L2a+L3+L4(N+P)+L5 |

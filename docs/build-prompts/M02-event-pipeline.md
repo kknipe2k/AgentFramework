@@ -4692,23 +4692,332 @@ EOF
 ---
 
 <!-- ============================================================ -->
-<!-- Stage F — Phase Closeout: Gap Analysis                         -->
+<!-- STAGE F — Phase Closeout: Gap Analysis (per CLAUDE.md §20)     -->
 <!-- ============================================================ -->
 
-[Stage F (Phase Closeout: Gap Analysis) authored in the next chunk per the chunked-authoring protocol. Stage F is the final commit on the parent-milestone branch; gates the M02 PR push.]
+## Stage F — Phase Closeout: Gap Analysis
+
+> **Per CLAUDE.md §20.** This stage runs after Stages A–E commit and `M02-summary.md` lands. It produces one new entry in `docs/gap-analysis.md`. The gap-analysis commit is the final commit on the parent-milestone branch — it gates the M02 PR push.
+
+### F.1 Problem Statement
+
+Generate the M02 entry in `docs/gap-analysis.md`. Cumulative review of code-vs-spec across all milestones to date (M01 + M02). Append-only — never edit prior entries (Pre-M01 baseline, Pre-M01 addendum, M01).
+
+The M02 review covers both new ground (provider abstraction, SSE state machine, agent SDK, Tauri shell, frontend skeleton, E2E pipeline) and resolution of carry-forward items M02 closed (mcp_servers table, .gitattributes, Windows drone integration test, coverage delta gating, *_with pattern documentation, src-tauri/gen/schemas/ gitignore). The Adherence section records every ⚠️ where M02 ships behavior that diverges from spec; the Spec review section flags places spec needs M03+ updates (Phase 3 React Flow + Zustand expansion, Session FSM diagram, plan model field shapes); the Fix backlog prioritizes M03-prep work; the Carry-forward section reports status of every prior-milestone Important item.
+
+**Success criterion.** New M02 entry in `docs/gap-analysis.md` follows the six-section template at the top of the file. Append-only check passes locally and in CI. M02-summary.md aggregates the per-stage retrospectives. PR push gated on this commit; PR description references all stage commits + retrospectives + summary + gap-analysis entry (three-artifact review per CLAUDE.md §19 + §20).
+
+### F.2 Files to Change
+
+| File | Change |
+|---|---|
+| `docs/gap-analysis.md` | **Edited (append-only)** — new M02 section appended at the bottom per the entry template. **Prior entries (Pre-M01 baseline, Pre-M01 addendum, M01) are immutable** — never edit, reorder, or delete. CI append-only check enforces. |
+| `docs/build-prompts/retrospectives/M02-summary.md` | **New** — aggregates M02.A through M02.E retrospectives per `docs/build-prompts/retrospectives/SUMMARY-TEMPLATE.md`. Per-stage axis scores rolled up; cross-stage friction patterns; verdict (Pattern held / held with friction / strained); decisions to apply before M03 authoring. |
+| `CHANGELOG.md` | **Edited** — `[Unreleased]` Status section updated noting M02 gap analysis appended; M02 entry summary; carry-forward closure summary. |
+
+### F.3 Detailed Changes
+
+The M02 entry follows the six-section template defined at the top of `docs/gap-analysis.md`. Do NOT diverge from the template; do NOT skip sections (write "None observed." if a section truly has nothing to report).
+
+**Process:**
+
+1. Re-read `agent-runtime-spec.md` end-to-end (yes, all of it — at least skim, with focus on §2, §2a, §2b, §2c, §10, §13, §M2 — sections M02 touches).
+2. Read every file produced or edited across all M02 stages:
+   - List via `git log --oneline main..HEAD` and `git diff --stat main..HEAD`.
+   - Open every new `.rs`, `.ts`, `.tsx`, `.json`, `.toml`, `.yml`, `.md` file. Cumulative review (M01 surfaces still in scope).
+3. Read the prior `docs/gap-analysis.md` entries IN FULL (Pre-M01 baseline, Pre-M01 addendum, M01). The Carry-forward section MUST report status of every Important item from those entries — Resolved / Still open / Deferred to M0X.
+4. Read the M02 per-stage retrospectives + draft `M02-summary.md` aggregating them.
+5. Draft the new gap-analysis entry per the template. Severity is non-elastic (CLAUDE.md §20).
+6. Run the append-only check locally before surfacing:
+   ```
+   git fetch origin main
+   git show origin/main:docs/gap-analysis.md > /tmp/gap-base.md
+   base_lines=$(wc -l < /tmp/gap-base.md)
+   diff /tmp/gap-base.md <(head -n "$base_lines" docs/gap-analysis.md)
+   ```
+   Output must be empty. If it isn't, prior content was modified; revert and re-edit by APPENDING ONLY at the bottom.
+
+#### M02 entry — section-by-section guidance
+
+**1. Codebase deep dive** — narrative review of the *cumulative* code shipped to date (M01 + M02), not just M02. 200–500 words. Surface:
+- Provider abstraction quality: does the `LLMProvider` trait surface bend cleanly when v1.0+ adds OpenAI / local? Note any signature that already feels too-Anthropic-shaped.
+- SSE state machine completeness: every Anthropic event variant exercised? Any wire-format quirk discovered during implementation that the prompt didn't anticipate?
+- AgentSdk + drone IPC: cancellation safety holding under real (non-test) conditions? Any orphan-task or leaked-socket failure modes surface?
+- Tauri capability boundary: did the lockdown hold (event-only)? Any capability that had to be widened during implementation?
+- Frontend type sync: TS `AgentEvent` discriminated union currently hand-mirrored from `runtime_core::AgentEvent` Rust enum. Did this drift during M02? Cite as a M03 codegen target.
+- Coverage holdouts: list every `--ignore-filename-regex` exclusion across the workspace (M01.C drone wrapper, anthropic.rs network wrapper, drone_ipc/connection.rs::open, key_store.rs platform-keychain-call). Are any reaching for over-exclusion?
+
+**2. Adherence to spec** — for each area touched, classify ✅ / ⚠️ / ❌ with file:line citations on both spec and code sides. Cover:
+- ✅ items: zero-telemetry (no analytics dep added); direct Anthropic API (no `@anthropic-ai/sdk` or `anthropic-rs`); SSE event sequence matches §2c wire format; capability lockdown matches §10; renderer never speaks HTTP / fs / shell.
+- ⚠️ items expected (Stage authors should land these or surface them):
+  - Decision extraction is a heuristic (M02 ships first-line "Decision:/Rationale:"); M04 verify+rails replaces with structured emitter. Document.
+  - `count_tokens` is char/4 approximation (Stage B/C); M04 budget integration replaces with real `/v1/messages/count_tokens` endpoint. Document.
+  - `ProviderEvent::ToolResult` translates to `AgentEvent::ToolResult` with `duration_ms: 0` (M02 doesn't run tools); M03 fills correctly. Document.
+  - `AgentSdk` is generic over `P: LLMProvider` — not `Box<dyn>`. v1.0+ multi-provider switching will refactor; documented as the M02 decision.
+  - `signal.rs` is scaffolded but no signals are emitted (emission lands in M04). Verify the type surface is right.
+  - `mcp_servers` table created but no MCP code consumes it (lands in M06). Verify the schema is forward-compatible.
+- ❌ items: "None observed" if no outright contradictions where code ships behavior the spec forbids or vice versa.
+
+**3. Spec review (forward-looking)** —
+- Missing items: Phase 3 React Flow + Zustand spec expansion (Pre-M01 carry-forward, M03-blocking); Session FSM diagram in §11 (Pre-M01 carry-forward, M04-blocking); plan model field shapes (M04-blocking); model deprecation policy (when does the runtime stop accepting deprecated model IDs).
+- Contradictions: any spec section that says X and another says NOT X. Surface explicitly.
+- Ambiguity: any §2c trait method whose semantics aren't clear (cancellation safety guarantees, error variant exhaustiveness, retry policy expectations).
+- Open questions: should `ProviderEvent::Error` be terminal (stream ends after) or recoverable (stream continues if downstream code retries)? M02 implementation chose terminal; spec doesn't say.
+- Recommended spec changes: bundle into a post-M02 `docs(spec):` PR before M03 authoring (parallel to the post-M01 `docs(spec):` PR pattern).
+
+**4. Fix backlog** — cumulative across M01 + M02; severity non-elastic.
+- 🔴 Critical (must fix before M03 starts): expected to be empty if M02 shipped correctly. Surface honestly if not.
+- 🟡 Important (should fix this release cycle): TS `AgentEvent` codegen from schema (M03 prep — manual mirror is fragile); Phase 3 React Flow + Zustand spec expansion (M03-blocking); plan model field shapes (M04-blocking); Session FSM diagram (M04-blocking); decision extractor → structured emitter migration (M04-blocking); count_tokens → real endpoint (M04-blocking); plus any new ⚠️ items from §2.
+- 🟢 Nice-to-have: any Tauri build/cache optimization, doc cross-link cleanup, schema lint, etc.
+
+**5. Carry-forward from prior milestones** — status of every Important item from Pre-M01 baseline, Pre-M01 addendum, and M01 entries.
+
+Expected resolutions M02 closes:
+- M01 🟡 "Coverage delta gating mechanism" — RESOLVED at M02 Stage A (CLAUDE.md §5 + .github/workflows/scripts/coverage-delta.sh).
+- M01 🟡 "*_with / _inner test-seam pattern" — RESOLVED at M02 Stage A (docs/style.md) + applied at Stage C (anthropic_sse.rs) + Stage D (agent_sdk.rs).
+- M01 🟡 "Windows drone integration test" — RESOLVED at M02 Stage A (crates/runtime-drone/tests/integration_windows.rs).
+- M01 🟡 ".gitattributes line-ending normalization" — RESOLVED at M02 Stage A (.gitattributes new file).
+- M01 🟡 "mcp_servers table" — RESOLVED at M02 Stage A (option (a) — table added with full 22-field schema).
+- M01 🟡 "Post-M01 docs(spec): PR" — RESOLVED at PR #36 (pre-M02 work).
+- M01 🟡 "src-tauri/gen/schemas/ gitignore" (PR #36 surface follow-up) — RESOLVED at M02 Stage A (.gitignore append).
+- Pre-M01 baseline 🟡 "typify oneOf clippy suppression" — confirmed still resolved.
+
+Expected to remain open:
+- M01 🟡 "Phase 3 React Flow + Zustand spec expansion" — STILL OPEN, M03-blocking.
+- M01 🟡 "Session FSM diagram in spec §11" — STILL OPEN, M04-blocking.
+- Pre-M01 addendum 🟡 "Reuse-first vs duplication-first §9 bias" — STILL DEFERRED to M07–M08 per addendum decision.
+- Pre-M01 addendum 🟡 "UI consistency: existing look and feel" — CARRY-FORWARD INTO M03 prep.
+- Pre-M01 baseline 🟢 "§10 numbering gap" — RESOLVED at PR #36 (cosmetic; closeout).
+
+**6. Sign-off** — Claude attestation + UTC timestamp.
+
+#### `docs/build-prompts/retrospectives/M02-summary.md` (new)
+
+Per `docs/build-prompts/retrospectives/SUMMARY-TEMPLATE.md`. Aggregates:
+- Per-stage axis scores (Process, Product, Pattern) → mean + range.
+- Per-stage outcome (Sound / Sound-but-rough / Friction-heavy / Not-ready).
+- Cross-stage trends: which decisions actually got applied (vs noted-and-forgotten); which friction patterns recurred; which time-box estimates came in fast/slow vs the calibrated baselines.
+- Verdict: Pattern held / held with friction / strained.
+- Decisions to apply before M03 authoring (CLAUDE.md / TEMPLATE.md / per-milestone-prompt updates).
+
+### F.4 Tests
+
+No new code tests. Verification is:
+
+1. **Append-only check** (CI-enforced via the `gap-analysis.md append-only check` job added in M01 Stage E + this stage's run).
+2. **Schema validation** of the entry's structure (six sections present; severity emojis valid; file:line citations parseable) — manual review at PR time, no automated gate.
+3. **User review** of the entry's substance per CLAUDE.md §19 + §20 three-artifact review (code diff + retrospectives/summary + gap-analysis entry).
+
+#### Coverage target
+
+N/A — documentation stage.
+
+### F.5 CLI Prompt
+
+```
+Read CLAUDE.md §20 (Gap Analysis Protocol) and docs/gap-analysis.md
+header (entry template).
+Read docs/build-prompts/M02-event-pipeline.md Stage F (sections F.1
+through F.4).
+
+═══ STEP 1 — INGEST ═══
+
+Read in order (large, but cumulative review is the point):
+
+1. agent-runtime-spec.md (skim end-to-end; focus on §2, §2a, §2b, §2c,
+   §10, §13, §M2).
+2. All files produced/edited across M02 stages (commit list:
+   git log --oneline main..HEAD; diff: git diff --stat main..HEAD).
+   Read every new .rs, .ts, .tsx, .json, .toml, .yml, .md.
+3. Prior gap-analysis.md entries IN FULL: Pre-M01 baseline, Pre-M01
+   addendum, M01. The Carry-forward section MUST report status of
+   every Important item from these entries.
+4. M02 per-stage retrospectives:
+   docs/build-prompts/retrospectives/M02.{A,B,C,D,E}-retrospective.md.
+
+═══ STEP 2 — DRAFT M02-summary.md ═══
+
+Copy SUMMARY-TEMPLATE.md to docs/build-prompts/retrospectives/M02-summary.md.
+Aggregate axis scores (Process, Product, Pattern) across stages A–E.
+Cross-stage trends. Verdict (Pattern held / held with friction /
+strained). Decisions to apply before M03 authoring (CLAUDE.md /
+TEMPLATE.md updates carrying forward).
+
+═══ STEP 3 — DRAFT THE GAP ANALYSIS ENTRY ═══
+
+Append to docs/gap-analysis.md a new section following the six-section
+template at the top of that file:
+
+  ## M02 — Event Pipeline (<YYYY-MM-DD>, commit `<sha-of-Stage-E-commit>`)
+  ### Codebase deep dive (cumulative — M01 + M02)
+  ### Adherence to spec
+  ### Spec review (forward-looking)
+  ### Fix backlog
+  ### Carry-forward from prior milestones
+  ### Sign-off
+
+Severity in the Fix backlog is non-elastic. If everything is "Important,"
+re-prioritize. Critical = "must fix before M03 starts." A pile of
+Criticals is a signal the milestone shouldn't have shipped; surface
+that honestly.
+
+Carry-forward MUST report status (Resolved / Still open / Deferred to
+M0X) for every Important item from Pre-M01 baseline + Pre-M01 addendum +
+M01 entries. Expected resolutions are listed in F.3 above.
+
+═══ STEP 4 — VERIFY APPEND-ONLY ═══
+
+Run locally:
+  git fetch origin main
+  git show origin/main:docs/gap-analysis.md > /tmp/gap-base.md
+  base_lines=$(wc -l < /tmp/gap-base.md)
+  diff /tmp/gap-base.md <(head -n "$base_lines" docs/gap-analysis.md)
+
+Output must be empty. If it isn't, prior content was modified; revert
+and re-edit by APPENDING ONLY at the bottom.
+
+═══ STEP 5 — SURFACE TO USER ═══
+
+Run: git status, git diff docs/gap-analysis.md
+   git diff docs/build-prompts/retrospectives/M02-summary.md
+   git diff CHANGELOG.md
+
+Surface:
+- The full new gap-analysis entry (verbatim).
+- The full M02-summary.md (verbatim).
+- The CHANGELOG diff.
+- Draft commit message from F.6.
+
+State: "M02 Gap Analysis is ready. I will NOT commit until you approve.
+Please review the entry — once committed, prior entries are immutable
+forever per CLAUDE.md §20."
+
+Wait for explicit approval.
+
+On approval (Stage F — Phase Closeout: Gap Analysis; final stage):
+1. Commit Stage F on the parent-milestone branch claude/m02-event-pipeline.
+2. Push the branch (first push for M02 — push waits until after Stage F
+   per CLAUDE.md §20).
+3. Draft the M02 PR description aggregating all stage commits + each
+   stage's retrospective + M02-summary + the new gap-analysis entry.
+   Surface for approval.
+4. On approval to open: use mcp__github__create_pull_request to open
+   the PR. Do NOT merge. User reviews + merges on GitHub.
+```
+
+### F.6 Commit Message
+
+```bash
+git commit -s -m "$(cat <<'EOF'
+docs(gap-analysis): M02 — append cumulative product+spec audit
+
+Per CLAUDE.md §20. Reviews codebase to date (M01 + M02) against
+agent-runtime-spec.md; records adherence findings, spec gaps, and
+prioritized fix backlog. This entry is immutable — future milestones
+report status via Carry-forward.
+
+M02 entry covers:
+- Codebase deep dive: provider abstraction quality, SSE state machine
+  completeness, AgentSdk cancellation safety, Tauri capability boundary
+  hold, frontend type sync, coverage holdouts.
+- Adherence: zero-telemetry, direct Anthropic API, SSE wire format,
+  capability lockdown all ✅. ⚠️ items: decision-extractor heuristic
+  (M04 replacement scheduled), count_tokens approximation (M04 real
+  endpoint scheduled), AgentSdk generic vs dyn (refactor cost
+  documented), signal.rs scaffold (M04 emission integration), mcp_servers
+  schema-only (M06 consumer).
+- Spec review: Phase 3 expansion still M03-blocking; Session FSM
+  M04-blocking; plan model field shapes M04-blocking; ProviderEvent::
+  Error terminal-vs-recoverable ambiguity needs spec resolution.
+- Fix backlog: 0 Critical (M02 shipped correctly); 🟡 Important spans
+  M03/M04 prep work + spec edits; 🟢 Nice-to-have for cosmetic.
+- Carry-forward: M01 🟡 items M02 closed (coverage delta gating, *_with
+  pattern doc, Windows drone integration test, .gitattributes,
+  mcp_servers table, src-tauri/gen/schemas/ gitignore). M01 🟡 items
+  remaining open (Phase 3 spec, Session FSM, UI consistency carry to
+  M03 prep).
+
+M02-summary.md (new, NOT immutable but once written not edited)
+aggregates per-stage axis scores and verdict.
+
+CHANGELOG.md [Unreleased] Status section updated.
+
+This commit is the FINAL commit on claude/m02-event-pipeline per
+CLAUDE.md §20. Push gates the M02 PR.
+
+Refs: M02-event-pipeline.md §F; CLAUDE.md §19 + §20; SUMMARY-TEMPLATE.md.
+
+https://claude.ai/code/session_<id>
+EOF
+)"
+```
 
 ---
 
 ## Summary Table
 
-[Filled in after Stage F is authored.]
+| Stage | New Files | Edited Files | Tests Added | Effort (calibrated) |
+|---|---|---|---|---|
+| **A** Build hygiene + scaffolding | 3 (.gitattributes, signal.rs, integration_windows.rs) | 8 (.gitignore, db.rs, drone.rs, heartbeat.rs, lib.rs, CLAUDE.md, style.md, CHANGELOG.md) | 5 + extended schema-init coverage | ~1.5h |
+| **B** LLMProvider trait + provider scaffolding | 2 (providers/mod.rs, anthropic.rs stub) | 6 (Cargo.toml workspace + crate, lib.rs, README, deny.toml, CHANGELOG.md) | 10 unit | ~1.5h |
+| **C** AnthropicProvider real HTTP+SSE | 3 (anthropic_sse.rs, anthropic_wiremock.rs, anthropic_smoke.rs) | 7 (Cargo.toml workspace + crate, anthropic.rs, mod.rs, README, ci.yml, CLAUDE.md, CHANGELOG.md) | 21 (12 unit + 8 wiremock + 1 smoke gated) | ~3h |
+| **D** AgentSdk + drone IPC client | 9 (sdk/{mod, agent_sdk, event_pipeline, decision_extractor}, drone_ipc/{mod, client, connection}, sdk_event_translation.rs, sdk_cancellation.rs, drone_ipc_loopback.rs) | 6 (event.rs, lib.rs, Cargo.toml, README, ci.yml, CLAUDE.md, CHANGELOG.md) | 50+ (9+1 unit decision, 20+ table-driven, 5+ cancellation, 10 IPC loopback) | ~2.5h |
+| **E** Tauri shell + renderer + E2E | 18 (frontend full surface + commands.rs + capabilities/default.json + key_store.rs + tests) | 8 (main.rs, Cargo.toml, tauri.conf.json, ci.yml, .gitignore, CLAUDE.md, MVP-v0.1.md, CHANGELOG.md) | 30+ (14 Vitest + 4 Rust + 8 Playwright + 2 wiremock E2E) | ~3h |
+| **F** Phase Closeout: Gap Analysis | 1 (M02-summary.md) | 2 (gap-analysis.md append-only, CHANGELOG.md) | 0 (documentation stage; append-only check is CI gate) | ~1.5h |
+| **Total** | 36 new | 37 edited | 116+ tests | **~13h actual** |
+
+Estimates calibrated against M01's 0.3× ratio. M02 is ~3× M01's scope by file count (provider, SDK, IPC, frontend, all-new vs M01's mostly-scaffolding). Per the calibration, M01's 30–40h human-time-equivalent estimate ran in 10.5h actual; M02's 30–40h-equivalent estimate runs ~13h actual.
 
 ---
 
 ## Verification Checklist
 
-[Filled in after Stage F is authored.]
+Before approving the M02 PR (Stage F's surface), verify:
+
+### Automated (gates)
+
+- [ ] `cargo fmt --all -- --check` — zero diff
+- [ ] `cargo clippy --workspace --all-targets -- -D warnings` — zero warnings
+- [ ] `cargo build --workspace` — succeeds on Linux/macOS/Windows × stable + MSRV
+- [ ] `cargo test --workspace` — all tests pass (~116+ tests)
+- [ ] `cargo test --workspace --doc` — doc tests pass
+- [ ] `RUSTDOCFLAGS="-D missing_docs" cargo doc --workspace --no-deps` — clean
+- [ ] `cargo audit` — zero high/critical
+- [ ] `cargo deny check` — passes
+- [ ] `cargo llvm-cov --workspace ... --fail-under-lines 80` — workspace coverage ≥80%
+- [ ] `cargo llvm-cov --package runtime-main ... --fail-under-lines 95` — runtime-main ≥95%
+- [ ] `cargo llvm-cov --package runtime-drone ... --fail-under-lines 95` — drone ≥95% (no regression)
+- [ ] Coverage delta gate vs main passes (no >0.5pp regression on any safety-primitive crate)
+- [ ] `npm run typecheck` — TS strict clean
+- [ ] `npx prettier --check '**/*.{ts,tsx,js,jsx,json,md,yml,yaml}'` — clean
+- [ ] `npx eslint .` — zero warnings
+- [ ] `npm run test` — all Vitest tests pass; src/ coverage ≥80%
+- [ ] `npm audit --audit-level=high` — zero high/critical
+- [ ] `npx playwright test` — E2E smoke green on Linux/macOS/Windows
+- [ ] `cargo run --bin xtask -- regenerate-types --check` — no schema drift
+- [ ] Schema validation (existing) — passes
+- [ ] gap-analysis.md append-only check — passes
+- [ ] CI green on all OS × toolchain cells
+
+### Manual
+
+- [ ] Smoke session works end-to-end against real Anthropic API: set key → click button → see events → ends in agent_complete
+- [ ] All five M02 stage retrospectives present and filled in (M02.A–E)
+- [ ] `M02-summary.md` aggregates across stages with explicit verdict
+- [ ] `docs/gap-analysis.md` M02 entry is the only new entry; prior entries unchanged
+- [ ] M02 PR description references all stage commits + retrospectives + summary + gap-analysis entry
+- [ ] CHANGELOG `[Unreleased]` reflects what M02 delivered
+- [ ] `docs/MVP-v0.1.md` §M2 acceptance criteria all `- [x]`
+
+### Approval gate (per CLAUDE.md §19 + §20)
+
+- [ ] **Hard Gate G1: do-not-commit-until-approved held** — every stage commit landed only after explicit user approval
+- [ ] User has reviewed each stage retrospective; scoring matches observable evidence
+- [ ] M02-summary verdict is "Pattern held" (sound) or "Pattern held with friction"; not "Pattern strained"
+- [ ] Gap-analysis Carry-forward correctly reports status of every prior Important item
+- [ ] Three-artifact review complete: code diff + retrospectives/summary + gap-analysis entry
 
 ---
 
-*M02 prompt — Stage A authored. Stages B–F pending.*
+*End of M02-event-pipeline.md. M02 PR opens after Stage F approval.*
+
