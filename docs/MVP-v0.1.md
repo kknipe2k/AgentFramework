@@ -208,6 +208,7 @@ Total: ~24 weeks elapsed at sustained pace. Compresses with parallel work; expan
 - Hash validation on every artifact load; `artifact_hash_mismatch` event blocks with re-install prompt
 - `Import` panel in Builder: paste a GitHub raw URL → fetch → schema-validate → L3 sandbox → tier-gate review → install → `skills.lock` updated
 - Same flow for skill / tool / agent / MCP server config (latter installs into MCP Manager from M6)
+- **Sharing groundwork (per spec §15 + ADR-0005)** — framework export populates `share_provenance` automatically (`exported_at`, `exported_by` set to `share-it@0.1.0` for the v0.1 export flow, `for_runtime_class: "desktop_runtime"`, `for_os: ["windows","macos","linux"]`, `rebake_changes: []`); the v0.1 export is runtime-to-runtime only (no rebaking, no Share It module yet — those land at M08+); on import, the runtime surfaces the `share_provenance` block in the install dialog as a trust signal
 
 **Acceptance criteria**
 - [ ] User pastes raw GitHub URL of a `skill.md` (e.g., from a community repo); skill is fetched, validated against `schemas/skill.v1.json`, L3-sandbox-tested, tier-gated, installed; `skills.lock` updated; appears in Builder palette
@@ -215,10 +216,12 @@ Total: ~24 weeks elapsed at sustained pace. Compresses with parallel work; expan
 - [ ] Tampered file (hash mismatch on subsequent load) → load blocked with prompt to reinstall or remove
 - [ ] `skills.lock` is reproducible across machines (commit it to user's framework repo for team consistency)
 - [ ] No Anthropic-upstream search UI in v0.1 — just URL/file import
+- [ ] Framework export emits `share_provenance` block populated; framework import surfaces it in the install dialog
+- [ ] `requires_secrets`, `runtime_dependency_class`, `compatible_os` fields read on import and validated; `compatible_os` mismatch with the recipient's OS surfaces a blocking error per spec §15c
 
 **Dependencies** — M5 (L3 validation), M6 optional (MCP server import uses MCP Manager from M6)
 
-**Out of scope** — Anthropic upstream search UI (v1.0); pluggable community registries (v2.0); Sigstore signature verification (v1.0)
+**Out of scope** — Anthropic upstream search UI (v1.0); pluggable community registries (v2.0); Sigstore signature verification (v1.0); the Share It module with rebake / per-OS bundle generation (v1.0 — see M8 forward declaration); headless `agent-runtime-cli` binary (v1.0 — separate milestone after M11)
 
 ---
 
@@ -245,7 +248,9 @@ Total: ~24 weeks elapsed at sustained pace. Compresses with parallel work; expan
 
 **Dependencies** — M3 (graph rendering primitives), M4 (plan primitive for Tester), M5 (capability enforcement for Tester sandboxing)
 
-**Out of scope** — generator integration (M9 wires it in); multi-framework comparison view (v1.0); plugin node types (v2.0)
+**Forward declaration — Share It module (v1.0; spec §15e)** — M08's Workbench is the natural home for the v1.0 Share It module that consumes the §15d metadata (`requires_secrets`, `runtime_dependency_class`, `compatible_os`, `share_provenance`) shipped in v0.1 (see ADR-0005). The module inspects the framework, surfaces portability issues, proposes substitutions for OS-specific tools, recomputes `compatible_os` and `runtime_dependency_class` via static analysis, runs the M08 Tester on each target variant, and emits signed bundles per OS + per runtime class. **Not in v0.1 scope** — the module ships with the v1.0 headless CLI runtime as paired deliverables. Sequencing decided when M08 begins (could fold into M08, could be a slim M08.5 follow-up).
+
+**Out of scope** — generator integration (M9 wires it in); multi-framework comparison view (v1.0); plugin node types (v2.0); Share It module with rebake/bundle (v1.0 paired with headless CLI)
 
 ---
 

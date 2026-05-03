@@ -8,6 +8,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Spec §15 Sharing & Distribution + ADR-0005** — three sharing tiers
+  declared (runtime-to-runtime in v0.1 via M07; headless CLI
+  `agent-runtime-cli` in v1.0; WASM in v2.0+); cross-OS portability
+  rules (POSIX-only paths, `compatible_os` declaration); the "Share It"
+  module forward-declared as v1.0 deliverable in M08+. Four additive
+  optional fields in `schemas/framework.v1.json` (`requires_secrets`,
+  `runtime_dependency_class`, `compatible_os`, `share_provenance`)
+  ship as v0.1 schema groundwork so M03–M07 frameworks are
+  forward-compatible with the v1.0 headless CLI and Share It module
+  without schema migration. Minor in-place schema bump per
+  `schemas/README.md` versioning policy; `$id` unchanged. MVP-v0.1.md
+  §M07 updated to emit `share_provenance` on export and validate the
+  four fields on import; §M08 forward-declares the Share It module.
+  Generated Rust types (`crates/runtime-core/src/generated/framework.rs`)
+  and TypeScript types (`src/types/framework.ts`) **must be regenerated
+  via `cargo xtask regenerate-types` before this changeset's PR merges**
+  — the type-drift CI gate (per CLAUDE.md §14) blocks merge otherwise.
+  Regen happens on a Rust-capable machine (Windows / macOS / Linux);
+  the agent environment that authored the schema/spec/ADR changes does
+  not have a usable cargo toolchain.
 - **M01 Foundation milestone** — Cargo workspace with five member crates
   (`runtime-core`, `runtime-main`, `runtime-drone`, `runtime-sandbox`,
   `xtask`) plus Tauri stub at `src-tauri/`, workspace lints (deny
