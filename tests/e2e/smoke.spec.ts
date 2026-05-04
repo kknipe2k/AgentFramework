@@ -81,19 +81,16 @@ test.describe('renderer smoke', () => {
     await expect(page.getByRole('button', { name: /run smoke test/i })).toBeDisabled();
   });
 
-  test.skip(
-    'save_key_then_run_smoke_disables_button_during_run (needs Tauri invoke; M03)',
-    () => {
-      // The renderer's `handleSetKey` and `handleSmoke` flows call
-      // `@tauri-apps/api/core::invoke` which in a non-Tauri browser
-      // requires `window.__TAURI_INTERNALS__.invoke` to be polyfilled.
-      // The shim above sets `window.__TAURI_API_SHIM__` but Tauri's
-      // own internals are needed. Vitest's App.test.tsx mocks
-      // `@tauri-apps/api` at the module level and exercises the same
-      // state-machine path. Full Tauri-shell E2E (tauri-driver +
-      // WebdriverIO) is the M03 carry-forward.
-    },
-  );
+  test.skip('save_key_then_run_smoke_disables_button_during_run (needs Tauri invoke; M03)', () => {
+    // The renderer's `handleSetKey` and `handleSmoke` flows call
+    // `@tauri-apps/api/core::invoke` which in a non-Tauri browser
+    // requires `window.__TAURI_INTERNALS__.invoke` to be polyfilled.
+    // The shim above sets `window.__TAURI_API_SHIM__` but Tauri's
+    // own internals are needed. Vitest's App.test.tsx mocks
+    // `@tauri-apps/api` at the module level and exercises the same
+    // state-machine path. Full Tauri-shell E2E (tauri-driver +
+    // WebdriverIO) is the M03 carry-forward.
+  });
 
   // Tests #19, #21, #22 — happy-path E2E that the M02 prompt enumerates as
   // requiring desktop-shell E2E. Skipped here because Playwright cannot
