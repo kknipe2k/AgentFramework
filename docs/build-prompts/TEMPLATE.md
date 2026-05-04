@@ -134,6 +134,8 @@ The header sections (Date through Implementation Workflow) live once at the top.
 
 **Existing patterns to mirror:** [List spec sections, ADRs, prior milestone files that codify patterns this milestone follows.]
 
+**Pre-existing legacy file inventory:** [Required when this milestone touches a tree that already exists from a prior milestone (e.g., M03 touches `src/` which M02 created; M07 touches `crates/runtime-main/` which M02 created). List every tracked-but-orphaned file the milestone might trip over: legacy CommonJS files conflicting with `"type": "module"`, dead imports left behind, fixture files that prettier/eslint will scan. Each entry: file path + one-line "why it exists / what it conflicts with / disposition for this milestone (delete | preserve | refactor)." Empty if this is the first milestone touching a fresh tree. Source: M02.E friction r5 — `src/counter.{js,test.js}` legacy files weren't inventoried at M02 authoring and tripped prettier/eslint mid-stage.]
+
 ---
 
 <!-- ============================================================ -->
@@ -200,6 +202,23 @@ Each stage runs through this exact cycle:
 
 ## Stage A — <Stage Title>
 
+<!-- WEBCHECK header — required when the stage touches fast-moving tooling.
+     Source: M02-summary.md "Decisions to apply before next parent milestone"
+     (M02.E surprise event 1 — recurring pattern across stages that touch the
+     npm / Tauri / esbuild / Vite ecosystem). The author web-verifies each URL
+     against the prompt body BEFORE the fresh session opens, per CLAUDE.md §12
+     web-first rule. Omit the WEBCHECK header for stages that touch only
+     stable Rust workspace surfaces. -->
+
+**WEBCHECK:** [List authoritative URLs to verify against this stage's prompt body before code. Example for a stage touching Tauri 2.x + Vite + ESLint:
+- https://v2.tauri.app/develop/tests/webdriver/ (Tauri 2.x E2E framework)
+- https://vitejs.dev/guide/ (Vite root convention + script tag references)
+- https://eslint.org/docs/latest/use/configure/migration-guide (ESLint flat-config)
+- https://docs.rs/keyring/latest/keyring/ (keyring crate API surface)
+- https://docs.anthropic.com/en/api/messages (provider HTTP wire format)
+
+Verify the prompt's claims about API shapes, version pins, and best practices against each URL. If a claim is stale, update the prompt body BEFORE the fresh session paste — never let a fresh session work from a stale snapshot.]
+
 ### A.1 Problem Statement
 
 [What this stage delivers, in 1–2 paragraphs. Reference what's net-new vs what edits an existing file. End with a one-line success criterion.]
@@ -228,6 +247,37 @@ Each stage runs through this exact cycle:
 
 ### A.4 Tests
 
+#### Pedantic-pass preflight (for stages adding new modules)
+
+Before writing the test plan, the author runs through this clippy
+pedantic+nursery checklist for every new module the stage introduces — the
+patterns recurred in every M02 stage retrospective and consolidating here
+keeps fresh sessions from re-discovering them. Per `docs/gotchas.md` #21.
+
+- [ ] `redundant_pub_crate` — used plain `pub` in private modules, not `pub(crate)`
+- [ ] `derive_partial_eq_without_eq` — `serde_json::Value` containment carries `#[allow]` with one-line rationale
+- [ ] `unused_async` — cross-platform `cfg` variants with mismatched await trees suppressed per-fn
+- [ ] `default_trait_access` — explicit type (`HashMap::default()`) over inferred (`Default::default()`)
+- [ ] `match_wildcard_for_single_variants` — explicit binding over `_` when a single variant remains
+- [ ] `cast_precision_loss` / `suboptimal_flops` — exact numeric types pinned with inline precision claim
+- [ ] `struct_excessive_bools` — 3+ `bool` fields collapsed to typed flag enum/struct
+- [ ] `missing_const_for_fn` — pure constructors marked `const fn`
+- [ ] `unnecessary_literal_bound` / `doc_markdown` — code identifiers backticked in doc comments
+
+#### Default test plan for stages adding a new safety primitive
+
+Pattern proven across M01.C / M02.A / M02.C / M02.D / M02.E (per
+`M02-summary.md` Decisions): `(N) unit tests for the testable seam (\`*_with\`
+/ `from_streams`) + (M) integration tests for end-to-end behavior`. The
+testable seam decouples OS calls (the structural-100% holdout) from
+business logic; integration tests cover the whole-system path that the
+seam abstracts away.
+
+Use as the starting template for any new safety-primitive stage; specialize
+N and M to the surface area.
+
+#### Test files
+
 [Test plan as embedded code, not just descriptions. For unit tests, full test file content. For property tests, the proptest! block. For integration tests, the test function body.]
 
 ```<lang>
@@ -251,6 +301,15 @@ The exclusion list goes inline in the crate's coverage configuration
 (`Cargo.toml` or `coverage.toml`) with a one-line rationale per excluded
 function. See M01.C codification at commit `1dec4ba` for the established
 pattern.
+
+**Doc-to-CI invariant.** When a stage adds a new exclusion to a coverage gate,
+update both (a) `.github/workflows/ci.yml` `--ignore-filename-regex` (the
+authoritative gate) AND (b) `CLAUDE.md` §5 documented exclusion list AND (c)
+the per-stage retrospective's `[END] Coverage holdouts` subsection in the
+same commit. The Stage E doc-to-CI drift bug (`key_store.rs` documented as
+excluded but not actually in the workflow regex; PR #42 follow-up commit
+`9b741e3` fixed) is the cautionary tale — schedule the retro check BEFORE
+the surface-for-approval step, not after.
 
 ### A.5 CLI Prompt
 

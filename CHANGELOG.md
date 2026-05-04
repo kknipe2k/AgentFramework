@@ -6,6 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Documentation — Post-M02 protocol iteration
+
+Per `CLAUDE.md` §19 + `M02-summary.md` Verdict ("Pattern held but with
+friction") prescribed protocol-iteration session before M03 authoring opens.
+Lands the carry-forward decisions from M02.A–E retrospectives into the
+shared protocol docs so M03 stages don't re-discover the same friction.
+
+- **`docs/gotchas.md`** — eight new entries (#21–#28) consolidating M02
+  carry-forwards: clippy pedantic+nursery patterns (compound entry covering
+  9 sub-patterns), `current_exe()`-derived subprocess test paths, Tauri 2.x
+  E2E uses `tauri-driver` + WebdriverIO (not Playwright `_electron`), ESLint
+  9 flat-config default, Vite root convention, `serde(tag = "type")` requires
+  struct-shape variants, Vitest+RTL DOM-ref-staleness pattern, bound
+  test-fixture streams.
+- **`docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md`** — new
+  `[END] Coverage holdouts` subsection between Threshold evaluation and
+  Decisions for next stage. Records workspace + per-package coverage
+  actuals, exclusions added this stage, current exclusion list, per-module
+  baselines (preserved-or-improved invariant per CLAUDE.md §5), and a
+  doc-to-CI drift check. Replaces the historical scatter across CLAUDE.md
+  §5 + per-stage `[END] Decisions`.
+- **`docs/build-prompts/TEMPLATE.md`** — four additions to the milestone
+  prompt template:
+  - **`WEBCHECK:` header** at each stage's title block — required when the
+    stage touches fast-moving tooling surfaces (npm / Tauri / esbuild /
+    Vite / etc.). Lists authoritative URLs to web-verify against the prompt
+    body before the fresh session opens. Per CLAUDE.md §12 web-first rule.
+  - **Pre-existing legacy file inventory** subsection in milestone-level
+    Background — required when this milestone touches a tree a prior
+    milestone created. Lists tracked-but-orphaned files that prettier /
+    eslint will scan with disposition (delete / preserve / refactor).
+  - **Pedantic-pass preflight** checklist in the Stage X.4 Tests section
+    template — clippy pedantic+nursery patterns to verify against new
+    modules before writing the test plan. Cross-references gotchas.md #21.
+  - **Default test plan for stages adding a new safety primitive** — codifies
+    the M01.C / M02.A / M02.C / M02.D / M02.E pattern: "N unit tests for
+    the testable seam + M integration tests for end-to-end behavior."
+  - **Doc-to-CI invariant** addition under Safety primitive coverage gate —
+    requires updating CI workflow + CLAUDE.md §5 + per-stage retro
+    Coverage holdouts subsection in the SAME commit when adding a new
+    coverage exclusion. Cites the M02.E `key_store.rs` drift bug as the
+    cautionary tale.
+
 ### Added — M02.E (Tauri shell + skeleton renderer + frontend CI gates + Playwright)
 
 - `package.json` + full frontend tooling (Vite 5.4, TypeScript 5.6 strict,
