@@ -184,6 +184,39 @@ Mark one:
 
 ---
 
+## [END] Coverage holdouts
+
+Per-stage record of coverage-gate exclusions and per-module baselines. Single source of truth for what's excluded from `cargo llvm-cov --fail-under-lines` gates and why — replaces the historical pattern where exclusion rationale was scattered across `CLAUDE.md` §5 + per-stage `[END] Decisions`. Stage F gap-analysis aggregates across the milestone; this subsection is the per-stage source data.
+
+### Workspace gate (≥80% line)
+
+- **Coverage actual this stage:** [N.NN%]
+- **Exclusions added this stage:** [path/to/file — one-line rationale | "None added this stage"]
+- **Exclusion list as of stage end:** [enumerate every regex term currently in `.github/workflows/ci.yml` workspace `--ignore-filename-regex`]
+
+### Per-package gates (≥95% line on safety primitives)
+
+For each safety-primitive crate gated this stage (`runtime-drone`, `runtime-main`, future: `runtime-sandbox`, capability enforcer, plan state machine, snapshot/recovery), record:
+
+- **Crate:** [name]
+- **Coverage actual this stage:** [N.NN%]
+- **Exclusions added this stage:** [path/to/file — one-line rationale | "None added this stage"]
+- **Exclusion list as of stage end:** [enumerate every regex term currently in `.github/workflows/ci.yml` for this package's `--ignore-filename-regex`]
+
+### Per-module baselines (preserved-or-improved invariant)
+
+Per `CLAUDE.md` §5, "Subsequent milestones must not regress any module below its baseline without a retro entry recording the reason." Record any module whose coverage moved this stage:
+
+| Module | Prior baseline | This stage | Direction | Reason if down |
+|---|---|---|---|---|
+| `path/to/module.rs` | NN.NN% (M0X.Y) | NN.NN% | ↑↓→ | [if ↓, one-line rationale] |
+
+### CI workflow drift check
+
+- [ ] The `--ignore-filename-regex` patterns in `.github/workflows/ci.yml` (gate steps + lcov export steps) match what's documented above. Confirm by inspecting the workflow file at end of stage; mismatches between this retro and the workflow are a Stage E-class drift bug — fix in this stage's commit, not "the next stage's housekeeping."
+
+---
+
 ## [END] Decisions for the next stage (or next parent milestone if this is the final stage)
 
 Specific changes to apply BEFORE the next stage session opens. Empty list = no changes recommended.
