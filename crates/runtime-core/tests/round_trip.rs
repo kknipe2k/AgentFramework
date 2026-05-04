@@ -51,7 +51,7 @@ fn framework_ralph_round_trip() {
 #[test]
 fn drone_event_serde_tags_correct() {
     let event = DroneEvent::Heartbeat {
-        status: "ok".into(),
+        status: runtime_core::HeartbeatStatus::Ok,
         timestamp: 1_234_567_890,
     };
     let json = serde_json::to_value(&event).expect("serialize");
@@ -129,7 +129,7 @@ fn drone_event_variant_count_matches_spec() {
     // changes are fine; keep this assertion in sync with spec §1d).
     let variants_in_drone_event = 7; // Heartbeat, SnapshotWritten, ActivityStateChange, ProcessSpawned, ProcessStopped, RecoveryAvailable, Alert
     let _check = match (DroneEvent::Heartbeat {
-        status: String::new(),
+        status: runtime_core::HeartbeatStatus::Ok,
         timestamp: 0,
     }) {
         DroneEvent::Heartbeat { .. } => 1,

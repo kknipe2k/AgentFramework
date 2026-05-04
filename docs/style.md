@@ -34,6 +34,37 @@ Project-wide style and naming conventions. CLAUDE.md §9 references this file as
 - Functions should have ≤3 parameters. Beyond that, introduce a struct.
 - Pure functions are preferred over functions with side effects. Effects (file I/O, network, time) live in well-named functions at the edge of the call graph.
 
+### `*_with` / `*_inner` test-seam pattern (OS-driven async functions)
+
+When wrapping an OS-driven async future (signal handlers, long-lived I/O like SSE streams, OS-timer cleanups), structure the function so the testable logic lives in a separate `*_inner` (no parameter injection) or `*_with` (caller injects the future) variant, with the production function being a thin wrapper that constructs the OS future and delegates.
+
+The pattern lifted M01.C drone coverage from 87% → 95% by making `lib::run` and `shutdown::handle_emergency` testable without firing real OS signals cross-platform. Cite `crates/runtime-drone/src/lib.rs::{run, run_inner}` and `crates/runtime-drone/src/shutdown.rs::{wait_and_handle, wait_and_handle_with}` as the archetype.
+
+```rust
+// Production wrapper — thin; delegates to *_with variant.
+pub async fn wait_and_handle(state: &State) -> Result<()> {
+    let signal = tokio::signal::ctrl_c();
+    wait_and_handle_with(state, signal).await
+}
+
+// Testable variant — caller injects the signal future.
+pub async fn wait_and_handle_with<F>(state: &State, signal: F) -> Result<()>
+where
+    F: Future<Output = std::io::Result<()>>,
+{
+    signal.await?;
+    state.persist().await
+}
+
+// In tests: pass `async { Ok(()) }` for an immediate signal; pass
+// `tokio::time::sleep(Duration::from_millis(50)).map(|_| Ok(()))` for
+// timed-arrival behavior; etc.
+```
+
+The `_with` form is preferred when callers may legitimately want to inject non-OS signals (e.g., a `oneshot::Receiver` for testing or a timer for non-signal-driven shutdown). The `_inner` form is preferred when the function just needs the testable seam without expanding the public API.
+
+When excluding the production wrapper from coverage (because it can only be exercised by firing real OS signals cross-platform), document it inline with a one-line rationale per excluded function — see M01.C codification commit `1dec4ba`.
+
 ## Errors
 
 - **Rust:** `Result<T, E>` everywhere it can fail. Use `thiserror` for library error types; `anyhow` for application error types at the boundary; `?` for propagation. No `panic!` in library code; `panic!` is for "this is impossible and represents a bug." Use `unwrap_or` / `unwrap_or_else` / `expect("...")` with a real error message when needed.

@@ -199,7 +199,7 @@ async fn handle_connection<R, W>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use runtime_core::{DroneCommand, DroneEvent};
+    use runtime_core::{DroneCommand, DroneEvent, HeartbeatStatus};
     use tokio::sync::{broadcast, mpsc};
     use tokio::time::{timeout, Duration};
 
@@ -297,7 +297,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
         event_tx
             .send(DroneEvent::Heartbeat {
-                status: "ok".into(),
+                status: HeartbeatStatus::Ok,
                 timestamp: 1,
             })
             .expect("broadcast");

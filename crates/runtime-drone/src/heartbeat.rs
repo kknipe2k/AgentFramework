@@ -6,7 +6,7 @@
 //! relay back to main.
 
 use crate::HEARTBEAT_INTERVAL;
-use runtime_core::DroneEvent;
+use runtime_core::{DroneEvent, HeartbeatStatus};
 use rusqlite::Connection;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -38,6 +38,7 @@ pub async fn run(
     event_tx: broadcast::Sender<DroneEvent>,
 ) -> Result<(), HeartbeatError> {
     let mut ticker = interval(HEARTBEAT_INTERVAL);
+    let status = HeartbeatStatus::Ok;
     loop {
         ticker.tick().await;
         let timestamp = current_timestamp();
@@ -46,13 +47,10 @@ pub async fn run(
             let guard = conn.lock().await;
             guard.execute(
                 "INSERT INTO heartbeats (id, session_id, timestamp, status) VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![id, session_id, timestamp, "ok"],
+                rusqlite::params![id, session_id, timestamp, status.to_string()],
             )?;
         }
-        let _ = event_tx.send(DroneEvent::Heartbeat {
-            status: "ok".to_string(),
-            timestamp,
-        });
+        let _ = event_tx.send(DroneEvent::Heartbeat { status, timestamp });
     }
 }
 
@@ -127,6 +125,33 @@ mod tests {
             )
             .expect("count");
         assert!(count >= 1, "heartbeats table should have at least one row");
+        task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn heartbeat_writes_typed_status_to_db() {
+        use runtime_core::HeartbeatStatus;
+        let (_dir, conn) = open();
+        let (tx, mut rx) = broadcast::channel(16);
+
+        let conn_clone = conn.clone();
+        let task = tokio::spawn(run("s1".to_string(), conn_clone, tx));
+
+        // Drain one tick so the writer has run.
+        let _ = rx.recv().await.expect("first tick");
+
+        let stored: String = conn
+            .lock()
+            .await
+            .query_row(
+                "SELECT status FROM heartbeats WHERE session_id = 's1' LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .expect("query stored status");
+        let parsed: HeartbeatStatus = stored.parse().expect("parse stored status");
+        assert_eq!(parsed, HeartbeatStatus::Ok);
+
         task.abort();
     }
 }

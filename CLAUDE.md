@@ -104,8 +104,32 @@ A micro-cycle should take 5–15 minutes. If a cycle is longer, the test is too 
 ### Coverage thresholds (per §12)
 
 - **≥80% line coverage** on all new code (Rust: `cargo-llvm-cov`; TS: `vitest --coverage`). Workspace gate excludes generated code and binary stubs: `--ignore-filename-regex "src.main\.rs|generated"`.
-- **≥95% line on safety primitives** with documented exclusions: drone (`crates/runtime-drone/`), capability enforcer (`crates/runtime-main/src/capability/`), plan state machine, snapshot/recovery code paths. The drone gate excludes `lib.rs` and `shutdown.rs` (OS-signal orchestrators wrapping testable `_inner`/`_with` variants — exercised end-to-end by the Unix subprocess integration test in `crates/runtime-drone/tests/integration.rs`). Per-module baseline (M01.C measured): `snapshot.rs` 100%, `db.rs` 98.82%, `heartbeat.rs` 98.59%, `command_handler.rs` 97.94%, `ipc.rs` 84.70% (platform-cfg variants). Subsequent milestones must not regress any module below its baseline without a retro entry recording the reason. Same pattern (≥95% overall + documented per-module baseline) applies as future safety primitives land — document the exclusion list and rationale here when adding them. (History: M01.C retrospective + M01-foundation.md Stage D §D.3 "Coverage gate semantics".)
+- **≥95% line on safety primitives** with documented exclusions: drone (`crates/runtime-drone/`), provider/SSE pipeline (`crates/runtime-main/`), capability enforcer (`crates/runtime-main/src/capability/`), plan state machine, snapshot/recovery code paths. The drone gate excludes `lib.rs` and `shutdown.rs` (OS-signal orchestrators wrapping testable `_inner`/`_with` variants — exercised end-to-end by the Unix subprocess integration test in `crates/runtime-drone/tests/integration.rs`). The runtime-main gate excludes `src/providers/anthropic.rs` (the production reqwest+SSE wrapper that constructs `reqwest::Client` and POSTs to `https://api.anthropic.com`; structurally untestable cross-platform). Wire-format logic lives in `src/providers/anthropic_sse.rs` and is exercised end-to-end by `tests/anthropic_wiremock.rs` (8 tests covering happy path, auth, rate limit, tool use, thinking, server-emitted error, malformed bytes skipped, and partial-chunk reassembly). Per-module baseline (M01.C measured): `snapshot.rs` 100%, `db.rs` 98.82%, `heartbeat.rs` 98.59%, `command_handler.rs` 97.94%, `ipc.rs` 84.70% (platform-cfg variants). Subsequent milestones must not regress any module below its baseline without a retro entry recording the reason. Same pattern (≥95% overall + documented per-module baseline) applies as future safety primitives land — document the exclusion list and rationale here when adding them. (History: M01.C retrospective + M01-foundation.md Stage D §D.3 "Coverage gate semantics"; M02.C added the runtime-main exclusion + wiremock coverage path.)
 - Coverage drops vs prior `main` block PR merge. CI computes the delta.
+
+**Coverage delta gating (from M02 onward) — Codecov-enforced.** M01 used
+absolute thresholds (workspace ≥80%, drone ≥95%) because no baseline
+existed. Starting M02, every PR also passes a delta-gate via Codecov:
+project + patch coverage thresholds set in `codecov.yml` (`target: auto`,
+`threshold: 0.5%`, `base: auto`). Codecov pulls the LCOV uploaded by the
+existing `cargo-llvm-cov` step in `.github/workflows/ci.yml`, compares
+to `main`'s last green build, and fails the PR check if any gated crate
+regresses by >0.5 percentage points (absolute) OR if patch coverage on
+the changed lines drops below the project floor.
+
+Codecov was advisory in M01 (commit `c04aac5`); M02 Stage A flips
+required-on for the project + patch checks via:
+- New `codecov.yml` at repo root with the project + patch rules.
+- `.github/workflows/ci.yml` keeps the existing upload step plus
+  per-crate flag uploads (`workspace`, `runtime-drone`, `runtime-main`);
+  the `informational: false` flag in `codecov.yml` makes the check
+  blocking and `fail_ci_if_error: true` reds the build on upload failure.
+- The absolute-threshold gates (`cargo llvm-cov --fail-under-lines`)
+  remain authoritative for hard floors; Codecov gates the *delta*.
+- No custom bash scripts to maintain.
+
+Pre-M01 carry-forward; resolved per the M01 gap-analysis Important
+"Coverage delta gating mechanism" item.
 
 ### Test types and when they apply
 
@@ -158,26 +182,51 @@ cargo llvm-cov --workspace \
 cargo llvm-cov --package runtime-drone \
     --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.shutdown\.rs" \
     --fail-under-lines 95
+
+# runtime-main safety-primitive coverage — additionally exclude (a) the
+# real-network reqwest+SSE wrapper (providers/anthropic.rs) and (b) the
+# cfg-platform open() OS-call wrapper (drone_ipc/connection.rs). Both are
+# OS-signal-class holdouts. Wire-format logic lives in
+# providers/anthropic_sse.rs (wiremock-covered); the drone-IPC testable
+# seam Connection::send_with_reconnect is exercised by both unit tests
+# (tokio::io::duplex) and the loopback integration test. Per CLAUDE.md
+# §5 + M02-event-pipeline.md Stages C/D.
+cargo llvm-cov --package runtime-main \
+    --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs" \
+    --fail-under-lines 95
 ```
 
 CI runs all of these on Linux/macOS/Windows × stable + MSRV.
 
-### Frontend gates (when `package.json` exists)
+### Frontend gates (active from M02 Stage E)
 
 ```bash
 npm ci
-npx prettier --check '**/*.{ts,tsx,js,jsx,json,md,yml,yaml}'
+# Markdown + YAML excluded via .prettierignore — repo-wide markdown predates
+# M02 and is checked by the existing markdown-lint job; YAML is structurally
+# validated by GitHub Actions. Stage E covers JS/TS/TSX/JSX/JSON.
+npx prettier --check '**/*.{ts,tsx,js,jsx,json}'
 npx eslint .
 npx tsc --noEmit
 npm run test
 npm audit --audit-level=high
 ```
 
-### E2E gates (when renderer can run a session, M3+)
+These gates must pass on every PR from M02 onward. Vitest coverage threshold
+≥80% on `src/` (configured in `vitest.config.ts`).
+
+### E2E gates (Playwright renderer-level — active from M02 Stage E)
 
 ```bash
-npm run test:e2e   # Playwright against the built Tauri app
+npm run test:e2e   # Playwright against the Vite dev server
 ```
+
+Stage E ships Playwright tests that drive the renderer against the Vite dev
+server with `@tauri-apps/api` module-mocked. Full desktop-shell E2E (driving
+the WebView2 / WebKitGTK window) requires `tauri-driver` + WebdriverIO per
+the official Tauri 2.x docs (<https://v2.tauri.app/develop/tests/webdriver/>);
+that is a M03 carry-forward — Playwright with `_electron` cannot drive a
+Tauri 2.x app, and `tauri-driver` does not support macOS.
 
 ### Schema gates (always — already in CI)
 

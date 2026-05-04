@@ -4,6 +4,71 @@
 //! for main↔drone IPC over Unix domain socket / Windows named pipe.
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::str::FromStr;
+
+/// Status reported in [`DroneEvent::Heartbeat`].
+///
+/// Matches the strings written by `runtime-drone::heartbeat::run` to the
+/// `heartbeats.status` `SQLite` column. Defined per spec §1d (post-M01
+/// `docs(spec):` PR #36 closeout — see M01 gap-analysis "Important
+/// `HeartbeatStatus` typed enum").
+///
+/// # Examples
+///
+/// ```
+/// use runtime_core::HeartbeatStatus;
+///
+/// assert_eq!(HeartbeatStatus::Ok.to_string(), "ok");
+/// let parsed: HeartbeatStatus = "degraded".parse().unwrap();
+/// assert_eq!(parsed, HeartbeatStatus::Degraded);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeartbeatStatus {
+    /// Drone is processing normally.
+    Ok,
+    /// Drone is making progress but degraded.
+    Degraded,
+    /// Drone has not made forward progress.
+    Stalled,
+}
+
+impl fmt::Display for HeartbeatStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Ok => "ok",
+            Self::Degraded => "degraded",
+            Self::Stalled => "stalled",
+        };
+        f.write_str(s)
+    }
+}
+
+/// Error returned when [`HeartbeatStatus::from_str`] sees an unknown value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseHeartbeatStatusError(String);
+
+impl fmt::Display for ParseHeartbeatStatusError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown heartbeat status: {}", self.0)
+    }
+}
+
+impl std::error::Error for ParseHeartbeatStatusError {}
+
+impl FromStr for HeartbeatStatus {
+    type Err = ParseHeartbeatStatusError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ok" => Ok(Self::Ok),
+            "degraded" => Ok(Self::Degraded),
+            "stalled" => Ok(Self::Stalled),
+            other => Err(ParseHeartbeatStatusError(other.to_string())),
+        }
+    }
+}
 
 /// Events emitted by the drone process to main.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -12,7 +77,7 @@ pub enum DroneEvent {
     /// Periodic heartbeat from the drone.
     Heartbeat {
         /// Current drone status.
-        status: String,
+        status: HeartbeatStatus,
         /// Unix timestamp (seconds since epoch).
         timestamp: i64,
     },
@@ -192,8 +257,16 @@ mod proptest_round_trip {
     use super::*;
     use proptest::prelude::*;
 
+    fn arb_heartbeat_status() -> impl Strategy<Value = HeartbeatStatus> {
+        prop_oneof![
+            Just(HeartbeatStatus::Ok),
+            Just(HeartbeatStatus::Degraded),
+            Just(HeartbeatStatus::Stalled),
+        ]
+    }
+
     fn arb_heartbeat() -> impl Strategy<Value = DroneEvent> {
-        (any::<String>(), any::<i64>())
+        (arb_heartbeat_status(), any::<i64>())
             .prop_map(|(status, timestamp)| DroneEvent::Heartbeat { status, timestamp })
     }
 
@@ -247,5 +320,30 @@ mod proptest_round_trip {
             let back: DroneCommand = serde_json::from_str(&line).unwrap();
             prop_assert_eq!(cmd, back);
         }
+    }
+
+    #[test]
+    fn heartbeat_status_display_round_trip() {
+        for s in [
+            HeartbeatStatus::Ok,
+            HeartbeatStatus::Degraded,
+            HeartbeatStatus::Stalled,
+        ] {
+            let displayed = s.to_string();
+            let parsed: HeartbeatStatus = displayed.parse().expect("parse");
+            assert_eq!(parsed, s);
+        }
+    }
+
+    #[test]
+    fn heartbeat_status_serializes_as_snake_case() {
+        let json = serde_json::to_string(&HeartbeatStatus::Degraded).unwrap();
+        assert_eq!(json, "\"degraded\"");
+    }
+
+    #[test]
+    fn heartbeat_status_parse_rejects_unknown() {
+        let err = "boom".parse::<HeartbeatStatus>().unwrap_err();
+        assert!(err.to_string().contains("boom"));
     }
 }

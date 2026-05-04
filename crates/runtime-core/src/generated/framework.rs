@@ -824,6 +824,25 @@ impl<'de> ::serde::Deserialize<'de> for FileGlobListItem {
 #[doc = "        \"additionalProperties\": false"]
 #[doc = "      }"]
 #[doc = "    },"]
+#[doc = "    \"compatible_os\": {"]
+#[doc = "      \"description\": \"Per spec §15c. OSes the framework supports. Default is all three (assume portable). If the framework uses an OS-specific tool (e.g., a tool that shells out to `powershell.exe`), narrow to the supported subset. The CLI / desktop runtime refuses to run a framework on an unsupported OS — fail loudly, do not silently misbehave. The Share It module narrows automatically based on tool/skill inspection.\","]
+#[doc = "      \"default\": ["]
+#[doc = "        \"windows\","]
+#[doc = "        \"macos\","]
+#[doc = "        \"linux\""]
+#[doc = "      ],"]
+#[doc = "      \"type\": \"array\","]
+#[doc = "      \"items\": {"]
+#[doc = "        \"type\": \"string\","]
+#[doc = "        \"enum\": ["]
+#[doc = "          \"windows\","]
+#[doc = "          \"macos\","]
+#[doc = "          \"linux\""]
+#[doc = "        ]"]
+#[doc = "      },"]
+#[doc = "      \"minItems\": 1,"]
+#[doc = "      \"uniqueItems\": true"]
+#[doc = "    },"]
 #[doc = "    \"decision_trace\": {"]
 #[doc = "      \"default\": true,"]
 #[doc = "      \"type\": \"boolean\""]
@@ -990,6 +1009,25 @@ impl<'de> ::serde::Deserialize<'de> for FileGlobListItem {
 #[doc = "      },"]
 #[doc = "      \"additionalProperties\": false"]
 #[doc = "    },"]
+#[doc = "    \"requires_secrets\": {"]
+#[doc = "      \"description\": \"Per spec §15d. Named secrets the recipient must provide before running this framework. Values are never embedded — only names. Example: [\\\"ANTHROPIC_API_KEY\\\", \\\"GITHUB_TOKEN\\\"]. The runtime / CLI prompts for any missing entry on first run; subsequent runs reuse keychain-stored values. Names must match the env-var-style pattern; case-sensitive.\","]
+#[doc = "      \"default\": [],"]
+#[doc = "      \"type\": \"array\","]
+#[doc = "      \"items\": {"]
+#[doc = "        \"type\": \"string\","]
+#[doc = "        \"pattern\": \"^[A-Z][A-Z0-9_]*$\""]
+#[doc = "      },"]
+#[doc = "      \"uniqueItems\": true"]
+#[doc = "    },"]
+#[doc = "    \"runtime_dependency_class\": {"]
+#[doc = "      \"description\": \"Per spec §15d. Whether the framework can run on the v1.0 headless `agent-runtime-cli` (`headless_compatible`) or requires the desktop runtime's live graph / workbench / canvas (`desktop_runtime`). Default is `desktop_runtime` (safe default — explicit opt-in required for headless). The Share It module (v1.0; spec §15e) computes the correct value via static analysis at export time.\","]
+#[doc = "      \"default\": \"desktop_runtime\","]
+#[doc = "      \"type\": \"string\","]
+#[doc = "      \"enum\": ["]
+#[doc = "        \"desktop_runtime\","]
+#[doc = "        \"headless_compatible\""]
+#[doc = "      ]"]
+#[doc = "    },"]
 #[doc = "    \"session\": {"]
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"properties\": {"]
@@ -1014,6 +1052,53 @@ impl<'de> ::serde::Deserialize<'de> for FileGlobListItem {
 #[doc = "    \"session_root_agent\": {"]
 #[doc = "      \"description\": \"Agent id (must be in agents[]) that the runtime spawns at session_start.\","]
 #[doc = "      \"type\": \"string\""]
+#[doc = "    },"]
+#[doc = "    \"share_provenance\": {"]
+#[doc = "      \"description\": \"Per spec §15d. Set automatically by the Share It module at export time; not authored by hand. Surfaces `shared on YYYY-MM-DD by ...` in the recipient runtime/CLI install dialog and provides an audit trail of any rebaking decisions.\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"exported_at\": {"]
+#[doc = "          \"description\": \"ISO 8601 UTC timestamp when the bundle was emitted.\","]
+#[doc = "          \"type\": \"string\","]
+#[doc = "          \"format\": \"date-time\""]
+#[doc = "        },"]
+#[doc = "        \"exported_by\": {"]
+#[doc = "          \"description\": \"Share It module identifier and SemVer (e.g., \\\"share-it@1.0.0\\\").\","]
+#[doc = "          \"type\": \"string\","]
+#[doc = "          \"pattern\": \"^share-it@[0-9]+\\\\.[0-9]+\\\\.[0-9]+$\""]
+#[doc = "        },"]
+#[doc = "        \"for_os\": {"]
+#[doc = "          \"description\": \"The OS subset the bundle was prepared for.\","]
+#[doc = "          \"type\": \"array\","]
+#[doc = "          \"items\": {"]
+#[doc = "            \"type\": \"string\","]
+#[doc = "            \"enum\": ["]
+#[doc = "              \"windows\","]
+#[doc = "              \"macos\","]
+#[doc = "              \"linux\""]
+#[doc = "            ]"]
+#[doc = "          },"]
+#[doc = "          \"minItems\": 1,"]
+#[doc = "          \"uniqueItems\": true"]
+#[doc = "        },"]
+#[doc = "        \"for_runtime_class\": {"]
+#[doc = "          \"description\": \"The `runtime_dependency_class` value the bundle was prepared for.\","]
+#[doc = "          \"type\": \"string\","]
+#[doc = "          \"enum\": ["]
+#[doc = "            \"desktop_runtime\","]
+#[doc = "            \"headless_compatible\""]
+#[doc = "          ]"]
+#[doc = "        },"]
+#[doc = "        \"rebake_changes\": {"]
+#[doc = "          \"description\": \"Human-readable list of substitutions / narrowings the Share It module applied at export time. Empty if no rebake was needed.\","]
+#[doc = "          \"default\": [],"]
+#[doc = "          \"type\": \"array\","]
+#[doc = "          \"items\": {"]
+#[doc = "            \"type\": \"string\""]
+#[doc = "          }"]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
 #[doc = "    },"]
 #[doc = "    \"sizing\": {"]
 #[doc = "      \"oneOf\": ["]
@@ -1177,6 +1262,9 @@ pub struct Framework {
     pub budget: ::std::option::Option<FrameworkBudget>,
     #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
     pub commands: ::std::vec::Vec<FrameworkCommandsItem>,
+    #[doc = "Per spec §15c. OSes the framework supports. Default is all three (assume portable). If the framework uses an OS-specific tool (e.g., a tool that shells out to `powershell.exe`), narrow to the supported subset. The CLI / desktop runtime refuses to run a framework on an unsupported OS — fail loudly, do not silently misbehave. The Share It module narrows automatically based on tool/skill inspection."]
+    #[serde(default = "defaults::framework_compatible_os")]
+    pub compatible_os: Vec<FrameworkCompatibleOsItem>,
     #[serde(default = "defaults::default_bool::<true>")]
     pub decision_trace: bool,
     pub description: FrameworkDescription,
@@ -1215,6 +1303,12 @@ pub struct Framework {
     pub plan_creation: ::std::option::Option<FrameworkPlanCreation>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub rails: ::std::option::Option<FrameworkRails>,
+    #[doc = "Per spec §15d. Named secrets the recipient must provide before running this framework. Values are never embedded — only names. Example: [\"ANTHROPIC_API_KEY\", \"GITHUB_TOKEN\"]. The runtime / CLI prompts for any missing entry on first run; subsequent runs reuse keychain-stored values. Names must match the env-var-style pattern; case-sensitive."]
+    #[serde(default = "defaults::framework_requires_secrets")]
+    pub requires_secrets: Vec<FrameworkRequiresSecretsItem>,
+    #[doc = "Per spec §15d. Whether the framework can run on the v1.0 headless `agent-runtime-cli` (`headless_compatible`) or requires the desktop runtime's live graph / workbench / canvas (`desktop_runtime`). Default is `desktop_runtime` (safe default — explicit opt-in required for headless). The Share It module (v1.0; spec §15e) computes the correct value via static analysis at export time."]
+    #[serde(default = "defaults::framework_runtime_dependency_class")]
+    pub runtime_dependency_class: FrameworkRuntimeDependencyClass,
     #[serde(
         rename = "$schema",
         default,
@@ -1225,6 +1319,8 @@ pub struct Framework {
     pub session: ::std::option::Option<FrameworkSession>,
     #[doc = "Agent id (must be in agents[]) that the runtime spawns at session_start."]
     pub session_root_agent: ::std::string::String,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub share_provenance: ::std::option::Option<FrameworkShareProvenance>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub sizing: ::std::option::Option<FrameworkSizing>,
     pub skills: ::std::vec::Vec<FrameworkSkillsItem>,
@@ -1532,6 +1628,83 @@ impl<'de> ::serde::Deserialize<'de> for FrameworkCommandsItemName {
             .map_err(|e: self::error::ConversionError| {
                 <D::Error as ::serde::de::Error>::custom(e.to_string())
             })
+    }
+}
+#[doc = "`FrameworkCompatibleOsItem`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"windows\","]
+#[doc = "    \"macos\","]
+#[doc = "    \"linux\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum FrameworkCompatibleOsItem {
+    #[serde(rename = "windows")]
+    Windows,
+    #[serde(rename = "macos")]
+    Macos,
+    #[serde(rename = "linux")]
+    Linux,
+}
+impl ::std::fmt::Display for FrameworkCompatibleOsItem {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Windows => f.write_str("windows"),
+            Self::Macos => f.write_str("macos"),
+            Self::Linux => f.write_str("linux"),
+        }
+    }
+}
+impl ::std::str::FromStr for FrameworkCompatibleOsItem {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "windows" => Ok(Self::Windows),
+            "macos" => Ok(Self::Macos),
+            "linux" => Ok(Self::Linux),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for FrameworkCompatibleOsItem {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for FrameworkCompatibleOsItem {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for FrameworkCompatibleOsItem {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
     }
 }
 #[doc = "`FrameworkDescription`"]
@@ -1980,6 +2153,155 @@ impl FrameworkRails {
         Default::default()
     }
 }
+#[doc = "`FrameworkRequiresSecretsItem`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"pattern\": \"^[A-Z][A-Z0-9_]*$\""]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct FrameworkRequiresSecretsItem(::std::string::String);
+impl ::std::ops::Deref for FrameworkRequiresSecretsItem {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<FrameworkRequiresSecretsItem> for ::std::string::String {
+    fn from(value: FrameworkRequiresSecretsItem) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for FrameworkRequiresSecretsItem {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        static PATTERN: ::std::sync::LazyLock<::regress::Regex> =
+            ::std::sync::LazyLock::new(|| ::regress::Regex::new("^[A-Z][A-Z0-9_]*$").unwrap());
+        if PATTERN.find(value).is_none() {
+            return Err("doesn't match pattern \"^[A-Z][A-Z0-9_]*$\"".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for FrameworkRequiresSecretsItem {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for FrameworkRequiresSecretsItem {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for FrameworkRequiresSecretsItem {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for FrameworkRequiresSecretsItem {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "Per spec §15d. Whether the framework can run on the v1.0 headless `agent-runtime-cli` (`headless_compatible`) or requires the desktop runtime's live graph / workbench / canvas (`desktop_runtime`). Default is `desktop_runtime` (safe default — explicit opt-in required for headless). The Share It module (v1.0; spec §15e) computes the correct value via static analysis at export time."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"Per spec §15d. Whether the framework can run on the v1.0 headless `agent-runtime-cli` (`headless_compatible`) or requires the desktop runtime's live graph / workbench / canvas (`desktop_runtime`). Default is `desktop_runtime` (safe default — explicit opt-in required for headless). The Share It module (v1.0; spec §15e) computes the correct value via static analysis at export time.\","]
+#[doc = "  \"default\": \"desktop_runtime\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"desktop_runtime\","]
+#[doc = "    \"headless_compatible\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum FrameworkRuntimeDependencyClass {
+    #[serde(rename = "desktop_runtime")]
+    DesktopRuntime,
+    #[serde(rename = "headless_compatible")]
+    HeadlessCompatible,
+}
+impl ::std::fmt::Display for FrameworkRuntimeDependencyClass {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::DesktopRuntime => f.write_str("desktop_runtime"),
+            Self::HeadlessCompatible => f.write_str("headless_compatible"),
+        }
+    }
+}
+impl ::std::str::FromStr for FrameworkRuntimeDependencyClass {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "desktop_runtime" => Ok(Self::DesktopRuntime),
+            "headless_compatible" => Ok(Self::HeadlessCompatible),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for FrameworkRuntimeDependencyClass {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for FrameworkRuntimeDependencyClass {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for FrameworkRuntimeDependencyClass {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::default::Default for FrameworkRuntimeDependencyClass {
+    fn default() -> Self {
+        FrameworkRuntimeDependencyClass::DesktopRuntime
+    }
+}
 #[doc = "`FrameworkSession`"]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
@@ -2030,6 +2352,318 @@ impl ::std::default::Default for FrameworkSession {
 impl FrameworkSession {
     pub fn builder() -> builder::FrameworkSession {
         Default::default()
+    }
+}
+#[doc = "Per spec §15d. Set automatically by the Share It module at export time; not authored by hand. Surfaces `shared on YYYY-MM-DD by ...` in the recipient runtime/CLI install dialog and provides an audit trail of any rebaking decisions."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"Per spec §15d. Set automatically by the Share It module at export time; not authored by hand. Surfaces `shared on YYYY-MM-DD by ...` in the recipient runtime/CLI install dialog and provides an audit trail of any rebaking decisions.\","]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"exported_at\": {"]
+#[doc = "      \"description\": \"ISO 8601 UTC timestamp when the bundle was emitted.\","]
+#[doc = "      \"type\": \"string\","]
+#[doc = "      \"format\": \"date-time\""]
+#[doc = "    },"]
+#[doc = "    \"exported_by\": {"]
+#[doc = "      \"description\": \"Share It module identifier and SemVer (e.g., \\\"share-it@1.0.0\\\").\","]
+#[doc = "      \"type\": \"string\","]
+#[doc = "      \"pattern\": \"^share-it@[0-9]+\\\\.[0-9]+\\\\.[0-9]+$\""]
+#[doc = "    },"]
+#[doc = "    \"for_os\": {"]
+#[doc = "      \"description\": \"The OS subset the bundle was prepared for.\","]
+#[doc = "      \"type\": \"array\","]
+#[doc = "      \"items\": {"]
+#[doc = "        \"type\": \"string\","]
+#[doc = "        \"enum\": ["]
+#[doc = "          \"windows\","]
+#[doc = "          \"macos\","]
+#[doc = "          \"linux\""]
+#[doc = "        ]"]
+#[doc = "      },"]
+#[doc = "      \"minItems\": 1,"]
+#[doc = "      \"uniqueItems\": true"]
+#[doc = "    },"]
+#[doc = "    \"for_runtime_class\": {"]
+#[doc = "      \"description\": \"The `runtime_dependency_class` value the bundle was prepared for.\","]
+#[doc = "      \"type\": \"string\","]
+#[doc = "      \"enum\": ["]
+#[doc = "        \"desktop_runtime\","]
+#[doc = "        \"headless_compatible\""]
+#[doc = "      ]"]
+#[doc = "    },"]
+#[doc = "    \"rebake_changes\": {"]
+#[doc = "      \"description\": \"Human-readable list of substitutions / narrowings the Share It module applied at export time. Empty if no rebake was needed.\","]
+#[doc = "      \"default\": [],"]
+#[doc = "      \"type\": \"array\","]
+#[doc = "      \"items\": {"]
+#[doc = "        \"type\": \"string\""]
+#[doc = "      }"]
+#[doc = "    }"]
+#[doc = "  },"]
+#[doc = "  \"additionalProperties\": false"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct FrameworkShareProvenance {
+    #[doc = "ISO 8601 UTC timestamp when the bundle was emitted."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub exported_at: ::std::option::Option<::chrono::DateTime<::chrono::offset::Utc>>,
+    #[doc = "Share It module identifier and SemVer (e.g., \"share-it@1.0.0\")."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub exported_by: ::std::option::Option<FrameworkShareProvenanceExportedBy>,
+    #[doc = "The OS subset the bundle was prepared for."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub for_os: ::std::option::Option<Vec<FrameworkShareProvenanceForOsItem>>,
+    #[doc = "The `runtime_dependency_class` value the bundle was prepared for."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub for_runtime_class: ::std::option::Option<FrameworkShareProvenanceForRuntimeClass>,
+    #[doc = "Human-readable list of substitutions / narrowings the Share It module applied at export time. Empty if no rebake was needed."]
+    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub rebake_changes: ::std::vec::Vec<::std::string::String>,
+}
+impl ::std::default::Default for FrameworkShareProvenance {
+    fn default() -> Self {
+        Self {
+            exported_at: Default::default(),
+            exported_by: Default::default(),
+            for_os: Default::default(),
+            for_runtime_class: Default::default(),
+            rebake_changes: Default::default(),
+        }
+    }
+}
+impl FrameworkShareProvenance {
+    pub fn builder() -> builder::FrameworkShareProvenance {
+        Default::default()
+    }
+}
+#[doc = "Share It module identifier and SemVer (e.g., \"share-it@1.0.0\")."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"Share It module identifier and SemVer (e.g., \\\"share-it@1.0.0\\\").\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"pattern\": \"^share-it@[0-9]+\\\\.[0-9]+\\\\.[0-9]+$\""]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct FrameworkShareProvenanceExportedBy(::std::string::String);
+impl ::std::ops::Deref for FrameworkShareProvenanceExportedBy {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<FrameworkShareProvenanceExportedBy> for ::std::string::String {
+    fn from(value: FrameworkShareProvenanceExportedBy) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for FrameworkShareProvenanceExportedBy {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        static PATTERN: ::std::sync::LazyLock<::regress::Regex> =
+            ::std::sync::LazyLock::new(|| {
+                ::regress::Regex::new("^share-it@[0-9]+\\.[0-9]+\\.[0-9]+$").unwrap()
+            });
+        if PATTERN.find(value).is_none() {
+            return Err("doesn't match pattern \"^share-it@[0-9]+\\.[0-9]+\\.[0-9]+$\"".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for FrameworkShareProvenanceExportedBy {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for FrameworkShareProvenanceExportedBy {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for FrameworkShareProvenanceExportedBy {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for FrameworkShareProvenanceExportedBy {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "`FrameworkShareProvenanceForOsItem`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"windows\","]
+#[doc = "    \"macos\","]
+#[doc = "    \"linux\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum FrameworkShareProvenanceForOsItem {
+    #[serde(rename = "windows")]
+    Windows,
+    #[serde(rename = "macos")]
+    Macos,
+    #[serde(rename = "linux")]
+    Linux,
+}
+impl ::std::fmt::Display for FrameworkShareProvenanceForOsItem {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Windows => f.write_str("windows"),
+            Self::Macos => f.write_str("macos"),
+            Self::Linux => f.write_str("linux"),
+        }
+    }
+}
+impl ::std::str::FromStr for FrameworkShareProvenanceForOsItem {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "windows" => Ok(Self::Windows),
+            "macos" => Ok(Self::Macos),
+            "linux" => Ok(Self::Linux),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for FrameworkShareProvenanceForOsItem {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for FrameworkShareProvenanceForOsItem {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for FrameworkShareProvenanceForOsItem {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "The `runtime_dependency_class` value the bundle was prepared for."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"The `runtime_dependency_class` value the bundle was prepared for.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"desktop_runtime\","]
+#[doc = "    \"headless_compatible\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum FrameworkShareProvenanceForRuntimeClass {
+    #[serde(rename = "desktop_runtime")]
+    DesktopRuntime,
+    #[serde(rename = "headless_compatible")]
+    HeadlessCompatible,
+}
+impl ::std::fmt::Display for FrameworkShareProvenanceForRuntimeClass {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::DesktopRuntime => f.write_str("desktop_runtime"),
+            Self::HeadlessCompatible => f.write_str("headless_compatible"),
+        }
+    }
+}
+impl ::std::str::FromStr for FrameworkShareProvenanceForRuntimeClass {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "desktop_runtime" => Ok(Self::DesktopRuntime),
+            "headless_compatible" => Ok(Self::HeadlessCompatible),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for FrameworkShareProvenanceForRuntimeClass {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for FrameworkShareProvenanceForRuntimeClass {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for FrameworkShareProvenanceForRuntimeClass {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
     }
 }
 #[doc = "`FrameworkSizing`"]
@@ -5419,6 +6053,8 @@ pub mod builder {
             ::std::vec::Vec<super::FrameworkCommandsItem>,
             ::std::string::String,
         >,
+        compatible_os:
+            ::std::result::Result<Vec<super::FrameworkCompatibleOsItem>, ::std::string::String>,
         decision_trace: ::std::result::Result<bool, ::std::string::String>,
         description: ::std::result::Result<super::FrameworkDescription, ::std::string::String>,
         design_doc_required: ::std::result::Result<bool, ::std::string::String>,
@@ -5461,6 +6097,10 @@ pub mod builder {
             ::std::option::Option<super::FrameworkRails>,
             ::std::string::String,
         >,
+        requires_secrets:
+            ::std::result::Result<Vec<super::FrameworkRequiresSecretsItem>, ::std::string::String>,
+        runtime_dependency_class:
+            ::std::result::Result<super::FrameworkRuntimeDependencyClass, ::std::string::String>,
         schema: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
@@ -5470,6 +6110,10 @@ pub mod builder {
             ::std::string::String,
         >,
         session_root_agent: ::std::result::Result<::std::string::String, ::std::string::String>,
+        share_provenance: ::std::result::Result<
+            ::std::option::Option<super::FrameworkShareProvenance>,
+            ::std::string::String,
+        >,
         sizing: ::std::result::Result<
             ::std::option::Option<super::FrameworkSizing>,
             ::std::string::String,
@@ -5495,6 +6139,7 @@ pub mod builder {
                 author: Ok(Default::default()),
                 budget: Ok(Default::default()),
                 commands: Ok(Default::default()),
+                compatible_os: Ok(super::defaults::framework_compatible_os()),
                 decision_trace: Ok(super::defaults::default_bool::<true>()),
                 description: Err("no value supplied for description".to_string()),
                 design_doc_required: Ok(Default::default()),
@@ -5511,9 +6156,12 @@ pub mod builder {
                 name: Err("no value supplied for name".to_string()),
                 plan_creation: Ok(Default::default()),
                 rails: Ok(Default::default()),
+                requires_secrets: Ok(super::defaults::framework_requires_secrets()),
+                runtime_dependency_class: Ok(super::defaults::framework_runtime_dependency_class()),
                 schema: Ok(Default::default()),
                 session: Ok(Default::default()),
                 session_root_agent: Err("no value supplied for session_root_agent".to_string()),
+                share_provenance: Ok(Default::default()),
                 sizing: Ok(Default::default()),
                 skills: Err("no value supplied for skills".to_string()),
                 task_defaults: Ok(Default::default()),
@@ -5561,6 +6209,16 @@ pub mod builder {
             self.commands = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for commands: {e}"));
+            self
+        }
+        pub fn compatible_os<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<Vec<super::FrameworkCompatibleOsItem>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.compatible_os = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for compatible_os: {e}"));
             self
         }
         pub fn decision_trace<T>(mut self, value: T) -> Self
@@ -5729,6 +6387,26 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for rails: {e}"));
             self
         }
+        pub fn requires_secrets<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<Vec<super::FrameworkRequiresSecretsItem>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.requires_secrets = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for requires_secrets: {e}"));
+            self
+        }
+        pub fn runtime_dependency_class<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::FrameworkRuntimeDependencyClass>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.runtime_dependency_class = value.try_into().map_err(|e| {
+                format!("error converting supplied value for runtime_dependency_class: {e}")
+            });
+            self
+        }
         pub fn schema<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
@@ -5757,6 +6435,16 @@ pub mod builder {
             self.session_root_agent = value.try_into().map_err(|e| {
                 format!("error converting supplied value for session_root_agent: {e}")
             });
+            self
+        }
+        pub fn share_provenance<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::FrameworkShareProvenance>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.share_provenance = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for share_provenance: {e}"));
             self
         }
         pub fn sizing<T>(mut self, value: T) -> Self
@@ -5820,6 +6508,7 @@ pub mod builder {
                 author: value.author?,
                 budget: value.budget?,
                 commands: value.commands?,
+                compatible_os: value.compatible_os?,
                 decision_trace: value.decision_trace?,
                 description: value.description?,
                 design_doc_required: value.design_doc_required?,
@@ -5836,9 +6525,12 @@ pub mod builder {
                 name: value.name?,
                 plan_creation: value.plan_creation?,
                 rails: value.rails?,
+                requires_secrets: value.requires_secrets?,
+                runtime_dependency_class: value.runtime_dependency_class?,
                 schema: value.schema?,
                 session: value.session?,
                 session_root_agent: value.session_root_agent?,
+                share_provenance: value.share_provenance?,
                 sizing: value.sizing?,
                 skills: value.skills?,
                 task_defaults: value.task_defaults?,
@@ -5854,6 +6546,7 @@ pub mod builder {
                 author: Ok(value.author),
                 budget: Ok(value.budget),
                 commands: Ok(value.commands),
+                compatible_os: Ok(value.compatible_os),
                 decision_trace: Ok(value.decision_trace),
                 description: Ok(value.description),
                 design_doc_required: Ok(value.design_doc_required),
@@ -5870,9 +6563,12 @@ pub mod builder {
                 name: Ok(value.name),
                 plan_creation: Ok(value.plan_creation),
                 rails: Ok(value.rails),
+                requires_secrets: Ok(value.requires_secrets),
+                runtime_dependency_class: Ok(value.runtime_dependency_class),
                 schema: Ok(value.schema),
                 session: Ok(value.session),
                 session_root_agent: Ok(value.session_root_agent),
+                share_provenance: Ok(value.share_provenance),
                 sizing: Ok(value.sizing),
                 skills: Ok(value.skills),
                 task_defaults: Ok(value.task_defaults),
@@ -6530,6 +7226,123 @@ pub mod builder {
                 idle_timeout_seconds: Ok(value.idle_timeout_seconds),
                 snapshot_interval_seconds: Ok(value.snapshot_interval_seconds),
                 stall_timeout_seconds: Ok(value.stall_timeout_seconds),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct FrameworkShareProvenance {
+        exported_at: ::std::result::Result<
+            ::std::option::Option<::chrono::DateTime<::chrono::offset::Utc>>,
+            ::std::string::String,
+        >,
+        exported_by: ::std::result::Result<
+            ::std::option::Option<super::FrameworkShareProvenanceExportedBy>,
+            ::std::string::String,
+        >,
+        for_os: ::std::result::Result<
+            ::std::option::Option<Vec<super::FrameworkShareProvenanceForOsItem>>,
+            ::std::string::String,
+        >,
+        for_runtime_class: ::std::result::Result<
+            ::std::option::Option<super::FrameworkShareProvenanceForRuntimeClass>,
+            ::std::string::String,
+        >,
+        rebake_changes:
+            ::std::result::Result<::std::vec::Vec<::std::string::String>, ::std::string::String>,
+    }
+    impl ::std::default::Default for FrameworkShareProvenance {
+        fn default() -> Self {
+            Self {
+                exported_at: Ok(Default::default()),
+                exported_by: Ok(Default::default()),
+                for_os: Ok(Default::default()),
+                for_runtime_class: Ok(Default::default()),
+                rebake_changes: Ok(Default::default()),
+            }
+        }
+    }
+    impl FrameworkShareProvenance {
+        pub fn exported_at<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                ::std::option::Option<::chrono::DateTime<::chrono::offset::Utc>>,
+            >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.exported_at = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for exported_at: {e}"));
+            self
+        }
+        pub fn exported_by<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                ::std::option::Option<super::FrameworkShareProvenanceExportedBy>,
+            >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.exported_by = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for exported_by: {e}"));
+            self
+        }
+        pub fn for_os<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                ::std::option::Option<Vec<super::FrameworkShareProvenanceForOsItem>>,
+            >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.for_os = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for for_os: {e}"));
+            self
+        }
+        pub fn for_runtime_class<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                ::std::option::Option<super::FrameworkShareProvenanceForRuntimeClass>,
+            >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.for_runtime_class = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for for_runtime_class: {e}"));
+            self
+        }
+        pub fn rebake_changes<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.rebake_changes = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for rebake_changes: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<FrameworkShareProvenance> for super::FrameworkShareProvenance {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: FrameworkShareProvenance,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                exported_at: value.exported_at?,
+                exported_by: value.exported_by?,
+                for_os: value.for_os?,
+                for_runtime_class: value.for_runtime_class?,
+                rebake_changes: value.rebake_changes?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::FrameworkShareProvenance> for FrameworkShareProvenance {
+        fn from(value: super::FrameworkShareProvenance) -> Self {
+            Self {
+                exported_at: Ok(value.exported_at),
+                exported_by: Ok(value.exported_by),
+                for_os: Ok(value.for_os),
+                for_runtime_class: Ok(value.for_runtime_class),
+                rebake_changes: Ok(value.rebake_changes),
             }
         }
     }
@@ -7891,6 +8704,19 @@ pub mod defaults {
         <T as ::std::convert::TryFrom<::std::num::NonZeroU64>>::Error: ::std::fmt::Debug,
     {
         T::try_from(::std::num::NonZeroU64::try_from(V).unwrap()).unwrap()
+    }
+    pub(super) fn framework_compatible_os() -> Vec<super::FrameworkCompatibleOsItem> {
+        vec![
+            super::FrameworkCompatibleOsItem::Windows,
+            super::FrameworkCompatibleOsItem::Macos,
+            super::FrameworkCompatibleOsItem::Linux,
+        ]
+    }
+    pub(super) fn framework_requires_secrets() -> Vec<super::FrameworkRequiresSecretsItem> {
+        vec![]
+    }
+    pub(super) fn framework_runtime_dependency_class() -> super::FrameworkRuntimeDependencyClass {
+        super::FrameworkRuntimeDependencyClass::DesktopRuntime
     }
     pub(super) fn framework_skills_item_source() -> super::FrameworkSkillsItemSource {
         super::FrameworkSkillsItemSource::Local

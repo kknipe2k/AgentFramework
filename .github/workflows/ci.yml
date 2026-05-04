@@ -207,7 +207,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace --all-features
+      # NOTE: deliberately NOT --all-features. The `integration` feature on
+      # runtime-main gates `tests/anthropic_smoke.rs` behind a real-API
+      # smoke test that requires an Anthropic API key in the OS keychain
+      # (per spec §M2 acceptance + CLAUDE.md §13 zero-telemetry).
+      # `--all-features` would un-gate it and CI would panic on missing key.
+      # Real-API smoke runs only as a manual `cargo test --features integration`.
+      - run: cargo test --workspace
       - name: Type generation drift check
         run: cargo xtask regenerate-types --check
         if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
@@ -342,21 +348,71 @@ jobs:
           cargo llvm-cov --package runtime-drone \
             --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.shutdown\.rs" \
             --fail-under-lines 95
-      # lcov export for Codecov — workspace exclusion only.
-      - name: Generate lcov for Codecov
+      # runtime-main safety-primitive gate — additionally exclude
+      # (a) providers/anthropic.rs (real-network reqwest+SSE wrapper;
+      # Stage C exclusion), (b) drone_ipc/connection.rs (cfg-platform
+      # open() OS-call wrapper; Stage D exclusion), and (c) key_store.rs
+      # (OS-keychain wrapper via the `keyring` crate; Stage E exclusion —
+      # the round-trip + missing-entry tests are #[ignore]-gated because
+      # they require a real OS keychain at runtime, not available on CI
+      # Linux runners). All three are the OS-signal-class holdouts for
+      # the runtime-main safety primitive.
+      # Testable seams Connection::send_with_reconnect +
+      # Connection::from_streams are exercised by unit tests
+      # (tokio::io::duplex) plus the loopback integration test
+      # (tests/drone_ipc_loopback.rs spawning the M01 drone subprocess).
+      # Per CLAUDE.md §5 + M02-event-pipeline.md Stages C/D/E.
+      - name: runtime-main coverage (≥95%, OS-call holdouts excluded)
+        run: |
+          cargo llvm-cov --package runtime-main \
+            --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.key_store\.rs" \
+            --fail-under-lines 95
+      # lcov export for Codecov — workspace + per-crate uploads. The
+      # cargo-llvm-cov --fail-under-lines gates above remain authoritative
+      # for absolute floors. Codecov gates the *delta* vs main per
+      # codecov.yml (project: 0.5pp, patch: ≥80% on touched lines).
+      # Per-crate flag uploads let codecov.yml's `runtime-drone` /
+      # `runtime-main` per-flag targets enforce 95% absolute coverage.
+      - name: Generate workspace lcov
         run: |
           cargo llvm-cov --workspace --lcov --output-path lcov.info \
             --ignore-filename-regex "src.main\.rs|generated"
-      # Codecov upload is advisory — the cargo-llvm-cov --fail-under-lines
-      # gates above are the authoritative quality check (per spec §12).
-      # Codecov requires CODECOV_TOKEN on protected branches; until that
-      # secret is configured (repo-level), upload failures must not red
-      # the build because the coverage thresholds already passed.
-      - uses: codecov/codecov-action@v4
+      - name: Generate runtime-drone lcov
+        run: |
+          cargo llvm-cov --package runtime-drone --lcov \
+            --output-path lcov-drone.info \
+            --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.shutdown\.rs"
+      - name: Generate runtime-main lcov
+        run: |
+          cargo llvm-cov --package runtime-main --lcov \
+            --output-path lcov-main.info \
+            --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.key_store\.rs"
+      # Codecov uploads — required from M02 onward (per CLAUDE.md §5
+      # "Coverage delta gating (from M02 onward) — Codecov-enforced").
+      # The codecov.yml `informational: false` flags make Codecov status
+      # checks blocking; this CI step's `fail_ci_if_error` ensures upload
+      # failures themselves also red the build.
+      - name: Upload workspace coverage to Codecov
+        uses: codecov/codecov-action@v4
         with:
-          files: lcov.info
-          fail_ci_if_error: false
-          token: ${{ secrets.CODECOV_TOKEN }}
+          files:            lcov.info
+          flags:            workspace
+          fail_ci_if_error: true
+          token:            ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload runtime-drone coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files:            lcov-drone.info
+          flags:            runtime-drone
+          fail_ci_if_error: true
+          token:            ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload runtime-main coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files:            lcov-main.info
+          flags:            runtime-main
+          fail_ci_if_error: true
+          token:            ${{ secrets.CODECOV_TOKEN }}
 
   frontend:
     name: Frontend (TypeScript)
@@ -371,7 +427,36 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm audit --audit-level=high
-      - run: npx prettier --check '**/*.{ts,tsx,js,jsx,json,md,yml,yaml}'
+      # Markdown / YAML / YAML excluded from prettier via .prettierignore —
+      # repo-wide markdown predates Stage E and is checked by the existing
+      # markdown-lint job; YAML is checked structurally by GitHub Actions
+      # itself. Stage E adds prettier coverage for the JS/TS/JSON surface.
+      - run: npx prettier --check '**/*.{ts,tsx,js,jsx,json}'
       - run: npx eslint .
       - run: npx tsc --noEmit
       - run: npm run test
+
+  e2e:
+    name: E2E (Playwright renderer)
+    needs: [detect-cargo, frontend]
+    if: needs.detect-cargo.outputs.has_npm == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # Stage E ships renderer-level Playwright tests against the Vite dev
+      # server with @tauri-apps/api shimmed inside the page. Full Tauri-shell
+      # E2E (driving the WebView2 / WebKitGTK window) is a M03 carry-forward
+      # per the Tauri 2.x docs (tauri-driver + WebdriverIO).
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
