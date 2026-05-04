@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 pub mod anthropic;
+mod anthropic_sse;
 
 /// Provider-emitted streaming event. Internal to runtime-main; translated to
 /// `AgentEvent` at the SDK boundary (Stage D).

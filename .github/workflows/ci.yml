@@ -342,6 +342,17 @@ jobs:
           cargo llvm-cov --package runtime-drone \
             --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.shutdown\.rs" \
             --fail-under-lines 95
+      # runtime-main safety-primitive gate — additionally exclude
+      # providers/anthropic.rs (the real-network reqwest+SSE wrapper).
+      # Wire-format logic lives in providers/anthropic_sse.rs and is
+      # exercised end-to-end via tests/anthropic_wiremock.rs (8 tests).
+      # Same OS-signal-class exclusion rationale as runtime-drone above.
+      # Per CLAUDE.md §5 + M02-event-pipeline.md Stage C §C.4.
+      - name: runtime-main coverage (≥95%, real-network wrapper excluded)
+        run: |
+          cargo llvm-cov --package runtime-main \
+            --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs" \
+            --fail-under-lines 95
       # lcov export for Codecov — workspace + per-crate uploads. The
       # cargo-llvm-cov --fail-under-lines gates above remain authoritative
       # for absolute floors. Codecov gates the *delta* vs main per
@@ -361,7 +372,7 @@ jobs:
         run: |
           cargo llvm-cov --package runtime-main --lcov \
             --output-path lcov-main.info \
-            --ignore-filename-regex "src.main\.rs|generated"
+            --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs"
       # Codecov uploads — required from M02 onward (per CLAUDE.md §5
       # "Coverage delta gating (from M02 onward) — Codecov-enforced").
       # The codecov.yml `informational: false` flags make Codecov status

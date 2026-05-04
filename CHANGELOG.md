@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M02.C (AnthropicProvider real HTTP+SSE)
+
+- `crates/runtime-main/src/providers/anthropic_sse.rs` — SSE state
+  machine + parser. `SseEvent` enum mirrors the Anthropic Messages API
+  wire format (`message_start`, `content_block_start/delta/stop`,
+  `message_delta/stop`, `ping`, `error`). `SseState` accumulates tool
+  input partial-JSON deltas across `content_block_delta` events; emits
+  the complete `ToolUse` on `ContentBlockStop`. `signature_delta` is
+  parsed and silently dropped (verifier-only payload).
+- `crates/runtime-main/src/providers/anthropic.rs::stream` — real
+  HTTP+SSE implementation. Direct `reqwest` + `eventsource-stream`; no
+  third-party Anthropic SDK. Lazy `OnceLock<reqwest::Client>` per
+  provider instance. Maps non-2xx responses: 401/403 → `Auth`; 429 →
+  `RateLimit { retry_after_secs }` (parsed from the `retry-after`
+  header, default 60); other → `Api { status, body }`.
+- `crates/runtime-main/tests/anthropic_wiremock.rs` — 8 wiremock-driven
+  integration tests covering happy path, auth failure, rate limit, tool
+  use accumulation, thinking + signature passthrough, server-emitted
+  error, malformed bytes skipped, and partial-chunk reassembly.
+- `crates/runtime-main/tests/anthropic_smoke.rs` — real-API smoke gated
+  by `--features integration`; reads keychain entry
+  `agent-runtime/anthropic`. CI never runs this; cost ~$0.001 per run
+  against Haiku 4.5.
+- `runtime-main` added to the safety-primitive coverage gate matrix
+  (≥95% line) with `src/providers/anthropic.rs` excluded as the
+  real-network production wrapper. CI gate + CLAUDE.md §5 updated.
+
+### Changed — M02.C
+
+- `crates/runtime-main/Cargo.toml` — add `bytes` dep (direct, was
+  transitive via reqwest) for the SSE state machine's stream type
+  bound, and `wiremock` dev-dep for the integration tests.
+- Workspace `Cargo.toml` — pin `wiremock = "0.6"` in
+  `[workspace.dependencies]`.
+- `crates/runtime-main/README.md` — add real-API smoke-test section
+  with platform-specific keychain setup notes.
+- `crates/runtime-main/src/providers/anthropic.rs` — remove the now-
+  obsolete `stub_stream_returns_text_then_stop` test (the wiremock
+  `happy_path_yields_text_deltas_and_message_stop` covers the same
+  end-to-end shape against the real HTTP+SSE pipeline).
+
 ### Added — M02.B (LLMProvider trait + AnthropicProvider stub)
 
 - `crates/runtime-main/src/providers/mod.rs` — `LLMProvider` trait,

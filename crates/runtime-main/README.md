@@ -19,5 +19,17 @@ Implement the `LLMProvider` trait. Keep the impl behind a feature flag if it pul
 
 ## Tests
 
-- `cargo test -p runtime-main` — unit tests for the provider trait, ProviderEvent serde, and the stub Anthropic implementation.
-- `cargo test -p runtime-main --features integration` — Stage C adds wiremock-driven integration tests + an opt-in real-API smoke test.
+- `cargo test -p runtime-main` — unit tests + 8 wiremock-driven integration tests for the SSE state machine + provider HTTP path. Offline; no API key needed.
+- `cargo test -p runtime-main --features integration` — adds the real-API smoke test in `tests/anthropic_smoke.rs` (gated). Requires a key in the OS keychain; CI never runs this.
+
+## Real-API smoke test
+
+The provider integration tests use `wiremock` for offline CI. To exercise the real Anthropic Messages API end-to-end:
+
+1. Get an API key from <https://console.anthropic.com> (Settings → API Keys → Create Key).
+2. Store it in the OS keychain under service `agent-runtime`, user `anthropic`:
+   - **Windows:** open Credential Manager → Add a Generic Credential. Set `Internet or network address` to `agent-runtime` and `User name` to `anthropic`; paste the API key in `Password`.
+   - **macOS / Linux:** any platform secret manager that writes the same `service=agent-runtime, user=anthropic` entry the `keyring` crate reads.
+3. Run: `cargo test -p runtime-main --features integration --test anthropic_smoke`.
+
+Cost per run: ~$0.001 against Haiku 4.5 ($1/$5 per million tokens). CI never runs this test; the wiremock tests in `tests/anthropic_wiremock.rs` cover the same wire-format paths offline.

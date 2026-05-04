@@ -104,7 +104,7 @@ A micro-cycle should take 5–15 minutes. If a cycle is longer, the test is too 
 ### Coverage thresholds (per §12)
 
 - **≥80% line coverage** on all new code (Rust: `cargo-llvm-cov`; TS: `vitest --coverage`). Workspace gate excludes generated code and binary stubs: `--ignore-filename-regex "src.main\.rs|generated"`.
-- **≥95% line on safety primitives** with documented exclusions: drone (`crates/runtime-drone/`), capability enforcer (`crates/runtime-main/src/capability/`), plan state machine, snapshot/recovery code paths. The drone gate excludes `lib.rs` and `shutdown.rs` (OS-signal orchestrators wrapping testable `_inner`/`_with` variants — exercised end-to-end by the Unix subprocess integration test in `crates/runtime-drone/tests/integration.rs`). Per-module baseline (M01.C measured): `snapshot.rs` 100%, `db.rs` 98.82%, `heartbeat.rs` 98.59%, `command_handler.rs` 97.94%, `ipc.rs` 84.70% (platform-cfg variants). Subsequent milestones must not regress any module below its baseline without a retro entry recording the reason. Same pattern (≥95% overall + documented per-module baseline) applies as future safety primitives land — document the exclusion list and rationale here when adding them. (History: M01.C retrospective + M01-foundation.md Stage D §D.3 "Coverage gate semantics".)
+- **≥95% line on safety primitives** with documented exclusions: drone (`crates/runtime-drone/`), provider/SSE pipeline (`crates/runtime-main/`), capability enforcer (`crates/runtime-main/src/capability/`), plan state machine, snapshot/recovery code paths. The drone gate excludes `lib.rs` and `shutdown.rs` (OS-signal orchestrators wrapping testable `_inner`/`_with` variants — exercised end-to-end by the Unix subprocess integration test in `crates/runtime-drone/tests/integration.rs`). The runtime-main gate excludes `src/providers/anthropic.rs` (the production reqwest+SSE wrapper that constructs `reqwest::Client` and POSTs to `https://api.anthropic.com`; structurally untestable cross-platform). Wire-format logic lives in `src/providers/anthropic_sse.rs` and is exercised end-to-end by `tests/anthropic_wiremock.rs` (8 tests covering happy path, auth, rate limit, tool use, thinking, server-emitted error, malformed bytes skipped, and partial-chunk reassembly). Per-module baseline (M01.C measured): `snapshot.rs` 100%, `db.rs` 98.82%, `heartbeat.rs` 98.59%, `command_handler.rs` 97.94%, `ipc.rs` 84.70% (platform-cfg variants). Subsequent milestones must not regress any module below its baseline without a retro entry recording the reason. Same pattern (≥95% overall + documented per-module baseline) applies as future safety primitives land — document the exclusion list and rationale here when adding them. (History: M01.C retrospective + M01-foundation.md Stage D §D.3 "Coverage gate semantics"; M02.C added the runtime-main exclusion + wiremock coverage path.)
 - Coverage drops vs prior `main` block PR merge. CI computes the delta.
 
 **Coverage delta gating (from M02 onward) — Codecov-enforced.** M01 used
@@ -181,6 +181,14 @@ cargo llvm-cov --workspace \
 # Stage D §D.3 "Coverage gate semantics".
 cargo llvm-cov --package runtime-drone \
     --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.shutdown\.rs" \
+    --fail-under-lines 95
+
+# runtime-main safety-primitive coverage — additionally exclude the
+# real-network reqwest+SSE wrapper (providers/anthropic.rs). Wire-format
+# logic lives in providers/anthropic_sse.rs (covered via wiremock) per
+# CLAUDE.md §5 + M02-event-pipeline.md Stage C §C.4.
+cargo llvm-cov --package runtime-main \
+    --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs" \
     --fail-under-lines 95
 ```
 

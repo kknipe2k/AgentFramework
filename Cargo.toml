@@ -42,6 +42,10 @@ async-trait         = "0.1"
 secrecy             = { version = "0.10", features = ["serde"] }
 keyring             = "3.6"
 
+# M02 Stage C — wiremock for provider integration tests.
+# Latest 0.6.x; takes the http-1.x types compatible with reqwest 0.13.
+wiremock            = "0.6"
+
 # runtime-core path-dep for runtime-main + future provider consumers.
 # Version pin avoids the cargo-deny wildcard rule.
 runtime-core        = { path = "crates/runtime-core", version = "0.1.0" }

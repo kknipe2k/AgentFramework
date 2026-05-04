@@ -1,29 +1,32 @@
-//! Anthropic Messages API provider (spec §2c).
+//! Anthropic Messages API provider — direct HTTP+SSE (spec §2c).
 //!
-//! Stage B ships a STUB: `stream()` returns a hardcoded sequence of
-//! `ProviderEvent`s. Stage C replaces the body with direct HTTP+SSE via
-//! `reqwest` + `eventsource-stream`. The stub exists so Stages D/E can
-//! depend on a stable interface before SSE work lands.
+//! No third-party Anthropic SDK (CLAUDE.md §15 trap #9 + spec §0d). Direct
+//! API hits via `reqwest` + `eventsource-stream` keep the dependency surface
+//! minimal and the breaking-change exposure flat.
+//!
+//! API key is loaded by the caller from OS keychain via `keyring` and held
+//! in `secrecy::SecretString` so it never `Debug`-prints. The provider
+//! lazily constructs `reqwest::Client` on first `stream()` call.
 
 use async_trait::async_trait;
-use futures::stream::{self, BoxStream, StreamExt};
-use secrecy::SecretString;
+use futures::stream::{BoxStream, StreamExt};
+use secrecy::{ExposeSecret, SecretString};
+use serde::Serialize;
+use std::sync::OnceLock;
 
+use super::anthropic_sse;
 use super::{
     AgentConfig, ContentBlock, CostBreakdown, LLMProvider, Message, ModelCapabilities, ModelInfo,
-    Pricing, ProviderError, ProviderEvent, ProviderSupport, ToolResultContent,
+    Pricing, ProviderError, ProviderEvent, ProviderSupport, ToolDef, ToolResultContent,
 };
 
+const ANTHROPIC_API_VERSION: &str = "2023-06-01";
+
 /// Direct HTTP+SSE Anthropic Messages API client.
-///
-/// API key is loaded from the OS keychain via `keyring` and held in
-/// `SecretString` so it never `Debug`-prints. No third-party Anthropic SDK
-/// is used (see CLAUDE.md §15 trap #9 + spec §0d).
 pub struct AnthropicProvider {
-    #[allow(dead_code, reason = "Stage C wires this into the HTTP client")]
     api_key: SecretString,
-    #[allow(dead_code, reason = "Stage C uses this as the request base URL")]
     base_url: String,
+    http: OnceLock<reqwest::Client>,
 }
 
 impl AnthropicProvider {
@@ -33,13 +36,27 @@ impl AnthropicProvider {
         Self {
             api_key,
             base_url: "https://api.anthropic.com".into(),
+            http: OnceLock::new(),
         }
     }
 
     /// Construct with an explicit base URL (for wiremock tests in Stage C).
     #[must_use]
     pub const fn with_base_url(api_key: SecretString, base_url: String) -> Self {
-        Self { api_key, base_url }
+        Self {
+            api_key,
+            base_url,
+            http: OnceLock::new(),
+        }
+    }
+
+    fn http_client(&self) -> &reqwest::Client {
+        self.http.get_or_init(|| {
+            reqwest::Client::builder()
+                .pool_max_idle_per_host(2)
+                .build()
+                .expect("reqwest client builder cannot fail with default features")
+        })
     }
 }
 
@@ -61,27 +78,58 @@ impl LLMProvider for AnthropicProvider {
         }
     }
 
-    /// STUB: returns a hardcoded `text_delta → message_stop` sequence.
-    /// Stage C replaces with real HTTP+SSE implementation.
+    /// Real HTTP+SSE implementation. Constructs the request, sends it, and
+    /// feeds the response byte stream into the private `anthropic_sse`
+    /// module's `stream_events`. Production wrapper — excluded from the ≥95%
+    /// coverage gate via `--ignore-filename-regex` because real-network hits
+    /// are structurally untestable cross-platform. Wire-format logic lives
+    /// in `anthropic_sse.rs` (covered by unit tests + wiremock integration).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError::Auth`] on 401/403; [`ProviderError::RateLimit`]
+    /// on 429 (with `retry_after_secs` parsed from the `retry-after` header,
+    /// defaulting to 60); [`ProviderError::Api`] on other non-2xx;
+    /// [`ProviderError::Http`] on transport failure.
     async fn stream(
         &self,
-        _config: AgentConfig,
+        config: AgentConfig,
     ) -> Result<BoxStream<'_, ProviderEvent>, ProviderError> {
-        let events = vec![
-            ProviderEvent::TextDelta {
-                text: "Hello".into(),
-            },
-            ProviderEvent::TextDelta {
-                text: " from".into(),
-            },
-            ProviderEvent::TextDelta {
-                text: " stub.".into(),
-            },
-            ProviderEvent::MessageStop {
-                stop_reason: "end_turn".into(),
-            },
-        ];
-        Ok(stream::iter(events).boxed())
+        let body = AnthropicRequest::from_config(&config);
+        let url = format!("{}/v1/messages", self.base_url);
+
+        let response = self
+            .http_client()
+            .post(&url)
+            .header("x-api-key", self.api_key.expose_secret())
+            .header("anthropic-version", ANTHROPIC_API_VERSION)
+            .header("content-type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            if status == 429 {
+                let retry_after_secs = response
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(60);
+                return Err(ProviderError::RateLimit { retry_after_secs });
+            }
+            if status == 401 || status == 403 {
+                return Err(ProviderError::Auth);
+            }
+            let body_text = response.text().await.unwrap_or_default();
+            return Err(ProviderError::Api {
+                status,
+                body: body_text,
+            });
+        }
+
+        Ok(anthropic_sse::stream_events(response.bytes_stream()).boxed())
     }
 
     async fn count_tokens(&self, messages: &[Message]) -> Result<u64, ProviderError> {
@@ -199,49 +247,61 @@ impl LLMProvider for AnthropicProvider {
     }
 }
 
+/// Anthropic `/v1/messages` request body. Subset of the full API: the parts
+/// the §M2 acceptance criteria require, plus tool support.
+#[derive(Debug, Serialize)]
+struct AnthropicRequest<'a> {
+    model: &'a str,
+    max_tokens: u32,
+    messages: &'a [Message],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<AnthropicTool<'a>>,
+    stream: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct AnthropicTool<'a> {
+    name: &'a str,
+    description: &'a str,
+    input_schema: &'a serde_json::Value,
+}
+
+impl<'a> AnthropicRequest<'a> {
+    fn from_config(config: &'a AgentConfig) -> Self {
+        Self {
+            model: &config.model,
+            max_tokens: config.max_tokens,
+            messages: &config.messages,
+            system: config.system_prompt.as_deref(),
+            temperature: config.temperature,
+            tools: config.tools.iter().map(AnthropicTool::from_def).collect(),
+            stream: true,
+        }
+    }
+}
+
+impl<'a> AnthropicTool<'a> {
+    fn from_def(def: &'a ToolDef) -> Self {
+        Self {
+            name: &def.name,
+            description: &def.description,
+            input_schema: &def.input_schema,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::{AgentConfig, Message, MessageRole, Pricing, ProviderEvent};
-    use futures::StreamExt;
+    use crate::providers::{Message, MessageRole, Pricing};
     use secrecy::SecretString;
 
     fn stub_provider() -> AnthropicProvider {
         AnthropicProvider::new(SecretString::from("sk-ant-test"))
-    }
-
-    fn stub_config() -> AgentConfig {
-        AgentConfig {
-            model: "claude-haiku-4-5".into(),
-            messages: vec![Message {
-                role: MessageRole::User,
-                content: vec![ContentBlock::Text {
-                    text: "ping".into(),
-                }],
-            }],
-            max_tokens: 100,
-            temperature: None,
-            system_prompt: None,
-            tools: vec![],
-        }
-    }
-
-    #[tokio::test]
-    async fn stub_stream_returns_text_then_stop() {
-        let provider = stub_provider();
-        let mut stream = provider.stream(stub_config()).await.unwrap();
-        let mut events = vec![];
-        while let Some(e) = stream.next().await {
-            events.push(e);
-        }
-        assert!(matches!(
-            events.first(),
-            Some(ProviderEvent::TextDelta { .. })
-        ));
-        assert!(matches!(
-            events.last(),
-            Some(ProviderEvent::MessageStop { .. })
-        ));
     }
 
     #[test]
