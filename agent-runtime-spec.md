@@ -825,6 +825,21 @@ Reference implementation: `crates/runtime-drone/src/ipc.rs` (lines 13-30
 for the platform-specific bindings) and the platform-specific notes in
 `crates/runtime-drone/README.md`.
 
+#### Reconnect semantics (locked 2026-05-04, M02 closeout)
+
+Main is the **client** in the main↔drone IPC; drone is the server. When the connection drops mid-session (drone restart, transient socket error, named-pipe handle lost), main reconnects automatically before the next command send. The reconnect policy:
+
+- **5 attempts** total, with exponential backoff: 200ms → 400ms → 800ms → 1.6s → 3.2s
+- Each attempt opens a fresh connection (Unix socket connect or Windows named pipe ClientOptions::open)
+- On all 5 attempts failing, main surfaces a `DroneUnreachable` error via the renderer's event bus and the session enters degraded mode (per §11)
+- The client's `send_with_reconnect` is the testable seam (`*_with` archetype per `docs/style.md`); raw `send` is the orchestrator wrapper
+
+This applies only to the **main → drone** direction. Drone → main events flow over the same connection; if main loses the connection, the drone treats this as an authoritative shutdown signal and emits its emergency snapshot before exiting (per §1 + §11). Drone does not reconnect to main on its own — main owns the lifecycle.
+
+> **⚠️ Long-lived events() subscription survival pending (M03 carry-forward).** Whether the renderer's long-lived `agent_event` subscription survives a main↔drone reconnect (i.e., does the renderer see a continuous event stream or a session-restart) is undefined for v0.1. M02 sessions are short enough that reconnect mid-stream hasn't been observed; M03 live-graph + longer-running sessions will force the call. Per `docs/gap-analysis.md` M02 entry "Open questions".
+
+Reference implementation: `crates/runtime-main/src/drone_ipc/client.rs::DroneClient::send_with_reconnect` (M02.D) + `crates/runtime-main/src/drone_ipc/connection.rs::Connection::from_streams` (testable seam).
+
 -----
 
 ## Phase 2: SDK Event Pipeline
@@ -1048,6 +1063,37 @@ v1 ships `AnthropicProvider`; provider selection lives in framework JSON:
 
 Model IDs move out of hardcoded constants; provider's `listModels()` populates the Builder UI's selector dropdown.
 
+#### §2c.1 Anthropic SSE wire format (locked 2026-05-04, M02 closeout)
+
+The `AnthropicProvider` SSE state machine consumes Anthropic's Messages API streaming events and emits `ProviderEvent`s. The complete wire-format event set, observed live during M02 stages C–D and codified in `crates/runtime-main/src/providers/anthropic_sse.rs`:
+
+| SSE event | Payload | Maps to `ProviderEvent` |
+|---|---|---|
+| `message_start` | `message: { id, role, model, ... }` | (state init; no event emitted) |
+| `content_block_start` | `index, content_block: { type, ... }` | (state init for the block; no event emitted) |
+| `content_block_delta` (`text_delta`) | `delta: { type: "text_delta", text }` | `TextDelta { text }` |
+| `content_block_delta` (`input_json_delta`) | `delta: { type: "input_json_delta", partial_json }` | (buffered until `content_block_stop` for that block, then emitted as `ToolUse { id, name, input }`) |
+| `content_block_delta` (`thinking_delta`) | `delta: { type: "thinking_delta", thinking }` | `ThinkingDelta { text }` |
+| `content_block_delta` (`signature_delta`) | `delta: { type: "signature_delta", signature }` | (verifier-only — append to the thinking block's signature; no `ProviderEvent` emitted) |
+| `content_block_stop` | `index` | (emits buffered `ToolUse` for tool-use blocks; otherwise no event) |
+| `message_delta` | `delta: { stop_reason, stop_sequence }`, `usage: { input_tokens, output_tokens }` | (state update; no event emitted) |
+| `message_stop` | (empty) | `MessageStop { stop_reason }` |
+| `ping` | (empty) | (SSE keep-alive — silently consumed; no event emitted) |
+| `error` | `error: { type, message }` | `Error { code: type, message }` (TERMINAL — see §2c.2) |
+
+Two events deserve specific call-out because they were undocumented in pre-M02 spec drafts and tripped the M02 implementation:
+
+- **`signature_delta`** — Anthropic emits this for every thinking-block content as a verifier signature (HMAC-style). The runtime's SSE state machine consumes and discards it (signature verification is not a v0.1 feature; deferred to v1.0+ if/when extended thinking ships with verifier-required mode). Fresh implementations that don't handle the event get spurious "unknown event type" warnings and a non-zero `ProviderEvent::Error` rate. Per `crates/runtime-main/src/providers/anthropic_sse.rs::translate_signature_delta`.
+- **`ping`** — SSE keep-alive emitted at irregular intervals when no other event is in flight; required to keep the connection alive across long-running thinking generations or cross-region routing. Consumed silently. Fresh implementations that surface `ping` as a `ProviderEvent` produce noise downstream.
+
+#### §2c.2 ProviderEvent::Error semantics (locked 2026-05-04, M02 closeout)
+
+`ProviderEvent::Error` is **terminal**. When the SSE stream yields `Error`, the provider stream terminates *without* a subsequent `MessageStop`. Consumers (the `AgentSdk`'s `EventPipeline`) must surface the error to the agent loop and not retry the stream within the same `stream(config)` call. Retry logic — if any — lives in the `AgentSdk` task layer, not the provider layer.
+
+Rationale (per ADR-future / M02 gap-analysis resolution): automatic retry within the provider layer creates a cost-runaway risk (each retry hits the API again with full context) and a correctness risk (re-streaming after a partial response could double-process tool calls). Recoverable errors are an opt-in extension via a future `LLMProvider` impl that wraps the base provider with a retry policy; the base trait stays terminal-on-error.
+
+Cancellation-safety: `provider.stream(config).await` returns a `BoxStream` that is **cancellation-safe** — dropping the stream mid-burst (e.g., when the renderer cancels the smoke session) drops any pending HTTP body without leaking the underlying `reqwest::Response`. The implementation must use `eventsource-stream` (which holds the connection in the `Stream` handle), not a manual buffered reader. Verified by `crates/runtime-main/tests/sdk_cancellation.rs` (5 cancellation tests covering stream-mid-burst, mid-tool-use, mid-snapshot drops).
+
 -----
 
 ### §2b Signals & VDR Projection
@@ -1070,6 +1116,8 @@ A signal is a persisted, schema-validated record of one operation. Eight signal 
 | 8 | `session` | `session_start`, `plan_complete`, `session_end` | Session-level summary boundaries |
 
 Pre/post events are correlated via a `pre_signal_id` field. Retry chains via `retry_of`. Parent-child via `parent_signal_id`. Context classification via `context.type ∈ {skill, framework, code, search, verify, commit, subagent}`.
+
+> **⚠️ ContextType reconciliation pending (M04 closeout).** M02's runtime scaffold defined the `signal::ContextType` enum (`crates/runtime-core/src/signal.rs`) with operation-context variants — `AgentLoop / SkillLoad / ToolInvoke / HookExecute / PlanCreate / HitlPrompt / SessionLifecycle` — diverging from the artifact-source set listed above (`skill / framework / code / search / verify / commit / subagent`). No emission code consumes the enum yet; M04 verify+rails integration is the first consumer. Reconciliation deferred to M04 closeout: the call could go either direction depending on which shape is correct (runtime's operational discovery vs spec's theoretical enum). The decision lock from M02 is "defer, don't pre-commit"; the M04 milestone document will reopen the question with emission-integration evidence. Per `docs/gap-analysis.md` M02 entry + M03 carry-forward.
 
 Full schema in `.aria/docs/SIGNAL-SCHEMA-V2.md`. The runtime ports this verbatim — adding new fields only when justified.
 
@@ -2491,7 +2539,7 @@ CREATE TABLE skills (
   skill_md TEXT
 );
 
--- MCP Servers
+-- MCP Servers (high-level intent — see ADR-0006 for the shipped 22-field schema)
 CREATE TABLE mcp_servers (
   id TEXT PRIMARY KEY,
   name TEXT,
@@ -2502,6 +2550,8 @@ CREATE TABLE mcp_servers (
   status TEXT
 );
 ```
+
+> **⚠️ MCP-schema divergence (ADR-0006).** The shipped `mcp_servers` table (M02 Stage A, `crates/runtime-drone/src/db.rs::init_schema`) is **richer than the 7-field shape above** — 22 fields covering transport set (`stdio | http | sse | streamable_http`), stdio-vs-remote mutual-exclusion CHECK constraint, env/args/headers/oauth_state JSON columns, capability discovery cache, scope/plugin_id, retry+timeout fields. The richness is an intentional architectural decision (forward-compat for M06 MCP basic + M06+ provider extensions) that goes beyond elaborating fields this section didn't enumerate. **See `docs/adr/0006-mcp-servers-schema.md` for the full 22-field schema, transport-set rationale, OAuth refresh-state design, and capability-cache invariants.** The 7-field shape in this section captures the spec-level intent ("MCP servers stored with id, name, URL, auth ref, lifecycle timestamps, status"); the ADR captures the implementation that v0.1 ships.
 
 -----
 
@@ -2553,22 +2603,29 @@ Recovery is never destructive. Discarded sessions are archived, not deleted.
 │   │   └── src/signal.rs     * # Signal Schema v2 types
 │   │
 │   ├── runtime-main/           # Tauri main process
-│   │   ├── src/main.rs
-│   │   ├── src/sdk/agent_sdk.rs
-│   │   ├── src/sdk/event_pipeline.rs
-│   │   ├── src/sdk/vdr_logger.rs
-│   │   ├── src/providers/anthropic.rs       # Direct HTTP+SSE
-│   │   ├── src/providers/mod.rs              # LLMProvider trait
-│   │   ├── src/mcp/manager.rs
-│   │   ├── src/mcp/client.rs
-│   │   ├── src/framework/loader.rs
-│   │   ├── src/framework/validator.rs
-│   │   ├── src/builder/registry.rs           # Build-time
-│   │   ├── src/builder/skill_writer.rs
-│   │   ├── src/builder/validator.rs
-│   │   ├── src/db/schema.rs
-│   │   ├── src/db/session_store.rs
-│   │   └── src/capability/enforcer.rs        # L2a application-level
+│   │   ├── src/lib.rs                                 # M02
+│   │   ├── src/key_store.rs                           # M02 — keyring-backed API key storage
+│   │   ├── src/sdk/mod.rs                             # M02
+│   │   ├── src/sdk/agent_sdk.rs                       # M02 — AgentSdk<P: LLMProvider>
+│   │   ├── src/sdk/event_pipeline.rs                  # M02 — ProviderEvent→AgentEvent
+│   │   ├── src/sdk/decision_extractor.rs              # M02 — heuristic; M04 replaces with structured emitter
+│   │   ├── src/sdk/vdr_logger.rs                      # M04 — VDR projection writer
+│   │   ├── src/providers/mod.rs                       # M02 — LLMProvider trait + ProviderEvent + CostBreakdown
+│   │   ├── src/providers/anthropic.rs                 # M02 — Direct HTTP+SSE wrapper (real-network; CI-excluded)
+│   │   ├── src/providers/anthropic_sse.rs             # M02 — SSE wire-format state machine (≥95% cov)
+│   │   ├── src/drone_ipc/mod.rs                       # M02
+│   │   ├── src/drone_ipc/client.rs                    # M02 — DroneClient + 5-attempt reconnect
+│   │   ├── src/drone_ipc/connection.rs                # M02 — Connection::from_streams testable seam
+│   │   ├── src/mcp/manager.rs                         # M06
+│   │   ├── src/mcp/client.rs                          # M06
+│   │   ├── src/framework/loader.rs                    # M06+
+│   │   ├── src/framework/validator.rs                 # M06+
+│   │   ├── src/builder/registry.rs                    # M07 (Build-time)
+│   │   ├── src/builder/skill_writer.rs                # M09
+│   │   ├── src/builder/validator.rs                   # M09
+│   │   ├── src/db/schema.rs                           # M04+
+│   │   ├── src/db/session_store.rs                    # M04+
+│   │   └── src/capability/enforcer.rs                 # M05 — L2a application-level
 │   │
 │   ├── runtime-drone/          # Drone binary (M01)
 │   │   ├── src/main.rs            # clap CLI + tracing init
