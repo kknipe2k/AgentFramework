@@ -183,12 +183,16 @@ cargo llvm-cov --package runtime-drone \
     --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.shutdown\.rs" \
     --fail-under-lines 95
 
-# runtime-main safety-primitive coverage — additionally exclude the
-# real-network reqwest+SSE wrapper (providers/anthropic.rs). Wire-format
-# logic lives in providers/anthropic_sse.rs (covered via wiremock) per
-# CLAUDE.md §5 + M02-event-pipeline.md Stage C §C.4.
+# runtime-main safety-primitive coverage — additionally exclude (a) the
+# real-network reqwest+SSE wrapper (providers/anthropic.rs) and (b) the
+# cfg-platform open() OS-call wrapper (drone_ipc/connection.rs). Both are
+# OS-signal-class holdouts. Wire-format logic lives in
+# providers/anthropic_sse.rs (wiremock-covered); the drone-IPC testable
+# seam Connection::send_with_reconnect is exercised by both unit tests
+# (tokio::io::duplex) and the loopback integration test. Per CLAUDE.md
+# §5 + M02-event-pipeline.md Stages C/D.
 cargo llvm-cov --package runtime-main \
-    --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs" \
+    --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs" \
     --fail-under-lines 95
 ```
 

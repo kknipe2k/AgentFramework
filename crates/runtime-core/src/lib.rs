@@ -21,5 +21,5 @@ pub use drone::{
     ProcessType, RevertReason, StopReason,
 };
 pub use error::RuntimeError;
-pub use event::AgentEvent;
+pub use event::{AgentEvent, ToolSource};
 pub use generated::*;

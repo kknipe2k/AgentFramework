@@ -6,6 +6,74 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M02.D (AgentSdk + drone IPC client + event translation)
+
+- `crates/runtime-main/src/sdk/agent_sdk.rs` — `AgentSdk<P: LLMProvider>`
+  agent loop. Generic over the provider trait so v1.0+ providers slot in
+  unchanged. Constructs the provider stream in `run_agent(config)`; the
+  test-seam variant `run_agent_with_provider_stream(stream)` accepts any
+  pre-built `Stream<ProviderEvent>` (mirrors the M01.C / M02.C `*_with`
+  archetype). Emits `AgentSpawned` first, drives the `EventPipeline` to
+  exhaustion, flushes buffered text. `SessionId` newtype wraps `Uuid`.
+- `crates/runtime-main/src/sdk/event_pipeline.rs` — pure
+  `ProviderEvent` → `AgentEvent` translator. Consecutive `TextDelta`s
+  bundle into a single `StreamText` per non-text event boundary;
+  flushed on `ThinkingDelta`, `ToolUse`, `ToolResult`, `MessageStop`,
+  `Error`, and end-of-stream. Decision extraction runs at every flush
+  and prepends a `DecisionRecord` when matching markers are present.
+- `crates/runtime-main/src/sdk/decision_extractor.rs` — first-line
+  `Decision:`/`Rationale:` heuristic per spec §2 `decision_record`.
+  Pure function; line-by-line scan tolerates intervening blank lines
+  and leading whitespace; last `Decision:`/`Rationale:` pair wins.
+  Optional `Tool used:` capture. Property test verifies no panic on
+  arbitrary input. M04 verify+rails replaces the heuristic with a
+  structured emitter.
+- `crates/runtime-main/src/drone_ipc/client.rs` — `DroneClient` main-
+  side IPC client. Connects via `DroneClient::connect(addr)` (cfg-
+  platform Unix `UnixStream` / Windows `NamedPipeClient`). Test-only
+  `DroneClient::noop()` short-circuits all sends. `events()` returns a
+  single-consumer stream of `Result<DroneEvent, DroneIpcError>`.
+- `crates/runtime-main/src/drone_ipc/connection.rs` — connection state
+  machine + reconnect policy. Exponential backoff: 200ms → 400ms →
+  800ms → 1.6s (4 sleeps for 5 attempts; no trailing sleep). Surfaces
+  `DroneIpcError::Disconnected { retries }` on exhaustion.
+  `Connection::from_streams` is the testable seam taking already-opened
+  read+write halves; the `open()` cfg-platform OS-call wrapper is the
+  coverage holdout.
+- `crates/runtime-core/src/event.rs` — `ToolSource { Builtin, Mcp,
+  Generated }` enum added; `AgentEvent::ToolInvoked` gains `source` +
+  `server` fields; `AgentEvent::AgentSpawned` gains `session_id`.
+  Property tests round-trip the new shape per the M01.B pattern.
+- `crates/runtime-main/tests/sdk_event_translation.rs` — 20 table-
+  driven translation tests + 1 proptest covering bundling boundaries,
+  decision extraction, error-path translation, multi-tool sequencing,
+  buffer drain semantics, agent-id propagation.
+- `crates/runtime-main/tests/sdk_cancellation.rs` — 5 drop-mid-stream
+  cancellation-safety tests using `tokio::time::timeout` +
+  `futures::stream::iter` patterns. Verifies no panic on drop, channel
+  drains to `Closed`, back-pressure does not panic.
+- `crates/runtime-main/tests/drone_ipc_loopback.rs` — 10 end-to-end
+  tests spawning the M01 `runtime-drone` binary, exercising every
+  `DroneCommand` variant, the `SnapshotWritten` event surface, and the
+  reconnect / disconnect surface paths.
+- `runtime-main` safety-primitive coverage gate extended to span
+  `sdk/` and `drone_ipc/`. Exclusions: `providers/anthropic.rs` (Stage
+  C real-network wrapper) plus `drone_ipc/connection.rs::open` (cfg-
+  platform OS-call holdout); the testable seam
+  `Connection::send_with_reconnect` is fully covered. CI gate +
+  `CLAUDE.md` §5 updated.
+
+### Changed — M02.D
+
+- `crates/runtime-main/Cargo.toml` — add `tokio-util` (`codec`
+  feature), `uuid` (`v4` + `serde`), `tempfile` + `rusqlite[bundled]`
+  (dev-deps for the loopback test).
+- `crates/runtime-main/src/lib.rs` — top-level module declarations
+  (`pub mod sdk; pub mod drone_ipc;`).
+- `crates/runtime-main/README.md` — appended §"Agent SDK" with the
+  `ProviderEvent` ↔ `AgentEvent` mapping table and `DroneClient`
+  reconnect policy notes.
+
 ### Added — M02.C (AnthropicProvider real HTTP+SSE)
 
 - `crates/runtime-main/src/providers/anthropic_sse.rs` — SSE state
