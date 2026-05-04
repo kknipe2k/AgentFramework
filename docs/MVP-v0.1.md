@@ -100,7 +100,7 @@ Total: ~24 weeks elapsed at sustained pace. Compresses with parallel work; expan
 
 **Dependencies** — M1
 
-**Out of scope** — graph rendering (M3), plan model (M4), generators (M9)
+**Out of scope** — graph rendering (M3), plan model (M4), generators (M9). Full Tauri 2.x desktop-shell E2E (M02 ships renderer-level Playwright against the Vite dev server with `@tauri-apps/api` mocked at module level; full desktop-shell E2E requires `tauri-driver` + WebdriverIO per official Tauri docs and is a M03 carry-forward).
 
 ---
 
@@ -113,6 +113,7 @@ Total: ~24 weeks elapsed at sustained pace. Compresses with parallel work; expan
 - Click-to-inspect side panel
 - Token-spend visualization (node weight)
 - VDR projection from signal stream — populated table + simple SQL inspector
+- **Tauri 2.x desktop-shell E2E framework** — `tauri-driver` + WebdriverIO per <https://v2.tauri.app/develop/tests/webdriver/>. Matrix: Linux + Windows only (macOS unsupported by tauri-driver). Wires the four `test.skip()`-with-rationale Playwright tests in `tests/e2e/smoke.spec.ts` that M02.E carried forward (renderer-loads-with-key, password-input-type, smoke-disabled-without-key, save-key-then-run-disables-button-during-run).
 
 **Acceptance criteria**
 - [ ] Repeat M2 smoke test; renderer shows graph instead of event log
@@ -120,10 +121,11 @@ Total: ~24 weeks elapsed at sustained pace. Compresses with parallel work; expan
 - [ ] Graph reconstructs after page reload (state from SQLite)
 - [ ] React + React Flow + Zustand for state; no Redux, no MobX
 - [ ] Renderer Vitest coverage ≥80% on graph reducers
+- [ ] `tauri-driver` + WebdriverIO E2E suite runs on Linux + Windows in CI (4+ tests covering renderer load + smoke happy path); `test.skip()` carry-forward from M02.E removed
 
 **Dependencies** — M2
 
-**Out of scope** — plan/task nodes wired to data (data lands in M4); MCP node connecting to a real server (M6)
+**Out of scope** — plan/task nodes wired to data (data lands in M4); MCP node connecting to a real server (M6); macOS Tauri-shell E2E (tauri-driver does not support macOS — deferred indefinitely)
 
 ---
 

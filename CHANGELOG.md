@@ -6,6 +6,70 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Documentation — Post-M02 spec lock + ADR-0006
+
+Per `M02-summary.md` Decisions + `docs/gap-analysis.md` M02 entry Fix
+Backlog. Locks the M02 architectural decisions into the spec so M03+
+implementations don't have to re-decide. Pairs with the
+post-M02-protocol-iteration PR (gotchas + retrospective + template
+carry-forwards) — both PRs are pre-M03 housekeeping.
+
+- **`agent-runtime-spec.md` §2c LLMProvider Abstraction** — two new
+  subsections locking the M02 SSE wire-format + ProviderEvent semantics:
+  - **§2c.1 Anthropic SSE wire format** — full event-set table with
+    payload + ProviderEvent mapping; specific call-out for
+    `signature_delta` (verifier-only; consumed silently) and `ping` (SSE
+    keep-alive; consumed silently). Pre-M02 spec drafts didn't document
+    these; M02 implementation discovered them live and they tripped
+    fresh implementations as "unknown event type" warnings.
+  - **§2c.2 ProviderEvent::Error semantics** — locks `Error` as
+    **terminal**: stream yields Error then terminates without
+    MessageStop. Retry logic lives in AgentSdk task layer, not provider
+    layer (cost-runaway + correctness rationale documented). Adds
+    cancellation-safety language: provider stream is cancellation-safe;
+    dropping mid-burst drops the underlying reqwest::Response.
+- **`agent-runtime-spec.md` §2b Signals & VDR Projection** — adds a
+  ⚠️ note flagging the `signal::ContextType` enum's divergence from
+  spec's `context.type ∈ {skill, framework, code, search, verify,
+  commit, subagent}` set. M02's runtime scaffold uses operation-context
+  variants (`AgentLoop / SkillLoad / ToolInvoke / HookExecute /
+  PlanCreate / HitlPrompt / SessionLifecycle`); reconciliation deferred
+  to M04 closeout when emission integration provides evidence on which
+  shape is correct.
+- **`agent-runtime-spec.md` §1d IPC Channels** — new "Reconnect
+  semantics" subsection documenting the 5-attempt 200ms→3.2s
+  exponential backoff M02.D landed in `DroneClient::send_with_reconnect`,
+  the `*_with` testable seam pattern, and the open M03-blocking
+  question on long-lived events() subscription survival across
+  reconnect.
+- **`agent-runtime-spec.md` §10 Persistence Layer** — adds ⚠️ note
+  alongside the `mcp_servers` table definition flagging the divergence
+  from the documented 7-field shape (the shipped table is 22 fields)
+  and pointing readers to ADR-0006 for the full rationale.
+- **`agent-runtime-spec.md` Project Structure** — runtime-main module
+  listing updated to reflect M02 actuals (sdk/, providers/, drone_ipc/,
+  key_store.rs, etc.) plus per-file milestone tags (M02 / M04 / M05 /
+  M06 / M06+ / M07 / M09) so readers can see what's shipped vs what's
+  forward-looking.
+- **`docs/adr/0006-mcp-servers-schema.md`** — new ADR (Accepted)
+  documenting the 22-field `mcp_servers` schema's divergence from spec
+  §10's 7-field shape. Per-field rationale table covers transport set
+  (stdio/http/sse/streamable_http), stdio-vs-remote mutual-exclusion
+  CHECK, OAuth refresh state persistence, capability discovery cache,
+  scope/plugin_id, retry+timeout policy, lifecycle audit fields. Four
+  alternatives rejected (match 7-field exactly; split tables; single
+  JSON column; defer to M06 Stage A) with explicit reasoning. Target
+  was "before M06 Stage A"; landed during post-M02 housekeeping.
+- **`docs/MVP-v0.1.md` §M2 / §M3** — Tauri 2.x E2E framework note.
+  §M2 Out-of-scope clarifies M02 ships renderer-level Playwright
+  against Vite dev server (`@tauri-apps/api` module-mocked); full
+  desktop-shell E2E is M03 carry-forward. §M3 deliverable adds
+  `tauri-driver` + WebdriverIO matrix (Linux + Windows; macOS
+  unsupported), wires the four `test.skip()` carry-forward Playwright
+  tests, adds CI E2E acceptance criterion. §M3 out-of-scope adds
+  "macOS Tauri-shell E2E (tauri-driver does not support macOS —
+  deferred indefinitely)".
+
 ### Documentation — Post-M02 protocol iteration
 
 Per `CLAUDE.md` §19 + `M02-summary.md` Verdict ("Pattern held but with
