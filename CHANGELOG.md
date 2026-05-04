@@ -94,6 +94,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 Stage E is the final implementation stage of M02. Stage F (Phase Closeout:
 Gap Analysis) follows in a fresh session per CLAUDE.md §20.
 
+### Documentation — M02.F (Phase Closeout: Gap Analysis)
+
+- `docs/gap-analysis.md` — M02 entry appended (commit `4bd809a`, Stage E).
+  Cumulative product+spec audit across M01 + M02 per CLAUDE.md §20. Six
+  sections: codebase deep dive, adherence to spec (1 ❌ "None observed";
+  multiple ✅ holds for zero-telemetry, direct Anthropic API, SSE wire
+  format, Tauri capability lockdown, schemas-as-source-of-truth, `*_with`
+  test-seam pattern, coverage delta gating, mcp_servers + Windows IPC test
+  + .gitattributes carry-forwards closed; ⚠️ items for the M04-deferred
+  decision-extractor heuristic, count_tokens approximation, EventPipeline
+  ToolResult duration_ms placeholder, ContextType enum diverging from spec
+  §2b's value set (M04 closeout reconciles — direction undetermined),
+  mcp_servers schema deliberately richer than spec §11 (ADR before M06),
+  vitest threshold not yet enforced by default, Tauri 2.x desktop-shell
+  E2E deferred to M03, hand-mirrored TS AgentEvent), spec review
+  (forward-looking — signature_delta + ping events, IPC reconnect surface,
+  ProviderEvent::Error terminal semantics, Phase 3 spec expansion, Session
+  FSM diagram, plan model field shapes, model deprecation policy, error.v1
+  schema), fix backlog (0 Critical; ~17 🟡 Important spanning M03/M04 prep
+  + post-M02 docs(spec) PR + CLAUDE.md+TEMPLATE.md consolidation; ~5 🟢
+  Nice-to-have including vite 5→7 bump and counter.{js,test.js} cleanup),
+  carry-forward (M01 🟡 mcp_servers / coverage delta gating / *_with /
+  Windows drone integration test / .gitattributes / post-M01 docs(spec)
+  PR all RESOLVED; M01 🟡 Phase 3 spec expansion / Session FSM diagram /
+  UI consistency STILL OPEN per their target milestone). Append-only
+  invariant verified locally and via `git diff origin/main` (line 706+ is
+  pure addition). Per CLAUDE.md §20 the entry is **immutable** once
+  committed.
+- `docs/build-prompts/retrospectives/M02-summary.md` — new. Per-parent-
+  milestone roll-up aggregating M02.A–E retrospectives. Mean Process
+  38.6/40, Product 39.4/40, Pattern 29.2/35; verdict **"Pattern held but
+  with friction"** (all hard gates passed; Stage E sound-but-rough due to
+  8 Sev-2-or-3 prompt-drift items including Tauri 2.x E2E framework, ESLint
+  flat-config, Vite root convention, serde tag-shape, Vitest+RTL idiom).
+  Decisions to apply before M03.1 authoring documented.
+
+### Status — M02.F
+
+Stage F is the final stage of M02 per CLAUDE.md §20. The Stage F commit is
+the last on `claude/m02-event-pipeline`; the M02 PR push is gated on this
+commit. The M02 PR aggregates all stage commits + per-stage retrospectives
++ M02-summary.md + the new gap-analysis entry for three-artifact review
+per CLAUDE.md §19 + §20.
+
 ### Added — M02.D (AgentSdk + drone IPC client + event translation)
 
 - `crates/runtime-main/src/sdk/agent_sdk.rs` — `AgentSdk<P: LLMProvider>`
