@@ -5,9 +5,14 @@
 crates/*/fuzz/target/
 crates/*/fuzz/artifacts/
 
-# Node.js
+# Node.js + frontend tooling (M02 Stage E)
 /node_modules/
 /dist/
+/.vite/
+/coverage/
+/playwright-report/
+/test-results/
+.eslintcache
 
 # ARIA runtime directories
 .aria/checkpoints/

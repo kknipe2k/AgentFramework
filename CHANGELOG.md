@@ -6,6 +6,94 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M02.E (Tauri shell + skeleton renderer + frontend CI gates + Playwright)
+
+- `package.json` + full frontend tooling (Vite 5.4, TypeScript 5.6 strict,
+  React 18.3, Vitest 2.1, Playwright 1.48, ESLint 9 flat-config, Prettier 3,
+  `@testing-library/react`, `@testing-library/user-event`,
+  `@testing-library/jest-dom`, `happy-dom` 20.x).
+- `src/` skeleton renderer:
+  - `App.tsx` composes `SetupPanel` + `SmokeButton` + `EventList`; state via
+    `useReducer` over a pure reducer (`lib/eventReducer.ts`) with full
+    immutability.
+  - `lib/ipc.ts` — typed wrappers over `@tauri-apps/api/core::invoke` and
+    `@tauri-apps/api/event::listen`.
+  - `lib/eventReducer.ts` — pure reducer + `Action` discriminated union.
+  - `types/agent_event.ts` — TypeScript discriminated union mirroring
+    `runtime_core::AgentEvent` v0.1 subset (10 variants Stage D emits +
+    `ToolSource` enum). M03+ regenerates from `schemas/event.v1.json` via
+    `cargo xtask regenerate-types` per CLAUDE.md §14.
+  - `components/{EventList,SetupPanel,SmokeButton}.tsx` — minimal
+    accessible markup; password-input invariant for the API-key field.
+  - `index.html` + `styles.css` + `main.tsx` (React 18 root).
+- `crates/runtime-main/src/key_store.rs` — OS-keychain-backed API key
+  storage via the `keyring` crate. Reads return `SecretString` so the key
+  never `Debug`-prints; `delete_api_key()` is idempotent (treats `NoEntry`
+  as success). 2 unit tests + 2 keychain-gated `#[ignore]` tests for
+  read-after-write round-trip + missing-entry → `NotFound` mapping.
+- `src-tauri/src/commands.rs` — `set_api_key` and `run_smoke_session`
+  Tauri commands. `CmdError` serializes with `serde(tag = "type")` for
+  renderer pattern-matching. The testable seam
+  `run_smoke_session_with(provider, event_tx, config)` (M01.C / M02.C /
+  M02.D `*_with` archetype) accepts an injectable `LLMProvider` + channel
+  so unit tests exercise the SDK→event flow without crossing reqwest or
+  the Tauri `AppHandle`.
+- `src-tauri/capabilities/default.json` — locked-down capability set:
+  `core:default` + `core:event:{default,allow-listen,allow-emit}` only.
+  No `shell:*`, no `fs:*`, no `http:*`, no `dialog:*`. Per spec §10
+  capability boundary; CLAUDE.md §15 trap #10 (Tauri allowlist is the
+  security boundary).
+- Tests:
+  - 14 frontend unit tests across `tests/unit/eventReducer.test.ts` (10)
+    + `tests/unit/ipc.test.ts` (5) — pure reducer immutability + IPC
+    wrapper call-shape + subscriber lifecycle.
+  - 11 component tests across `tests/unit/components.test.tsx` (8)
+    covering password-input invariant, save-button enabled-when-key-min-
+    length, EventList aria-label + data-event-type attrs, all 10
+    `AgentEvent` variant render paths.
+  - 2 App-level state-machine tests in `tests/unit/App.test.tsx` —
+    save-key-then-run-smoke happy path + command-error surface (mocks
+    `@tauri-apps/api` at the module level).
+  - 4 Playwright renderer-level E2E tests in `tests/e2e/smoke.spec.ts`:
+    renderer-loads-with-setup-visible, password-input-type, smoke-
+    disabled-without-key, save-key-then-run-disables-button-during-run.
+  - 4 Rust unit tests in `src-tauri/src/commands.rs::tests` —
+    `cmd_error_serializes_with_type_tag`, `from_keystore_not_found_maps_
+    to_setup_required`, `run_smoke_session_with_emits_events_to_channel`,
+    `smoke_config_targets_haiku_with_tight_budget`.
+  - 2 unit tests + 2 keychain-gated tests in
+    `crates/runtime-main/src/key_store.rs::tests`.
+- CI:
+  - `frontend` job (existed from M02.A) updated to run prettier on
+    `**/*.{ts,tsx,js,jsx,json}` (markdown + YAML excluded via
+    `.prettierignore` since markdown is checked by the existing
+    `markdown-lint` job and YAML is structurally validated by the
+    Actions runner).
+  - `e2e` job added — installs Playwright + Chromium, runs
+    `npm run test:e2e` against the Vite dev server.
+  - `runtime-main` coverage gate exclusion list extended to add
+    `src/key_store.rs` (the keychain-call paths are platform-bound and
+    `#[ignore]`-gated). runtime-main remains at 99.37% line; workspace
+    at 94.51% line. CLAUDE.md §5 + §6 updated.
+
+### Documentation — M02.E
+
+- `CLAUDE.md` §6 — frontend gates section made authoritative; E2E gates
+  subsection added with the Tauri 2.x platform note (full desktop-shell
+  E2E requires `tauri-driver` + WebdriverIO per the official Tauri docs;
+  Stage E ships renderer-level Playwright against the dev server).
+- `crates/runtime-main/README.md` — `key_store` module documented;
+  Tauri command surface (`set_api_key` + `run_smoke_session` +
+  `CmdError` shape) documented with the testable-seam pattern note.
+- `docs/MVP-v0.1.md` §M2 — acceptance criteria all marked `[x]`; the
+  `tool_invoked (LoadSkill)` sub-criterion noted as M03+ work since
+  skills don't exist at M02.
+
+### Status — M02.E
+
+Stage E is the final implementation stage of M02. Stage F (Phase Closeout:
+Gap Analysis) follows in a fresh session per CLAUDE.md §20.
+
 ### Added — M02.D (AgentSdk + drone IPC client + event translation)
 
 - `crates/runtime-main/src/sdk/agent_sdk.rs` — `AgentSdk<P: LLMProvider>`

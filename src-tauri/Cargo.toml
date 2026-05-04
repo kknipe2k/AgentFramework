@@ -10,7 +10,15 @@ rust-version = "1.85"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri              = { version = "2", features = [] }
+runtime-core       = { workspace = true }
+runtime-main       = { path = "../crates/runtime-main", version = "0.1.0" }
+async-trait        = { workspace = true }
+futures            = { workspace = true }
+serde              = { workspace = true, features = ["derive"] }
+serde_json         = { workspace = true }
+thiserror          = { workspace = true }
+tokio              = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
 
 [lints]
 workspace = true

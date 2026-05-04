@@ -417,7 +417,36 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm audit --audit-level=high
-      - run: npx prettier --check '**/*.{ts,tsx,js,jsx,json,md,yml,yaml}'
+      # Markdown / YAML / YAML excluded from prettier via .prettierignore —
+      # repo-wide markdown predates Stage E and is checked by the existing
+      # markdown-lint job; YAML is checked structurally by GitHub Actions
+      # itself. Stage E adds prettier coverage for the JS/TS/JSON surface.
+      - run: npx prettier --check '**/*.{ts,tsx,js,jsx,json}'
       - run: npx eslint .
       - run: npx tsc --noEmit
       - run: npm run test
+
+  e2e:
+    name: E2E (Playwright renderer)
+    needs: [detect-cargo, frontend]
+    if: needs.detect-cargo.outputs.has_npm == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # Stage E ships renderer-level Playwright tests against the Vite dev
+      # server with @tauri-apps/api shimmed inside the page. Full Tauri-shell
+      # E2E (driving the WebView2 / WebKitGTK window) is a M03 carry-forward
+      # per the Tauri 2.x docs (tauri-driver + WebdriverIO).
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

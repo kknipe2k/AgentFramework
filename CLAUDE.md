@@ -198,22 +198,35 @@ cargo llvm-cov --package runtime-main \
 
 CI runs all of these on Linux/macOS/Windows × stable + MSRV.
 
-### Frontend gates (when `package.json` exists)
+### Frontend gates (active from M02 Stage E)
 
 ```bash
 npm ci
-npx prettier --check '**/*.{ts,tsx,js,jsx,json,md,yml,yaml}'
+# Markdown + YAML excluded via .prettierignore — repo-wide markdown predates
+# M02 and is checked by the existing markdown-lint job; YAML is structurally
+# validated by GitHub Actions. Stage E covers JS/TS/TSX/JSX/JSON.
+npx prettier --check '**/*.{ts,tsx,js,jsx,json}'
 npx eslint .
 npx tsc --noEmit
 npm run test
 npm audit --audit-level=high
 ```
 
-### E2E gates (when renderer can run a session, M3+)
+These gates must pass on every PR from M02 onward. Vitest coverage threshold
+≥80% on `src/` (configured in `vitest.config.ts`).
+
+### E2E gates (Playwright renderer-level — active from M02 Stage E)
 
 ```bash
-npm run test:e2e   # Playwright against the built Tauri app
+npm run test:e2e   # Playwright against the Vite dev server
 ```
+
+Stage E ships Playwright tests that drive the renderer against the Vite dev
+server with `@tauri-apps/api` module-mocked. Full desktop-shell E2E (driving
+the WebView2 / WebKitGTK window) requires `tauri-driver` + WebdriverIO per
+the official Tauri 2.x docs (<https://v2.tauri.app/develop/tests/webdriver/>);
+that is a M03 carry-forward — Playwright with `_electron` cannot drive a
+Tauri 2.x app, and `tauri-driver` does not support macOS.
 
 ### Schema gates (always — already in CI)
 

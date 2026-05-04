@@ -1,0 +1,80 @@
+/* Minimal stylesheet for the M02 Stage E smoke renderer.
+ * M03 brings React Flow + real graph styling. */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  background: #fafafa;
+  color: #222;
+}
+
+main {
+  max-width: 720px;
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
+
+h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+section {
+  margin: 1rem 0;
+  padding: 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #fff;
+}
+
+button {
+  cursor: pointer;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid #888;
+  border-radius: 4px;
+  background: #fff;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+input[type='password'] {
+  margin-left: 0.5rem;
+  padding: 0.3rem;
+  font-family: monospace;
+  border: 1px solid #888;
+  border-radius: 4px;
+}
+
+ul {
+  list-style: none;
+  padding: 0;
+}
+
+li {
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid #eee;
+  font-family:
+    'SF Mono', 'Cascadia Mono', Consolas, monospace;
+  font-size: 0.85rem;
+}
+
+li:last-child {
+  border-bottom: none;
+}
+
+p.error {
+  color: #b00020;
+  font-weight: 600;
+}

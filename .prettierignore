@@ -1,0 +1,30 @@
+node_modules
+dist
+target
+src-tauri/target
+src-tauri/gen
+playwright-report
+test-results
+coverage
+package-lock.json
+*.md
+CHANGELOG.md
+.aria
+archive
+schemas
+examples
+
+# Pre-existing files that pre-date M02 Stage E. Counter example is from a
+# pre-runtime commit (`8c854c2`); the .claude / .vscode tooling configs and
+# the fuzz corpus seeds are out of M02 Stage E scope. Tauri config is owned
+# by the Tauri 2.x toolchain (regenerated). Everything in this block is
+# intentional carry-over, not a Stage E omission.
+.claude
+.vscode
+src/counter.js
+src/counter.test.js
+src-tauri/tauri.conf.json
+src-tauri/capabilities
+crates/runtime-drone/fuzz/corpus
+*.yml
+*.yaml

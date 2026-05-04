@@ -8,6 +8,7 @@ The Tauri main process for Agent Runtime. Hosts the agent SDK, the LLM provider 
 - `providers/anthropic.rs` + `providers/anthropic_sse.rs` — `AnthropicProvider` against the Anthropic Messages API (HTTP+SSE; no third-party SDK).
 - `sdk/` (M02 Stage D) — `AgentSdk<P: LLMProvider>` agent loop, `EventPipeline` translator, `extract_decision` heuristic.
 - `drone_ipc/` (M02 Stage D) — `DroneClient` main-side IPC client connecting to the M01 drone subprocess.
+- `key_store.rs` (M02 Stage E) — OS-keychain-backed Anthropic API key storage via the `keyring` crate. Reads return `SecretString` so the key never `Debug`-prints; the platform backend is Linux Secret Service / macOS Keychain Services / Windows Credential Manager.
 
 ## Agent SDK
 
@@ -76,3 +77,14 @@ The provider integration tests use `wiremock` for offline CI. To exercise the re
 3. Run: `cargo test -p runtime-main --features integration --test anthropic_smoke`.
 
 Cost per run: ~$0.001 against Haiku 4.5 ($1/$5 per million tokens). CI never runs this test; the wiremock tests in `tests/anthropic_wiremock.rs` cover the same wire-format paths offline.
+
+## Key store + Tauri command surface (M02 Stage E)
+
+The renderer never holds the API key, never speaks HTTP, never touches the filesystem. Privileged actions go through the Tauri command surface in `src-tauri/src/commands.rs`:
+
+- `set_api_key(key: String)` — writes the key to `agent-runtime/anthropic` in the OS keychain via `runtime_main::key_store::write_api_key`.
+- `run_smoke_session()` — reads the key, constructs an `AnthropicProvider`, drives the SDK against a hardcoded "Say only the word: hello" prompt with `claude-haiku-4-5` + `max_tokens: 16` + `temperature: 0`, and emits each `AgentEvent` via `app.emit("agent_event", &event)`.
+
+Both commands return `Result<(), CmdError>` where `CmdError` serializes as `{"type":"setup_required"|"provider"|"key_store"|...}` for renderer pattern-matching.
+
+The testable seam `commands::run_smoke_session_with(provider, event_tx, config)` accepts an injectable `LLMProvider` + channel — production wraps it with the keychain read + Tauri `AppHandle` event forwarder.

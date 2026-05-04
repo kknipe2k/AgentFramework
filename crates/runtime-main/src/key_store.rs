@@ -1,0 +1,143 @@
+//! OS-keychain-backed Anthropic API key storage (M02 Stage E).
+//!
+//! Reads/writes the API key under service `agent-runtime`, user `anthropic`
+//! via the [`keyring`] crate. Reads are wrapped in `SecretString` so the
+//! key never `Debug`-prints; writes accept `&str` and rely on
+//! `keyring::Entry::set_password` to drop the input after storing.
+//!
+//! Per spec §13 zero-telemetry, the key is never logged, never serialized
+//! over IPC, and never returned to the renderer (the renderer's only
+//! interactions are `invokeSetApiKey(key)` and `invokeRunSmokeSession()`,
+//! the latter of which reads the key main-side and constructs the provider).
+//!
+//! The platform backend is provided by the `keyring` crate:
+//! - Linux: Secret Service via D-Bus.
+//! - macOS: Keychain Services.
+//! - Windows: Credential Manager.
+//!
+//! Tests requiring a real platform keychain are gated `#[ignore]` (CI cells
+//! without a session bus or keychain skip them automatically). Unit-level
+//! coverage is provided by the `KeyStoreError`-construction tests below.
+
+use keyring::Entry;
+use secrecy::SecretString;
+use thiserror::Error;
+
+const SERVICE: &str = "agent-runtime";
+const USER: &str = "anthropic";
+
+/// Errors raised by the key-store layer.
+#[derive(Debug, Error)]
+pub enum KeyStoreError {
+    /// No entry exists for the configured service+user pair.
+    #[error("API key not found in OS keychain (service={SERVICE}, user={USER})")]
+    NotFound,
+    /// Underlying keyring failure (platform backend error).
+    #[error("keyring error: {0}")]
+    Keyring(#[from] keyring::Error),
+}
+
+/// Read the Anthropic API key from the OS keychain.
+///
+/// # Errors
+///
+/// Returns [`KeyStoreError::NotFound`] if no entry exists,
+/// [`KeyStoreError::Keyring`] for any other backend failure.
+pub fn read_api_key() -> Result<SecretString, KeyStoreError> {
+    let entry = Entry::new(SERVICE, USER)?;
+    match entry.get_password() {
+        Ok(s) => Ok(SecretString::from(s)),
+        Err(keyring::Error::NoEntry) => Err(KeyStoreError::NotFound),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Write the Anthropic API key to the OS keychain. Overwrites any prior value.
+///
+/// # Errors
+///
+/// Returns [`KeyStoreError::Keyring`] on any backend failure.
+pub fn write_api_key(key: &str) -> Result<(), KeyStoreError> {
+    let entry = Entry::new(SERVICE, USER)?;
+    entry.set_password(key)?;
+    Ok(())
+}
+
+/// Delete the Anthropic API key entry. Idempotent — calling on a missing
+/// entry returns `Ok(())` so test setup/teardown can run without ordering
+/// constraints.
+///
+/// # Errors
+///
+/// Returns [`KeyStoreError::Keyring`] on any backend failure other than
+/// "no entry" (which is treated as success).
+pub fn delete_api_key() -> Result<(), KeyStoreError> {
+    let entry = Entry::new(SERVICE, USER)?;
+    match entry.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use secrecy::ExposeSecret;
+
+    #[test]
+    fn not_found_error_message_carries_service_and_user_for_setup_diagnostics() {
+        // Pure construction test — does not touch the platform keychain.
+        // Verifies the error renders the SERVICE/USER constants so a fresh
+        // user looking at the renderer's surfaced error knows which entry
+        // to populate.
+        let e = KeyStoreError::NotFound;
+        let s = e.to_string();
+        assert!(
+            s.contains(SERVICE),
+            "NotFound message should cite service name: {s}"
+        );
+        assert!(
+            s.contains(USER),
+            "NotFound message should cite user name: {s}"
+        );
+    }
+
+    #[test]
+    fn keyring_error_wraps_underlying_via_from() {
+        // The `#[from] keyring::Error` derive should surface the underlying
+        // error via Display. We construct a NoEntry to exercise the From impl
+        // even though `read_api_key` translates NoEntry to NotFound.
+        let raw = keyring::Error::NoEntry;
+        let wrapped: KeyStoreError = raw.into();
+        let s = wrapped.to_string();
+        assert!(
+            s.starts_with("keyring error:"),
+            "wrapped error should start with keyring prefix: {s}"
+        );
+    }
+
+    // The two tests below exercise a real platform keychain and are gated
+    // `#[ignore]` so CI cells without one do not fail. Locally, run with
+    // `cargo test --package runtime-main key_store -- --ignored`.
+
+    #[test]
+    #[ignore = "requires a platform keychain — Linux Secret Service / macOS Keychain / Windows Credential Manager"]
+    fn read_after_write_roundtrips() {
+        // Ensure clean slate.
+        delete_api_key().expect("delete (initial)");
+        write_api_key("sk-ant-test-roundtrip").expect("write");
+        let got = read_api_key().expect("read");
+        assert_eq!(got.expose_secret(), "sk-ant-test-roundtrip");
+        delete_api_key().expect("delete (cleanup)");
+    }
+
+    #[test]
+    #[ignore = "requires a platform keychain"]
+    fn read_when_missing_returns_not_found() {
+        delete_api_key().expect("delete");
+        match read_api_key() {
+            Err(KeyStoreError::NotFound) => {}
+            other => panic!("expected NotFound, got {other:?}"),
+        }
+    }
+}
