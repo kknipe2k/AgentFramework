@@ -185,9 +185,254 @@ Stage A closes all three classes before Stage B starts touching React Flow. Net 
 
 ### A.3 Detailed Changes
 
-(Stage A's full Find/Replace blocks + new file content land here — TS codegen approach selected, per-file diffs captured, `current_exe()` retrofit shown, etc. Authored verbatim before the Stage A fresh session opens. Surfaced in the next chunk after this PR's Stage A frame is approved.)
+Apply changes in this order. Each block below is either a surgical Find/Replace, full new-file content, or an explicit instruction (with archetype reference) where the implementation is too long to inline.
 
-> **Author note.** Stage A's A.3 body is intentionally elided in this initial chunk — the surface area is large (xtask TS codegen mechanism choice; per-test-file path retrofit; package.json + Cargo.toml diffs) and surfacing it as separate-file content is cleaner than inlining hundreds of lines. The Stage A chunk's second pass will populate A.3 with concrete content and a TS-codegen-mechanism decision (Rust `schemars` crate vs Node `json-schema-to-typescript` CLI shell-out via `std::process::Command`).
+#### `Cargo.toml` (workspace) — drop `secrecy/serde` feature
+
+**Find:**
+
+```toml
+secrecy             = { version = "0.10", features = ["serde"] }
+```
+
+**Replace with:**
+
+```toml
+secrecy             = "0.10"
+```
+
+Rationale: `SecretString` does not serialize via serde by design (security; per `docs.rs/secrecy/0.10.3` + WEBCHECK in this stage's header). The `Deserialize` impl from the `serde` feature is not used in any M02 code path; removing the feature is dead-weight cleanup. Verify the cleanup with `grep -rn "secrecy" crates/ src-tauri/` after the change — every callsite should be `SecretString::from(...)` or `expose_secret()`, never serde-derived.
+
+#### `package.json` — Vite 5→7 + new deps + script change
+
+**Find:**
+
+```json
+    "test": "vitest run",
+```
+
+**Replace with:**
+
+```json
+    "test": "vitest run --coverage",
+```
+
+Then bump Vite + add the two new deps. **Find** the `devDependencies` block's `"vite": "^5.4.0"`, **bump** to `"vite": "^7.0.0"` (verify against current 7.x at <https://vite.dev/releases> during WEBCHECK; pick the latest stable 7.x patch).
+
+**Add** to `devDependencies`:
+
+```json
+    "json-schema-to-typescript": "^15.0.0",
+```
+
+Verify the json-schema-to-typescript major version at <https://www.npmjs.com/package/json-schema-to-typescript> during WEBCHECK; use whichever is current stable (15.x as of late 2025; may be 16.x by M03 author time).
+
+**Add** to `dependencies` (production deps for the renderer):
+
+```json
+    "@xyflow/react": "^12.10.0",
+    "zustand": "^5.0.0",
+```
+
+Verify at <https://www.npmjs.com/package/@xyflow/react> + <https://www.npmjs.com/package/zustand> during WEBCHECK.
+
+After the edits run `npm install` to regenerate `package-lock.json`. Commit the lockfile alongside the manifest. `npm audit --audit-level=high` should pass clean.
+
+#### `crates/xtask/Cargo.toml` — no changes
+
+The TS codegen path shells out to `npx json-schema-to-typescript` via `std::process::Command`; it does not require new Rust deps. The existing `anyhow` + `clap` + `serde_json` deps cover the wiring.
+
+#### `crates/xtask/src/main.rs` — extend `regenerate-types` with TS codegen
+
+The fresh session reads the existing `regenerate_types(check: bool)` function (lines 38–71 of `crates/xtask/src/main.rs`) as the archetype. The TS codegen extension follows the same shape but writes TS to `src/types/`.
+
+**Add** a new function `regenerate_typescript_types(check: bool) -> Result<()>` that:
+
+1. Walks `schemas/` for files matching the M03 codegen target list. Initial list: `event.v1.json` (added in this stage). The list is hardcoded for now (matching the typify schemas array convention); future schemas added via the same function.
+2. For each schema, runs `npx --yes json-schema-to-typescript <schemas/X.v1.json>` via `std::process::Command::new("npx")`. Captures stdout (the generated TS); checks exit status (non-zero → bail with the stderr output for diagnostics).
+3. Prepends a generated-file header banner identical in shape to the typify Rust files: `// AUTO-GENERATED FILE — do not edit by hand. Regenerate via `cargo xtask regenerate-types`. Source schema: schemas/X.v1.json. Generator: json-schema-to-typescript@<version>.`
+4. Writes the result to `src/types/<X>.ts` (e.g., `src/types/agent_event.ts` for `event.v1.json`).
+5. In `--check` mode, diffs committed vs regenerated; appends to the existing `all_drift` list rather than maintaining a separate drift list.
+6. Returns the merged drift list to the caller.
+
+The testable seam pattern (per CLAUDE.md §5 / `docs/style.md` `*_with` archetype):
+
+```rust
+/// Test-seam: regenerate TS types from a caller-supplied list of schemas
+/// and runner. Tests inject an in-memory runner; production calls the npx
+/// binary via `std::process::Command`.
+pub fn regenerate_typescript_types_with<R>(
+    schemas: &[(&str, &std::path::Path)],
+    output_dir: &std::path::Path,
+    runner: R,
+) -> Result<Vec<String>>
+where
+    R: Fn(&std::path::Path) -> Result<String>,
+{
+    // Iterates schemas, calls runner(schema_path) -> TS source string,
+    // prepends header, writes to output_dir/<name>.ts, returns drift list
+    // (when check mode is wired by the caller).
+}
+```
+
+The production wrapper calls the seam with `runner = |schema_path| { run_npx_json_schema_to_typescript(schema_path) }`. The unit test calls the seam with a stub runner that returns a deterministic string, so the test exercises the file-write + header-prepend logic without crossing the npx subprocess boundary.
+
+**Wire the new function into `regenerate_types(check: bool)`:** call `regenerate_typescript_types(check)` after the existing typify loop; merge its drift output into `all_drift` so the single error message in the existing `bail!` branch covers both Rust and TS drift.
+
+**Decision:** Hardcode the schema list (`[("event", "event.v1.json")]`) inside `regenerate_typescript_types` for M03. Future schemas added via line edits to that list. Acceptable because the typify pattern already does the same (`["common", "framework", "skill", "tool", "agent"]` array on line 43 of the existing code).
+
+#### `schemas/event.v1.json` — new
+
+The canonical AgentEvent schema. Source-of-truth: `crates/runtime-core/src/event.rs` (M02-shipped enum). The fresh session reads `event.rs` and emits a JSON Schema Draft 2020-12 document mirroring the AgentEvent enum:
+
+- `$schema`: `https://json-schema.org/draft/2020-12/schema`
+- `$id`: `https://schemas.aria-runtime.dev/event.v1.json` (matches the convention in other v1 schemas)
+- `title`: `AgentEvent`
+- `description`: short paragraph; cite spec §2 + §3.
+
+Body is a `oneOf` of 10 variants matching the v0.1 `AgentEvent` enum:
+
+1. `session_start { session_id, framework, model }`
+2. `agent_spawned { agent_id, agent_name, parent_id?, session_id }` — `session_id` is the M02.D addition; ensure it's present in the schema
+3. `agent_complete { agent_id, result }`
+4. `agent_error { agent_id, error }`
+5. `tool_invoked { agent_id, tool_id, input, source, server? }` — `source` is the new `ToolSource` enum (`Builtin | Mcp | Generated`); `server` populated when `source = Mcp`
+6. `tool_result { agent_id, tool_id, output, duration_ms? }`
+7. `skill_loaded { agent_id, skill_id, mode? }`
+8. `stream_text { agent_id, text }`
+9. `stream_thinking { agent_id, text }`
+10. `decision_record { agent_id, decision, rationale, confidence? }`
+
+Use `serde(tag = "type", rename_all = "snake_case")` shape: each variant has a `type` discriminator field plus the listed payload fields. Reference: spec §2 Event Types subsection (line 836+ of `agent-runtime-spec.md`). The TypeScript discriminated-union output is exactly what `src/types/agent_event.ts` should look like post-regeneration.
+
+**Verify byte-level parity:** after the schema lands and the fresh session runs `cargo xtask regenerate-types`, the generated `src/types/agent_event.ts` must match the existing hand-mirrored content semantically. Mismatch is acceptable on whitespace / comment placement; field shapes + variant names + enum values must match. If regeneration produces a different shape than the hand-mirrored version, the schema is wrong (not the hand-mirrored version) — fix the schema until parity holds.
+
+#### `src/types/agent_event.ts` — regenerate
+
+After `schemas/event.v1.json` lands, run `cargo xtask regenerate-types`. The hand-mirrored content is replaced by generator output. The header banner makes it obvious to future readers that this file is generated, not authored.
+
+Diff against the pre-Stage-A content. Spot-check: `ToolSource` enum values match (`Builtin | Mcp | Generated`); `AgentSpawned.session_id` present and required; `tool_invoked` discriminator's `source` + optional `server` fields present.
+
+#### `src/counter.js` + `src/counter.test.js` — delete
+
+```bash
+rm src/counter.js src/counter.test.js
+```
+
+Stage the deletions.
+
+#### `.prettierignore` — remove counter.* entries
+
+**Find:**
+
+```
+src/counter.js
+src/counter.test.js
+```
+
+**Delete those two lines.** Note: lines 24–25 in current main; surrounding context preserved.
+
+#### `eslint.config.js` — remove counter.* entries
+
+**Find:**
+
+```javascript
+      'src/counter.js',
+      'src/counter.test.js',
+```
+
+**Delete those two lines.** Note: lines 24–25 of current `ignores` array; trailing comma and surrounding entries preserved.
+
+#### `crates/runtime-drone/tests/integration.rs` — `current_exe()` retrofit
+
+The existing `drone_binary()` helper (line 13 of current main) hard-codes `target/debug/runtime-drone.exe` paths. Refactor to use the M02.D archetype at `crates/runtime-main/tests/drone_ipc_loopback.rs::drone_binary` (per `docs/gotchas.md` #22).
+
+The archetype derives the path from `std::env::current_exe()`, which works under both `cargo test` (debug target dir) and `cargo llvm-cov --workspace` (instrumented target dir). The fresh session reads the archetype function and copies its shape into `runtime-drone`'s `integration.rs`:
+
+```rust
+/// Locate the runtime-drone binary alongside the test binary.
+///
+/// Per `docs/gotchas.md` #22: `cargo test` puts the test binary under
+/// `target/debug/deps/integration-<hash>` while `cargo llvm-cov --workspace`
+/// uses a distinct target dir (`target/llvm-cov-target/...`). Hard-coding
+/// `target/debug/runtime-drone` breaks under coverage runs. Deriving from
+/// `std::env::current_exe()` works for both.
+fn drone_binary() -> std::path::PathBuf {
+    let test_exe = std::env::current_exe().expect("current_exe");
+    // test_exe = .../target/<profile>/deps/integration-<hash>(.exe)
+    // step up to .../target/<profile>/deps/, then to .../target/<profile>/
+    let deps_dir = test_exe.parent().expect("parent of test exe");
+    let target_profile = deps_dir.parent().expect("parent of deps");
+    let mut p = target_profile.join("runtime-drone");
+    if cfg!(windows) {
+        p.set_extension("exe");
+    }
+    p
+}
+```
+
+Same refactor in `crates/runtime-drone/tests/integration_windows.rs` if it has its own copy of the helper. If `integration_windows.rs` already calls `drone_binary()` from `integration.rs` via a shared module, the single retrofit covers both.
+
+**After the retrofit, run** `cargo test --package runtime-drone` (verifies the helper still finds the binary at default debug profile) **and** `cargo llvm-cov --package runtime-drone` (verifies the helper finds the binary under the instrumented profile).
+
+#### `crates/xtask/tests/check_drift.rs` — extend for TS codegen drift
+
+The current test file exercises three drift cases for typify Rust output (`crates/runtime-core/src/generated/common.rs`). Extend with a fourth case for TS:
+
+```rust
+    // === Case 4: --check detects TS codegen drift ===
+    {
+        use std::fs;
+        let workspace_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let target = workspace_root.join("src/types/agent_event.ts");
+        let original = fs::read_to_string(&target).expect("read original");
+
+        // Mutate: append a comment.
+        fs::write(&target, format!("{original}\n// drift-test\n")).expect("write mutation");
+
+        let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+            .args(["regenerate-types", "--check"])
+            .output()
+            .expect("run xtask --check");
+
+        // Restore BEFORE asserting (so a panicking assertion doesn't leave the file dirty).
+        fs::write(&target, &original).expect("restore");
+
+        assert!(
+            !output.status.success(),
+            "drift check should detect TS mutation. stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+```
+
+This case asserts that `cargo xtask regenerate-types --check` exits non-zero when the committed TS file diverges from regenerated output, mirroring the existing Case 3 for Rust output.
+
+#### `vitest.config.ts` — verify coverage threshold honored
+
+After the `package.json` script change (`"test": "vitest run --coverage"`), `vitest.config.ts`'s `coverage.thresholds.lines: 80` (from M02 Stage E) actually runs on every `npm run test`. No edit needed unless the existing config has an unrelated bug — verify by running `npm run test` after Stage A's edits and confirming the threshold is enforced (test output should include coverage table; if coverage is below 80% the run fails).
+
+If the existing `vitest.config.ts` does not enable a `coverage` block at all, **add** the block per Vitest 2.x docs (Vitest is at 2.1.x in the M02-pinned package.json; Vite 7's peer dep allows Vitest 2.x to keep working). Reference at <https://vitest.dev/config/#coverage>.
+
+#### `CHANGELOG.md` — `[Unreleased]` entry
+
+**Add** a section under `[Unreleased]` matching the shape of the existing M02.E entry:
+
+```markdown
+### Added — M03.A (Build hygiene + carry-forward closures + new deps)
+
+- ... (paste content matching A.6 Commit Message body, formatted as a
+  bulleted list per Keep-a-Changelog conventions; cross-reference
+  M02-summary Decisions, gotchas.md #22 + #29-31, spec §13.5)
+```
+
+The fresh Stage A session writes the bulleted version of A.6's commit-message body into CHANGELOG.
+
 
 ### A.4 Tests
 
