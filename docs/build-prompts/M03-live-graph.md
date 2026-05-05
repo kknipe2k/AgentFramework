@@ -1254,10 +1254,551 @@ https://claude.ai/code
 ```
 
 ---
+<!-- ============================================================ -->
+<!-- STAGE C — 8 remaining node types + animated edges + colors     -->
+<!-- ============================================================ -->
+
 ## Stage C — Remaining 8 node types + animated edges + color encoding
 
-*Authored in subsequent chunks.*
+**WEBCHECK:** verify each URL against this stage's prompt body **before** the fresh session opens. If any claim is stale, update this section in `M03-live-graph.md` BEFORE pasting Stage C's CLI prompt to the fresh session.
 
+- <https://reactflow.dev/api-reference/types/edge> — confirm `Edge` type's `animated` field semantics in `@xyflow/react` v12; class-name conventions for animated edges (`react-flow__edge--animated`)
+- <https://reactflow.dev/learn/customization/custom-edges> — confirm v12's custom-edge API; needed if Stage C decides to use a custom Edge component for the dash-flow visual instead of pure CSS
+- <https://reactflow.dev/api-reference/types/node-props> — confirm v12's `NodeProps<T>` generic for typed `data`; the eight new components consume this via the same pattern as Stage B's three
+- <https://www.w3.org/WAI/ARIA/apg/patterns/> — confirm ARIA pattern recommendations for graph nodes (especially for HITLNode which presents a blocking-on-input affordance — does it need `role="alert"` / `aria-live="assertive"`?)
+
+### C.1 Problem Statement
+
+Stage B shipped three of eleven node types (Agent, Tool, Skill). Stage C adds the remaining eight: **MCPNode**, **GapNode**, **HITLNode**, **PlanNode**, **TaskNode**, **VerifyNode**, **HookNode**, **FrameworkNode**. Plus the spec §3 visual layer: animated edges during active tool calls, dashed edges for skill loads (Stage B's foundation extended consistently), and the full color-encoding palette across every node type's status states (active blue, complete green, error red, **gap amber**, **hitl white/bright**).
+
+The cardinal scoping decision: **Stage C ships components + the graphStore wiring for events that already exist; M4+ wires the rest.** Per MVP §M3 out-of-scope ("plan/task nodes wired to data → M4; MCP node connecting to a real server → M6"), Stage C ships **eight component files** with full styling and accessibility, but the graphStore's `applyEvent` only adds new wiring for events the v0.1 AgentEvent schema actually emits:
+
+- **`session_start` → spawn FrameworkNode** as the graph's root (already in v0.1 schema; not yet handled by Stage B's store)
+- **`tool_invoked` with `source: 'mcp'` + `server: '<name>'` → lazily spawn MCPNode** as the parent of the ToolNode (Stage B treats every tool the same; Stage C splits MCP-hosted tools into their own MCPNode parent group)
+
+The remaining six components (Gap, HITL, Plan, Task, Verify, Hook) ship as **renderable components without store wiring**. Their `applyEvent` cases land at M4 (plan/task/verify/hook events) and M5 (gap events). Stage C tests them with **synthetic store fixtures** — manually populated state passed to `<GraphCanvas>` — to verify render correctness without manufacturing events the schema doesn't yet emit.
+
+The second decision: **animated edges via Edge.animated + CSS, not custom edge components.** React Flow v12's built-in `animated: true` field on `Edge` triggers the `react-flow__edge--animated` CSS class; pure CSS handles the dash-flow visual. Custom edge components are reserved for M4+ if a need surfaces (e.g., per-edge-type token spend visualization).
+
+The third decision: **edge state lifecycle.** When `tool_invoked` fires, the agent → tool edge is created with `animated: true`. When `tool_result` fires, the same edge transitions to `animated: false` + a `complete` color class. When `agent_error` fires, downstream edges (where source is the failed agent) transition to `error` color. Stage C codifies this state machine in graphStore.
+
+The fourth decision: **GapNode visual prominence.** Per spec §3 Behavior ("GapNode appears immediately on `tool_missing` ... HITLNode blocks the graph visually, dims non-relevant nodes"), GapNode + HITLNode get prominence styling — pulsing borders or higher z-index. Stage C ships the styles; the actual gap-flow integration with the agent loop is M5.
+
+**One-line success criterion:** every node type renders correctly in isolation (Vitest); the M02 smoke test (single AgentNode + zero ToolNodes since the prompt invokes none) now also displays a FrameworkNode root with an edge to the smoke-agent; CSS color encoding verified visually + via component-test class assertions; renderer Vitest coverage on the 8 new components ≥80%; graphStore.ts coverage stays ≥95%.
+
+**New artifacts:**
+- `src/components/nodes/MCPNode.tsx` + 7 sibling files (one per remaining node type)
+- 8 new test files at `tests/unit/nodes/<NodeName>.test.tsx`
+- Extended `src/lib/graphStore.ts` (FrameworkNode + MCPNode wiring; edge-animation lifecycle)
+- Extended `src/styles.css` (8 new node-type styles + animated-edge styles + dashed-edge styles)
+- Extended `src/components/GraphCanvas.tsx` (`nodeTypes` map with 11 entries)
+
+### C.2 Files to Change
+
+| File | Change |
+|---|---|
+| `src/components/nodes/MCPNode.tsx` | **New** — React Flow custom node for spec §3 MCPNode; renders MCP server name + tool count badge |
+| `src/components/nodes/GapNode.tsx` | **New** — spec §3 GapNode; amber color + prominent styling per Visual Design Principles |
+| `src/components/nodes/HITLNode.tsx` | **New** — spec §3 HITLNode; bright/white styling + `role="alert"` + `aria-live="assertive"` |
+| `src/components/nodes/PlanNode.tsx` | **New** — spec §3 PlanNode; renders plan name + progress (placeholder data; M4 wires real plan-state data) |
+| `src/components/nodes/TaskNode.tsx` | **New** — spec §3 TaskNode; renders task name + status + HITL flag |
+| `src/components/nodes/VerifyNode.tsx` | **New** — spec §3 VerifyNode; pass/fail state visualization |
+| `src/components/nodes/HookNode.tsx` | **New** — spec §3 HookNode; hook name + category + outcome |
+| `src/components/nodes/FrameworkNode.tsx` | **New** — spec §3 FrameworkNode; framework name + active model |
+| `tests/unit/nodes/MCPNode.test.tsx` | **New** — 5 tests: render + status classes + tool-count + a11y + handles |
+| `tests/unit/nodes/GapNode.test.tsx` | **New** — same shape; emphasize amber color class assertion |
+| `tests/unit/nodes/HITLNode.test.tsx` | **New** — same shape; assert `role="alert"` + `aria-live` attrs |
+| `tests/unit/nodes/PlanNode.test.tsx` | **New** |
+| `tests/unit/nodes/TaskNode.test.tsx` | **New** |
+| `tests/unit/nodes/VerifyNode.test.tsx` | **New** |
+| `tests/unit/nodes/HookNode.test.tsx` | **New** |
+| `tests/unit/nodes/FrameworkNode.test.tsx` | **New** |
+| `src/lib/graphStore.ts` | **Edited** — extend `GraphNode` discriminated union with 8 new variants; add data interfaces (MCPNodeData, GapNodeData, etc.); extend `applyEvent` for `session_start` → FrameworkNode + `tool_invoked.source='mcp'` → lazy MCPNode + animated-edge lifecycle; the six remaining variants get type definitions but no `applyEvent` handlers (M4+ adds those) |
+| `tests/unit/graphStore.test.ts` | **Edited** — add 2 new tests: `session_start: spawns FrameworkNode at root` + `tool_invoked with source mcp: lazily spawns parent MCPNode`; update existing `agent_spawned` test to assert FrameworkNode is the parent when no parentId is provided |
+| `src/components/GraphCanvas.tsx` | **Edited** — extend `nodeTypes` map from 3 entries to 11 (one per spec §3 node type) |
+| `src/styles.css` | **Edited** — add 8 new node-type styles (each with `--active`, `--complete`, `--error` modifiers per spec §3 color encoding); add `--gap` (amber) modifier on GapNode; add `--hitl` (bright/white) modifier on HITLNode; add `.react-flow__edge--animated` dash-flow keyframes; add `.react-flow__edge--dashed` style for skill-load edges |
+| `CHANGELOG.md` | **Edited** — `[Unreleased]` entry under "Added — M03.C" |
+
+### C.3 Detailed Changes
+
+#### `src/lib/graphStore.ts` — extend types + applyEvent
+
+Add eight new data interfaces + extend the `GraphNode` discriminated union. Pattern (one shown; rest follow same shape):
+
+```typescript
+export interface MCPNodeData {
+  serverId: string;
+  serverName: string;
+  status: NodeStatus;
+  discoveredToolCount: number | null;
+}
+
+export interface GapNodeData {
+  gapId: string;
+  kind: 'tool_missing' | 'skill_missing';
+  missingName: string;
+  status: NodeStatus; // 'gap' is rendered via amber color class on the component side
+}
+
+export interface HITLNodeData {
+  hitlId: string;
+  prompt: string;
+  resolved: boolean;
+}
+
+// PlanNodeData, TaskNodeData, VerifyNodeData, HookNodeData,
+// FrameworkNodeData follow the same pattern. All have a `status: NodeStatus`
+// or equivalent state field. Full content authored by the fresh session
+// per spec §3 + the existing AgentNodeData/ToolNodeData/SkillNodeData
+// shapes from Stage B.
+```
+
+Extend the `GraphNode` discriminated union:
+
+```typescript
+export type GraphNode =
+  | Node<AgentNodeData,     'agent'>
+  | Node<ToolNodeData,      'tool'>
+  | Node<SkillNodeData,     'skill'>
+  | Node<MCPNodeData,       'mcp'>
+  | Node<GapNodeData,       'gap'>
+  | Node<HITLNodeData,      'hitl'>
+  | Node<PlanNodeData,      'plan'>
+  | Node<TaskNodeData,      'task'>
+  | Node<VerifyNodeData,    'verify'>
+  | Node<HookNodeData,      'hook'>
+  | Node<FrameworkNodeData, 'framework'>;
+```
+
+Extend `applyEvent` for the two new event-driven cases:
+
+```typescript
+case 'session_start':
+  // Spawn FrameworkNode as the graph's root if not already present.
+  // Idempotent (same session_id arriving twice no-ops).
+  if (state.nodes.some((n) => n.id === `framework:${event.framework}`)) {
+    return state;
+  }
+  return {
+    ...state,
+    nodes: [
+      ...state.nodes,
+      {
+        id: `framework:${event.framework}`,
+        type: 'framework',
+        position: { x: -200, y: -150 },
+        data: {
+          frameworkName: event.framework,
+          model: event.model,
+          status: 'active' as NodeStatus,
+        },
+      } satisfies Node<FrameworkNodeData, 'framework'>,
+    ],
+  };
+
+case 'tool_invoked':
+  // Stage B's existing handler is extended: when source === 'mcp', lazily
+  // spawn the MCPNode parent (if not already present), then add the
+  // ToolNode + edge from MCP → tool. When source !== 'mcp', existing
+  // Stage B behavior holds (edge from agent → tool directly).
+  // Animated-edge lifecycle: edges created here have `animated: true`;
+  // tool_result handler turns this off.
+  // Full body authored by the fresh session.
+  return /* extended state */;
+
+case 'tool_result':
+  // Update existing ToolNode's status to 'complete' + durationMs;
+  // turn off animated flag on the agent → tool (or MCP → tool) edge.
+  return /* updated state */;
+
+// The six remaining variants from spec §3 (gap_added, hitl_requested,
+// plan_created, task_started, verify_completed, hook_fired) are NOT
+// handled in Stage C — schemas/event.v1.json only declares the 10 v0.1
+// variants Stage A added. M4+ extends the schema and adds these handlers.
+// The TS exhaustiveness check on `applyEvent`'s default branch enforces
+// this: adding a new variant to the schema later is a compile error
+// until the handler lands.
+```
+
+The wiring for Gap, HITL, Plan, Task, Verify, Hook in `applyEvent` is **deliberately deferred to M4+**. Stage C tests these components by passing **synthetic graph state** to `<GraphCanvas>` directly in unit tests:
+
+```typescript
+// tests/unit/nodes/GapNode.test.tsx — example of synthetic-state testing
+import { render } from '@testing-library/react';
+import { ReactFlow } from '@xyflow/react';
+import { GapNode } from '../../../src/components/nodes/GapNode';
+
+const nodeTypes = { gap: GapNode };
+
+test('GapNode renders with amber color when kind is tool_missing', () => {
+  const nodes = [{
+    id: 'gap:tool-missing-foo',
+    type: 'gap',
+    position: { x: 0, y: 0 },
+    data: { gapId: 'tool-missing-foo', kind: 'tool_missing', missingName: 'foo', status: 'gap' },
+  }];
+  const { getByTestId } = render(<ReactFlow nodes={nodes} edges={[]} nodeTypes={nodeTypes} />);
+  const node = getByTestId('gap-node-tool-missing-foo');
+  expect(node).toHaveClass('gap-node--gap');
+  expect(node).toHaveAttribute('data-kind', 'tool_missing');
+});
+```
+
+This pattern verifies render correctness without forcing the store to handle events that don't yet exist in the schema.
+
+#### `src/components/nodes/<NodeName>.tsx` — eight new files
+
+Each follows the AgentNode pattern from Stage B with type-appropriate data:
+
+```typescript
+// src/components/nodes/FrameworkNode.tsx — example
+import { Handle, Position, type NodeProps } from '@xyflow/react';
+import type { FrameworkNodeData } from '../../lib/graphStore';
+
+export function FrameworkNode({ data }: NodeProps<FrameworkNodeData>) {
+  return (
+    <div
+      className={`framework-node framework-node--${data.status}`}
+      data-testid={`framework-node-${data.frameworkName}`}
+      data-status={data.status}
+      aria-label={`framework ${data.frameworkName} on ${data.model}`}
+    >
+      <div className="framework-node__name">{data.frameworkName}</div>
+      <div className="framework-node__model">{data.model}</div>
+      <Handle type="source" position={Position.Bottom} />
+    </div>
+  );
+}
+```
+
+The seven other node components follow the same shape with their respective data fields. Two get specialized markup:
+
+- **GapNode** — extra `data-kind` attribute (`tool_missing` | `skill_missing`); body lists the missing artifact name; amber border + pulsing animation modifier (CSS handles the pulse via `@keyframes`)
+- **HITLNode** — `role="alert"` + `aria-live="assertive"` per ARIA APG patterns for blocking inputs; renders `data.prompt` so the user sees what's being asked
+
+The fresh Stage C session reads `src/components/nodes/AgentNode.tsx` (Stage B archetype) + this section for the per-component specializations and produces the eight files in one pass.
+
+#### `src/components/GraphCanvas.tsx` — extend nodeTypes
+
+**Find:**
+
+```typescript
+const nodeTypes = {
+  agent: AgentNode,
+  tool: ToolNode,
+  skill: SkillNode,
+};
+```
+
+**Replace with:**
+
+```typescript
+const nodeTypes = {
+  agent: AgentNode,
+  tool: ToolNode,
+  skill: SkillNode,
+  mcp: MCPNode,
+  gap: GapNode,
+  hitl: HITLNode,
+  plan: PlanNode,
+  task: TaskNode,
+  verify: VerifyNode,
+  hook: HookNode,
+  framework: FrameworkNode,
+};
+```
+
+Plus the matching imports at the top of the file.
+
+#### `src/styles.css` — 8 new node styles + edge animation
+
+Append the new node-type styles (one per node, with `--active`/`--complete`/`--error` modifiers; GapNode adds `--gap` amber; HITLNode adds `--hitl` bright). Spec §3 Visual Design Principles drive the colors:
+
+```css
+/* Color encoding palette (spec §3 Visual Design Principles) */
+:root {
+  --node-active:   #4a90e2;
+  --node-complete: #4caf50;
+  --node-error:    #e53935;
+  --node-gap:      #ffa726;
+  --node-hitl:     #ffffff;
+}
+
+/* MCPNode — server hosting tools */
+.mcp-node {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  border: 2px solid #2a3045;
+  background: #15192a;
+  color: #e6e6e6;
+  min-width: 160px;
+}
+.mcp-node--active   { border-color: var(--node-active); }
+.mcp-node--complete { border-color: var(--node-complete); }
+.mcp-node--error    { border-color: var(--node-error); }
+.mcp-node__tool-count {
+  font-size: 11px;
+  color: #aaa;
+  margin-top: 2px;
+}
+
+/* GapNode — missing tool/skill (amber per spec §3) */
+.gap-node {
+  /* base styles */
+}
+.gap-node--gap {
+  border-color: var(--node-gap);
+  animation: gap-pulse 1.4s ease-in-out infinite;
+}
+@keyframes gap-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255,167,38,0.4); }
+  50%      { box-shadow: 0 0 0 8px rgba(255,167,38,0); }
+}
+
+/* HITLNode — blocking on human input (bright/white per spec §3) */
+.hitl-node {
+  /* base styles */
+}
+.hitl-node--hitl {
+  border-color: var(--node-hitl);
+  background: rgba(255,255,255,0.08);
+}
+
+/* Plan/Task/Verify/Hook/FrameworkNode — base + status modifiers, same pattern */
+
+/* Animated edges (active tool calls per spec §3 Behavior) */
+.react-flow__edge.animated .react-flow__edge-path {
+  stroke-dasharray: 5 5;
+  animation: dash-flow 1s linear infinite;
+}
+@keyframes dash-flow {
+  to { stroke-dashoffset: -10; }
+}
+
+/* Dashed edges for skill loads (no animation; loaded skill stays in context) */
+.react-flow__edge--dashed .react-flow__edge-path {
+  stroke-dasharray: 3 3;
+}
+```
+
+Full CSS body produced by the fresh session per the patterns above. Verify visually after the renderer compiles by running `npm run tauri dev` and triggering the M02 smoke test — the AgentNode now has a FrameworkNode parent edge.
+
+### C.4 Tests
+
+#### Pedantic-pass preflight
+
+Same checklist as Stage B (TS strict, ESLint flat-config, prettier). Per `docs/gotchas.md` #21 and the Stage B traps (nodeTypes stability, Zustand selector pattern, Vitest+RTL DOM-ref staleness, exhaustive applyEvent). New trap class for Stage C:
+
+- [ ] `tsc --noEmit` clean across the new discriminated-union variants
+- [ ] No `as any` / `@ts-ignore` to bypass narrowing in the 8 new component files
+- [ ] No `any` in test fixtures — use the data interfaces from `graphStore.ts`
+
+#### Default test plan for stages adding a new safety primitive
+
+`graphStore.ts` is still the primitive being protected. Stage C adds 2 store tests + 8 component tests:
+
+- 2 new graphStore tests for the FrameworkNode + lazy MCPNode wiring
+- 5 component tests per new node type × 8 = 40 new component tests
+- Test for the animated-edge state machine: `tool_invoked` creates animated edge; `tool_result` transitions to non-animated + complete
+
+Total Stage C new tests: ~43.
+
+#### Test plan (Stage C)
+
+`tests/unit/graphStore.test.ts` — **edited** (add):
+
+1. **session_start: spawns FrameworkNode at root** — apply event, assert FrameworkNode with `framework:<name>` id is in `state.nodes`
+2. **session_start: idempotent** — apply twice, assert one FrameworkNode
+3. **tool_invoked with source 'mcp': lazily spawns parent MCPNode** — apply event with `source: 'mcp', server: 'github-mcp'`, assert MCPNode is in nodes + ToolNode is in nodes + edge MCP → Tool is in edges (NOT agent → Tool directly)
+4. **tool_invoked with source 'mcp': second tool from same server reuses MCPNode** — apply two tool_invoked events with same `server`, assert one MCPNode + two ToolNodes + two edges from the single MCPNode
+5. **tool_invoked: edge created with animated=true** — assert the edge in state.edges has `animated: true`
+6. **tool_result: turns off animated flag** — apply tool_invoked then tool_result, assert the edge's `animated` is now false (or undefined)
+
+`tests/unit/nodes/<NodeName>.test.tsx` — **new** (8 files, 5 tests each):
+
+For each component:
+1. **renders with all required data fields** — assert the test-id, name, secondary fields all rendered
+2. **applies status class for active|complete|error** — three render cases
+3. **has accessible aria-label** — assert label content
+4. **has data-testid + data-status attributes** — for E2E selectability (Stage F)
+5. **renders source/target Handles per node type** — FrameworkNode has source only; GapNode has target only; HITLNode has target only (input affordance — graph blocks here); PlanNode/TaskNode have both; etc.
+
+Special cases:
+- **GapNode test**: assert `data-kind` attribute distinguishes `tool_missing` vs `skill_missing`; assert `gap-pulse` keyframe class is applied
+- **HITLNode test**: assert `role="alert"` + `aria-live="assertive"` attributes present
+- **FrameworkNode test**: assert renders both framework name + model
+
+#### Coverage target
+
+- Workspace Rust: ≥80% (preserved)
+- runtime-drone: ≥95% (preserved)
+- runtime-main: ≥95% (preserved)
+- src-tauri: 50% patch gate (preserved)
+- src/ frontend: ≥80% with **graphStore.ts ≥95%** (preserved primitive treatment); each new node component ≥80% line via the 5-tests-per-component pattern
+
+**Doc-to-CI invariant.** Stage C does not add OS-call wrappers; coverage is end-to-end testable. No new exclusions to the codecov path-based override map. If component-test coverage falls below 80% during Stage C, surface in the retro before reducing the gate.
+
+### C.5 CLI Prompt
+
+```xml
+<work_stage_prompt id="M03.C">
+  <context>
+    Stage C of M03 (Live Graph). Eight remaining spec §3 node types
+    (MCP, Gap, HITL, Plan, Task, Verify, Hook, Framework) + animated
+    edges (tool calls) + dashed edges (skill loads) + full color-
+    encoding palette. graphStore wiring extended only for events the
+    v0.1 schema emits (session_start → FrameworkNode; tool_invoked
+    with source='mcp' → lazy MCPNode); Gap/HITL/Plan/Task/Verify/Hook
+    components ship as renderable but their applyEvent handlers land
+    at M4+ when those events join the schema. Builds on Stage B's
+    React Flow + Zustand foundation. Stage D does not start until
+    Stage C's commit is on the milestone branch.
+  </context>
+
+  <read_first>
+    <file>CLAUDE.md</file>
+    <file>STAGE-PROMPT-PROTOCOL.md</file>
+    <file>docs/build-prompts/M03-live-graph.md (Stage C sections C.1–C.4)</file>
+    <file>agent-runtime-spec.md §3 (Node Types + Behavior + Visual Design)</file>
+    <file>docs/MVP-v0.1.md §M3</file>
+    <file>docs/gotchas.md (#21 #25 #26 #27)</file>
+  </read_first>
+
+  <read_reference>
+    <file purpose="Stage B AgentNode archetype to mirror for the 8 new node components">src/components/nodes/AgentNode.tsx</file>
+    <file purpose="Zustand store + applyEvent shape from Stage B (extending here)">src/lib/graphStore.ts</file>
+    <file purpose="GraphCanvas nodeTypes map being extended (3 → 11)">src/components/GraphCanvas.tsx</file>
+    <file purpose="Stage B's CSS color encoding for AgentNode — pattern to extend across 8 new types">src/styles.css</file>
+    <file purpose="component test pattern from Stage B (5 tests per node)">tests/unit/nodes/AgentNode.test.tsx</file>
+    <file purpose="graphStore test fixtures from Stage B (synthetic-state pattern for event-less node types)">tests/unit/graphStore.test.ts</file>
+  </read_reference>
+
+  <read_prior_stages>
+    <retrospective section="[END] Decisions for the next stage">docs/build-prompts/retrospectives/M03.A-retrospective.md</retrospective>
+    <retrospective section="[END] Decisions for the next stage">docs/build-prompts/retrospectives/M03.B-retrospective.md</retrospective>
+  </read_prior_stages>
+
+  <deliverable ref="docs/build-prompts/M03-live-graph.md" section="C.3 Detailed Changes"/>
+
+  <test_plan_required>true</test_plan_required>
+
+  <execution_steps>
+    <step name="write_failing_tests" budget="1"/>
+    <step name="implement" budget="1"/>
+    <step name="verify_gates" budget_iterations="3"/>
+    <step name="fill_retrospective"/>
+    <step name="surface"/>
+  </execution_steps>
+
+  <acceptance_criteria ref="docs/build-prompts/M03-live-graph.md" section="C.4 Tests"/>
+
+  <scope_locks ref="docs/build-prompts/M03-live-graph.md" section="Key constraints"/>
+
+  <gates milestone="M03"/>
+
+  <self_correction_budget>3</self_correction_budget>
+
+  <gotchas>
+    <trap>Stage C ships 8 components + edge animation + 2 graphStore wirings (FrameworkNode + lazy MCPNode). Resist scope creep into M4 territory: the six event-less node types (Gap, HITL, Plan, Task, Verify, Hook) ship as components only. Their applyEvent handlers land at M4 (plan/task/verify/hook events) and M5 (gap events) when the schema gains those events.</trap>
+    <trap>Synthetic-state testing pattern for the six event-less components: Vitest tests pass populated state directly into `<ReactFlow nodes={...}>` rather than dispatching events through the store. This verifies render correctness without manufacturing events the schema doesn't yet emit. The pattern is locked here so M4+ extends without fighting the test infrastructure.</trap>
+    <trap>Exhaustive `applyEvent` discriminated union: TS's `_exhaustive: never` check at the default branch protects against silent drift. When M4+ adds new event variants, the compile error in graphStore.ts is the forcing function. Don't suppress with `as never` or `@ts-ignore`.</trap>
+    <trap>nodeTypes map (in GraphCanvas.tsx) MUST stay defined at module level even after growing to 11 entries. The Stage B trap re-applies: inline definition triggers per-render remount of every node type — kills the streaming UX especially noticeable now with 11 types.</trap>
+    <trap>HITLNode + GapNode have ARIA-specific requirements per WAI APG: HITLNode is `role="alert"` + `aria-live="assertive"` (blocking input affordance); GapNode pulses via CSS keyframe (visual) but doesn't need its own ARIA role beyond standard graph-node a11y. Don't apply alert role to GapNode (it's not a request for response — it's a gap visualization).</trap>
+    <trap>Color encoding palette is in `src/styles.css` `:root` CSS custom properties (--node-active, --node-complete, --node-error, --node-gap, --node-hitl). Don't hardcode the hex values per-component-rule — use `var(--node-...)`. This keeps the palette consistent and Stage D's token-spend visualization (which adjusts per-node visual weight, not color) doesn't have to fight per-component overrides.</trap>
+  </gotchas>
+
+  <execution_warnings>
+    <warning>DO NOT extend `schemas/event.v1.json` with M4+ event variants in Stage C. Stage A locked the v0.1 schema at 10 variants; M4 owns the schema bump (per schemas/README.md minor in-place bump policy). Stage C touches only the renderer.</warning>
+    <warning>DO NOT add custom edge components in Stage C. React Flow v12's built-in `Edge.animated: true` + CSS keyframes is the chosen mechanism (per Decision #2 in C.1). Custom edge components are deferred to M4+ if a per-edge-type need surfaces.</warning>
+    <warning>DO NOT wire PlanNode/TaskNode to plan-state data in Stage C. M4 ships the plan + task primitives; until then, component tests use synthetic placeholder data.</warning>
+    <warning>DO NOT touch SetupPanel, SmokeButton, ipc.ts, or App.tsx unless absolutely required — preserved verbatim from Stage B (which itself preserved them from M02).</warning>
+  </execution_warnings>
+
+  <time_box estimate_hours="5.5"/>
+
+  <retrospective_requirements ref="docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md" section="M[NN].&lt;X&gt; — Stage Retrospective">
+    <special_log>Decisions for Stage D: which inspector-panel layout (right-rail vs bottom-drawer); whether the 11-node-type CSS color palette holds up against Stage D's token-spend node-weight scaling; whether the synthetic-state testing pattern is durable for the six event-less components or needs refactor before M4 wires events; whether any of the eight new components need refactor for reuse vs duplication of base styles.</special_log>
+  </retrospective_requirements>
+
+  <commit_protocol ref="CLAUDE.md" section="8. PR + commit workflow (CRITICAL — read carefully)"/>
+  <commit_message ref="docs/build-prompts/M03-live-graph.md" section="C.6 Commit Message"/>
+
+  <approval_surface>
+    <item>diff stat (git diff --stat HEAD)</item>
+    <item>gate results (each gate, pass/fail, key numbers including frontend coverage on the 8 new components ≥80%)</item>
+    <item>retrospective (filled-in [END] section with three-axis scoring + verdict + decisions for Stage D + [END] Coverage holdouts subsection)</item>
+    <item>draft commit message from M03-live-graph.md C.6 Commit Message section</item>
+    <item>screenshot or paste of the rendered graph after smoke-test run, showing FrameworkNode root + AgentNode (with color encoding active → complete transition)</item>
+    <item>explicit statement: "Stage M03.C is ready. I will not commit until you approve."</item>
+  </approval_surface>
+</work_stage_prompt>
+```
+
+### C.6 Commit Message
+
+```
+feat(renderer): M03 Stage C — 8 remaining node types + animated edges + colors
+
+Lights up the rest of spec §3's node-type set. After Stage C, all 11
+node types ship as renderable components: AgentNode, ToolNode,
+SkillNode (Stage B) + MCPNode, GapNode, HITLNode, PlanNode, TaskNode,
+VerifyNode, HookNode, FrameworkNode (this stage). graphStore.applyEvent
+extended for the two events that already exist in the v0.1 schema:
+session_start → FrameworkNode (graph root); tool_invoked with
+source='mcp' → lazy parent MCPNode. The remaining six components
+(Gap, HITL, Plan, Task, Verify, Hook) ship as renderable but their
+event-driven wiring lands at M4 (plan/task/verify/hook events) and
+M5 (gap events) when the schema gains those variants.
+
+8 new components in src/components/nodes/. Each follows the Stage B
+AgentNode archetype with type-appropriate data + Handle/Position +
+ARIA + data-testid pattern. Two specialize:
+- HITLNode: role="alert" + aria-live="assertive" (per WAI APG;
+  blocking input affordance).
+- GapNode: data-kind attribute + CSS gap-pulse keyframe per spec §3
+  Behavior ("GapNode appears immediately on tool_missing").
+
+Edge layer:
+- React Flow v12's built-in Edge.animated: true + CSS keyframes
+  (no custom Edge component; deferred to M4+ if per-edge-type need
+  surfaces).
+- Animated dashed flow on tool_invoked → tool_result transitions;
+  static dashed edges on skill_loaded.
+- Edge state machine codified in graphStore: animated=true on
+  tool_invoked; cleared on tool_result.
+
+CSS palette (spec §3 Visual Design Principles):
+- :root CSS custom properties --node-{active,complete,error,gap,hitl}
+  for consistent color encoding across all 11 node types.
+- gap-pulse keyframe for GapNode visual prominence.
+- Dash-flow keyframe for animated edges; dashed-edge style for skills.
+
+Tests (~43 new):
+- 2 new graphStore tests (FrameworkNode + lazy MCPNode + animated-
+  edge lifecycle).
+- 5 component tests per new node × 8 = 40 component tests.
+- Synthetic-state testing pattern for the 6 event-less components
+  (Gap, HITL, Plan, Task, Verify, Hook): tests pass populated state
+  directly into <ReactFlow> rather than dispatching events. Pattern
+  is locked here so M4+ extends without fighting the infrastructure.
+
+Coverage:
+- graphStore.ts stays ≥95% (primitive treatment per CLAUDE.md §5).
+- Each new node component ≥80% line via 5-tests-per-component pattern.
+- Workspace + runtime-drone + runtime-main + src-tauri gates all
+  preserved (no Rust changes in Stage C).
+
+Refs: M03-live-graph.md §C; agent-runtime-spec.md §3 Node Types +
+Behavior + Visual Design; docs/MVP-v0.1.md §M3; docs/gotchas.md
+#21 + #27 (Vitest+RTL DOM-ref staleness, applies to component tests
+that await render).
+
+https://claude.ai/code
+```
+
+---
 ## Stage D — Click-to-inspect side panel + token-spend visualization + zoom/pan
 
 *Authored in subsequent chunks.*
