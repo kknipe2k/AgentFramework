@@ -131,6 +131,23 @@ required-on for the project + patch checks via:
 Pre-M01 carry-forward; resolved per the M01 gap-analysis Important
 "Coverage delta gating mechanism" item.
 
+**Tauri shell patch-gate exception (PR #45 / M02 post-merge).** The
+`src-tauri/src/commands.rs` wrapper functions (`set_api_key`,
+`run_smoke_session`, `forward_events`) call real OS APIs (keychain via
+`keyring`, Tauri `AppHandle::emit`, `AnthropicProvider::new` against
+the real network) and are structurally untestable on CI Linux without
+a platform keychain or a Tauri runtime. The `*_with` testable seams
+in the same file (`set_api_key_with`, `run_smoke_session_with`) ARE
+unit-tested. To honor the seam-vs-wrapper split honestly, `codecov.yml`
+defines a `tauri-shell` patch gate at 50% (target) covering
+`src-tauri/**`, and the default 80% patch gate excludes that path.
+Same architectural rationale as the runtime-main exclusions
+(`providers/anthropic.rs`, `key_store.rs`, `drone_ipc/connection.rs`)
+— all OS-call holdouts wrapped by testable seams. M03+ work that
+adds non-wrapper logic to `src-tauri/src/` must re-evaluate whether
+the 50% target stays appropriate; document any change here with a
+retro entry.
+
 ### Test types and when they apply
 
 | Type | Tool | Required from |
