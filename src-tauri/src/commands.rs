@@ -394,8 +394,7 @@ mod tests {
         // The bare KeyStoreError::NotFound variant maps to SetupRequired
         // per the From impl. Exercises the same error tracing branch as
         // the test above but a different translation path.
-        let result =
-            set_api_key_with("sk-ant-test1234567890", |_key| Err(KeyStoreError::NotFound));
+        let result = set_api_key_with("sk-ant-test1234567890", |_key| Err(KeyStoreError::NotFound));
         let err = result.expect_err("expected NotFound error");
         assert!(
             matches!(err, CmdError::SetupRequired),
