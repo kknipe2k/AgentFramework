@@ -27,7 +27,7 @@ Stack rationale lives in **ADR-0002**.
 
 **License:** Apache 2.0. Contributions via DCO sign-off (`git commit -s`). See `CONTRIBUTING.md`.
 
-**Status:** pre-implementation. The runtime binary does not yet exist. M1 (Foundation) is the next deliverable — see `docs/MVP-v0.1.md` and `docs/build-prompts/M01-foundation.md`.
+**Status:** in flight. M1 Foundation (PR #34) and M2 Event Pipeline (PR #42 + #45 hotfix) merged; the runtime binary builds, smoke-tests against the live Anthropic API, and the M02 acceptance criteria are met end-to-end. M3 (Live Graph) is the next deliverable — see `docs/MVP-v0.1.md` §M3 and `docs/build-prompts/M03-live-graph.md`.
 
 ---
 
@@ -54,11 +54,11 @@ In a fresh session, read these in order before writing any code or making decisi
 
 - **Stack locked:** Tauri + Rust + TS/React (ADR-0002).
 - **Scope locked:** §0d Release Scope Matrix in spec. v0.1 is Windows-only, single-session, Novice + Promoted tiers, STANDARD mode hardcoded, `fresh_context_per_task` loop policy, Anthropic-only.
-- **Next milestone:** M1 Foundation — Cargo workspace + drone + runtime-core types + CI green. Detailed prompt at `docs/build-prompts/M01-foundation.md`.
-- **What's authored:** spec, schemas, two reference frameworks (`examples/aria/`, `examples/ralph/`), MVP build checklist, ADRs 0001–0004, OSS scaffolding (LICENSE, SECURITY, CoC, CONTRIBUTING, .github), launch communication drafts.
-- **What's NOT authored yet:** any Rust crate, any TypeScript code, any actual binary, any GitHub Release.
+- **Next milestone:** M3 Live Graph — React Flow v12 + Zustand v5 + 11 node types per spec §3 + VDR projection + Tauri 2.x desktop-shell E2E (tauri-driver + WebdriverIO). Detailed prompt at `docs/build-prompts/M03-live-graph.md`. First milestone authored on the v1.2 XML stage-prompt protocol per `STAGE-PROMPT-PROTOCOL.md`.
+- **What's shipped (M01 + M02):** Cargo workspace + 5 crates (`runtime-core`, `runtime-main`, `runtime-drone`, `runtime-sandbox`, `xtask`); type-generation pipeline (typify) for Rust types from `schemas/*.v1.json`; drone Phase 1 (heartbeat + snapshot + IPC + signal handling, ≥95% coverage); `LLMProvider` trait + `AnthropicProvider` (direct HTTP+SSE) per spec §2c; `AgentSdk` generic over provider; main↔drone IPC client (Unix socket / Windows named pipe with reconnect); Tauri 2.x shell with capability lockdown; React 18 + TypeScript + Vite skeleton renderer with `set_api_key` + `run_smoke_session` Tauri commands; OS-keychain API key storage; CI green on Linux/macOS/Windows × stable + MSRV; Codecov delta gating; full dev-logging discipline (spec §13.5); `mcp_servers` SQLite table; `signal::ContextType` scaffold; ADRs 0001–0006; M01 + M02 retrospectives + summaries + cumulative `gap-analysis.md` ledger; v1.2 XML stage-prompt protocol at `STAGE-PROMPT-PROTOCOL.md`. The runtime binary builds and the M02 smoke test calls Anthropic live and streams events back to the renderer.
+- **What's NOT authored yet (M3+):** React Flow live graph (M3); plan + verify + HITL + budget primitives (M4); gap detection + capability enforcement (M5); MCP basic (M6); registry import (M7); Workbench Builder Canvas (M8); Generators (M9); first-run + polish (M10); ship-prep + signed installer (M11); headless `agent-runtime-cli` (post-M11, per §15 share matrix); Share It module (M08+, per §15e).
 
-The implication: most early sessions are **build-from-scratch sessions**. Each milestone produces real code, tests, and CI changes — not just docs. Documentation-only work continues only if a session uncovers a spec gap that must be closed before code can land.
+The implication: M01 + M02 took ~13–15h of code execution (calibrated). Subsequent milestones build on this foundation. Each milestone produces real code, tests, and CI changes; documentation-only work continues only if a session uncovers a spec gap that must be closed before code can land.
 
 ---
 
