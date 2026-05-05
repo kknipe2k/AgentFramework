@@ -92,19 +92,28 @@ impl From<KeyStoreError> for CmdError {
 /// Returns [`CmdError::KeyStore`] if the platform keychain rejects the write.
 #[tauri::command]
 pub async fn set_api_key(key: String) -> Result<(), CmdError> {
-    // Log entry only — never log the key value (per spec §13 zero-telemetry +
-    // §13.5 dev-logging redaction rules). The length is a useful debugging
-    // signal that does not leak the secret.
-    tracing::info!(key_len = key.len(), "set_api_key invoked");
-    if let Err(e) = write_api_key(&key) {
-        tracing::error!(error = %e, "set_api_key failed at write_api_key");
-        return Err(e.into());
-    }
-    tracing::info!("set_api_key succeeded");
+    set_api_key_with(&key, write_api_key)?;
     // `key: String` is dropped at the end of this scope; the keyring crate
     // takes ownership of the bytes during set_password, so the input string
     // does not outlive this call.
     drop(key);
+    Ok(())
+}
+
+/// Test-seam for [`set_api_key`] (per CLAUDE.md §5 `*_with` archetype).
+/// Accepts an injectable writer so tests exercise the tracing + error
+/// translation paths without touching the real OS keychain. Per spec
+/// §13.5 dev-logging — never log the key value, only `key_len`.
+pub fn set_api_key_with<F>(key: &str, write: F) -> Result<(), CmdError>
+where
+    F: FnOnce(&str) -> Result<(), KeyStoreError>,
+{
+    tracing::info!(key_len = key.len(), "set_api_key invoked");
+    if let Err(e) = write(key) {
+        tracing::error!(error = %e, "set_api_key failed at write_api_key");
+        return Err(e.into());
+    }
+    tracing::info!("set_api_key succeeded");
     Ok(())
 }
 
@@ -122,17 +131,9 @@ pub async fn set_api_key(key: String) -> Result<(), CmdError> {
 /// - [`CmdError::Internal`] for SDK channel-closed conditions.
 #[tauri::command]
 pub async fn run_smoke_session(app: AppHandle) -> Result<(), CmdError> {
-    tracing::info!("run_smoke_session invoked");
-    let api_key = match read_api_key() {
-        Ok(k) => k,
-        Err(e) => {
-            // Most common surface in dev — log the structured cause so the
-            // terminal shows what the renderer's CmdError variant maps to.
-            tracing::error!(error = %e, "run_smoke_session: read_api_key failed");
-            return Err(e.into());
-        }
-    };
-    tracing::debug!("api key read from keychain");
+    let api_key = read_api_key().inspect_err(|e| {
+        tracing::error!(error = %e, "run_smoke_session: read_api_key failed");
+    })?;
     let provider = AnthropicProvider::new(api_key.clone());
     let (tx, rx) = mpsc::channel::<AgentEvent>(64);
     let app_clone = app.clone();
@@ -141,11 +142,6 @@ pub async fn run_smoke_session(app: AppHandle) -> Result<(), CmdError> {
     drop(api_key);
     // Wait for the forwarder to drain any final events before returning.
     let _ = forwarder.await;
-    if let Err(ref e) = result {
-        tracing::error!(error = %e, "run_smoke_session failed");
-    } else {
-        tracing::info!("run_smoke_session succeeded");
-    }
     result
 }
 
@@ -165,11 +161,18 @@ pub async fn run_smoke_session_with<P: LLMProvider + 'static>(
     event_tx: mpsc::Sender<AgentEvent>,
     config: AgentConfig,
 ) -> Result<(), CmdError> {
+    tracing::info!("run_smoke_session starting");
     let drone = Arc::new(DroneClient::noop());
     let sdk = AgentSdk::new(Arc::new(provider), event_tx, drone, SessionId::new());
-    sdk.run_agent(config).await.map_err(|e| CmdError::Provider {
+    let result = sdk.run_agent(config).await.map_err(|e| CmdError::Provider {
         message: e.to_string(),
-    })
+    });
+    if let Err(ref e) = result {
+        tracing::error!(error = %e, "run_smoke_session failed");
+    } else {
+        tracing::info!("run_smoke_session succeeded");
+    }
+    result
 }
 
 async fn forward_events(mut rx: mpsc::Receiver<AgentEvent>, app: AppHandle) {
@@ -306,6 +309,96 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, AgentEvent::AgentComplete { .. })),
             "expected AgentComplete in {events:?}"
+        );
+    }
+
+    /// Stub provider whose `stream()` returns a `ProviderError` so the
+    /// `run_smoke_session_with` error-path tracing branch is exercised.
+    struct FailingProvider;
+
+    #[async_trait]
+    impl LLMProvider for FailingProvider {
+        #[allow(
+            clippy::unnecessary_literal_bound,
+            reason = "trait method returns &str by signature; literal &'static str must reborrow"
+        )]
+        fn name(&self) -> &str {
+            "failing"
+        }
+        fn supports(&self) -> ProviderSupport {
+            ProviderSupport {
+                tool_use: false,
+                streaming: true,
+                thinking: false,
+            }
+        }
+        async fn stream(
+            &self,
+            _config: AgentConfig,
+        ) -> Result<BoxStream<'_, ProviderEvent>, ProviderError> {
+            Err(ProviderError::Auth)
+        }
+        async fn count_tokens(&self, _m: &[Message]) -> Result<u64, ProviderError> {
+            Ok(0)
+        }
+        async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+            Ok(Vec::new())
+        }
+        fn estimate_cost(&self, _b: &CostBreakdown, _m: &str) -> f64 {
+            0.0
+        }
+    }
+
+    #[tokio::test]
+    async fn run_smoke_session_with_error_path_emits_provider_cmd_error() {
+        // Exercises the error-branch tracing call inside run_smoke_session_with.
+        // The stub provider returns ProviderError::Auth; the seam must wrap it
+        // into CmdError::Provider per the existing translation.
+        let (tx, _rx) = mpsc::channel(8);
+        let result = run_smoke_session_with(FailingProvider, tx, smoke_config()).await;
+        let err = result.expect_err("expected provider error");
+        assert!(
+            matches!(err, CmdError::Provider { .. }),
+            "expected CmdError::Provider, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn set_api_key_with_success_path() {
+        // Inject a writer that succeeds; exercises the entry + success
+        // tracing branches in `set_api_key_with`.
+        let result = set_api_key_with("sk-ant-test1234567890", |_key| Ok(()));
+        assert!(result.is_ok(), "got {result:?}");
+    }
+
+    #[test]
+    fn set_api_key_with_error_path_maps_to_keystore_cmd_error() {
+        // Inject a writer that returns a Keyring error; exercises the error
+        // tracing branch + the From<KeyStoreError> for CmdError translation.
+        // We use the underlying NoEntry variant to construct a Keyring-wrapped
+        // KeyStoreError (same pattern as crates/runtime-main/src/key_store.rs
+        // ::tests::keyring_error_wraps_underlying_via_from).
+        let result = set_api_key_with("sk-ant-test1234567890", |_key| {
+            Err(KeyStoreError::Keyring(keyring::Error::NoEntry))
+        });
+        let err = result.expect_err("expected keyring error");
+        assert!(
+            matches!(err, CmdError::KeyStore { .. }),
+            "expected CmdError::KeyStore, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn set_api_key_with_error_path_not_found_maps_to_setup_required() {
+        // The bare KeyStoreError::NotFound variant maps to SetupRequired
+        // per the From impl. Exercises the same error tracing branch as
+        // the test above but a different translation path.
+        let result =
+            set_api_key_with("sk-ant-test1234567890", |_key| Err(KeyStoreError::NotFound));
+        let err = result.expect_err("expected NotFound error");
+        assert!(
+            matches!(err, CmdError::SetupRequired),
+            "expected CmdError::SetupRequired, got {err:?}"
         );
     }
 

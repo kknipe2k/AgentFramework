@@ -22,5 +22,11 @@ tokio              = { workspace = true, features = ["macros", "rt-multi-thread"
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
+[dev-dependencies]
+# Used by commands.rs::tests to construct keyring::Error variants for the
+# `set_api_key_with` error-path tests (mirrors the dev-dep choice in
+# crates/runtime-main/Cargo.toml).
+keyring            = { workspace = true }
+
 [lints]
 workspace = true
