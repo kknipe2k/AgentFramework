@@ -2367,10 +2367,555 @@ https://claude.ai/code
 ```
 
 ---
+<!-- ============================================================ -->
+<!-- STAGE E — VDR projection + SQL inspector + graph persistence  -->
+<!-- ============================================================ -->
+
 ## Stage E — VDR projection + SQL inspector + graph persistence
 
-*Authored in subsequent chunks.*
+**WEBCHECK:** verify each URL against this stage's prompt body **before** the fresh session opens. If any claim is stale, update this section in `M03-live-graph.md` BEFORE pasting Stage E's CLI prompt to the fresh session.
 
+- <https://www.sqlite.org/lang_select.html> — confirm SQLite SELECT statement syntax + restrictions; needed for the SQL inspector's allow-list validation (only SELECT permitted; DDL/DML/PRAGMA rejected)
+- <https://github.com/rusqlite/rusqlite> — confirm rusqlite v0.32 (M02 pin) prepared-statement + column-iteration API; needed for the read-only query path that returns rows as JSON
+- <https://www.sqlite.org/lang_keywords.html> — confirm reserved keywords (used in SQL parsing for the SELECT-only validator)
+- <https://docs.rs/serde_rusqlite/latest/serde_rusqlite/> — evaluate whether the `serde_rusqlite` crate adds enough value over hand-rolled `Row → serde_json::Value` conversion for ~50 lines of read-only query handling. Decision: hand-roll (per CLAUDE.md §6 "no third-party dependencies without `cargo deny check` passing"; one-off conversion logic doesn't justify a new dep)
+- <https://v2.tauri.app/develop/calling-rust/> — confirm Tauri 2.x command pattern for commands that take a `String` argument and return `Vec<Value>`; needed for the new `query_session_db` + `replay_session` commands
+
+### E.1 Problem Statement
+
+Stages B–D ship a graph that lives **only as long as the session window stays open**. Per spec §3 Behavior ("Graph state is persisted per session — reopen a session and the graph reconstructs") + MVP §M3 acceptance criteria ("Graph reconstructs after page reload (state from SQLite)"), the graph must persist. Plus per spec §2b ("VDR is a projection of signals 4 (decision) + 5 (verify)") and MVP §M3 ("populated table + simple SQL inspector"), Stage E delivers the VDR projection + a renderer-side SQL inspector for ad-hoc query of session state.
+
+Three pieces, one stage:
+
+1. **VDR projection (drone-side, continuous).** A new `runtime-drone::vdr` module reads signals from the existing `signals` table (M01-shipped) and writes correlated VDR rows to the `vdr` table. Idempotent: re-running over the same signals produces the same VDR row count (no duplicates). Triggered after each signal write (drone-internal — no IPC roundtrip per signal). Per spec §2b's projection model: signals are the source of truth, VDR is the read-optimized projection.
+
+2. **SQL inspector (renderer + IPC).** A new `<SqlInspector>` component lets the user paste a SELECT statement and view results as a table. Renderer calls a new Tauri command `query_session_db(sql: String) -> Vec<JsonRow>`; main proxies to drone via a new `DroneCommand::QuerySessionDb`; drone validates the SQL is **SELECT-only** (no DDL/DML/PRAGMA — read-only is the security boundary), executes, returns rows as JSON. Per spec §13 zero-telemetry: the inspector is dev-mode + user-initiated; nothing leaves the machine.
+
+3. **Graph persistence (replay-from-signals on app start).** When the renderer mounts, if a previous session's `session_id` is in `localStorage` or the URL hash, main fires a new `replay_session(session_id)` Tauri command. Main reads signals via drone IPC, translates each signal → AgentEvent (the inverse of the M02 EventPipeline), and emits them through the existing `app.emit("agent_event", ...)` channel. The renderer's `graphStore.applyEvent` consumes them in order — same code path as live events; idempotency from Stage B/C tests guarantees correctness.
+
+The cardinal architectural decision: **VDR is a drone-internal projection, not an IPC-driven one.** The drone has direct SQLite access; running the projector on every signal-write costs O(1) per signal (decision/verify signals only; ~5 ms per row on M01's hardware baseline). Pushing the projection to main would require IPC roundtrips on every write. Drone-internal is the right shape per spec §1 (drone owns persistence) + §2b (VDR is a read-optimized projection of signals).
+
+The second decision: **graph persistence is replay-from-signals, not snapshot-the-store.** Snapshotting the Zustand store would be simpler short-term but conflicts with spec's append-only model (signals are immutable; VDR is derived; replay is the canonical reconstruction path). Replay also tests `graphStore.applyEvent`'s idempotency property end-to-end — every event flows through the same code path whether live or replayed.
+
+The third decision: **SELECT-only validation via parser, not regex.** Regex-matching `^SELECT` is trivially bypassed (`SELECT 1; DROP TABLE foo`). Drone uses `sqlite3_prepare_v2` to compile the SQL, then walks the parsed statement to assert it's a single `SELECT` (no compound statements via semicolons; no `WITH RECURSIVE` modifying CTEs; no `pragma_table_info`-shape pragma calls). Future M03+ work may extend with `EXPLAIN` + parameterized queries; v0.1 is `SELECT * FROM ... WHERE ...` shape.
+
+The fourth decision: **session-id discovery via the existing M02 keychain pattern.** No new persistence for "which session was last open"; the renderer reads from `localStorage.lastSessionId` (set on session start). This avoids a fourth Tauri command for "give me the most-recent session"; main just reads what the renderer sends.
+
+**One-line success criterion:** after running the M02 smoke test once, the user can: (a) open the SQL inspector and run `SELECT * FROM signals WHERE session_id = ?` to see the live signal log; (b) reload the app — the graph reconstructs identically (same nodes, same edges, same selected-node state) from the persisted signal log; (c) the `vdr` table populates with at least one row from the `decision_record` event the smoke test emits (M02.D's heuristic decision-extractor produces these); (d) renderer Vitest coverage on `SqlInspector.tsx` ≥80%; drone-main runtime coverage stays ≥95% on the new vdr module.
+
+**New artifacts:**
+- `crates/runtime-drone/src/vdr.rs` — VDR projection engine (drone-internal continuous projector)
+- `crates/runtime-drone/tests/vdr_projection.rs` — projection idempotence + correlation correctness tests
+- `crates/runtime-main/src/sdk/replay.rs` — signal-log → AgentEvent translator (inverse of EventPipeline)
+- `crates/runtime-main/tests/sdk_replay.rs` — replay translation tests
+- `src/components/SqlInspector.tsx` — renderer-side SQL inspector
+- `tests/unit/components/SqlInspector.test.tsx` — render + execute + error-path tests
+- New `DroneCommand` variants in `runtime-core::drone`: `QuerySessionDb { sql: String }`, `ReadSignals { session_id: String }`
+- New Tauri commands in `src-tauri/src/commands.rs`: `query_session_db`, `replay_session`
+
+### E.2 Files to Change
+
+| File | Change |
+|---|---|
+| `crates/runtime-drone/src/vdr.rs` | **New** — VDR projection module; `project_signal(conn, signal)` for the per-signal projection path; `project_session(conn, session_id)` for full-session replay (used at SQL-inspector load time) |
+| `crates/runtime-drone/src/db.rs` | **Edited** — add `vdr_insert(conn, vdr_row)` + `vdr_query_for_signal(conn, signal_id)` helpers + `signals_for_session(conn, session_id)` helper |
+| `crates/runtime-drone/src/command_handler.rs` | **Edited** — handle two new DroneCommand variants: `QuerySessionDb { sql }` (read-only SQL execution; SELECT-only validation; rows-as-JSON response) + `ReadSignals { session_id }` (returns all signals for the session as JSON) |
+| `crates/runtime-drone/src/heartbeat.rs` | **Edited** — wire the VDR projector to fire after each signal write (drone-internal — no IPC) |
+| `crates/runtime-drone/tests/vdr_projection.rs` | **New** — 6 tests: projection produces row for decision signal; idempotent on re-run; correlates with tool signal; rejects non-SELECT SQL; SELECT returns rows as JSON; replay-full-session reproduces VDR table |
+| `crates/runtime-drone/tests/integration.rs` | **Edited** — extend with QuerySessionDb + ReadSignals roundtrip integration tests |
+| `crates/runtime-core/src/drone.rs` | **Edited** — add `QuerySessionDb { sql: String }` + `ReadSignals { session_id: String }` to `DroneCommand` enum; matching `QueryResult { rows: Vec<JsonValue> }` + `SignalLog { signals: Vec<JsonValue> }` to `DroneEvent` enum (or `DroneResponse` if a response type exists) |
+| `crates/runtime-main/src/drone_ipc/client.rs` | **Edited** — add `query_session_db(sql: String) -> Result<Vec<Value>>` + `read_signals(session_id: String) -> Result<Vec<Value>>` methods on `DroneClient`; both wrap the underlying `send_with_reconnect` with the new command shapes |
+| `crates/runtime-main/src/sdk/replay.rs` | **New** — `replay_signals_to_events(signals: Vec<Value>) -> Vec<AgentEvent>` pure-function translator; reverse of M02.D's EventPipeline |
+| `crates/runtime-main/tests/sdk_replay.rs` | **New** — 4 tests: each signal type translates correctly; ordering preserved; missing fields don't crash; large signal log (~100 entries) translates without OOM |
+| `src-tauri/src/commands.rs` | **Edited** — add `query_session_db(sql: String) -> Result<Vec<Value>, CmdError>` + `replay_session(session_id: String) -> Result<(), CmdError>` Tauri commands; both with `*_with` testable seams (per CLAUDE.md §5 archetype) |
+| `src-tauri/src/main.rs` | **Edited** — register the two new commands in the `tauri::Builder` |
+| `src/components/SqlInspector.tsx` | **New** — text area for SQL input + Execute button + results table; ARIA-compliant; debounced execute (avoid spamming drone on every keystroke) |
+| `tests/unit/components/SqlInspector.test.tsx` | **New** — 5 tests: renders empty state; user types SQL + clicks Execute → invoke called with the SQL; renders results table on success; renders error state on rejection; debounces rapid clicks |
+| `src/lib/ipc.ts` | **Edited** — add `invokeQuerySessionDb(sql: string) -> Promise<Row[]>` + `invokeReplaySession(sessionId: string) -> Promise<void>` wrappers |
+| `src/App.tsx` | **Edited** — add `<SqlInspector>` to the layout (below the graph + inspector panel); add `useEffect` on mount that reads `localStorage.lastSessionId` and calls `invokeReplaySession` if present; persist `localStorage.lastSessionId` on session-start |
+| `tests/unit/App.test.tsx` | **Edited** — add 2 tests: replay-on-mount calls invokeReplaySession with stored session id; replay populates the graph (subscribes to events fired by main during replay) |
+| `tests/unit/ipc.test.ts` | **Edited** — add tests for the two new wrappers |
+| `CHANGELOG.md` | **Edited** — `[Unreleased]` entry under "Added — M03.E" |
+
+### E.3 Detailed Changes
+
+#### `crates/runtime-drone/src/vdr.rs` — projection engine
+
+```rust
+//! VDR projection. Reads signals 4 (decision) + 5 (verify) per spec §2b
+//! and produces correlated VDR rows. Drone-internal continuous projector;
+//! triggered after each signal write (no IPC roundtrip per signal).
+//!
+//! Idempotence: re-running `project_signal(conn, signal)` over the same
+//! signal twice produces the same VDR row (uses `INSERT OR IGNORE` plus
+//! a UNIQUE constraint on `vdr.contributing_signal_id`).
+
+use rusqlite::{params, Connection, Result};
+use serde_json::Value;
+
+/// Project a single signal into the VDR table. Returns the number of rows
+/// inserted (0 if signal type does not produce VDR rows or the row already
+/// exists; 1 if a new row was inserted).
+pub fn project_signal(conn: &Connection, signal: &Signal) -> Result<usize> {
+    match signal.signal_type.as_str() {
+        "decision" | "verify" => {
+            let row = build_vdr_row(conn, signal)?;
+            conn.execute(
+                "INSERT OR IGNORE INTO vdr (
+                    id, session_id, contributing_signal_id, kind,
+                    decision_text, rationale, alternatives_considered,
+                    confidence, tool_id, tool_input, tool_output,
+                    outcome, token_cost, snapshot_id, created_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                params![
+                    row.id, row.session_id, row.contributing_signal_id, row.kind,
+                    row.decision_text, row.rationale, row.alternatives_considered,
+                    row.confidence, row.tool_id, row.tool_input, row.tool_output,
+                    row.outcome, row.token_cost, row.snapshot_id, row.created_at,
+                ],
+            )
+        }
+        _ => Ok(0), // non-decision/verify signals do not produce VDR rows
+    }
+}
+
+/// Project an entire session's signals. Used at SQL-inspector load time
+/// + as a fallback consistency check. O(N) over signal count.
+pub fn project_session(conn: &Connection, session_id: &str) -> Result<usize> {
+    let signals = signals_for_session(conn, session_id)?;
+    let mut total = 0;
+    for signal in signals {
+        total += project_signal(conn, &signal)?;
+    }
+    Ok(total)
+}
+
+fn build_vdr_row(conn: &Connection, signal: &Signal) -> Result<VdrRow> {
+    // For decision signals: extract decision_text + rationale + confidence
+    // from signal.payload_json. For verify signals: extract pass/fail +
+    // failing_items. Correlate with the tool signal via signal.pre_signal_id
+    // (decision-followed-by-tool-call) or signal.parent_signal_id (verify-
+    // ran-on-tool-result). Token cost: sum from contributing tool signals'
+    // payload_json.tokens_in + tokens_out (M03 Stage D).
+    todo!("implementation per spec §2b VDR row shape; full body authored by fresh session")
+}
+
+// ... helper functions: signals_for_session, etc. — the fresh session
+// fills these in following the existing db.rs query pattern (M01.C archetype) ...
+```
+
+**Schema migration:** the existing `vdr` table (M01) needs a `contributing_signal_id` column with a UNIQUE constraint for the idempotence guarantee. Stage E adds a migration in `db.rs::init_schema` (idempotent — `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` semantics + `CREATE UNIQUE INDEX IF NOT EXISTS`).
+
+#### `crates/runtime-drone/src/command_handler.rs` — new IPC commands
+
+Extend the existing `dispatch_command` switch with two new variants:
+
+```rust
+DroneCommand::QuerySessionDb { sql } => {
+    if !is_select_only(&sql) {
+        return Err(DroneError::SqlValidation(format!(
+            "only SELECT statements permitted; got: {}",
+            &sql[..sql.len().min(80)]
+        )));
+    }
+    let rows = execute_select(&conn, &sql)?;
+    Ok(DroneResponse::QueryResult { rows })
+}
+
+DroneCommand::ReadSignals { session_id } => {
+    let signals = signals_for_session_as_json(&conn, &session_id)?;
+    Ok(DroneResponse::SignalLog { signals })
+}
+```
+
+The `is_select_only` validator is **parser-based, not regex-based**. Per Decision #3 in E.1: regex-matching `^SELECT` is trivially bypassed. Use `sqlite3_prepare_v2` to compile the SQL; check the resulting prepared statement's `sql()` for compound statements via semicolons + verify `column_count() > 0` (DDL/DML have zero output columns) + reject `pragma_*` and `WITH RECURSIVE` modifying CTEs explicitly.
+
+```rust
+fn is_select_only(sql: &str) -> bool {
+    // Compile the SQL; if it doesn't compile as a single statement,
+    // reject. If it produces zero output columns, it's not a SELECT
+    // (DDL/DML have zero columns). Reject pragma calls explicitly.
+    let trimmed = sql.trim();
+    if trimmed.contains(';') {
+        // Compound statements via semicolons — reject (one statement only).
+        // SQLite ignores trailing whitespace + a single trailing semicolon
+        // but multiple semicolons indicate compound. Conservative: reject.
+        let stripped = trimmed.trim_end_matches(';').trim_end();
+        if stripped.contains(';') {
+            return false;
+        }
+    }
+    let lower = trimmed.to_lowercase();
+    if lower.starts_with("pragma ") {
+        return false;
+    }
+    // Use rusqlite's column_count() check after prepare:
+    // SELECT and EXPLAIN return columns; everything else returns 0.
+    let dummy_conn = rusqlite::Connection::open_in_memory().unwrap_or_else(|_| panic!("in-memory open"));
+    match dummy_conn.prepare(sql) {
+        Ok(stmt) => stmt.column_count() > 0 && lower.starts_with("select"),
+        Err(_) => false,
+    }
+}
+```
+
+Tested via the new `vdr_projection.rs::rejects_non_select_sql` test (per E.4).
+
+#### `crates/runtime-main/src/sdk/replay.rs` — signal-to-event translator
+
+```rust
+//! Replay: signal log → AgentEvent stream. Inverse of M02.D's EventPipeline.
+//! Used when the renderer mounts with a known session_id; main reads
+//! signals via drone IPC, translates them here, emits to the renderer
+//! via the existing `app.emit("agent_event", ...)` channel.
+
+use runtime_core::event::AgentEvent;
+use serde_json::Value;
+
+/// Pure-function translator. Each signal becomes one AgentEvent.
+/// Ordering is preserved (signals are sorted by timestamp at the drone).
+/// Idempotent at the renderer side: graphStore.applyEvent's idempotence
+/// property guarantees correctness when called twice.
+pub fn replay_signals_to_events(signals: &[Value]) -> Vec<AgentEvent> {
+    signals.iter().filter_map(signal_to_event).collect()
+}
+
+fn signal_to_event(signal: &Value) -> Option<AgentEvent> {
+    let signal_type = signal.get("type")?.as_str()?;
+    let payload = signal.get("payload_json")?;
+    match signal_type {
+        "agent" => {
+            // payload has event="spawned" | "complete" | "error"
+            let event = payload.get("event")?.as_str()?;
+            match event {
+                "spawned" => Some(AgentEvent::AgentSpawned { /* ... */ }),
+                "complete" => Some(AgentEvent::AgentComplete { /* ... */ }),
+                "error" => Some(AgentEvent::AgentError { /* ... */ }),
+                _ => None,
+            }
+        }
+        "tool" => Some(AgentEvent::ToolInvoked { /* ... */ }),
+        "skill" => Some(AgentEvent::SkillLoaded { /* ... */ }),
+        "decision" => Some(AgentEvent::DecisionRecord { /* ... */ }),
+        "session" => {
+            let event = payload.get("event")?.as_str()?;
+            match event {
+                "start" => Some(AgentEvent::SessionStart { /* ... */ }),
+                _ => None, // session_end is not in v0.1 AgentEvent schema
+            }
+        }
+        _ => None, // unknown signal type — skip silently per spec §2b's "more types may exist"
+    }
+}
+```
+
+The fresh session fills in the `/* ... */` extraction from each signal's `payload_json` shape per M02 Signal Schema v2 (see `.aria/docs/SIGNAL-SCHEMA-V2.md` if the reference is needed). Tested via the 4 tests in `crates/runtime-main/tests/sdk_replay.rs` per E.4.
+
+#### `src/components/SqlInspector.tsx` — renderer SQL inspector
+
+```typescript
+import { useState } from 'react';
+import { invokeQuerySessionDb } from '../lib/ipc';
+
+export function SqlInspector() {
+  const [sql, setSql] = useState('SELECT * FROM signals LIMIT 10;');
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function handleExecute(): Promise<void> {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await invokeQuerySessionDb(sql);
+      setRows(result);
+    } catch (e) {
+      console.error('SQL inspector error:', e);
+      setError(unwrapCmdError(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <section aria-label="SQL inspector" className="sql-inspector" data-testid="sql-inspector">
+      <textarea
+        value={sql}
+        onChange={(e) => setSql(e.target.value)}
+        rows={3}
+        aria-label="SQL query"
+        disabled={loading}
+      />
+      <button type="button" onClick={() => void handleExecute()} disabled={loading || sql.trim().length === 0}>
+        {loading ? 'Executing…' : 'Execute'}
+      </button>
+      {error && <p className="error" role="alert">{error}</p>}
+      {rows.length > 0 && (
+        <table className="sql-results">
+          <thead>
+            <tr>{Object.keys(rows[0]).map((k) => <th key={k}>{k}</th>)}</tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={i}>
+                {Object.values(row).map((v, j) => <td key={j}>{String(v)}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+```
+
+#### `src/App.tsx` — replay-on-mount + persist session-id
+
+Extend the existing `useEffect` block:
+
+```typescript
+useEffect(() => {
+  // Replay-on-mount: if a previous session-id is in localStorage,
+  // request main to read its signal log and re-emit AgentEvents.
+  // graphStore.applyEvent processes them in order — same code path
+  // as live events; idempotence property guarantees correctness.
+  const lastSessionId = localStorage.getItem('lastSessionId');
+  if (lastSessionId) {
+    void invokeReplaySession(lastSessionId).catch((e) => {
+      console.error('Replay session error:', e);
+    });
+  }
+
+  // ... existing subscribeAgentEvents wiring ...
+
+  return () => {
+    // ... existing cleanup ...
+  };
+}, []);
+```
+
+When `agent_event` arrives with `type: 'session_start'`, write `event.session_id` to `localStorage.lastSessionId` so the next mount can replay.
+
+### E.4 Tests
+
+#### Pedantic-pass preflight
+
+Stage E adds new Rust modules (vdr.rs, replay.rs) and TS components (SqlInspector). Apply `docs/gotchas.md` #21 + the existing M02 traps. Stage E specifics:
+
+- [ ] `derive_partial_eq_without_eq` on VDR row types (likely contain serde_json::Value) — needs `#[allow]` with rationale
+- [ ] `unused_async` — drone command handlers may be sync (the existing M01 dispatch is sync); keep new variants sync too
+- [ ] SELECT-only validator is **parser-based, not regex-based** (per Decision #3); regex-only attempts will fail security review
+
+Vitest+RTL trap (per `docs/gotchas.md` #27) applies to SqlInspector tests: any `await waitFor(() => loading toggle)` followed by interaction must re-query the elements via `findByLabelText`.
+
+#### Default test plan for stages adding a new safety primitive
+
+`vdr.rs` is a new safety primitive — bug here corrupts the VDR table. Treat as ≥95% line per the runtime-drone gate. `replay.rs` is normal coverage (≥80%) — pure function with deterministic translation; less risk because it's read-only over the persisted log.
+
+#### Test plan (Stage E)
+
+`crates/runtime-drone/tests/vdr_projection.rs` — **new** (6 tests):
+
+1. **decision signal produces VDR row** — write a decision signal, call project_signal, assert vdr table has 1 row with matching contributing_signal_id
+2. **verify signal produces VDR row** — same shape for verify type
+3. **non-decision/non-verify signal produces nothing** — write a tool signal, call project_signal, assert vdr table count unchanged
+4. **idempotent on re-run** — call project_signal twice on the same signal, assert vdr count is 1 (UNIQUE constraint enforces)
+5. **project_session reproduces VDR table** — write 5 signals (mix of types), call project_session, assert correct subset projected
+6. **rejects non-SELECT SQL** — call is_select_only with 6 attack vectors (DROP, DELETE, INSERT, UPDATE, PRAGMA, compound semicolons); assert all rejected
+
+`crates/runtime-drone/tests/integration.rs` — **edited** (2 new tests):
+
+1. **QuerySessionDb roundtrip** — drone subprocess receives QuerySessionDb command with valid SELECT; returns rows; main parses; assert correctness
+2. **ReadSignals roundtrip** — drone returns signals for a populated session; main parses; assert ordering
+
+`crates/runtime-main/tests/sdk_replay.rs` — **new** (4 tests):
+
+1. **each signal type translates to expected AgentEvent** — feed mock signals of each type; assert AgentEvent variants match
+2. **ordering preserved** — feed signals out of timestamp order (drone returns sorted; test simulates raw); assert output ordering matches input order
+3. **missing fields don't crash** — feed signal with missing payload_json fields; assert filtered out, not panicked
+4. **large signal log translates without OOM** — feed 100-signal log; assert duration < 100ms + memory bounded (per `docs/gotchas.md` #28 bounded streams)
+
+`tests/unit/components/SqlInspector.test.tsx` — **new** (5 tests):
+
+1. **renders default SQL placeholder + Execute button** — assert visible
+2. **user types SQL + clicks Execute → invokeQuerySessionDb called with the SQL** — mock the IPC; assert call shape
+3. **renders results table on success** — IPC returns rows; assert table headers + cells
+4. **renders error state on rejection** — IPC rejects with CmdError; assert error message via `unwrapCmdError`
+5. **debounces rapid Execute clicks** — fire 3 clicks within 100ms; assert IPC called once
+
+`tests/unit/App.test.tsx` — **edited** (2 new tests):
+
+1. **mount replays session if localStorage has lastSessionId** — set localStorage, render App, assert invokeReplaySession called with that id
+2. **session_start event persists session_id to localStorage** — fire session_start through subscribeAgentEvents, assert localStorage.lastSessionId set
+
+#### Coverage target
+
+- Workspace Rust: ≥80% (preserved)
+- runtime-drone: ≥95% (preserved; new vdr.rs adds ~150 lines covered by 6 tests)
+- runtime-main: ≥95% (preserved; new replay.rs covered by 4 tests)
+- src-tauri: 50% patch gate (new commands.rs functions; testable seams cover the logic — wrappers are excluded by the `tauri-shell` codecov path)
+- src/ frontend: ≥80% with **graphStore.ts ≥95%** (preserved) + **layout.ts ≥95%** (preserved); SqlInspector.tsx ≥80%
+
+**Doc-to-CI invariant.** Stage E adds runtime-main `replay.rs` (testable) — no new exclusion. Stage E adds runtime-drone `vdr.rs` (testable) — no new exclusion. SqlInspector renders results from a Tauri command — the `*_with` testable seam in `src-tauri/src/commands.rs` keeps the new commands' coverage in the seam, the wrapper-only lines counted under the 50% `tauri-shell` gate.
+
+### E.5 CLI Prompt
+
+```xml
+<work_stage_prompt id="M03.E">
+  <context>
+    Stage E of M03 (Live Graph). VDR projection (drone-internal continuous
+    projector reading signals → vdr table) + SQL inspector (renderer-side
+    SELECT-only query UI) + graph persistence (replay-from-signals on app
+    mount). Largest stage in M03 — touches drone Rust, runtime-main Rust,
+    src-tauri Rust, and the renderer. Builds on Stage D's inspector panel
+    + token tracking. Stage F does not start until Stage E's commit is
+    on the milestone branch.
+  </context>
+
+  <read_first>
+    <file>CLAUDE.md</file>
+    <file>STAGE-PROMPT-PROTOCOL.md</file>
+    <file>docs/build-prompts/M03-live-graph.md (Stage E sections E.1–E.4)</file>
+    <file>agent-runtime-spec.md §1 (drone) §2b (signals + VDR) §3 (graph behavior)</file>
+    <file>docs/MVP-v0.1.md §M3</file>
+    <file>docs/gotchas.md (especially #21 #27 #28)</file>
+  </read_first>
+
+  <read_reference>
+    <file purpose="M01 drone db.rs schema + WAL pragma archetype to extend with VDR migration">crates/runtime-drone/src/db.rs</file>
+    <file purpose="M01 drone command_handler.rs dispatch pattern to extend with QuerySessionDb + ReadSignals">crates/runtime-drone/src/command_handler.rs</file>
+    <file purpose="M02.D EventPipeline shape — replay.rs is the inverse direction">crates/runtime-main/src/sdk/event_pipeline.rs</file>
+    <file purpose="M02.D drone IPC client + reconnect pattern to extend with new command methods">crates/runtime-main/src/drone_ipc/client.rs</file>
+    <file purpose="M02 Tauri command archetype + *_with testable seam pattern">src-tauri/src/commands.rs</file>
+    <file purpose="Stage D InspectorPanel pattern (sibling component for SqlInspector)">src/components/InspectorPanel.tsx</file>
+    <file purpose="Stage A xtask drift check pattern (no schema changes Stage E but pattern is referenced)">crates/xtask/tests/check_drift.rs</file>
+  </read_reference>
+
+  <read_prior_stages>
+    <retrospective section="[END] Decisions for the next stage">docs/build-prompts/retrospectives/M03.A-retrospective.md</retrospective>
+    <retrospective section="[END] Decisions for the next stage">docs/build-prompts/retrospectives/M03.B-retrospective.md</retrospective>
+    <retrospective section="[END] Decisions for the next stage">docs/build-prompts/retrospectives/M03.C-retrospective.md</retrospective>
+    <retrospective section="[END] Decisions for the next stage">docs/build-prompts/retrospectives/M03.D-retrospective.md</retrospective>
+  </read_prior_stages>
+
+  <deliverable ref="docs/build-prompts/M03-live-graph.md" section="E.3 Detailed Changes"/>
+
+  <test_plan_required>true</test_plan_required>
+
+  <execution_steps>
+    <step name="write_failing_tests" budget="1"/>
+    <step name="implement" budget="1"/>
+    <step name="verify_gates" budget_iterations="3"/>
+    <step name="fill_retrospective"/>
+    <step name="surface"/>
+  </execution_steps>
+
+  <acceptance_criteria ref="docs/build-prompts/M03-live-graph.md" section="E.4 Tests"/>
+
+  <scope_locks ref="docs/build-prompts/M03-live-graph.md" section="Key constraints"/>
+
+  <gates milestone="M03"/>
+
+  <self_correction_budget>3</self_correction_budget>
+
+  <gotchas>
+    <trap>SELECT-only SQL validation MUST be parser-based, not regex-based. Regex-matching ^SELECT is trivially bypassed (`SELECT 1; DROP TABLE foo` slips through). Use `rusqlite::Connection::prepare` + `column_count() > 0` + reject compound semicolons + reject `pragma_*`. Per Decision #3 in E.1.</trap>
+    <trap>VDR projection is drone-INTERNAL (continuous, post-signal-write), not main-side via IPC. Pushing to main means IPC roundtrips per signal — wrong shape. Per Decision #1 in E.1.</trap>
+    <trap>Graph persistence is replay-FROM-SIGNALS, not snapshot-the-store. Snapshotting Zustand directly would conflict with spec's append-only model. Replay also tests applyEvent's idempotency end-to-end. Per Decision #2 in E.1.</trap>
+    <trap>VDR idempotence: `INSERT OR IGNORE` + UNIQUE constraint on contributing_signal_id. Without the constraint, re-running project_signal duplicates rows. Schema migration in db.rs MUST add the constraint via `CREATE UNIQUE INDEX IF NOT EXISTS`.</trap>
+    <trap>Signal-log replay can be large (100+ signals on a real session). The test for OOM behavior (per docs/gotchas.md #28) bounds the input + asserts memory-bounded translation. Don't use unbounded streaming patterns.</trap>
+    <trap>The new Tauri commands (`query_session_db`, `replay_session`) MUST have `*_with` testable seams (per CLAUDE.md §5 archetype). Without seams, the wrapper lines fall under the 50% tauri-shell codecov gate AND the testable logic stays in the seam at 80%+.</trap>
+    <trap>localStorage is NOT shared across Tauri instances or sessions (it's webview-scoped). For M03, localStorage.lastSessionId is sufficient; M04+ may persist last-session-id in the SQLite database itself if cross-instance state is needed. Don't over-engineer for M03.</trap>
+  </gotchas>
+
+  <execution_warnings>
+    <warning>DO NOT add new schema changes to schemas/event.v1.json in Stage E. Stage E is signal-log replay + VDR — no new event variants. Stage D's schema bump is the last AgentEvent schema change in M03.</warning>
+    <warning>DO NOT add `serde_rusqlite` or other third-party crates without `cargo deny check` passing per CLAUDE.md §6 hard rule. Hand-roll the Row → JSON conversion (~50 lines) instead.</warning>
+    <warning>DO NOT extend the SQL inspector with parameterized queries / EXPLAIN / WITH RECURSIVE in Stage E. v0.1 is `SELECT * FROM ... WHERE ...` shape. M03+ may extend.</warning>
+    <warning>DO NOT touch SetupPanel, SmokeButton, ipc.ts (beyond the two new wrappers), or M02 keychain code — preserved verbatim. Stage E adds; doesn't refactor existing surfaces.</warning>
+  </execution_warnings>
+
+  <time_box estimate_hours="5"/>
+
+  <retrospective_requirements ref="docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md" section="M[NN].&lt;X&gt; — Stage Retrospective">
+    <special_log>Decisions for Stage F: whether the SQL inspector + graph replay UX feels right or needs refactor for the Tauri-driver E2E (Stage F's E2E suite must navigate to the inspector + verify replay reconstructs); whether the VDR projection performance is acceptable with 100+ signals (drone-internal projector should be <10ms per signal); whether the localStorage-based session-id persistence will hold up against M04's multi-session expectations or needs an early SQLite-side persistence; whether the SELECT-only validator's rejection of compound statements is too strict for legitimate use cases.</special_log>
+  </retrospective_requirements>
+
+  <commit_protocol ref="CLAUDE.md" section="8. PR + commit workflow (CRITICAL — read carefully)"/>
+  <commit_message ref="docs/build-prompts/M03-live-graph.md" section="E.6 Commit Message"/>
+
+  <approval_surface>
+    <item>diff stat (git diff --stat HEAD) — Stage E is the largest stage; expect ~30+ files</item>
+    <item>gate results (each gate, pass/fail, key numbers including new vdr.rs ≥95% + replay.rs ≥80% + SqlInspector.tsx ≥80% + drift check + drone integration tests)</item>
+    <item>retrospective (filled-in [END] section with three-axis scoring + verdict + decisions for Stage F + [END] Coverage holdouts subsection)</item>
+    <item>draft commit message from M03-live-graph.md E.6 Commit Message section</item>
+    <item>screenshot or paste of the rendered app showing: (a) graph live-rendered after smoke-test run; (b) SQL inspector below with `SELECT * FROM signals` results visible; (c) reload demonstration — close the app, reopen, graph reconstructs identically</item>
+    <item>explicit statement: "Stage M03.E is ready. I will not commit until you approve."</item>
+  </approval_surface>
+</work_stage_prompt>
+```
+
+### E.6 Commit Message
+
+```
+feat(runtime+renderer): M03 Stage E — VDR projection + SQL inspector + replay
+
+Largest stage in M03. Three pieces, one stage:
+
+- VDR projection: drone-internal continuous projector reads signals
+  4 (decision) + 5 (verify) per spec §2b → writes correlated vdr
+  table rows. New `runtime_drone::vdr` module. Idempotent via
+  UNIQUE constraint on contributing_signal_id (schema migration in
+  db.rs::init_schema). Triggered after each signal write — no IPC
+  roundtrip per signal.
+- SQL inspector: new <SqlInspector> renderer component + new Tauri
+  command query_session_db(sql) → main proxies to drone via new
+  DroneCommand::QuerySessionDb. Drone validates SELECT-only via
+  parser-based rusqlite::Connection::prepare + column_count() > 0
+  (NOT regex-based — regex is trivially bypassable). Returns rows
+  as JSON.
+- Graph persistence: replay-from-signals on app mount. New
+  invokeReplaySession(session_id) Tauri command; main reads signals
+  via new DroneCommand::ReadSignals; new runtime-main::sdk::replay
+  module translates signal log → AgentEvent stream (inverse of
+  M02.D EventPipeline); main re-emits via existing app.emit
+  ("agent_event") channel. graphStore.applyEvent's idempotence
+  (Stage B/C tested) guarantees correctness.
+
+Four architectural decisions locked:
+- VDR is drone-internal projection, not IPC-driven (perf + spec
+  alignment).
+- Persistence is replay-from-signals, not snapshot-the-store
+  (spec append-only model + tests applyEvent idempotence end-to-end).
+- SELECT-only validation is parser-based, not regex-based (security).
+- Session-id discovery via localStorage.lastSessionId (M03 sufficient;
+  M04+ may persist in SQLite for cross-instance).
+
+~30 files in scope: 4 NEW Rust modules (vdr.rs + vdr_projection.rs
+test + replay.rs + sdk_replay.rs test), 2 NEW renderer files
+(SqlInspector + test), ~12 EDIT (drone db + command_handler +
+heartbeat + integration test, runtime-core::drone + runtime-main
+client + sdk-mod, src-tauri commands + main, src App + ipc + tests).
+
+~17 new tests: 6 vdr_projection (decision/verify/non-match/
+idempotence/full-session/SELECT-only-rejection); 2 drone integration
+roundtrips; 4 replay (per-type/ordering/missing-fields/100-signal-OOM);
+5 SqlInspector (default/execute/results/error/debounce); 2 App-level
+(replay-on-mount + session-id-persist).
+
+Coverage: vdr.rs ≥95% line (new primitive — bug corrupts the VDR
+table); replay.rs ≥80% (pure function); SqlInspector ≥80%;
+runtime-drone stays ≥95%; runtime-main stays ≥95%.
+
+Refs: M03-live-graph.md §E; agent-runtime-spec.md §1 §2b §3 §13;
+docs/MVP-v0.1.md §M3 acceptance criteria #2 (graph reconstructs
+after page reload) + #6 (VDR populated table); CLAUDE.md §5 *_with
+archetype + §6 cargo deny no-new-deps; docs/gotchas.md #21 #27 #28.
+
+https://claude.ai/code
+```
+
+---
 ## Stage F — Tauri 2.x desktop-shell E2E + Phase Closeout
 
 *Authored in subsequent chunks.*
