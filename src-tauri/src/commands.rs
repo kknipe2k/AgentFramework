@@ -92,7 +92,15 @@ impl From<KeyStoreError> for CmdError {
 /// Returns [`CmdError::KeyStore`] if the platform keychain rejects the write.
 #[tauri::command]
 pub async fn set_api_key(key: String) -> Result<(), CmdError> {
-    write_api_key(&key)?;
+    // Log entry only — never log the key value (per spec §13 zero-telemetry +
+    // §13.5 dev-logging redaction rules). The length is a useful debugging
+    // signal that does not leak the secret.
+    tracing::info!(key_len = key.len(), "set_api_key invoked");
+    if let Err(e) = write_api_key(&key) {
+        tracing::error!(error = %e, "set_api_key failed at write_api_key");
+        return Err(e.into());
+    }
+    tracing::info!("set_api_key succeeded");
     // `key: String` is dropped at the end of this scope; the keyring crate
     // takes ownership of the bytes during set_password, so the input string
     // does not outlive this call.
@@ -114,7 +122,17 @@ pub async fn set_api_key(key: String) -> Result<(), CmdError> {
 /// - [`CmdError::Internal`] for SDK channel-closed conditions.
 #[tauri::command]
 pub async fn run_smoke_session(app: AppHandle) -> Result<(), CmdError> {
-    let api_key = read_api_key()?;
+    tracing::info!("run_smoke_session invoked");
+    let api_key = match read_api_key() {
+        Ok(k) => k,
+        Err(e) => {
+            // Most common surface in dev — log the structured cause so the
+            // terminal shows what the renderer's CmdError variant maps to.
+            tracing::error!(error = %e, "run_smoke_session: read_api_key failed");
+            return Err(e.into());
+        }
+    };
+    tracing::debug!("api key read from keychain");
     let provider = AnthropicProvider::new(api_key.clone());
     let (tx, rx) = mpsc::channel::<AgentEvent>(64);
     let app_clone = app.clone();
@@ -123,6 +141,11 @@ pub async fn run_smoke_session(app: AppHandle) -> Result<(), CmdError> {
     drop(api_key);
     // Wait for the forwarder to drain any final events before returning.
     let _ = forwarder.await;
+    if let Err(ref e) = result {
+        tracing::error!(error = %e, "run_smoke_session failed");
+    } else {
+        tracing::info!("run_smoke_session succeeded");
+    }
     result
 }
 

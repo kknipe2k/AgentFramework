@@ -40,7 +40,15 @@ reqwest             = { version = "0.13", default-features = false, features = [
 eventsource-stream  = "0.2"
 async-trait         = "0.1"
 secrecy             = { version = "0.10", features = ["serde"] }
-keyring             = "3.6"
+# keyring 3.x ships NO platform backend by default — bare `keyring = "3.6"`
+# compiles fine but uses a stub that silently succeeds on writes and returns
+# `NoEntry` on reads. M02 Stage E hit this in dev: "Save key ✓" then
+# `setup_required` on the smoke test. Per docs/gotchas.md #29.
+# Three features cover all v0.1 + v1.0 OS targets:
+#   apple-native            — macOS Keychain Services
+#   windows-native          — Windows Credential Manager
+#   sync-secret-service     — Linux Secret Service via D-Bus (sync API)
+keyring             = { version = "3.6", default-features = false, features = ["apple-native", "windows-native", "sync-secret-service"] }
 
 # M02 Stage C — wiremock for provider integration tests.
 # Latest 0.6.x; takes the http-1.x types compatible with reqwest 0.13.

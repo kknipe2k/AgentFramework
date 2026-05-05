@@ -1,6 +1,11 @@
 import { useEffect, useReducer, useState } from 'react';
 import { initialState, reducer } from './lib/eventReducer';
-import { invokeRunSmokeSession, invokeSetApiKey, subscribeAgentEvents } from './lib/ipc';
+import {
+  invokeRunSmokeSession,
+  invokeSetApiKey,
+  subscribeAgentEvents,
+  unwrapCmdError,
+} from './lib/ipc';
 import { EventList } from './components/EventList';
 import { SetupPanel } from './components/SetupPanel';
 import { SmokeButton } from './components/SmokeButton';
@@ -23,8 +28,13 @@ export function App(): JSX.Element {
   }, []);
 
   async function handleSetKey(key: string): Promise<void> {
-    await invokeSetApiKey(key);
-    setHasKey(true);
+    try {
+      await invokeSetApiKey(key);
+      setHasKey(true);
+    } catch (e) {
+      console.error('Set API key error:', e);
+      dispatch({ type: 'error', message: unwrapCmdError(e) });
+    }
   }
 
   async function handleSmoke(): Promise<void> {
@@ -33,10 +43,12 @@ export function App(): JSX.Element {
     try {
       await invokeRunSmokeSession();
     } catch (e) {
-      dispatch({
-        type: 'error',
-        message: e instanceof Error ? e.message : String(e),
-      });
+      // Always log structured errors to DevTools console — `state.error`
+      // carries the user-facing string but the full object is needed for
+      // diagnostics (per docs/gotchas.md #29 keyring-stub case the renderer
+      // alone showed "[object Object]" with no usable signal).
+      console.error('Smoke test error:', e);
+      dispatch({ type: 'error', message: unwrapCmdError(e) });
     }
   }
 
