@@ -204,6 +204,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use futures::stream::BoxStream;
+    use keyring::Error as KeyringError;
     use runtime_main::providers::{
         AgentConfig, CostBreakdown, LLMProvider, Message, ModelInfo, ProviderError, ProviderEvent,
         ProviderSupport,
@@ -379,7 +380,7 @@ mod tests {
         // KeyStoreError (same pattern as crates/runtime-main/src/key_store.rs
         // ::tests::keyring_error_wraps_underlying_via_from).
         let result = set_api_key_with("sk-ant-test1234567890", |_key| {
-            Err(KeyStoreError::Keyring(keyring::Error::NoEntry))
+            Err(KeyStoreError::Keyring(KeyringError::NoEntry))
         });
         let err = result.expect_err("expected keyring error");
         assert!(
