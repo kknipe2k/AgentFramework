@@ -3058,6 +3058,82 @@ These options are surfaced in Settings → Privacy.
 - The runtime never stores personal data about the user or their contacts beyond what the user's own framework JSON instructs it to store.
 - For enterprise/regulated users: the runtime can be configured to log nothing (toggle in Settings → Privacy → Disable all local logs); their session is then ephemeral.
 
+### §13.5 Dev Logging (locked 2026-05-04, M02 post-merge live debugging)
+
+> **Locked.** Dev-mode logging is mandatory; release-mode logging is bounded by the §13 default policy. The boundary between "dev signal we need" and "user data we never collect" is enforced explicitly here.
+
+The M02 smoke session shipped with `tracing::info!` / `tracing::error!` calls inside Tauri commands but **no `tracing_subscriber::fmt::init()` in `src-tauri/src/main.rs`**, so those calls emitted to a null sink. When the renderer surfaced `[object Object]` from a structured `CmdError`, the only diagnostic trail was a manually-added `console.error` in the renderer — Rust-side logging was silent. The fix is small (~5 lines), the policy gap was structural. This subsection locks the gap.
+
+#### What dev mode logs
+
+In dev mode (`cargo run`, `npm run tauri dev`, `cargo test`), every Rust binary in the workspace MUST initialize a `tracing_subscriber::fmt`-based subscriber at the top of `main()`:
+
+```rust
+fn main() {
+    init_tracing();
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "<binary-name> starting");
+    // ... rest of main ...
+}
+
+fn init_tracing() {
+    use tracing_subscriber::{fmt, EnvFilter};
+    let default = "info,runtime_core=debug,runtime_main=debug,runtime_drone=debug,agent_runtime=debug";
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default));
+    fmt().with_env_filter(filter).with_target(true).with_level(true).compact().init();
+}
+```
+
+Default level: `info` globally, `debug` for project crates (`runtime_core`, `runtime_main`, `runtime_drone`, `agent_runtime`, future M03+ crates). `RUST_LOG` overrides per `tracing_subscriber::EnvFilter` syntax.
+
+Every Tauri command (in `src-tauri/src/commands.rs`) MUST log:
+
+- **Entry**: `tracing::info!(...)` with non-secret request shape (e.g., `key_len = key.len()` for `set_api_key`, never the key value).
+- **Error path**: `tracing::error!(error = %e, "<command> failed at <step>")` BEFORE returning the error to the renderer. The structured `error` field captures the underlying cause; the message names which sub-step failed for fast triage.
+- **Success path**: `tracing::info!("<command> succeeded")` so the terminal shows the happy path is reaching the end.
+
+The renderer side complements this:
+
+- Every `try { await invoke(...) } catch (e) { ... }` block MUST `console.error('<context> error:', e)` before user-facing dispatch. Without this, structured errors collapse to `"[object Object]"` in the UI with zero diagnostic signal anywhere (per `docs/gotchas.md` #30).
+- The `unwrapCmdError(e: unknown): string` helper at `src/lib/ipc.ts` is the canonical Tauri-error renderer; new code reuses it rather than re-implementing the unwrap.
+
+#### What release mode logs
+
+Release builds (`cargo build --release`, `npm run tauri build`) keep the dev logging discipline but with a different default level (`info` globally, `info` for project crates) and a structured-JSON formatter for log file output. Per `cargo` profile config:
+
+- `[profile.release]` sets `RUST_LOG=info` as the build-time default.
+- `tracing_subscriber::fmt::Layer` is configured with `.json()` for structured output that downstream tooling (e.g., user-side OpenTelemetry exporter, future) can consume without re-parsing.
+- Logs land at `$DATA_DIR/logs/{date}/{binary}.log`; rotated daily, retained 30 days (per §13 above), or disabled entirely via the existing Settings → Privacy → Disable all local logs toggle.
+
+#### Secrets redaction (zero-leakage invariant)
+
+`tracing` macros take any `Display`-able or `Debug`-able value. The codebase enforces zero-secret-leakage by wrapping API keys in `secrecy::SecretString` whose `Debug` impl emits `[REDACTED]`. The discipline:
+
+- API key values: `SecretString` only; never `String` or `&str` in `tracing!` calls.
+- Provider responses containing user content: log structural shape only (`tokens=N, blocks=M`), not the content.
+- Tool inputs/outputs: log tool name and outcome, not arguments. (M03+ debug-mode override — opt-in per session — may log argument shapes for graph-rendering work; the toggle UI lives in §14 Settings.)
+- HTTP headers: `Authorization: <REDACTED>` always; the `reqwest` client does not currently log headers, but if a future provider adds verbose-mode logging it MUST honor this rule.
+
+Secret leakage in a log file is a §13 violation and is treated as a security bug: hotfix PR + entry in `docs/SECURITY.md` + rotation of any potentially-exposed secrets.
+
+#### What dev mode does NOT log
+
+- Telemetry to anywhere external. The §13 zero-telemetry default applies in dev mode too.
+- Diagnostic data sent to maintainers without explicit user opt-in. The `Settings → Help → Submit diagnostics` flow (M11 ship-prep) attaches user-selected logs to a bug report; never automatic.
+- "Phone home on crash." Crashes write to the local log directory; user manually attaches if reporting.
+
+The boundary: dev-mode logs are for the *user* (and the maintainer when the user shares them). Never for *us* without the user's explicit action.
+
+#### Per-milestone logging requirements
+
+Per `docs/build-prompts/TEMPLATE.md` (post-M02 protocol iteration), every milestone's Background section enumerates:
+
+- Which subsystems emit logs at which level
+- Where logs land (stdout/stderr in dev; rotated files in release)
+- Any new redaction rules (e.g., M06 MCP adds OAuth refresh-token redaction)
+- Any new `tracing` instrumentation (e.g., M04 verify+rails adds `tracing::instrument` on plan-state-machine transitions)
+
+The §13.5 review is a closeout-stage gate: gap analysis confirms the milestone's log surface matches the spec before the milestone PR pushes.
+
 -----
 
 ## §14 First-Run Experience

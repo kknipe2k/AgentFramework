@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed — Post-M02 smoke-test live debugging
+
+Live debugging a "[object Object]" smoke-test failure in the M02 desktop app surfaced four overlapping issues. All four are fixed here in one PR; the underlying spec/process gap (dev-logging discipline) is locked into the spec so future milestones don't repeat the silent-stub trap.
+
+- **`Cargo.toml` — keyring 3.x platform features.** Bare `keyring = "3.6"` ships NO platform backend by default; the workspace dep was missing the `apple-native` / `windows-native` / `sync-secret-service` features. Result: the keyring crate compiled but used a stub backend that silently succeeded on writes and returned `NoEntry` on reads. Symptoms in M02 dev: "Save key ✓ stored in OS keychain" then `setup_required` on smoke test. Fix opts into all three OS backends (one-line change to the workspace dep). Per `docs/gotchas.md` #29.
+- **`src/lib/ipc.ts` — typed `unwrapCmdError` helper.** Tauri renderer's `catch(e)` receives a serde-tagged JS object (e.g., `{type: "setup_required"}` or `{type: "provider", message: "..."}`); `e instanceof Error` is `false`; `String(e)` yields `"[object Object]"`. The new `unwrapCmdError(e: unknown): string` helper exhaustively handles `Error` instances, `CmdError` shape (with type + optional message), generic objects with `message`, and falls back to `String(e)`. Exported so M03+ command surfaces reuse it. Type definition matches the actual `CmdError` enum in `src-tauri/src/commands.rs`. Per `docs/gotchas.md` #30.
+- **`src/App.tsx` — error logging at every `catch`.** Both `handleSetKey` and `handleSmoke` now `console.error('<context> error:', e)` before user-facing dispatch. Critical for diagnostics: without this, structured errors collapse to `"[object Object]"` in the UI with zero signal in the DevTools console. The change pairs with the `unwrapCmdError` helper — together they ensure every renderer-side error has a console log AND a user-readable string.
+- **`src-tauri/src/main.rs` — `tracing_subscriber::fmt::init()`.** M02 wired `tracing::info!` / `tracing::error!` calls inside Tauri commands but never initialized the subscriber, so the calls emitted to a null sink. The fix adds an `init_tracing()` function called at the top of `main()` with `EnvFilter`-based level config (default `info` globally, `debug` for project crates; `RUST_LOG` overrides). Adds `tracing` + `tracing-subscriber` (with `env-filter`, `fmt` features) to `src-tauri/Cargo.toml`. Per `docs/gotchas.md` #31.
+- **`src-tauri/src/commands.rs` — minimum-viable command-level instrumentation.** `set_api_key` and `run_smoke_session` now log entry (`info!`), failure paths (`error!` with `error = %e` + which sub-step), and success (`info!`). API key VALUES are never logged (only `key_len` for `set_api_key`); `SecretString` wrapping ensures `Debug` output is `[REDACTED]`. Per `agent-runtime-spec.md` §13.5 (new this PR).
+
+### Documentation — Spec §13.5 + gotchas #29–#31
+
+Locks the dev-logging discipline that the M02 live debugging exposed as a structural gap.
+
+- **`agent-runtime-spec.md` §13.5 Dev Logging** — new subsection inside §13 Privacy & Telemetry. Documents the dev/release boundary (zero-telemetry remains in force), the `tracing_subscriber::fmt::init()` requirement at every Rust binary's `main()`, the per-Tauri-command instrumentation pattern (entry / success / error logs), the renderer-side `console.error` + `unwrapCmdError` pattern, the secrets-redaction invariant (`SecretString` for API keys; structural-only logging for user content), what release mode does differently (JSON formatter, log files at `$DATA_DIR/logs/{date}/`), and what dev mode does NOT do (no telemetry, no automatic diagnostics, no phone-home-on-crash). Includes the per-milestone logging-requirements gate that §13.5 reviews land in closeout stages.
+- **`docs/gotchas.md`** — three new entries (#29, #30, #31) consolidating the M02 live debugging traps:
+  - **#29** keyring 3.x stub backend (no platform features by default)
+  - **#30** Tauri renderer's `catch(e)` gets non-Error objects from serde-tagged enums
+  - **#31** Tauri main process binary needs `tracing_subscriber::fmt::init()` in `main()`
+
 ### Documentation — Post-M02 spec lock + ADR-0006
 
 Per `M02-summary.md` Decisions + `docs/gap-analysis.md` M02 entry Fix
