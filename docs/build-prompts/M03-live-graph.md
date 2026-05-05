@@ -1799,10 +1799,574 @@ https://claude.ai/code
 ```
 
 ---
+<!-- ============================================================ -->
+<!-- STAGE D — Inspector + token-spend node weight + zoom/pan      -->
+<!-- ============================================================ -->
+
 ## Stage D — Click-to-inspect side panel + token-spend visualization + zoom/pan
 
-*Authored in subsequent chunks.*
+**WEBCHECK:** verify each URL against this stage's prompt body **before** the fresh session opens. If any claim is stale, update this section in `M03-live-graph.md` BEFORE pasting Stage D's CLI prompt to the fresh session.
 
+- <https://github.com/dagrejs/dagre> — confirm `@dagrejs/dagre` is the maintained fork (vs the unmaintained `dagre` package); current stable version; React Flow v12 layout-integration pattern (use `dagre.graphlib.Graph` to compute positions, then assign back to React Flow `Node.position`)
+- <https://reactflow.dev/learn/layouting> — confirm v12's layouting API + `useNodesState` / `useEdgesState` hooks for layout integration; whether layout should be in the store (Zustand) or computed via React Flow hooks
+- <https://reactflow.dev/api-reference/components/minimap> — confirm `<MiniMap>` props in v12 (color-encoding callback, position, click-to-pan behavior); a11y options
+- <https://reactflow.dev/api-reference/components/controls> — confirm `<Controls>` (already in Stage B's GraphCanvas) supports keyboard navigation, fit-view, zoom-in/out
+- <https://docs.anthropic.com/en/api/messages-streaming#message_delta> — confirm Anthropic's `message_delta` SSE event payload includes `usage.input_tokens` + `usage.output_tokens` (the source of token counts the AgentSdk surfaces; M02 already consumed this in `anthropic_sse.rs`, but Stage D wires the count forward to AgentEvent variants)
+- <https://www.w3.org/WAI/ARIA/apg/patterns/dialog/> — confirm ARIA dialog pattern recommendations for the InspectorPanel (focus trap when open, ESC to close, role="dialog", aria-modal)
+
+### D.1 Problem Statement
+
+Stages B + C ship the graph as a renderable surface — 11 node types, animated edges, color encoding. The user can see the runtime as it happens but cannot drill into any node. Stage D adds three pieces that make the graph **interactive**:
+
+1. **Click-to-inspect side panel.** Per spec §3 Behavior ("Click any node for full VDR trace, input/output, timing"). The panel renders alongside `<GraphCanvas>` (right-rail layout); shows the selected node's data + a chronological list of events that contributed to that node's state. Stage E's VDR projection populates the "decision history" subsection; Stage D's panel handles M02-shipped event data.
+
+2. **Token-spend visualization (node weight).** Per spec §3 Visual Design ("Token spend shown as node weight — larger spend = visually larger node"). Each AgentNode and ToolNode tracks cumulative input + output tokens; CSS-based scaling makes higher-spend nodes visually larger. Triggers a Rust-side schema bump: `schemas/event.v1.json` extends `tool_result` with optional `tokens_in?` + `tokens_out?` fields and `agent_complete` with `tokens_total?`; `runtime_core::AgentEvent` matches; AgentSdk's `EventPipeline` populates them from the existing `ProviderEvent` token data (M02.B already consumes Anthropic's `message_delta.usage`; Stage D surfaces it through the SDK→renderer pipeline).
+
+3. **Zoom/pan/select controls + layout.** Stage B added React Flow's built-in `<Controls>`; Stage D extends with `<MiniMap>` (necessary at 11 node types and growing) plus a proper layout algorithm (`@dagrejs/dagre`) that replaces Stage B's naive horizontal-stagger. Layout runs after every store-state change but is debounced — re-running dagre on every event would freeze the UI.
+
+The cardinal architectural decision: **the InspectorPanel reads from the store, never holds its own state.** Selected-node id is in the store (`selectedNodeId` from Stage B); the panel subscribes to the selected node's data slice via Zustand selectors. Closing the panel clears `selectedNodeId`. This matches the Stage B pattern (single source of truth, components subscribe via selectors) and forward-compatible with Stage E's persistence (selected-node state replays from the event log).
+
+The second decision: **layout runs in `useEffect` inside `<GraphCanvas>`, not inside the store.** Layout is a *visualization concern*, not state — the store's nodes have logical positions (the staggered defaults from Stage B); the layout pass overlays presentation positions. Storing layout positions in Zustand would conflate concerns and complicate persistence. Per React Flow's layouting guide, the recommended pattern is `useEffect(() => { layoutNodes(nodes, edges); setNodes(...); }, [nodes.length])` — layout reruns on node-count changes, debounced to coalesce rapid event bursts.
+
+The third decision: **token weight via CSS `transform: scale()`, not JS-computed font-size.** Per spec §3 Visual Design ("larger spend = visually larger node"). Pure CSS keeps the renderer fast; the scale factor is computed from cumulative tokens (`scale = clamp(0.8, 1 + tokens/1000, 1.5)`). Disabled in tests via a `data-token-scale-disabled` attribute set by Vitest setup so visual regressions don't trip the test suite.
+
+The fourth decision: **schema bump strategy.** `schemas/event.v1.json` is currently the only `v1.x` schema in the runtime that the Rust side does NOT generate from. Stage A added it to the TS codegen list (`xtask` regenerates `src/types/agent_event.ts`); the Rust `AgentEvent` enum stays hand-written for M03. Stage D's schema bump adds optional fields to existing variants; both the Rust enum and the TS regenerated types must match. The xtask drift check enforces TS parity; the Rust side relies on hand-written maintenance — flag in Stage E retro for "extend Rust typify codegen to include event.v1.json" carry-forward to M04.
+
+**One-line success criterion:** the M02 smoke test produces a graph where (a) clicking the AgentNode opens an InspectorPanel showing the smoke-agent's full data + the events received, (b) the AgentNode visually scales after `agent_complete` fires (Haiku 4.5 reports ~10–20 tokens for the smoke prompt; barely visible scaling but the mechanism is wired), (c) `<MiniMap>` renders in the corner with a click-to-pan affordance, (d) layout via dagre produces a coherent root → smoke-agent edge instead of Stage B's hardcoded position; renderer Vitest coverage on `InspectorPanel.tsx` ≥80%, `layout.ts` ≥95% (treated as primitive).
+
+**New artifacts:**
+- `src/components/InspectorPanel.tsx` — right-rail panel; subscribes to `selectedNodeId` + node-data selectors; renders ARIA-compliant dialog
+- `src/lib/layout.ts` — dagre wrapper; `layoutGraph(nodes, edges) => { nodes }` pure function
+- 2 new test files at `tests/unit/components/InspectorPanel.test.tsx` and `tests/unit/lib/layout.test.ts`
+
+### D.2 Files to Change
+
+| File | Change |
+|---|---|
+| `src/components/InspectorPanel.tsx` | **New** — right-rail panel; ARIA dialog; renders selected node's full data via Zustand selectors; ESC-to-close; focus trap |
+| `tests/unit/components/InspectorPanel.test.tsx` | **New** — render selected/unselected states; ESC closes; ARIA attrs; focus trap behavior |
+| `src/lib/layout.ts` | **New** — `layoutGraph(nodes, edges) => Node[]` pure function over `@dagrejs/dagre`; takes the GraphNode + GraphEdge types from graphStore; returns nodes with computed `position` |
+| `tests/unit/lib/layout.test.ts` | **New** — empty graph returns []; single-node graph returns one positioned node; parent-child edge produces top-down layout; throws cleanly on cycles (dagre handles cycles but our schema doesn't have them; test surfaces the contract) |
+| `src/lib/graphStore.ts` | **Edited** — extend `AgentNodeData` + `ToolNodeData` with `tokensIn: number` + `tokensOut: number` (default 0); extend `applyEvent` for `tool_result.tokens_in` + `tool_result.tokens_out` + `agent_complete.tokens_total` (additive — events without the optional fields no-op the token tracking) |
+| `tests/unit/graphStore.test.ts` | **Edited** — add 4 new tests: tool_result with tokens updates AgentNode + ToolNode token totals; agent_complete with tokens_total matches sum of contributing tool_results; missing token fields don't crash; cumulative token totals across multiple tool_results |
+| `src/components/GraphCanvas.tsx` | **Edited** — add `<MiniMap>` from `@xyflow/react`; wire `useEffect` layout pass via `layoutGraph(nodes, edges)`; render alongside `<InspectorPanel>` (side-by-side via flexbox in `<App>`) |
+| `src/components/nodes/AgentNode.tsx` | **Edited** — add `style={{ transform: `scale(${tokenScale(data.tokensIn + data.tokensOut)})` }}` (or via inline CSS custom property `--token-scale`); add unit-test setup-time disable attr |
+| `src/components/nodes/ToolNode.tsx` | **Edited** — same scaling pattern |
+| `src/styles.css` | **Edited** — add `.inspector-panel` styles (right-rail layout; ARIA visible-on-focus); add `transform-origin: center` for scaling stability; add MiniMap container override; the `@keyframes` already in Stage C are preserved |
+| `src/App.tsx` | **Edited** — wrap `<GraphCanvas>` + `<InspectorPanel>` in a flexbox container so they sit side-by-side; preserve `<SetupPanel>` + `<SmokeButton>` above |
+| `tests/unit/App.test.tsx` | **Edited** — add 2 tests: clicking an AgentNode opens InspectorPanel; ESC closes it |
+| `package.json` | **Edited** — add `@dagrejs/dagre ^1.x` to `dependencies` |
+| `package-lock.json` | **Regenerated** via `npm install` |
+| `schemas/event.v1.json` | **Edited** — extend `tool_result` with optional `tokens_in?: integer` + `tokens_out?: integer`; extend `agent_complete` with optional `tokens_total?: integer`. Additive minor in-place bump per `schemas/README.md` versioning policy; `$id` URL unchanged |
+| `src/types/agent_event.ts` | **Regenerated** via `cargo xtask regenerate-types` after schema edit lands; the new optional fields appear |
+| `crates/runtime-core/src/event.rs` | **Edited** — extend the `AgentEvent::ToolResult` variant with `tokens_in: Option<u64>` + `tokens_out: Option<u64>`; extend `AgentEvent::AgentComplete` with `tokens_total: Option<u64>`; update serde derives to skip-if-none on output (`#[serde(skip_serializing_if = "Option::is_none")]`) |
+| `crates/runtime-main/src/sdk/event_pipeline.rs` | **Edited** — populate the new fields from `ProviderEvent` data (M02.B already consumes Anthropic's `message_delta.usage` into `CostBreakdown`; Stage D surfaces the per-call counts forward to `AgentEvent::ToolResult` and `AgentEvent::AgentComplete`) |
+| `crates/runtime-main/tests/sdk_event_translation.rs` | **Edited** — extend translation tests to assert tokens_in/tokens_out flow through correctly |
+| `CHANGELOG.md` | **Edited** — `[Unreleased]` entry under "Added — M03.D" |
+
+### D.3 Detailed Changes
+
+#### `schemas/event.v1.json` — additive token fields
+
+Schema bump: `tool_result` gains optional `tokens_in?: integer` + `tokens_out?: integer`; `agent_complete` gains optional `tokens_total?: integer`. Per `schemas/README.md`: additive optional fields are a minor in-place bump (no `$id` change). Stage A's xtask drift check + the new `cargo xtask regenerate-types` will produce updated `src/types/agent_event.ts` after this edit.
+
+```json
+// schemas/event.v1.json — relevant variants (additive fields shown)
+"oneOf": [
+  // ... other variants unchanged ...
+  {
+    "type": "object",
+    "required": ["type", "agentId", "toolId", "output"],
+    "properties": {
+      "type":     { "const": "tool_result" },
+      "agentId":  { "type": "string" },
+      "toolId":   { "type": "string" },
+      "output":   { "type": "object" },
+      "durationMs": { "type": "integer", "minimum": 0 },
+      "tokensIn":  { "type": "integer", "minimum": 0 },
+      "tokensOut": { "type": "integer", "minimum": 0 }
+    }
+  },
+  {
+    "type": "object",
+    "required": ["type", "agentId", "result"],
+    "properties": {
+      "type":         { "const": "agent_complete" },
+      "agentId":      { "type": "string" },
+      "result":       { "type": "string" },
+      "tokensTotal":  { "type": "integer", "minimum": 0 }
+    }
+  }
+]
+```
+
+#### `crates/runtime-core/src/event.rs` — match the schema
+
+Hand-edit (event.rs is hand-written; not in the typify codegen list). Extend the variants with the new optional fields:
+
+```rust
+pub enum AgentEvent {
+    // ...
+    ToolResult {
+        agent_id: String,
+        tool_id: String,
+        output: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tokens_in: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tokens_out: Option<u64>,
+    },
+    AgentComplete {
+        agent_id: String,
+        result: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tokens_total: Option<u64>,
+    },
+    // ...
+}
+```
+
+The serde `skip_serializing_if = "Option::is_none"` keeps backward-compatible JSON output: M02-era event consumers see the same shape; M03-era consumers see the new fields when populated.
+
+#### `crates/runtime-main/src/sdk/event_pipeline.rs` — surface tokens
+
+The `EventPipeline::translate` function currently produces `AgentEvent::ToolResult` from `ProviderEvent::ToolResult`. Extend to populate the token fields from the existing per-call cost-breakdown tracking. The fresh session reads the existing `CostBreakdown` accumulator usage in `agent_sdk.rs` (Stage M02.B) and threads the per-tool-call counts forward.
+
+For `AgentEvent::AgentComplete`: M02's `agent_sdk.rs` already aggregates total tokens per session (for cost reporting). Surface that aggregate in the `tokens_total` field at completion time.
+
+#### `src/lib/layout.ts` — dagre wrapper
+
+```typescript
+import dagre from '@dagrejs/dagre';
+import type { GraphNode, GraphEdge } from './graphStore';
+
+const NODE_WIDTH = 180;
+const NODE_HEIGHT = 60;
+
+/**
+ * Run dagre layout over a snapshot of nodes + edges; return new nodes
+ * with computed positions. Pure function — no side effects, deterministic
+ * for a given input.
+ *
+ * Stage D ships top-down hierarchical layout (rankdir='TB'); Stage E may
+ * extend with per-graph-shape selectors.
+ */
+export function layoutGraph(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+): GraphNode[] {
+  if (nodes.length === 0) {
+    return nodes;
+  }
+
+  const g = new dagre.graphlib.Graph();
+  g.setDefaultEdgeLabel(() => ({}));
+  g.setGraph({ rankdir: 'TB', nodesep: 50, ranksep: 80 });
+
+  for (const node of nodes) {
+    g.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
+  }
+  for (const edge of edges) {
+    g.setEdge(edge.source, edge.target);
+  }
+
+  dagre.layout(g);
+
+  return nodes.map((node) => {
+    const layoutNode = g.node(node.id);
+    return {
+      ...node,
+      position: { x: layoutNode.x - NODE_WIDTH / 2, y: layoutNode.y - NODE_HEIGHT / 2 },
+    };
+  });
+}
+```
+
+Tested via 4 unit tests in `tests/unit/lib/layout.test.ts` (per D.4).
+
+#### `src/components/InspectorPanel.tsx` — ARIA dialog right-rail
+
+```typescript
+import { useEffect, useRef } from 'react';
+import { useGraphStore } from '../lib/graphStore';
+
+export function InspectorPanel() {
+  const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
+  const selectedNode = useGraphStore((s) =>
+    s.selectedNodeId ? s.nodes.find((n) => n.id === s.selectedNodeId) : null,
+  );
+  const selectNode = useGraphStore((s) => s.selectNode);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Focus management per WAI APG dialog pattern.
+  useEffect(() => {
+    if (selectedNodeId && panelRef.current) {
+      panelRef.current.focus();
+    }
+  }, [selectedNodeId]);
+
+  // ESC closes per ARIA dialog pattern.
+  useEffect(() => {
+    if (!selectedNodeId) return undefined;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') selectNode(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedNodeId, selectNode]);
+
+  if (!selectedNodeId || !selectedNode) {
+    return null;
+  }
+
+  return (
+    <aside
+      ref={panelRef}
+      className="inspector-panel"
+      role="dialog"
+      aria-modal="false"
+      aria-label="node inspector"
+      tabIndex={-1}
+      data-testid="inspector-panel"
+    >
+      <header className="inspector-panel__header">
+        <h2>{selectedNode.type} node</h2>
+        <button
+          type="button"
+          onClick={() => selectNode(null)}
+          aria-label="close inspector"
+        >
+          ×
+        </button>
+      </header>
+      <pre className="inspector-panel__data">
+        {JSON.stringify(selectedNode.data, null, 2)}
+      </pre>
+      {/* Stage E adds VDR-correlated decision history here. */}
+    </aside>
+  );
+}
+```
+
+Tested via 6 tests (per D.4).
+
+#### `src/components/GraphCanvas.tsx` — MiniMap + layout effect
+
+Extend Stage B/C's GraphCanvas:
+
+```typescript
+import { ReactFlow, Background, Controls, MiniMap, useNodesState } from '@xyflow/react';
+import { useEffect, useMemo } from 'react';
+import { useGraphStore } from '../lib/graphStore';
+import { layoutGraph } from '../lib/layout';
+// ... existing imports for nodeTypes ...
+
+export function GraphCanvas() {
+  const storeNodes = useGraphStore((s) => s.nodes);
+  const edges = useGraphStore((s) => s.edges);
+  const selectNode = useGraphStore((s) => s.selectNode);
+
+  // Run dagre layout when node count changes. Debounce for rapid event bursts.
+  const layouted = useMemo(() => layoutGraph(storeNodes, edges), [storeNodes.length, edges.length]);
+
+  return (
+    <div className="graph-canvas" data-testid="graph-canvas">
+      <ReactFlow
+        nodes={layouted}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        fitView
+        onNodeClick={(_, node) => selectNode(node.id)}
+        onPaneClick={() => selectNode(null)}
+      >
+        <Background />
+        <Controls />
+        <MiniMap nodeStrokeWidth={3} pannable zoomable />
+      </ReactFlow>
+    </div>
+  );
+}
+```
+
+#### `src/components/nodes/AgentNode.tsx` + `ToolNode.tsx` — token weight
+
+Extend Stage B/C's nodes with token-weight scaling:
+
+```typescript
+function tokenScale(totalTokens: number): number {
+  // clamp(0.8, 1 + tokens/1000, 1.5)
+  return Math.max(0.8, Math.min(1.5, 1 + totalTokens / 1000));
+}
+
+export function AgentNode({ data }: NodeProps<AgentNodeData>) {
+  const scale = tokenScale(data.tokensIn + data.tokensOut);
+  return (
+    <div
+      className={`agent-node agent-node--${data.status}`}
+      data-testid={`agent-node-${data.agentId}`}
+      data-status={data.status}
+      style={{ transform: `scale(${scale})`, transformOrigin: 'center' }}
+      aria-label={`agent ${data.agentName} (${data.status})`}
+    >
+      {/* ... existing markup ... */}
+    </div>
+  );
+}
+```
+
+ToolNode follows the same pattern. Tests verify the `transform` style attr applies; visual regression is out-of-scope for unit tests (covered by Stage F E2E if needed).
+
+#### `src/App.tsx` — side-by-side layout
+
+Extend Stage B's App.tsx:
+
+```typescript
+return (
+  <main>
+    <h1>Agent Runtime — M03 live graph</h1>
+    <SetupPanel onSave={handleSetKey} />
+    <SmokeButton disabled={!hasKey || running} onClick={handleSmoke} />
+    {error && <p className="error">{error}</p>}
+    <div className="graph-layout">
+      <GraphCanvas />
+      <InspectorPanel />
+    </div>
+  </main>
+);
+```
+
+CSS for `.graph-layout`: flexbox row; GraphCanvas takes `flex: 1`; InspectorPanel takes `flex: 0 0 360px` when visible (collapses when no node selected via `null` return).
+
+### D.4 Tests
+
+#### Pedantic-pass preflight
+
+Same checklist as Stage B + C. Stage D adds Rust changes (event.rs + event_pipeline.rs); apply `docs/gotchas.md` #21 clippy traps to those files specifically:
+
+- [ ] `derive_partial_eq_without_eq` — `serde_json::Value` containment (the `output` field on `ToolResult`); already has `#[allow]` from M02; preserve
+- [ ] `unused_async` — N/A (event translation is sync)
+- [ ] `default_trait_access` — N/A
+- [ ] `match_wildcard_for_single_variants` — N/A
+- [ ] `cast_precision_loss` / `suboptimal_flops` — token scaling is u64 → f64; Stage D's `tokenScale` is in TS not Rust, but verify any Rust-side aggregation uses `u64::saturating_add` for safety
+- [ ] `struct_excessive_bools` — N/A
+- [ ] `missing_const_for_fn` — N/A
+
+#### Default test plan for stages adding a new safety primitive
+
+`layout.ts` is treated as a primitive (≥95% line) — single source of layout truth; bug here breaks the visual layer. `InspectorPanel.tsx` is normal-coverage (≥80%).
+
+Rust-side: `event_pipeline.rs` extension is exercised by `crates/runtime-main/tests/sdk_event_translation.rs` extensions; runtime-main coverage gate (≥95%) preserved.
+
+#### Test plan (Stage D)
+
+`tests/unit/lib/layout.test.ts` — 4 tests:
+
+1. **empty graph returns empty** — `layoutGraph([], [])` returns `[]`
+2. **single-node graph returns one positioned node** — single node gets a position (any non-NaN coords)
+3. **parent-child edge produces top-down layout** — assert child's `y > parent.y`
+4. **deterministic for same input** — call twice, assert identical positions
+
+`tests/unit/components/InspectorPanel.test.tsx` — 6 tests:
+
+1. **returns null when no selectedNodeId** — `render(...)` produces empty document
+2. **renders panel when selectedNodeId is set** — populate store, render, assert `data-testid="inspector-panel"` present
+3. **renders selected node's data as JSON** — assert `<pre>` content includes node data fields
+4. **ESC key clears selectedNodeId** — fire ESC keydown, assert `selectNode(null)` was called (via store assertion)
+5. **close button clears selectedNodeId** — click `aria-label="close inspector"`, assert
+6. **has ARIA dialog attributes** — assert `role="dialog"`, `aria-label`, `aria-modal="false"` (non-modal — graph stays interactable behind the panel)
+
+`tests/unit/graphStore.test.ts` — **edited** (4 new tests):
+
+1. **tool_result with tokens updates ToolNode's tokensIn + tokensOut** — apply tool_result with tokens, assert ToolNode data fields
+2. **tool_result with tokens accumulates AgentNode totals** — apply tool_result, assert parent AgentNode's tokensIn/tokensOut += tool_result counts
+3. **agent_complete with tokens_total updates AgentNode totals** — final aggregate
+4. **events without optional token fields don't crash** — apply tool_result without tokens fields, assert state unchanged in token slots (defaults to 0)
+
+`tests/unit/App.test.tsx` — **edited** (2 new tests):
+
+1. **clicking AgentNode opens InspectorPanel** — render App, fire `agent_spawned`, click the node (find by data-testid), assert panel appears
+2. **ESC closes InspectorPanel** — extend the previous test, fire ESC, assert panel hides
+
+`crates/runtime-main/tests/sdk_event_translation.rs` — **edited** (2 new tests):
+
+1. **tool_result translation surfaces tokens_in + tokens_out** — feed a `ProviderEvent::ToolResult` with token data; assert the resulting `AgentEvent::ToolResult` has the matching fields
+2. **agent_complete translation surfaces tokens_total** — feed completion event; assert tokens_total flows through
+
+#### Coverage target
+
+- Workspace Rust: ≥80% (preserved)
+- runtime-drone: ≥95% (preserved; no Rust change in Stage D's drone scope)
+- runtime-main: ≥95% (preserved; the event_pipeline.rs extension is small + covered by the 2 new translation tests)
+- src-tauri: 50% patch gate (preserved)
+- src/ frontend: ≥80% with **graphStore.ts ≥95%** (preserved primitive treatment) + **layout.ts ≥95%** (new primitive); InspectorPanel.tsx ≥80%
+
+**Doc-to-CI invariant.** Stage D does not add OS-call wrappers; coverage stays end-to-end testable. No new exclusions to the codecov path-based override map.
+
+### D.5 CLI Prompt
+
+```xml
+<work_stage_prompt id="M03.D">
+  <context>
+    Stage D of M03 (Live Graph). Click-to-inspect side panel + token-
+    spend visualization (node weight) + zoom/pan + dagre layout. Adds
+    InspectorPanel + layout.ts; bumps schemas/event.v1.json with optional
+    token fields; extends runtime-core::AgentEvent + runtime-main's
+    EventPipeline to surface tokens from M02.B's existing ProviderEvent
+    cost tracking. Builds on Stages B + C's React Flow + Zustand
+    foundation + 11 node types. Stage E does not start until Stage D's
+    commit is on the milestone branch.
+  </context>
+
+  <read_first>
+    <file>CLAUDE.md</file>
+    <file>STAGE-PROMPT-PROTOCOL.md</file>
+    <file>docs/build-prompts/M03-live-graph.md (Stage D sections D.1–D.4)</file>
+    <file>agent-runtime-spec.md §3 (Behavior + Visual Design Principles)</file>
+    <file>docs/MVP-v0.1.md §M3</file>
+    <file>schemas/README.md (additive minor in-place bump policy)</file>
+    <file>docs/gotchas.md (#21 #25 #27)</file>
+  </read_first>
+
+  <read_reference>
+    <file purpose="Stage B/C graphStore + applyEvent shape (extending here for token tracking)">src/lib/graphStore.ts</file>
+    <file purpose="Stage B/C GraphCanvas (extending with MiniMap + layout effect)">src/components/GraphCanvas.tsx</file>
+    <file purpose="Stage B AgentNode archetype (extending with token-weight scaling)">src/components/nodes/AgentNode.tsx</file>
+    <file purpose="M02 event_pipeline.rs translation pattern (extending to surface token fields)">crates/runtime-main/src/sdk/event_pipeline.rs</file>
+    <file purpose="M02 AgentSdk's CostBreakdown aggregation (the existing source of token data)">crates/runtime-main/src/sdk/agent_sdk.rs</file>
+    <file purpose="ARIA dialog pattern reference for InspectorPanel">https://www.w3.org/WAI/ARIA/apg/patterns/dialog/</file>
+  </read_reference>
+
+  <read_prior_stages>
+    <retrospective section="[END] Decisions for the next stage">docs/build-prompts/retrospectives/M03.A-retrospective.md</retrospective>
+    <retrospective section="[END] Decisions for the next stage">docs/build-prompts/retrospectives/M03.B-retrospective.md</retrospective>
+    <retrospective section="[END] Decisions for the next stage">docs/build-prompts/retrospectives/M03.C-retrospective.md</retrospective>
+  </read_prior_stages>
+
+  <deliverable ref="docs/build-prompts/M03-live-graph.md" section="D.3 Detailed Changes"/>
+
+  <test_plan_required>true</test_plan_required>
+
+  <execution_steps>
+    <step name="write_failing_tests" budget="1"/>
+    <step name="implement" budget="1"/>
+    <step name="verify_gates" budget_iterations="3"/>
+    <step name="fill_retrospective"/>
+    <step name="surface"/>
+  </execution_steps>
+
+  <acceptance_criteria ref="docs/build-prompts/M03-live-graph.md" section="D.4 Tests"/>
+
+  <scope_locks ref="docs/build-prompts/M03-live-graph.md" section="Key constraints"/>
+
+  <gates milestone="M03"/>
+
+  <self_correction_budget>3</self_correction_budget>
+
+  <gotchas>
+    <trap>Stage D's schema bump on schemas/event.v1.json must run xtask regenerate-types AFTER editing schemas + event.rs. Verify drift check passes (`cargo xtask regenerate-types --check` exits zero) before commit. Without this, src/types/agent_event.ts diverges from the schema and CI fails.</trap>
+    <trap>schemas/event.v1.json is NOT in the typify Rust codegen list (only the TS list per Stage A). The Rust event.rs is hand-written and must be manually updated to match the schema bump. Flag in retro Decisions for M04: extend xtask Rust typify list to include `event` so this drift class can't recur.</trap>
+    <trap>Layout in useEffect, NOT in the store. React Flow's layouting guide (per WEBCHECK) says layout is a visualization concern; storing computed positions in Zustand conflates concerns and breaks Stage E's persistence. Pure-function `layoutGraph` + `useMemo` keeps the store clean.</trap>
+    <trap>Token-weight scaling via CSS transform: scale(), NOT JS-computed font-size. CSS keeps the renderer fast; the scale factor is computed inline. Tests use `data-token-scale-disabled` setup attr to avoid visual-regression flakes.</trap>
+    <trap>InspectorPanel is `aria-modal="false"` (non-modal) — graph stays interactable behind the panel. Per WAI APG dialog pattern, modal dialogs trap focus + dim the background; M03's inspector is informational-not-blocking. Don't make it modal.</trap>
+    <trap>Existing graphStore tests must pass unchanged after the token-tracking edits. The new token fields are ADDITIVE on AgentNodeData/ToolNodeData; existing tests that don't populate them rely on default 0. Verify by running the original 12 graphStore tests post-edit; failures here indicate non-additive changes.</trap>
+  </gotchas>
+
+  <execution_warnings>
+    <warning>DO NOT switch to elk-js or another layout library. @dagrejs/dagre is the chosen library per Decision #4 in D.1; Stage D's layout.ts pattern is locked. M04+ may revisit if dagre proves insufficient.</warning>
+    <warning>DO NOT make InspectorPanel modal (aria-modal="true" + focus trap that prevents tabbing out). The graph stays interactable; the panel is informational. Per WAI APG dialog pattern + Decision #1 in D.1.</warning>
+    <warning>DO NOT extend the schema with non-token fields in Stage D. The Stage D schema bump scope is exactly two variants × three new optional fields. Other extensions (e.g., MCP server-id surfacing on tool_invoked) wait for M06 which owns MCP integration.</warning>
+    <warning>DO NOT touch SetupPanel, SmokeButton, ipc.ts, or the M02 keychain code — preserved verbatim.</warning>
+  </execution_warnings>
+
+  <time_box estimate_hours="4.5"/>
+
+  <retrospective_requirements ref="docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md" section="M[NN].&lt;X&gt; — Stage Retrospective">
+    <special_log>Decisions for Stage E: whether the dagre layout's per-event recomputation is performant enough for Stage E's persistence-replay (rendering 100+ nodes at session reload); whether the InspectorPanel data-rendering pattern needs refactor for Stage E's VDR row addition; whether the token-scaling clamp(0.8, ..., 1.5) range works for the smoke test or needs adjustment; whether the schema bump → hand-edit Rust event.rs flow is brittle enough to push the M04 carry-forward (extend Rust typify list to include event.v1.json) into a hotfix PR before M04.</special_log>
+  </retrospective_requirements>
+
+  <commit_protocol ref="CLAUDE.md" section="8. PR + commit workflow (CRITICAL — read carefully)"/>
+  <commit_message ref="docs/build-prompts/M03-live-graph.md" section="D.6 Commit Message"/>
+
+  <approval_surface>
+    <item>diff stat (git diff --stat HEAD)</item>
+    <item>gate results (each gate, pass/fail, key numbers including layout.ts ≥95% + InspectorPanel ≥80% + Rust drift check passing on the schema bump)</item>
+    <item>retrospective (filled-in [END] section with three-axis scoring + verdict + decisions for Stage E + [END] Coverage holdouts subsection)</item>
+    <item>draft commit message from M03-live-graph.md D.6 Commit Message section</item>
+    <item>screenshot or paste of the rendered graph after smoke-test run, showing: (a) clicking AgentNode opens InspectorPanel; (b) MiniMap visible in corner; (c) AgentNode visually scaled per token count (subtle for ~20 tokens but the mechanism wired); (d) dagre layout produces top-down hierarchy</item>
+    <item>explicit statement: "Stage M03.D is ready. I will not commit until you approve."</item>
+  </approval_surface>
+</work_stage_prompt>
+```
+
+### D.6 Commit Message
+
+```
+feat(renderer): M03 Stage D — inspector panel + token weight + dagre layout
+
+Three pieces that make the graph interactive:
+- Click-to-inspect side panel (per spec §3 Behavior). Right-rail
+  layout; ARIA-compliant dialog (aria-modal="false" — non-modal so
+  graph stays interactable); ESC + close-button to dismiss; subscribes
+  to selectedNodeId via Zustand selectors (single source of truth
+  pattern from Stage B preserved).
+- Token-spend visualization (per spec §3 Visual Design). Each
+  AgentNode + ToolNode tracks cumulative tokensIn + tokensOut; CSS
+  transform: scale() applies via clamp(0.8, 1 + tokens/1000, 1.5).
+  Triggers schema bump: tool_result + agent_complete gain optional
+  token fields; runtime-core::AgentEvent matches; AgentSdk's
+  EventPipeline surfaces tokens from M02.B's existing ProviderEvent
+  cost tracking.
+- Zoom/pan/select extension. <MiniMap> from @xyflow/react alongside
+  Stage B's <Controls>; @dagrejs/dagre layout replaces Stage B's
+  naive horizontal-stagger via pure-function layoutGraph(nodes, edges)
+  in src/lib/layout.ts, called from useEffect in <GraphCanvas>.
+
+Schema:
+- schemas/event.v1.json bumped (additive minor in-place per
+  schemas/README.md): tool_result gains optional tokens_in +
+  tokens_out; agent_complete gains optional tokens_total. $id
+  unchanged. xtask regenerate-types updates src/types/agent_event.ts.
+- crates/runtime-core/src/event.rs hand-edited to match (event.rs
+  is NOT in the typify codegen list per Stage A; flagged in retro
+  Decisions as M04 carry-forward to extend the typify list).
+- crates/runtime-main/src/sdk/event_pipeline.rs extended to surface
+  tokens from M02.B's CostBreakdown into the new AgentEvent fields.
+
+12 files in scope: 4 NEW (InspectorPanel + InspectorPanel.test +
+layout.ts + layout.test), 8 EDIT (graphStore + GraphCanvas +
+AgentNode + ToolNode + App + App.test + styles + schemas/event.v1.json
++ event.rs + event_pipeline.rs + sdk_event_translation.rs +
+package.json + CHANGELOG).
+
+~16 new tests: 4 layout tests; 6 InspectorPanel tests; 4 graphStore
+token-tracking tests; 2 App-level interaction tests; 2 Rust event-
+translation tests.
+
+Coverage:
+- layout.ts ≥95% line (new primitive — pure function).
+- InspectorPanel.tsx ≥80% line (component-test pattern).
+- graphStore.ts stays ≥95% (token-tracking added without dropping
+  existing branches).
+- runtime-main stays ≥95% (event_pipeline.rs extension covered by
+  the 2 new translation tests).
+
+Per-stage decisions (per Stage D retro):
+- @dagrejs/dagre chosen over elk-js (smaller bundle; v0.1 sufficient).
+- Layout in useEffect not in store (visualization vs state separation).
+- CSS transform: scale() for token weight (perf > JS-computed sizing).
+- aria-modal="false" on InspectorPanel (informational, not blocking).
+
+Refs: M03-live-graph.md §D; agent-runtime-spec.md §3 Behavior + Visual
+Design; schemas/README.md additive in-place bump; docs/gotchas.md
+#21 + #27 + new entry M04 carry-forward (extend Rust typify list to
+include event.v1.json).
+
+https://claude.ai/code
+```
+
+---
 ## Stage E — VDR projection + SQL inspector + graph persistence
 
 *Authored in subsequent chunks.*
