@@ -631,13 +631,629 @@ https://claude.ai/code
 ---
 
 <!-- ============================================================ -->
-<!-- STAGE B onward — placeholder; authored in subsequent chunks    -->
+<!-- STAGE B — React Flow + Zustand foundation + 3 basic node types -->
 <!-- ============================================================ -->
 
 ## Stage B — React Flow + Zustand foundation + 3 basic node types
 
-*Authored in the next chunk after Stage A is approved.*
+**WEBCHECK:** verify each URL against this stage's prompt body **before** the fresh session opens. If any claim is stale, update this section in `M03-live-graph.md` BEFORE pasting Stage B's CLI prompt to the fresh session.
 
+- <https://reactflow.dev/learn/customization/custom-nodes> — confirm the `@xyflow/react` v12 custom-node API: `Handle` + `Position` + `NodeProps<T>` generic typing; `nodeTypes` prop on `<ReactFlow>` is a stable-reference map (memoize or define outside the component to avoid re-renders)
+- <https://reactflow.dev/api-reference/react-flow#fit-view> — confirm the `fitView` prop and `fitViewOptions` for v12; behavior on initial mount when `nodes` is empty
+- <https://zustand.docs.pmnd.rs/guides/typescript> — confirm Zustand v5 TypeScript patterns (`create<T>()(set => ({...}))` shape; selector-based subscriptions for re-render minimization)
+- <https://zustand.docs.pmnd.rs/integrations/persisting-store-data> — confirm v5's persist middleware behavior (M03 Stage E adds persistence; Stage B does NOT persist yet, but document the seam so Stage E's addition is non-breaking)
+- <https://reactflow.dev/api-reference/types/node> + <https://reactflow.dev/api-reference/types/edge> — confirm v12 `Node` + `Edge` type shapes; specifically the `data` field's generic typing
+
+### B.1 Problem Statement
+
+M02 ships a flat `<ul>` event list. Spec §3 declares the live graph as the user-facing surface: agents are nodes, skill loads are edges, gaps are nodes. Stage B lays the foundation — React Flow + Zustand + three of the eleven spec §3 node types — without trying to ship every node type at once. Three node types (`AgentNode`, `ToolNode`, `SkillNode`) are enough to cover the M02 smoke-test event flow (agent_spawned → tool_invoked → skill_loaded → tool_result → agent_complete) end-to-end as a graph. The remaining eight types (MCPNode, GapNode, HITLNode, PlanNode, TaskNode, VerifyNode, HookNode, FrameworkNode) land in Stage C.
+
+The cardinal architectural decision Stage B locks: **Zustand store, not Tauri-event-side event handling, drives the graph state.** The IPC layer (M02's `subscribeAgentEvents`) still fires on every AgentEvent; the new `applyEvent(event)` action on the Zustand store is the single entry point that translates events into node + edge mutations. Components subscribe to the store via selector hooks; React Flow renders nodes + edges from the store's snapshot.
+
+The second decision: **the three node components are React Flow custom nodes**, not generic divs styled to look like nodes. Custom nodes get React Flow's `Handle` + `Position` primitives, participate in edge calculation correctly, and benefit from the v12 SSR-safe layout work without renderer-side hacks.
+
+The third decision: **the store is event-driven, not snapshot-driven.** The store's state is computed by replaying every received `AgentEvent` through `applyEvent`. This is forward-compatible with Stage E's persistence: replay the persisted event log to reconstruct the graph at session-reload time. Stage B's tests use this property to verify reducer-shaped invariants (idempotence on duplicate events, ordering independence for non-causal events) without integration tests.
+
+**One-line success criterion:** clicking "Run smoke test" in the M02 SetupPanel UI shows the smoke session as a small graph (1 AgentNode for `smoke-agent`, 0 tool/skill nodes since the smoke prompt doesn't invoke any), with the AgentNode transitioning from `active` (blue) to `complete` (green) via React Flow color encoding, and the renderer Vitest coverage on `src/lib/graphStore.ts` and the three node components is ≥80%.
+
+**New artifacts:**
+- `src/lib/graphStore.ts` — Zustand store; the canonical event-driven graph reducer
+- `src/components/GraphCanvas.tsx` — `<ReactFlow>` wrapper subscribed to the store
+- `src/components/nodes/AgentNode.tsx` — custom node for spec §3 AgentNode
+- `src/components/nodes/ToolNode.tsx` — custom node for spec §3 ToolNode
+- `src/components/nodes/SkillNode.tsx` — custom node for spec §3 SkillNode
+- `tests/unit/graphStore.test.ts` — Zustand store action tests
+- `tests/unit/nodes/AgentNode.test.tsx` + `ToolNode.test.tsx` + `SkillNode.test.tsx` — component render tests
+
+### B.2 Files to Change
+
+| File | Change |
+|---|---|
+| `src/lib/graphStore.ts` | **New** — Zustand store with `nodes`, `edges`, `selectedNodeId` state + `applyEvent`, `clear`, `selectNode` actions |
+| `src/lib/eventReducer.ts` | **Delete** — replaced by graphStore |
+| `tests/unit/eventReducer.test.ts` | **Delete** — replaced by graphStore.test.ts |
+| `tests/unit/graphStore.test.ts` | **New** — covers all 6 AgentEvent variants Stage B handles, edge cases (orphan events, duplicates) |
+| `src/components/GraphCanvas.tsx` | **New** — wraps `<ReactFlow>` from `@xyflow/react`; subscribes to store via selectors; defines stable `nodeTypes` map |
+| `src/components/EventList.tsx` | **Delete** — replaced by GraphCanvas |
+| `src/components/nodes/AgentNode.tsx` | **New** — React Flow custom node for spec §3 AgentNode (status + name) |
+| `src/components/nodes/ToolNode.tsx` | **New** — React Flow custom node for spec §3 ToolNode |
+| `src/components/nodes/SkillNode.tsx` | **New** — React Flow custom node for spec §3 SkillNode |
+| `tests/unit/nodes/AgentNode.test.tsx` | **New** |
+| `tests/unit/nodes/ToolNode.test.tsx` | **New** |
+| `tests/unit/nodes/SkillNode.test.tsx` | **New** |
+| `src/App.tsx` | **Edited** — replace `<EventList events={state.events} />` with `<GraphCanvas />`; remove the `useReducer(reducer, initialState)` hook (the Zustand store handles state); preserve SetupPanel + SmokeButton + handleSetKey + handleSmoke; preserve `subscribeAgentEvents` but call `applyEvent` from the store instead of `dispatch({ type: 'event_received', event })` |
+| `tests/unit/App.test.tsx` | **Edited** — refactor to assert on Zustand store state (read via `useGraphStore.getState()` in test) instead of `state.events` count; preserve happy-path + error-path scenarios |
+| `tests/unit/components.test.tsx` | **Edited** — drop EventList variant render tests (8 tests); preserve SetupPanel password-input + save-button-min-key-length + SmokeButton disabled-state tests; add a "renders empty GraphCanvas before any events arrive" smoke test |
+| `tests/unit/ipc.test.ts` | **No change** — IPC layer is preserved as-is |
+| `src/lib/ipc.ts` | **No change** — `subscribeAgentEvents` + `unwrapCmdError` already correct |
+| `src/styles.css` | **Edited** — add graph-canvas styles + node-type styles (.agent-node, .tool-node, .skill-node) per spec §3 visual design (dark bg, color encoding, animated dashed edges); preserve existing M02 component styles |
+
+### B.3 Detailed Changes
+
+#### `src/lib/graphStore.ts` — new
+
+```typescript
+import { create } from 'zustand';
+import type { Edge, Node } from '@xyflow/react';
+import type { AgentEvent } from '../types/agent_event';
+
+/**
+ * Status field shared by every spec §3 node type. Drives color encoding
+ * (per spec §3 Visual Design: blue=active, green=complete, red=error).
+ */
+export type NodeStatus = 'active' | 'complete' | 'error';
+
+/**
+ * Data attached to AgentNode instances in the React Flow graph.
+ */
+export interface AgentNodeData {
+  agentId: string;
+  agentName: string;
+  status: NodeStatus;
+  parentAgentId: string | null;
+}
+
+/**
+ * Data attached to ToolNode instances. Stage B handles the basic shape;
+ * Stage C extends with `source` ("builtin" | "mcp" | "generated") +
+ * `server` for MCP tools.
+ */
+export interface ToolNodeData {
+  toolId: string;
+  toolName: string;
+  agentId: string; // parent agent
+  status: NodeStatus;
+  durationMs: number | null;
+}
+
+/**
+ * Data attached to SkillNode instances. Skills are loaded into context
+ * (not called); the edge from the parent agent is dashed (no flow
+ * animation per spec §3 Behavior).
+ */
+export interface SkillNodeData {
+  skillId: string;
+  skillName: string;
+  agentId: string; // parent agent that loaded the skill
+  mode: string | null; // mode-variant section selector if applicable
+}
+
+/**
+ * Discriminated union over the three Stage B node types. Stage C extends
+ * with the remaining eight spec §3 types.
+ */
+export type GraphNode =
+  | Node<AgentNodeData, 'agent'>
+  | Node<ToolNodeData, 'tool'>
+  | Node<SkillNodeData, 'skill'>;
+
+/**
+ * Edge variants Stage B emits. Stage C adds animated active-call edges
+ * + dashed skill-load edges per spec §3 Behavior.
+ */
+export type GraphEdge = Edge;
+
+interface GraphState {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  selectedNodeId: string | null;
+
+  /**
+   * Single entry point for translating AgentEvent into node + edge
+   * mutations. Idempotent on duplicate events (asserts in test); order-
+   * independent for non-causal events (e.g., two unrelated agent_spawned
+   * events).
+   */
+  applyEvent: (event: AgentEvent) => void;
+
+  /**
+   * Clear all nodes + edges. Called when user clicks "Run smoke test"
+   * (renderer dispatches `clear` before the new session begins; M02's
+   * dispatch({type:'clear'}) shape preserved).
+   */
+  clear: () => void;
+
+  /**
+   * Set the currently-selected node. Stage D's inspector panel uses this.
+   */
+  selectNode: (id: string | null) => void;
+}
+
+export const useGraphStore = create<GraphState>((set) => ({
+  nodes: [],
+  edges: [],
+  selectedNodeId: null,
+
+  applyEvent: (event) =>
+    set((state) => {
+      switch (event.type) {
+        case 'session_start':
+          // No node added at session_start; Stage E may render a
+          // FrameworkNode root here, but Stage B has no FrameworkNode.
+          return state;
+
+        case 'agent_spawned':
+          // Skip duplicate (idempotence: same agent_id appearing twice
+          // is a bug upstream but the store should not crash on it).
+          if (state.nodes.some((n) => n.id === `agent:${event.agentId}`)) {
+            return state;
+          }
+          return {
+            ...state,
+            nodes: [
+              ...state.nodes,
+              {
+                id: `agent:${event.agentId}`,
+                type: 'agent',
+                position: nextAgentPosition(state.nodes),
+                data: {
+                  agentId: event.agentId,
+                  agentName: event.agentName,
+                  status: 'active',
+                  parentAgentId: event.parentId ?? null,
+                },
+              } satisfies Node<AgentNodeData, 'agent'>,
+            ],
+            edges: event.parentId
+              ? [
+                  ...state.edges,
+                  {
+                    id: `edge:${event.parentId}->${event.agentId}`,
+                    source: `agent:${event.parentId}`,
+                    target: `agent:${event.agentId}`,
+                  },
+                ]
+              : state.edges,
+          };
+
+        case 'tool_invoked':
+          // ... (per-event mutation; full body in the fresh session)
+          return state;
+
+        case 'tool_result':
+          // Update existing ToolNode's status to 'complete' + durationMs;
+          // if no matching ToolNode (out-of-order arrival), no-op.
+          return state;
+
+        case 'skill_loaded':
+          // Add SkillNode + dashed edge from agent.
+          return state;
+
+        case 'agent_complete':
+          return updateAgentStatus(state, event.agentId, 'complete');
+
+        case 'agent_error':
+          return updateAgentStatus(state, event.agentId, 'error');
+
+        // M02 emits these too; Stage B treats them as no-op (no node
+        // representation). Stage D's inspector panel surfaces stream
+        // text + decision records.
+        case 'stream_text':
+        case 'stream_thinking':
+        case 'decision_record':
+          return state;
+
+        default: {
+          // Exhaustiveness check — TS narrows event to `never` here.
+          const _exhaustive: never = event;
+          return state;
+        }
+      }
+    }),
+
+  clear: () => set({ nodes: [], edges: [], selectedNodeId: null }),
+
+  selectNode: (id) => set({ selectedNodeId: id }),
+}));
+
+// ---- helpers ----
+
+function nextAgentPosition(existing: GraphNode[]): { x: number; y: number } {
+  // Naive layout for Stage B: stagger horizontally. Stage D adds a real
+  // layout algorithm (probably dagre). The position is the React Flow
+  // default coordinate space (px); React Flow's `fitView` re-centers
+  // on mount.
+  const agentCount = existing.filter((n) => n.type === 'agent').length;
+  return { x: agentCount * 220, y: 0 };
+}
+
+function updateAgentStatus(
+  state: { nodes: GraphNode[]; edges: GraphEdge[]; selectedNodeId: string | null },
+  agentId: string,
+  status: NodeStatus,
+): GraphState {
+  return {
+    ...state,
+    nodes: state.nodes.map((n) =>
+      n.id === `agent:${agentId}` && n.type === 'agent'
+        ? { ...n, data: { ...n.data, status } }
+        : n,
+    ),
+  } as unknown as GraphState; // narrow the discriminated union after the map
+}
+```
+
+The full `tool_invoked`, `tool_result`, `skill_loaded` bodies are authored verbatim by the fresh session per the patterns shown above (idempotence + parent-edge wiring). Each follows the same shape: lookup by stable id (`tool:<id>` / `skill:<id>`), early-return on duplicate, append node + edge.
+
+#### `src/components/nodes/AgentNode.tsx` — new
+
+```typescript
+import { Handle, Position, type NodeProps } from '@xyflow/react';
+import type { AgentNodeData } from '../../lib/graphStore';
+
+export function AgentNode({ data }: NodeProps<AgentNodeData>) {
+  return (
+    <div
+      className={`agent-node agent-node--${data.status}`}
+      data-testid={`agent-node-${data.agentId}`}
+      data-status={data.status}
+      aria-label={`agent ${data.agentName} (${data.status})`}
+    >
+      <Handle type="target" position={Position.Top} />
+      <div className="agent-node__name">{data.agentName}</div>
+      <div className="agent-node__id">{data.agentId.slice(0, 8)}</div>
+      <Handle type="source" position={Position.Bottom} />
+    </div>
+  );
+}
+```
+
+`ToolNode.tsx` and `SkillNode.tsx` follow the same shape with their respective data types. SkillNode's wrapper `div` gets a `skill-node--dashed` modifier so the spec §3 dashed-edge / no-flow-animation styling applies (see CSS section).
+
+#### `src/components/GraphCanvas.tsx` — new
+
+```typescript
+import { ReactFlow, Background, Controls } from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import { useGraphStore } from '../lib/graphStore';
+import { AgentNode } from './nodes/AgentNode';
+import { ToolNode } from './nodes/ToolNode';
+import { SkillNode } from './nodes/SkillNode';
+
+// Defined OUTSIDE the component per @xyflow/react v12 docs: nodeTypes is
+// a stable-reference map; redefining it on each render forces React Flow
+// to re-mount every node, which kills the streaming UX.
+const nodeTypes = {
+  agent: AgentNode,
+  tool: ToolNode,
+  skill: SkillNode,
+};
+
+export function GraphCanvas() {
+  const nodes = useGraphStore((s) => s.nodes);
+  const edges = useGraphStore((s) => s.edges);
+  const selectNode = useGraphStore((s) => s.selectNode);
+
+  return (
+    <div className="graph-canvas" data-testid="graph-canvas">
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        fitView
+        onNodeClick={(_, node) => selectNode(node.id)}
+        onPaneClick={() => selectNode(null)}
+      >
+        <Background />
+        <Controls />
+      </ReactFlow>
+    </div>
+  );
+}
+```
+
+#### `src/App.tsx` — replace EventList with GraphCanvas
+
+**Find:**
+
+```typescript
+import { useEffect, useReducer, useState } from 'react';
+import { initialState, reducer } from './lib/eventReducer';
+```
+
+**Replace with:**
+
+```typescript
+import { useEffect, useState } from 'react';
+import { useGraphStore } from './lib/graphStore';
+```
+
+**Find:**
+
+```typescript
+import { EventList } from './components/EventList';
+```
+
+**Replace with:**
+
+```typescript
+import { GraphCanvas } from './components/GraphCanvas';
+```
+
+**Find** the `useReducer` line and replace with `useGraphStore` selectors. The `dispatch({ type: 'event_received', event })` call inside `subscribeAgentEvents` becomes `useGraphStore.getState().applyEvent(event)`. The `dispatch({ type: 'clear' })` call at the start of `handleSmoke` becomes `useGraphStore.getState().clear()`. The `<EventList events={state.events} />` JSX becomes `<GraphCanvas />`.
+
+**Preserve verbatim:** SetupPanel + SmokeButton + handleSetKey + handleSmoke (including the `console.error` + `unwrapCmdError(e)` from PR #45). The state-machine semantics (clear → started → completed/error) shift from the deleted `eventReducer` to a new minimal state hook (`const [running, setRunning] = useState(false);` + `state.error` derived from a separate `useState(null)`). Full `App.tsx` body produced by the fresh session.
+
+#### `src/styles.css` — graph + node styles
+
+Append the graph styles. Preserve M02's existing component styles. Per spec §3 Visual Design Principles:
+
+- Dark background, high-contrast labels
+- Color encoding: `active` = blue, `complete` = green, `error` = red, `gap` (Stage C) = amber, `hitl` (Stage C) = white/bright
+- Edges animated dashes during active calls (Stage C); solid when complete
+- SkillNode dashed outline; no flow animation
+
+```css
+.graph-canvas {
+  width: 100%;
+  height: 70vh;
+  background: #0e1014;
+}
+
+.agent-node {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  border: 2px solid #2a3045;
+  background: #15192a;
+  color: #e6e6e6;
+  min-width: 140px;
+}
+.agent-node--active   { border-color: #4a90e2; }
+.agent-node--complete { border-color: #4caf50; }
+.agent-node--error    { border-color: #e53935; }
+
+.tool-node { /* same shape with .tool-node--{active,complete,error} */ }
+.skill-node {
+  border-style: dashed;
+  /* no animation; skill is loaded-into-context, not called */
+}
+```
+
+Stage C extends with edge animation styles (`.react-flow__edge--animated` overrides) + the remaining eight node types' base styles. Stage D extends with token-spend-driven `font-size` scaling on AgentNode.
+
+### B.4 Tests
+
+#### Pedantic-pass preflight
+
+Stage B introduces several new modules (graphStore, GraphCanvas, AgentNode, ToolNode, SkillNode). Apply the checklist from `docs/gotchas.md` #21:
+
+- [ ] No clippy traps (Stage B is TS only — N/A for the Rust pedantic list)
+- [ ] No TS strict-mode violations: `tsc --noEmit` clean
+- [ ] No ESLint flat-config violations: `eslint .` clean
+- [ ] No prettier violations: `prettier --check .` clean
+
+Frontend-specific traps (per `docs/gotchas.md` #25, #26, #27):
+
+- [ ] Vitest+RTL DOM-ref staleness: any `await waitFor(...)` followed by element interaction must re-query (`findByLabelText`) — never reuse the pre-await ref (per #27)
+- [ ] React Flow `nodeTypes` map MUST be defined outside the component (per WEBCHECK / React Flow v12 docs); inline definition causes re-mounts on every render
+- [ ] Zustand v5 selector patterns: components subscribe via `useGraphStore((s) => s.<field>)`, not `useGraphStore()` (the latter triggers re-renders on any state change; the selector form re-renders only when the selected slice changes)
+
+#### Default test plan for stages adding a new safety primitive
+
+The Zustand store is the closest thing to a safety primitive in Stage B (single source of graph state; bug here breaks the entire UI). Apply the seam-test pattern (per `docs/build-prompts/TEMPLATE.md` post-M02 addition):
+
+- N unit tests for the store actions (testable seam: `applyEvent` is pure-function-shaped; tests dispatch events directly and assert on the resulting state without touching React Flow)
+- M integration tests (Vitest+RTL) for the GraphCanvas component rendering nodes/edges from the store
+
+#### Test plan (Stage B)
+
+`tests/unit/graphStore.test.ts` — Zustand store action tests:
+
+1. **agent_spawned: adds AgentNode with active status** — apply event, assert `state.nodes` has one AgentNode with id `agent:<id>` and `status: 'active'`
+2. **agent_spawned with parentId: adds parent edge** — apply parent + child agent_spawned, assert `state.edges` contains the parent→child edge
+3. **agent_spawned: idempotent on duplicate** — apply same event twice, assert nodes count is 1
+4. **agent_complete: updates AgentNode status to complete** — spawn agent + complete, assert status transition
+5. **agent_error: updates AgentNode status to error** — same shape
+6. **tool_invoked: adds ToolNode + edge from agent** — assert node + edge correctly wired
+7. **tool_result: updates ToolNode status to complete + durationMs** — assert update
+8. **skill_loaded: adds SkillNode + dashed edge from agent** — assert node added; edge data field marks it dashed
+9. **stream_text / stream_thinking / decision_record: no-op** — assert state unchanged after these events
+10. **clear: empties nodes + edges + selectedNodeId** — populate then clear, assert empty state
+11. **selectNode: sets selectedNodeId** — assert
+12. **applyEvent on session_start: no-op (Stage E adds FrameworkNode)** — assert state unchanged
+
+Coverage target on `src/lib/graphStore.ts`: ≥95% line (treat as primitive — every branch in `applyEvent` is covered by an explicit test above).
+
+`tests/unit/nodes/AgentNode.test.tsx` — render tests:
+
+1. **renders agent name + truncated agent_id** — assert
+2. **applies status class for active|complete|error** — three render assertions with each status
+3. **has accessible aria-label** — assert label contains agent name + status
+4. **has data-testid + data-status attributes** — for E2E selectability (Stage F)
+5. **renders source + target Handles** — verify React Flow handle elements present
+
+Same shape for ToolNode + SkillNode (~5 tests each).
+
+`tests/unit/App.test.tsx` — refactored:
+
+1. **save-key + run-smoke happy path: AgentNode appears in graph** — mock `subscribeAgentEvents` to fire an `agent_spawned`, assert `useGraphStore.getState().nodes` contains the AgentNode
+2. **command-error surface: state.error rendered, no node added** — fire an invoke rejection, assert error path
+
+`tests/unit/components.test.tsx` — drop EventList variant tests; keep:
+
+- SetupPanel password-input invariant
+- SetupPanel save-button-min-key-length
+- SmokeButton disabled-state
+- Add: GraphCanvas renders empty before any events arrive (data-testid="graph-canvas" present; no nodes)
+
+#### Coverage target
+
+- Workspace Rust: ≥80% (preserved; no Rust change in Stage B)
+- runtime-drone: ≥95% (preserved; no Rust change)
+- runtime-main: ≥95% (preserved; no Rust change)
+- src-tauri: 50% patch gate (preserved; no Rust change)
+- **src/ frontend: ≥80%** with **graphStore.ts ≥95%** (treat as primitive; the store is the single source of truth for graph state)
+
+**Doc-to-CI invariant.** No new exclusions in Stage B. The graphStore + components are pure TS, no OS-call wrappers; everything is testable. If Stage B somehow surfaces an OS-call holdout (unexpected; React Flow + Zustand are pure renderer code), update CI workflow regex + CLAUDE.md §5 + the retro `[END] Coverage holdouts` subsection in the same commit.
+
+### B.5 CLI Prompt
+
+```xml
+<work_stage_prompt id="M03.B">
+  <context>
+    Stage B of M03 (Live Graph). React Flow + Zustand foundation; three
+    basic node types (Agent, Tool, Skill); replace the M02 EventList with
+    a GraphCanvas component. Builds on Stage A's @xyflow/react + zustand
+    deps + regenerated agent_event.ts schema. Stage C does not start
+    until Stage B's commit is on the milestone branch.
+  </context>
+
+  <read_first>
+    <file>CLAUDE.md</file>
+    <file>STAGE-PROMPT-PROTOCOL.md</file>
+    <file>docs/build-prompts/M03-live-graph.md (Stage B sections B.1–B.4)</file>
+    <file>agent-runtime-spec.md §3</file>
+    <file>docs/MVP-v0.1.md §M3</file>
+    <file>docs/style.md</file>
+    <file>docs/gotchas.md (especially #21 #25 #26 #27)</file>
+  </read_first>
+
+  <read_reference>
+    <file purpose="event-driven-store archetype + applyEvent shape; Stage A regenerated this">src/types/agent_event.ts</file>
+    <file purpose="M02 useReducer pattern being replaced">src/lib/eventReducer.ts</file>
+    <file purpose="component test idiom (RTL queries, mock @tauri-apps/api)">tests/unit/components.test.tsx</file>
+    <file purpose="App.tsx state-machine pattern to preserve (handleSetKey + handleSmoke + console.error)">src/App.tsx</file>
+    <file purpose="renderer-side IPC wrappers (preserved as-is)">src/lib/ipc.ts</file>
+  </read_reference>
+
+  <read_prior_stages>
+    <retrospective section="[END] Decisions for the next stage">docs/build-prompts/retrospectives/M03.A-retrospective.md</retrospective>
+  </read_prior_stages>
+
+  <deliverable ref="docs/build-prompts/M03-live-graph.md" section="B.3 Detailed Changes"/>
+
+  <test_plan_required>true</test_plan_required>
+
+  <execution_steps>
+    <step name="write_failing_tests" budget="1"/>
+    <step name="implement" budget="1"/>
+    <step name="verify_gates" budget_iterations="3"/>
+    <step name="fill_retrospective"/>
+    <step name="surface"/>
+  </execution_steps>
+
+  <acceptance_criteria ref="docs/build-prompts/M03-live-graph.md" section="B.4 Tests"/>
+
+  <scope_locks ref="docs/build-prompts/M03-live-graph.md" section="Key constraints"/>
+
+  <gates milestone="M03"/>
+
+  <self_correction_budget>3</self_correction_budget>
+
+  <gotchas>
+    <trap>Stage B's job is the foundation + 3 basic node types, NOT all 11. Resist scope creep; MCPNode/GapNode/HITLNode/PlanNode/TaskNode/VerifyNode/HookNode/FrameworkNode all land in Stage C.</trap>
+    <trap>React Flow v12 nodeTypes map MUST be defined outside the component (per WEBCHECK reference). Inline definition forces React Flow to re-mount every node on every render — kills streaming UX. Define `nodeTypes` at module level (per the GraphCanvas.tsx pattern in B.3).</trap>
+    <trap>Zustand v5 selector pattern matters: `useGraphStore((s) => s.nodes)` re-renders only on nodes changes; bare `useGraphStore()` re-renders on any state change. Components must use selector form (per WEBCHECK reference).</trap>
+    <trap>Vitest+RTL DOM-ref staleness (per docs/gotchas.md #27): any test that awaits a state change must re-query the DOM via `findByLabelText` etc. before interacting with elements. Capturing pre-await refs is broken even when the await resolves.</trap>
+    <trap>The `graphStore.ts` `applyEvent` function MUST handle the discriminated union exhaustively (the `_exhaustive: never` check in the default branch). Adding a new AgentEvent variant later that the store doesn't handle is a TS compile error, not a silent no-op.</trap>
+  </gotchas>
+
+  <execution_warnings>
+    <warning>DO NOT bump @xyflow/react or zustand mid-stage — Stage A pinned them; Stage B uses what Stage A installed. Bumping mid-stage means re-verifying every test.</warning>
+    <warning>DO NOT add edge animation in Stage B — Stage C handles animated edges + dashed-edge styling. Stage B ships with React Flow's default edge rendering.</warning>
+    <warning>DO NOT touch SetupPanel, SmokeButton, or ipc.ts unless absolutely required — they're preserved verbatim from M02.</warning>
+  </execution_warnings>
+
+  <time_box estimate_hours="5.5"/>
+
+  <retrospective_requirements ref="docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md" section="M[NN].&lt;X&gt; — Stage Retrospective">
+    <special_log>Decisions for Stage C: which edge-animation pattern Stage C will use; whether the @xyflow/react `Background` + `Controls` toolbar feels right for spec §3 visual design; whether the AgentNode/ToolNode/SkillNode CSS structure can be reused for the remaining 8 node types or needs a refactor; whether the Zustand store's discriminated-union exhaustiveness check held up against the new variants Stage C adds.</special_log>
+  </retrospective_requirements>
+
+  <commit_protocol ref="CLAUDE.md" section="8. PR + commit workflow (CRITICAL — read carefully)"/>
+  <commit_message ref="docs/build-prompts/M03-live-graph.md" section="B.6 Commit Message"/>
+
+  <approval_surface>
+    <item>diff stat (git diff --stat HEAD)</item>
+    <item>gate results (each gate, pass/fail, key numbers including frontend coverage now ≥80% with graphStore ≥95%)</item>
+    <item>retrospective (filled-in [END] section with three-axis scoring + verdict + decisions for Stage C + new [END] Coverage holdouts subsection)</item>
+    <item>draft commit message from M03-live-graph.md B.6 Commit Message section (filled with session URL)</item>
+    <item>screenshot or paste of the rendered graph after a successful smoke-test run, showing the AgentNode in active → complete state</item>
+    <item>explicit statement: "Stage M03.B is ready. I will not commit until you approve."</item>
+  </approval_surface>
+</work_stage_prompt>
+```
+
+### B.6 Commit Message
+
+```
+feat(renderer): M03 Stage B — React Flow + Zustand foundation + 3 basic nodes
+
+Lays the foundation for the live graph. Replaces M02's flat <ul>
+event list with a React Flow canvas backed by a Zustand store.
+Three of the eleven spec §3 node types ship: AgentNode, ToolNode,
+SkillNode. The remaining eight (MCP, Gap, HITL, Plan, Task, Verify,
+Hook, Framework) land in Stage C.
+
+Architecture:
+- Zustand store (src/lib/graphStore.ts) is the single source of
+  graph state. The `applyEvent(event)` action is the canonical
+  AgentEvent → node/edge translation (idempotent on duplicates;
+  exhaustive over the discriminated union via TS `never` check).
+- React Flow custom nodes (src/components/nodes/{Agent,Tool,Skill}
+  Node.tsx) use Handle + Position + NodeProps<T> primitives. CSS
+  per spec §3 visual design (dark bg, color encoding for status).
+- GraphCanvas component (src/components/GraphCanvas.tsx) wraps
+  <ReactFlow>; nodeTypes defined at module level (per @xyflow/react
+  v12 docs; inline definition causes per-render remounts).
+- App.tsx refactored to subscribe to the Zustand store via selectors
+  instead of useReducer; SetupPanel + SmokeButton + handleSmoke +
+  unwrapCmdError preserved verbatim from M02.
+
+Deletions:
+- src/lib/eventReducer.ts (replaced by graphStore.ts)
+- src/components/EventList.tsx (replaced by GraphCanvas)
+- tests/unit/eventReducer.test.ts (replaced by graphStore.test.ts)
+
+Tests (new):
+- tests/unit/graphStore.test.ts — 12 tests covering each AgentEvent
+  variant Stage B handles + idempotence + clear/select actions.
+  Coverage on graphStore.ts: ≥95% line (treated as primitive).
+- tests/unit/nodes/{Agent,Tool,Skill}Node.test.tsx — 5 tests each
+  covering render + status classes + accessibility + handles.
+- tests/unit/components.test.tsx — refactored: dropped EventList
+  variant tests; added GraphCanvas empty-state smoke test.
+- tests/unit/App.test.tsx — refactored: asserts on Zustand store
+  state instead of state.events.
+
+Per-stage decisions (per Stage B retro):
+- Naive horizontal-stagger layout for AgentNodes; Stage D adds a
+  proper layout algorithm (probably dagre).
+- Edge animation deferred to Stage C; Stage B ships with React Flow's
+  default static edges.
+- Token-spend node weight deferred to Stage D.
+
+Refs: M03-live-graph.md §B; agent-runtime-spec.md §3; CLAUDE.md §5
+*_with archetype (graphStore.applyEvent is the seam); docs/gotchas.md
+#21 (clippy traps), #25 (Vite root), #26 (serde tag-shape — N/A for
+TS), #27 (Vitest+RTL DOM-ref staleness).
+
+https://claude.ai/code
+```
+
+---
 ## Stage C — Remaining 8 node types + animated edges + color encoding
 
 *Authored in subsequent chunks.*
