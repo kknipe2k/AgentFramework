@@ -106,6 +106,8 @@ Total: ~24 weeks elapsed at sustained pace. Compresses with parallel work; expan
 
 ## M3 — Live Graph (weeks 5–6)
 
+> **Build prompt:** `docs/build-prompts/M03-live-graph.md` (6 stages A–F; ~25–31h calibrated; first milestone authored on v1.2 XML stage-prompt protocol).
+
 **Deliverable**
 - React Flow integration in renderer
 - All node types per spec §3: `AgentNode`, `ToolNode`, `SkillNode`, `MCPNode`, `GapNode`, `HITLNode`, `PlanNode`, `TaskNode`, `VerifyNode`, `HookNode`, `FrameworkNode`
