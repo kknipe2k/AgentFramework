@@ -31,7 +31,8 @@ fn main() {
 fn init_tracing() {
     use tracing_subscriber::{fmt, EnvFilter};
 
-    let default = "info,runtime_core=debug,runtime_main=debug,runtime_drone=debug,agent_runtime=debug";
+    let default =
+        "info,runtime_core=debug,runtime_main=debug,runtime_drone=debug,agent_runtime=debug";
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default));
 
     fmt()

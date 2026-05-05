@@ -29,12 +29,7 @@ export async function subscribeAgentEvents(
  * - `internal`       — has `message`
  */
 export interface CmdError {
-  type:
-    | 'setup_required'
-    | 'provider'
-    | 'drone'
-    | 'key_store'
-    | 'internal';
+  type: 'setup_required' | 'provider' | 'drone' | 'key_store' | 'internal';
   message?: string;
 }
 
