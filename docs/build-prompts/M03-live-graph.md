@@ -2916,9 +2916,630 @@ https://claude.ai/code
 ```
 
 ---
+<!-- ============================================================ -->
+<!-- STAGE F — Tauri-driver E2E + Phase Closeout                  -->
+<!-- ============================================================ -->
+
 ## Stage F — Tauri 2.x desktop-shell E2E + Phase Closeout
 
-*Authored in subsequent chunks.*
+**WEBCHECK:** verify each URL against this stage's prompt body **before** the fresh session opens. If any claim is stale, update this section in `M03-live-graph.md` BEFORE pasting Stage F's CLI prompt to the fresh session.
+
+- <https://v2.tauri.app/develop/tests/webdriver/> — confirm Tauri 2.x desktop-shell E2E uses `tauri-driver` + WebdriverIO; macOS unsupported (no WKWebView WebDriver tool); Linux + Windows officially supported
+- <https://v2.tauri.app/develop/tests/webdriver/example/webdriverio/> — confirm WebdriverIO config shape (`wdio.conf.ts`) for Tauri 2.x; `tauri-driver` startup as a service; window-handle attachment pattern
+- <https://v2.tauri.app/develop/tests/webdriver/ci/> — confirm GitHub Actions CI setup for Linux (webkit2gtk + tauri-driver via apt) + Windows (msedgedriver auto-on-PATH for windows-latest runners)
+- <https://www.npmjs.com/package/@crabnebula/tauri-driver> — confirm current stable version of the npm package; alternative is `tauri-driver` cargo binary (older path); the npm package is the v2 official distribution
+- <https://docs.crabnebula.dev/plugins/tauri-e2e-tests/> — confirm any additional setup or configuration for end-to-end Tauri tests
+- <https://webdriver.io/docs/configurationfile> — confirm WebdriverIO v9 config + capabilities format (Tauri 2.x ecosystem expects v9+; older v8 configs may not work)
+
+### F.1 Problem Statement
+
+Stage F closes M03 with two workstreams that share a single commit:
+
+**Part 1 — Full Tauri 2.x desktop-shell E2E.** M02.E shipped four `test.skip()` Playwright entries with rationale stating that full desktop-shell E2E requires `tauri-driver` + WebdriverIO per the official Tauri docs (Playwright's `_electron` API is Electron-specific and won't drive Tauri's WebView2 / WebKitGTK windows). Stage F lights this up: adds `@crabnebula/tauri-driver` + WebdriverIO v9 + a `wdio.conf.ts` configured for Tauri 2.x, ships 6 E2E tests covering renderer-load + smoke happy path + graph rendering + inspector panel + SQL inspector + replay reconstruction, wires a new `e2e-tauri-driver` CI job into Linux + Windows runners (macOS unsupported per tauri-driver upstream — deferred indefinitely per MVP §M3 out-of-scope), and **deletes** the four `test.skip()` carry-forwards from `tests/e2e/smoke.spec.ts`. The renderer-level Playwright tests stay — they cover a different layer (Vite dev server, fast feedback) and complement the desktop-shell tests.
+
+**Part 2 — M03 Phase Closeout.** Per `CLAUDE.md` §20, every parent milestone produces a Gap Analysis entry **separate from per-stage retrospectives**. Retrospectives evaluate the build *process*; gap analysis evaluates the build *product* (does code match spec, what did spec get wrong, prioritized fix backlog). The M03 entry lands at Stage F as the **final commit on the parent-milestone branch**, gating the PR push. Six required sections per `CLAUDE.md` §20 (codebase deep dive cumulative across M01+M02+M03; adherence to spec with file:line cites; spec review forward-looking; fix backlog 🔴/🟡/🟢; carry-forward from prior milestones; sign-off). Plus the new v1.2 protocol's `<gotchas_graduation>` subsection auditing per-stage `<gotchas>` across A–F (disposition: kept | graduated | resolved | expired). Plus `M03-summary.md` per `SUMMARY-TEMPLATE.md` aggregating per-stage axis scores. The commit is **immutable once landed** — future milestones report status updates via their Carry-forward sections only; Stage F's gap-analysis entry never gets edited.
+
+The cardinal architectural decision: **Tauri-driver E2E tests are a SEPARATE test type, not an extension of the existing Playwright suite.** They live at `tests/e2e-tauri/` (new directory) with their own `wdio.conf.ts`. The existing `tests/e2e/` Playwright tests remain and exercise the Vite-dev-server renderer (fast feedback, no Tauri compile required); the new `tests/e2e-tauri/` exercises the actual built Tauri app (slow feedback, full integration). Two test types, two CI jobs, two layers of regression detection.
+
+The second decision: **CI matrix is Linux + Windows only; macOS is documented out-of-scope.** Per `tauri-driver`'s official limitations + MVP §M3 out-of-scope; the existing macOS Rust matrix job continues to run unit + integration tests but skips the new `e2e-tauri-driver` job. This is a one-line CI config — `if: matrix.os != 'macos-latest'` on the new job.
+
+The third decision: **the four `test.skip()` carry-forwards are DELETED, not migrated.** The skipped entries in `tests/e2e/smoke.spec.ts` were rationale-only placeholders for Stage F to address; their replacement isn't a 1:1 port to the new test file (the WebdriverIO + tauri-driver test setup is genuinely different). Stage F authors fresh tests in `tests/e2e-tauri/smoke.e2e.ts` covering the same intent + new M03-specific scenarios.
+
+The fourth decision: **gap-analysis entry's `<gotchas_graduation>` audits all 28+ per-stage gotchas** (Stage A through Stage F authoring + execution combined). Each gets a disposition. This is the v1.2 protocol's structural improvement over M01/M02 (which used informal disposition discussion in retros); Stage F is the first milestone to ship the formal subsection.
+
+**One-line success criterion:** the new `e2e-tauri-driver` CI job runs green on Linux + Windows; six E2E tests cover renderer-load + save-key + smoke + graph-render + inspector-panel + sql-inspector + replay; `M03-summary.md` lands with all axis scores ≥3 across all stages (no hard-gate violations); `docs/gap-analysis.md` gains an immutable M03 entry with six populated sections + a `<gotchas_graduation>` subsection covering all per-stage gotchas; the M03 PR is pushed and ready for three-artifact review.
+
+**New artifacts:**
+- `wdio.conf.ts` — WebdriverIO v9 config for Tauri 2.x desktop-shell E2E
+- `tests/e2e-tauri/` directory + `tests/e2e-tauri/smoke.e2e.ts`
+- `docs/build-prompts/retrospectives/M03-summary.md`
+- M03 entry appended to `docs/gap-analysis.md` (immutable)
+
+### F.2 Files to Change
+
+| File | Change |
+|---|---|
+| `package.json` | **Edited** — add `@crabnebula/tauri-driver`, `@wdio/cli ^9`, `@wdio/local-runner ^9`, `@wdio/mocha-framework ^9`, `@wdio/spec-reporter ^9`, `webdriverio ^9`, `@types/mocha` to `devDependencies`. Add new script `"test:e2e:tauri": "wdio run wdio.conf.ts"` |
+| `package-lock.json` | **Regenerated** via `npm install` |
+| `wdio.conf.ts` | **New** — WebdriverIO v9 config; tauri-driver as a service; window-handle attachment + base URL = `tauri://localhost`; spec-reporter; capabilities for chromedriver-on-WebKitGTK (Linux) + msedgedriver-on-WebView2 (Windows); excludes macOS via `process.platform !== 'darwin'` guard at config-load time |
+| `tests/e2e-tauri/smoke.e2e.ts` | **New** — 6 tests using `@wdio/mocha-framework` + chai assertions (per WebdriverIO v9 default): (1) app launches with SetupPanel visible, (2) save-key flow (paste valid format → click save → ✓ checkmark appears), (3) run-smoke happy path (after key saved, click Run smoke test → AgentNode appears in graph), (4) click AgentNode → InspectorPanel opens with node data, (5) SQL inspector executes `SELECT * FROM signals LIMIT 5` and renders rows, (6) reload (close + relaunch) → graph reconstructs from persisted signals |
+| `tests/e2e/smoke.spec.ts` | **Edited** — delete the 4 `test.skip()` entries (the renderer-level Playwright happy-path tests STAY; only the skip-with-rationale entries that pointed to Stage F leave) |
+| `.github/workflows/ci.yml` | **Edited** — add new `e2e-tauri-driver` job: matrix Linux + Windows; needs Rust toolchain + npm + tauri-driver setup + cargo tauri build; runs `npm run test:e2e:tauri`. Linux runner installs tauri-driver via npm; Windows runner uses msedgedriver auto-on-PATH (windows-latest has it). Job uses the existing Tauri Linux deps `apt-get install` block; macOS skipped via `if:` guard |
+| `docs/build-prompts/retrospectives/M03-summary.md` | **New** — per `docs/build-prompts/retrospectives/SUMMARY-TEMPLATE.md`: aggregate three-axis scores across A–F; cross-stage trends; pattern-level wins + surprises; hard-gate-violation summary (none, or list); time-box accuracy (calibrated 25–31h vs actual; M02 ratio was 0.7×); 8–12 explicit decisions to apply before M04.1 authoring; verdict (Sound | Sound-but-rough | Friction-heavy | Not-ready); user-review notes |
+| `docs/gap-analysis.md` | **Edited (append-only)** — append the M03 entry per `CLAUDE.md` §20: six required sections (codebase deep dive cumulative; adherence to spec ✅/⚠️/❌ with file:line cites; spec review forward-looking; fix backlog 🔴/🟡/🟢; carry-forward from M01/M02; sign-off) plus `<gotchas_graduation>` subsection per v1.2 STAGE-PROMPT-PROTOCOL.md (each per-stage gotcha gets disposition: kept | graduated | resolved | expired). **APPEND-ONLY HARD RULE per §20: prior M01 + M02 entries MUST NOT be edited, reordered, or deleted.** CI's `gap-analysis.md append-only check` job (M01.E-shipped) verifies. |
+| `CHANGELOG.md` | **Edited** — `[Unreleased]` entry under "Added — M03.F (Tauri-shell E2E + Phase Closeout)" |
+
+### F.3 Detailed Changes
+
+#### `wdio.conf.ts` — WebdriverIO v9 + tauri-driver config
+
+```typescript
+import type { Options } from '@wdio/types';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { resolve } from 'node:path';
+
+if (process.platform === 'darwin') {
+  // macOS unsupported by tauri-driver upstream per
+  // https://v2.tauri.app/develop/tests/webdriver/. The wdio.conf.ts
+  // exits cleanly so `npm run test:e2e:tauri` is a no-op on macOS
+  // rather than a hard failure.
+  process.stdout.write('tauri-driver E2E skipped on macOS (unsupported)\n');
+  process.exit(0);
+}
+
+const TAURI_DRIVER_PORT = 4444;
+const APP_BIN_NAME = process.platform === 'win32' ? 'agent-runtime.exe' : 'agent-runtime';
+const APP_BIN_PATH = resolve(__dirname, 'src-tauri/target/release', APP_BIN_NAME);
+
+let tauriDriverProc: ChildProcess | undefined;
+
+export const config: Options.Testrunner = {
+  runner: 'local',
+  framework: 'mocha',
+  mochaOpts: { ui: 'bdd', timeout: 60_000 },
+  reporters: ['spec'],
+  specs: ['./tests/e2e-tauri/**/*.e2e.ts'],
+  maxInstances: 1, // tauri-driver does not parallelize within a single host
+  capabilities: [
+    {
+      maxInstances: 1,
+      'tauri:options': {
+        application: APP_BIN_PATH,
+      },
+      // browserName mapped per platform: webkit2gtk on Linux, edge on Windows.
+      browserName: process.platform === 'win32' ? 'edge' : 'webkit2gtk',
+    } as WebdriverIO.Capabilities,
+  ],
+  hostname: '127.0.0.1',
+  port: TAURI_DRIVER_PORT,
+  logLevel: 'info',
+
+  // Lifecycle hooks: spawn tauri-driver before WebdriverIO connects;
+  // tear down after. Per https://v2.tauri.app/develop/tests/webdriver/.
+  onPrepare() {
+    tauriDriverProc = spawn('tauri-driver', ['--port', String(TAURI_DRIVER_PORT)], {
+      stdio: 'inherit',
+    });
+  },
+
+  onComplete() {
+    tauriDriverProc?.kill('SIGTERM');
+  },
+};
+```
+
+#### `tests/e2e-tauri/smoke.e2e.ts` — 6 tests covering M03's user-facing surfaces
+
+```typescript
+import { expect } from 'chai';
+
+describe('Tauri shell E2E — M03 live graph', () => {
+  it('app launches with SetupPanel visible', async () => {
+    const setupPanel = await $('section[aria-label="api key setup"]');
+    await setupPanel.waitForDisplayed({ timeout: 10_000 });
+    expect(await setupPanel.isDisplayed()).to.be.true;
+  });
+
+  it('save-key flow: paste key → save → ✓ stored in OS keychain', async () => {
+    const input = await $('input[type="password"]');
+    await input.setValue('sk-ant-test-1234567890123456'); // length ≥ 10 to enable button
+    const saveButton = await $('button*=Save key');
+    await saveButton.click();
+    const savedIndicator = await $('span[aria-label="saved"]');
+    await savedIndicator.waitForDisplayed({ timeout: 5_000 });
+    expect(await savedIndicator.getText()).to.include('stored in OS keychain');
+  });
+
+  it('graph renders after smoke test (real Anthropic API call)', async () => {
+    // Requires real ANTHROPIC_API_KEY in the OS keychain.
+    // CI runs this with a test key from secrets; locally requires user-set key.
+    const smokeButton = await $('button*=Run smoke test');
+    await smokeButton.click();
+    const agentNode = await $('[data-testid^="agent-node-"]');
+    await agentNode.waitForDisplayed({ timeout: 30_000 });
+    expect(await agentNode.getAttribute('data-status')).to.equal('active');
+    // Wait for completion (Haiku 4.5 ~3s for the smoke prompt).
+    await browser.waitUntil(
+      async () => (await agentNode.getAttribute('data-status')) === 'complete',
+      { timeout: 30_000 },
+    );
+  });
+
+  it('click AgentNode → InspectorPanel opens with node data', async () => {
+    const agentNode = await $('[data-testid^="agent-node-"]');
+    await agentNode.click();
+    const inspector = await $('[data-testid="inspector-panel"]');
+    await inspector.waitForDisplayed({ timeout: 5_000 });
+    const json = await $('.inspector-panel__data');
+    const text = await json.getText();
+    expect(text).to.include('agentId');
+    expect(text).to.include('status');
+  });
+
+  it('SQL inspector executes SELECT * FROM signals LIMIT 5', async () => {
+    const inspectorTextarea = await $('textarea[aria-label="SQL query"]');
+    await inspectorTextarea.setValue('SELECT * FROM signals LIMIT 5;');
+    const executeButton = await $('button*=Execute');
+    await executeButton.click();
+    const resultsTable = await $('table.sql-results');
+    await resultsTable.waitForDisplayed({ timeout: 5_000 });
+    const rows = await $$('table.sql-results tbody tr');
+    expect(rows.length).to.be.greaterThan(0);
+  });
+
+  it('reload reconstructs the graph from persisted signals', async () => {
+    // Close the app, relaunch via tauri-driver's restart capability.
+    await browser.reloadSession();
+    // After reload, the AgentNode from the previous smoke test should
+    // re-appear via replay-from-signals.
+    const agentNode = await $('[data-testid^="agent-node-"]');
+    await agentNode.waitForDisplayed({ timeout: 15_000 });
+    expect(await agentNode.getAttribute('data-status')).to.equal('complete');
+  });
+});
+```
+
+The fresh Stage F session adapts these tests to the actual selectors + timing observed during local Tauri-driver runs; the patterns are the load-bearing structure.
+
+#### `.github/workflows/ci.yml` — new `e2e-tauri-driver` job
+
+Add a new job after the existing `e2e` (Playwright renderer) job:
+
+```yaml
+e2e-tauri-driver:
+  name: E2E (Tauri-driver desktop shell)
+  needs: [detect-cargo, frontend]
+  if: needs.detect-cargo.outputs.has_cargo == 'true'
+  runs-on: ${{ matrix.os }}
+  strategy:
+    fail-fast: false
+    matrix:
+      os: [ubuntu-latest, windows-latest]
+      # macos-latest skipped — tauri-driver does not support macOS per
+      # https://v2.tauri.app/develop/tests/webdriver/. Renderer-level
+      # Playwright tests cover macOS via the existing `e2e` job.
+  steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: npm
+    - name: Install Tauri Linux system deps
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libwebkit2gtk-4.1-dev \
+          libgtk-3-dev \
+          libayatana-appindicator3-dev \
+          librsvg2-dev \
+          libxdo-dev \
+          libssl-dev \
+          webkit2gtk-driver \
+          xvfb
+    - run: npm ci
+    - name: Install tauri-driver
+      run: npm install -g @crabnebula/tauri-driver
+    - name: Build Tauri app (release mode)
+      run: cargo tauri build
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_TEST_KEY }}
+    - name: Run Tauri-driver E2E (Linux with Xvfb)
+      if: matrix.os == 'ubuntu-latest'
+      run: xvfb-run --auto-servernum npm run test:e2e:tauri
+    - name: Run Tauri-driver E2E (Windows native)
+      if: matrix.os == 'windows-latest'
+      run: npm run test:e2e:tauri
+```
+
+Linux uses `xvfb-run` to provide a virtual display for the WebKitGTK window. Windows runs natively (windows-latest has Edge WebView2 + msedgedriver pre-installed).
+
+`secrets.ANTHROPIC_TEST_KEY` is a low-budget test key; the smoke test costs ~$0.001 per run against Haiku 4.5.
+
+#### `tests/e2e/smoke.spec.ts` — delete `test.skip()` entries
+
+Delete the four `test.skip()` blocks that pointed to Stage F. The remaining renderer-level Playwright tests (3 active tests covering page-loads + password-input-type + smoke-disabled-without-key) STAY. They cover a different layer than the new Tauri-shell tests.
+
+#### `docs/build-prompts/retrospectives/M03-summary.md` — Phase Closeout summary
+
+Per `docs/build-prompts/retrospectives/SUMMARY-TEMPLATE.md`. Sections (full template; fresh session populates):
+
+- **Stage trail** (commits across A–F)
+- **Aggregate scoring** (Process / Product / Pattern axes — mean across stages with std dev)
+- **Cross-stage trends** (friction patterns, pattern wins, surprises, hard-gate violations)
+- **Time-box accuracy** (calibrated 25–31h vs actual; M02 ratio was 0.7×)
+- **Decisions to apply before next parent milestone** (CLAUDE.md updates; TEMPLATE.md updates; M04 stage prompts known constraints)
+- **Verdict** (Sound | Sound-but-rough | Friction-heavy | Not-ready)
+- **User-review notes**
+- **Sign-off**
+
+The Stage F fresh session has access to all five prior-stage retrospectives (`M03.A` through `M03.E-retrospective.md`) and aggregates them into the summary.
+
+#### `docs/gap-analysis.md` — append M03 entry (immutable on commit)
+
+Per `CLAUDE.md` §20 + the new v1.2 `<gotchas_graduation>` subsection requirement. Six required sections + the new subsection:
+
+```markdown
+## M03 — Live Graph (2026-MM-DD, commit `<sha>`)
+
+### 1. Codebase deep dive (cumulative across M01 + M02 + M03)
+
+[200–500 words. M01 drone foundation; M02 event pipeline; M03 live graph
++ VDR projection + persistence + Tauri-shell E2E. What's structurally
+sound, what's accumulated debt, what M03 added that previous milestones
+couldn't have shipped without.]
+
+### 2. Adherence to spec
+
+✅ items: [list with file:line cites — e.g., `crates/runtime-drone/src/vdr.rs::project_signal:42 — VDR projection per spec §2b`]
+⚠️ items: [list with rationale]
+❌ items: [list — should be empty for M03]
+
+### 3. Spec review forward-looking
+
+Missing: [things spec doesn't say but should]
+Contradicted: [things spec says one way but code does differently and code is right]
+Ambiguous: [things spec leaves open that need clarifying for M04+]
+
+### 4. Fix backlog
+
+🔴 Critical: [list — should be empty for M03]
+🟡 Important: [list with target milestone]
+🟢 Nice-to-have: [list]
+
+### 5. Carry-forward from prior milestones
+
+[Status updates on M01 + M02 entries' open items. Format per CLAUDE.md §20:
+"M01 🟡 'X' — RESOLVED at <commit>" or "M02 🟡 'X' — STILL OPEN, target M0Y"]
+
+### 6. Gotchas graduation (v1.2 protocol addition)
+
+Per STAGE-PROMPT-PROTOCOL.md v1.2 — every per-stage <gotchas> entry
+across A–F gets a disposition.
+
+| Stage | Gotcha | Disposition | Target/Resolution |
+|---|---|---|---|
+| A | secrecy/serde feature drop | RESOLVED | M03.A commit <sha> dropped feature |
+| A | TS codegen mechanism choice | RESOLVED | M03.A chose Node CLI shell-out |
+| ... | (all 28+ gotchas across stages) | ... | ... |
+
+### 7. Sign-off
+
+Hard gates G1–G5 cleared in all six M03 stages; <count> Critical-severity
+findings (target: zero). Per CLAUDE.md §20 this entry is **immutable**
+once committed.
+
+— Claude (Stage F fresh session); user-approved <date>.
+```
+
+The fresh Stage F session populates this from all six per-stage retrospectives + the actual M03 codebase state. Pre-commit verification: `git show origin/main:docs/gap-analysis.md` produces the prior content; `head -n <prior-line-count> docs/gap-analysis.md` MUST match byte-for-byte (after CRLF/LF normalization). The new content is APPEND-ONLY at the bottom.
+
+CI's `gap-analysis.md append-only check` job (M01.E-shipped) verifies on every PR push.
+
+### F.4 Tests
+
+#### Pedantic-pass preflight
+
+Stage F adds new TypeScript files (`wdio.conf.ts`, `tests/e2e-tauri/*.e2e.ts`). Apply `docs/gotchas.md` #21 + Stage B/C/D/E TS traps. Stage F specifics:
+
+- [ ] `tsc --noEmit` clean across the new test files
+- [ ] No `as any` in WebdriverIO capability casts (use `WebdriverIO.Capabilities` typed cast where needed)
+- [ ] No `@ts-ignore` to suppress mocha global types — use `@types/mocha` properly
+- [ ] WebdriverIO v9 config uses the v9 `Options.Testrunner` type (NOT v8's `WebdriverIO.Config`)
+
+ARIA + a11y on the E2E tests:
+- [ ] Selectors prefer `aria-label` / `role` queries over `data-testid` when possible (matches the existing Vitest+RTL test idiom; future a11y refactor doesn't break tests)
+- [ ] No tests rely on visual styling alone (color encoding for status — assert via `data-status` attribute, not CSS color)
+
+#### Default test plan for stages adding a new safety primitive
+
+Stage F doesn't add a new safety primitive in code — the closeout artifacts (gap-analysis entry + M03-summary) are documentation. The Tauri-driver E2E suite is a new test type, not a primitive; coverage targets don't apply.
+
+#### Test plan (Stage F)
+
+`tests/e2e-tauri/smoke.e2e.ts` — 6 E2E tests (per F.3 above):
+
+1. App launches + SetupPanel visible
+2. Save-key flow + ✓ indicator
+3. Graph renders after smoke (real Anthropic API call)
+4. Click AgentNode → InspectorPanel opens
+5. SQL inspector executes SELECT
+6. Reload reconstructs graph
+
+Test data dependencies:
+- Test 3 needs `ANTHROPIC_TEST_KEY` in CI secrets (low-budget; ~$0.001 per CI run × 2 OS = ~$0.002 per PR run)
+- Test 6 depends on Test 3 having populated the signal log — ordering matters; tests run in declared order via mocha's default
+
+Local development (without CI secrets):
+- Tests 1, 2, 4 (with seeded data), 5 (with seeded data) work without an API key
+- Test 3 + 6 require a real key in keychain; manual run only
+
+Skipped on macOS via the `wdio.conf.ts` `process.platform === 'darwin'` early-exit. The CI `e2e-tauri-driver` job skips macOS-latest entirely.
+
+#### Coverage target
+
+Stage F doesn't change coverage gates:
+
+- Workspace Rust: ≥80% (preserved)
+- runtime-drone: ≥95% (preserved)
+- runtime-main: ≥95% (preserved)
+- src-tauri: 50% patch gate (preserved)
+- src/ frontend: ≥80% (preserved)
+- E2E tests are NOT measured for coverage (they exercise the built binary; coverage tools don't instrument the release build)
+
+**Doc-to-CI invariant.** Stage F adds a new CI job (`e2e-tauri-driver`) but no new code-coverage gates. The new job's pass/fail is the gate — no coverage threshold applies.
+
+### F.5 CLI Prompt
+
+Stage F is the closeout — uses `<closeout_stage_prompt>`, not `<work_stage_prompt>`. Per STAGE-PROMPT-PROTOCOL.md v1.2 §8.
+
+```xml
+<closeout_stage_prompt id="M03.F">
+  <context>
+    Closeout stage of M03 (Live Graph). Stages A–E have committed on the
+    milestone branch claude/m03-live-graph-authoring (then renamed
+    claude/m03-live-graph at execution-branch creation). This stage
+    produces TWO things in ONE commit:
+
+    1. Tauri 2.x desktop-shell E2E suite (tauri-driver + WebdriverIO v9;
+       Linux + Windows matrix; macOS unsupported per upstream + MVP §M3
+       out-of-scope). Six E2E tests covering renderer-load + save-key +
+       smoke + graph-render + inspector + sql-inspector + replay
+       reconstruction. Deletes the four test.skip() carry-forwards from
+       M02.E's tests/e2e/smoke.spec.ts.
+
+    2. M03 Phase Closeout artifacts per CLAUDE.md §20: M03-summary.md
+       aggregating per-stage retrospectives + docs/gap-analysis.md
+       APPEND-ONLY entry with six required sections + the new v1.2
+       protocol's <gotchas_graduation> subsection (each per-stage
+       gotcha across A–F gets disposition: kept | graduated | resolved
+       | expired).
+
+    The gap-analysis commit is the FINAL commit on the parent-milestone
+    branch and gates the PR push. The entry is IMMUTABLE once committed.
+  </context>
+
+  <read_first>
+    <file>CLAUDE.md (especially §3.4 Gap Analysis Entry + §4.7 Do-Not-Commit Rule + §20)</file>
+    <file>STAGE-PROMPT-PROTOCOL.md (v1.2 — closeout-only tags + gotchas_graduation requirement)</file>
+    <file>docs/build-prompts/M03-live-graph.md (Stage F sections F.1–F.4)</file>
+    <file>agent-runtime-spec.md §3 + §13 (privacy — no telemetry in CI E2E)</file>
+    <file>docs/MVP-v0.1.md §M3 acceptance criteria</file>
+    <file>docs/gotchas.md (especially #23 tauri-driver + WebdriverIO matrix; #25 Vite root; #27 Vitest+RTL — applies analogously to WebdriverIO selectors)</file>
+    <file>docs/build-prompts/retrospectives/SUMMARY-TEMPLATE.md</file>
+    <file>docs/gap-analysis.md (read existing M01 + M02 entries; verify their content survives untouched in your final diff)</file>
+  </read_first>
+
+  <read_reference>
+    <file purpose="Tauri 2.x WebDriver setup canonical reference">https://v2.tauri.app/develop/tests/webdriver/</file>
+    <file purpose="WebdriverIO v9 + Tauri example config reference">https://v2.tauri.app/develop/tests/webdriver/example/webdriverio/</file>
+    <file purpose="Tauri WebDriver CI configuration reference">https://v2.tauri.app/develop/tests/webdriver/ci/</file>
+    <file purpose="M02.E test.skip() rationale entries to delete">tests/e2e/smoke.spec.ts</file>
+    <file purpose="renderer-level Playwright config + smoke test (preserved unchanged)">playwright.config.ts</file>
+    <file purpose="existing CI workflow with frontend + e2e jobs to extend">.github/workflows/ci.yml</file>
+    <file purpose="M01-summary archetype for the M03-summary.md shape">docs/build-prompts/retrospectives/M01-summary.md</file>
+    <file purpose="M02-summary archetype for the M03-summary.md shape">docs/build-prompts/retrospectives/M02-summary.md</file>
+    <file purpose="M01 + M02 gap-analysis entries — APPEND BELOW; do not modify">docs/gap-analysis.md</file>
+  </read_reference>
+
+  <cumulative_reads>
+    <codebase>entire shipped codebase to date (M01.A–M01.D + M02.A–M02.F + M03.A–M03.E commits on the milestone branch + this stage's E2E additions)</codebase>
+    <spec>spec/agent-runtime-spec.md (end-to-end, focus on §3 Live Graph + §2b VDR + §1d IPC + §13 Privacy that M03 touches)</spec>
+    <gap_analysis>docs/gap-analysis.md (M01 + M02 entries; M03.F appends the third)</gap_analysis>
+    <retrospectives>docs/build-prompts/retrospectives/M03.A-retrospective.md, M03.B-, M03.C-, M03.D-, M03.E-retrospective.md (all five work stages)</retrospectives>
+  </cumulative_reads>
+
+  <deliverables>
+    <milestone_summary>docs/build-prompts/retrospectives/M03-summary.md (aggregates per-stage retrospectives; scores axes across stages; marks verdict; ~250 lines per M01-summary archetype)</milestone_summary>
+    <gap_analysis_entry>docs/gap-analysis.md (append M03 entry; six required sections + new <gotchas_graduation> subsection per v1.2; APPEND-ONLY; ~200 lines)</gap_analysis_entry>
+    <e2e_suite>tests/e2e-tauri/smoke.e2e.ts + wdio.conf.ts + .github/workflows/ci.yml e2e-tauri-driver job (Linux + Windows; macOS skipped)</e2e_suite>
+    <pr_description>draft only; PR opens only on explicit human ask after approval</pr_description>
+  </deliverables>
+
+  <gap_analysis_requirements ref="CLAUDE.md" section="20. Gap Analysis Protocol (append-only, per-milestone)">
+    <gotchas_graduation>
+      <stage_review id="A">
+        <gotcha>scope creep into Stage B's React Flow work — resist</gotcha>
+        <disposition>resolved</disposition>
+        <target>M03.A commit (held the line; A landed without React Flow code)</target>
+      </stage_review>
+      <stage_review id="A">
+        <gotcha>secrecy/serde feature drop side effects — verify no callsite breaks</gotcha>
+        <disposition>resolved</disposition>
+        <target>M03.A commit (grep verified zero callsites; feature dropped cleanly)</target>
+      </stage_review>
+      <stage_review id="A">
+        <gotcha>TS codegen drift — output must be byte-stable across re-runs</gotcha>
+        <disposition>kept</disposition>
+        <target>per-stage <gotchas> in M04+ when xtask Rust list extends to event.v1.json (deferred from Stage D)</target>
+      </stage_review>
+      <stage_review id="B">
+        <gotcha>nodeTypes map MUST be defined outside the component (re-render trap)</gotcha>
+        <disposition>graduated</disposition>
+        <target>docs/gotchas.md §23 (or new entry — check Stage F authoring)</target>
+      </stage_review>
+      <stage_review id="B">
+        <gotcha>Zustand v5 selector pattern (use selectors, not bare hook)</gotcha>
+        <disposition>graduated</disposition>
+        <target>docs/gotchas.md §X — new entry per protocol-iteration session</target>
+      </stage_review>
+      <!-- ... full graduation matrix populated by the fresh session ...
+           28+ entries covering all per-stage gotchas A–F plus this Stage F's
+           own gotchas. Each is one of: kept (still applies forward, stays in
+           per-stage <gotchas>), graduated (recurred 2+ times, promoted to
+           docs/gotchas.md), resolved (fixed by code change, cite commit),
+           expired (stage-local with no forward applicability, cite rationale). -->
+    </gotchas_graduation>
+  </gap_analysis_requirements>
+
+  <append_only_verification>
+    <local_check>prior content of docs/gap-analysis.md (M01 + M02 entries; lines 1–<count>) MUST be a literal prefix of HEAD before commit. Verify via: `git show origin/main:docs/gap-analysis.md > /tmp/prior.md && head -n <count> docs/gap-analysis.md | tr -d '\r' > /tmp/head.md && diff -q /tmp/prior.md /tmp/head.md` — must report identical.</local_check>
+    <ci_check name="gap-analysis.md append-only check">added in M01.E; verifies on every PR push that prior entries remain byte-identical to merged main.</ci_check>
+  </append_only_verification>
+
+  <three_artifact_review>
+    <artifact>code diff (cumulative M03.A through M03.F)</artifact>
+    <artifact>per-stage retrospectives (M03.A–E) + M03 milestone summary (M03-summary.md, new in F)</artifact>
+    <artifact>new docs/gap-analysis.md M03 entry — flagged "IMMUTABLE once committed"</artifact>
+    <pushback_blocks_pr>true</pushback_blocks_pr>
+  </three_artifact_review>
+
+  <scope_locks>
+    <lock>Append-only is a hard rule (CLAUDE.md §4.1, §4.6, §20) — no editing M01 or M02 prior entries, ever. CI enforces.</lock>
+    <lock>The <gotchas_graduation> subsection MUST list every prior stage of M03 (A–F), even those whose <gotchas> were "None observed." Per STAGE-PROMPT-PROTOCOL.md v1.2 validator rules.</lock>
+    <lock>tauri-driver does not support macOS — DO NOT add macos-latest to the new e2e-tauri-driver CI matrix. The renderer-level Playwright tests cover macOS via the existing e2e job; that's the cross-OS coverage path for v0.1.</lock>
+    <lock>M03 PR push happens AFTER user approves this Stage F commit. Per CLAUDE.md §8, no push without user approval; per §20, the gap-analysis commit is the FINAL commit on the branch and gates the push.</lock>
+  </scope_locks>
+
+  <gates milestone="M03"/>
+
+  <self_correction_budget>3</self_correction_budget>
+
+  <gotchas>
+    <trap>The "Carry-forward" section is required even when empty — write "None observed." rather than omit (CLAUDE.md §3.4). Same for "Spec review forward-looking" sections (Missing/Contradicted/Ambiguous).</trap>
+    <trap>Severity is non-elastic — if M03 has a pile of 🔴 Criticals in the fix backlog, the milestone shouldn't ship; surface this rather than rationalize down to 🟡. The user's review verdict on this entry is the milestone's go/no-go gate.</trap>
+    <trap>The <gotchas_graduation> disposition `expired` requires rationale beyond bare `n/a` per STAGE-PROMPT-PROTOCOL.md v1.2 — explain WHY the gotcha doesn't apply forward (validator checks length).</trap>
+    <trap>tauri-driver's tests/e2e-tauri/ directory MUST NOT be confused with tests/e2e/ (Playwright). Separate test types, separate CI jobs, separate config files. Don't move or merge them.</trap>
+    <trap>The wdio.conf.ts macOS early-exit (process.exit(0)) ensures `npm run test:e2e:tauri` is a no-op on macOS rather than a hard failure. Without this guard, macOS local development breaks. CI's macos-latest skips the whole e2e-tauri-driver job, so the guard is for local dev.</trap>
+    <trap>Three-artifact review pushback BLOCKS the PR push (pushback_blocks_pr: true). If the user pushes back on the gap-analysis content during review, revise; do NOT push the branch until all three artifacts have user approval.</trap>
+  </gotchas>
+
+  <execution_warnings>
+    <warning>DO NOT edit prior gap-analysis.md entries (M01 or M02). Append at the bottom only. CI's append-only check fails the PR if prior content shifts even by one byte (after CRLF/LF normalization).</warning>
+    <warning>DO NOT skip the &lt;gotchas_graduation&gt; subsection. The v1.2 protocol validator (when shipped) will reject the entry without it. Manual authoring per the table format in F.3 above.</warning>
+    <warning>DO NOT push the branch in the same approval round as the Stage F commit. CLAUDE.md §8 + §20 require: commit Stage F (user approves) → user reviews three artifacts (code + retros/summary + gap-analysis) → user approves push → branch pushed → PR draft surfaced for SEPARATE re-approval.</warning>
+    <warning>DO NOT add new code in Stage F beyond the E2E suite + wdio.conf.ts + CI workflow extension. The closeout is doc-heavy by design; new code in Stage F sneaks past the per-stage retro discipline.</warning>
+  </execution_warnings>
+
+  <time_box estimate_hours="5.5"/>
+
+  <retrospective_requirements ref="docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md" section="M[NN].&lt;X&gt; — Stage Retrospective">
+    <special_log>Stage F retro is the M03.F-retrospective.md AND the M03-summary.md is created in this stage too — but they're DIFFERENT files. M03.F-retrospective.md covers ONLY this closeout stage's process (was the tauri-driver setup smooth, did the gap-analysis authoring hit any walls, was the CI workflow extension straightforward); M03-summary.md aggregates ALL six stages. Don't conflate them.</special_log>
+  </retrospective_requirements>
+
+  <commit_protocol ref="CLAUDE.md" section="8. PR + commit workflow (CRITICAL — read carefully)"/>
+  <commit_message ref="docs/build-prompts/M03-live-graph.md" section="F.6 Commit Message"/>
+
+  <approval_surface>
+    <item>diff stat (git diff --stat HEAD)</item>
+    <item>gate results (each gate, pass/fail, key numbers including new e2e-tauri-driver CI job results — green on Linux + Windows)</item>
+    <item>M03.F-retrospective.md filled in (Stage F retro — covers ONLY this closeout stage)</item>
+    <item>M03-summary.md filled in (aggregate across all six stages)</item>
+    <item>gap-analysis.md M03 entry full text (six sections + gotchas_graduation subsection)</item>
+    <item>append-only verification output (diff -q on prior content; CI check status)</item>
+    <item>draft commit message from M03-live-graph.md F.6 Commit Message section</item>
+    <item>screenshot or paste of: (a) successful e2e-tauri-driver CI run; (b) the rendered graph + inspector + SQL inspector + replay reconstruction in the built Tauri app; (c) M03 PR description draft (will be opened only after user re-approval)</item>
+    <item>explicit flag: "This gap-analysis entry is IMMUTABLE once committed. Please review the M03 entry text carefully — once the commit lands and the PR pushes, future milestones can only report status via Carry-forward sections; the M03 entry itself is locked forever."</item>
+    <item>explicit statement: "M03 closeout is ready. I will not commit until you approve. After commit, I will not push until you re-approve. After push, I will not open the PR until you ask."</item>
+  </approval_surface>
+</closeout_stage_prompt>
+```
+
+### F.6 Commit Message
+
+```
+docs+test+ci(m03): Stage F — Tauri-driver E2E + Phase Closeout
+
+Final commit on the M03 milestone branch. Two workstreams in one commit:
+
+Tauri 2.x desktop-shell E2E suite:
+- New tests/e2e-tauri/ directory; 6 tests covering renderer-load,
+  save-key, smoke happy-path (real Anthropic API call), click-to-
+  inspect, SQL inspector execute, reload reconstructs.
+- New wdio.conf.ts (WebdriverIO v9; tauri-driver as service; Linux
+  webkit2gtk + Windows edge capabilities; macOS early-exit since
+  tauri-driver is upstream-unsupported on macOS per
+  v2.tauri.app/develop/tests/webdriver/).
+- New CI job e2e-tauri-driver (Linux + Windows matrix; xvfb on
+  Linux for headless WebKitGTK; uses ANTHROPIC_TEST_KEY secret
+  for the smoke test costing ~$0.001 per CI run × 2 OS).
+- Deletes the four test.skip() carry-forwards from M02.E in
+  tests/e2e/smoke.spec.ts (the renderer-level Playwright tests
+  stay; they cover a different layer with faster feedback).
+
+M03 Phase Closeout per CLAUDE.md §20:
+- New docs/build-prompts/retrospectives/M03-summary.md per
+  SUMMARY-TEMPLATE.md (aggregate axis scores across A–F; cross-
+  stage trends; pattern wins + surprises; time-box accuracy
+  vs the calibrated 25–31h estimate; 8–12 explicit decisions for
+  M04.1).
+- Append M03 entry to docs/gap-analysis.md per CLAUDE.md §20.
+  Six required sections (codebase deep dive cumulative across
+  M01+M02+M03; adherence ✅/⚠️/❌ with file:line; spec review
+  forward-looking; fix backlog 🔴/🟡/🟢; carry-forward from M01+M02;
+  sign-off) plus the new v1.2 protocol's <gotchas_graduation>
+  subsection auditing all 28+ per-stage gotchas across A–F with
+  disposition (kept | graduated | resolved | expired).
+
+This commit is the FINAL commit on claude/m03-live-graph per
+CLAUDE.md §20. The gap-analysis entry is IMMUTABLE once committed.
+Push gates the M03 PR (separate user approval per CLAUDE.md §8 +
+§20).
+
+Refs: M03-live-graph.md §F; agent-runtime-spec.md §3 + §13;
+CLAUDE.md §20; STAGE-PROMPT-PROTOCOL.md v1.2 (closeout schema +
+gotchas_graduation subsection); docs/gotchas.md #23 (tauri-driver
+matrix); MVP-v0.1.md §M3 acceptance criteria.
+
+https://claude.ai/code
+```
+
+---
+
+## Summary Table
+
+| Stage | Title | Calibrated effort | Key deliverables |
+|---|---|---|---|
+| A | Build hygiene + carry-forward closures + new deps | ~2–3h | Vite 5→7 bump; secrecy/serde drop; @xyflow/react + zustand deps; src/counter.{js,test.js} delete; current_exe() drone test retrofit; schemas/event.v1.json + xtask TS codegen; vitest --coverage default |
+| B | React Flow + Zustand foundation + 3 basic node types | ~5–6h | graphStore.ts (Zustand store with applyEvent reducer); GraphCanvas wrapper; AgentNode + ToolNode + SkillNode custom node components; ~30 tests |
+| C | Remaining 8 node types + animated edges + color encoding | ~5–6h | MCPNode + GapNode + HITLNode + PlanNode + TaskNode + VerifyNode + HookNode + FrameworkNode + Edge.animated lifecycle + spec §3 color palette via CSS custom properties; ~43 tests; synthetic-state testing pattern locked |
+| D | Click-to-inspect side panel + token-spend visualization + zoom/pan | ~4–5h | InspectorPanel (ARIA dialog) + layout.ts (dagre) + token-weight CSS scaling + MiniMap + schemas/event.v1.json bump for tokens + Rust event.rs + event_pipeline.rs token surfacing; ~16 tests |
+| E | VDR projection + SQL inspector + graph persistence | ~5–6h | Drone-internal vdr.rs continuous projector + SqlInspector renderer component + parser-based SELECT-only validation + replay-from-signals on app mount + replay.rs (signal→event translator); ~17 tests |
+| F | Tauri 2.x desktop-shell E2E + Phase Closeout | ~5–6h | tauri-driver + WebdriverIO v9 + 6 E2E tests + new e2e-tauri-driver CI job (Linux + Windows; macOS skipped) + M03-summary.md + immutable gap-analysis.md M03 entry with <gotchas_graduation> |
+
+Total calibrated: 25–31h. Expected actual at M02's 0.7× ratio: 17–22h.
+
+## Verification Checklist
+
+Per CLAUDE.md §16 session-start checklist, applied at M03 PR open time. The user verifies before merging:
+
+- [ ] All 6 stages committed on `claude/m03-live-graph` (or whatever branch the user opens with at M03 execution time)
+- [ ] All 6 per-stage retrospectives present at `docs/build-prompts/retrospectives/M03.{A,B,C,D,E,F}-retrospective.md`
+- [ ] M03-summary.md present at `docs/build-prompts/retrospectives/M03-summary.md`
+- [ ] M03 gap-analysis entry appended to `docs/gap-analysis.md` (CI append-only check passes)
+- [ ] All 11 spec §3 node types render correctly in unit tests
+- [ ] graphStore.ts + layout.ts + vdr.rs + replay.rs all ≥95% line coverage (new primitives)
+- [ ] Frontend coverage ≥80% on src/
+- [ ] Workspace Rust coverage ≥80%; runtime-drone + runtime-main ≥95%; src-tauri 50% patch gate
+- [ ] CI green across all 3 OS targets × stable + MSRV (Rust matrix); frontend job; e2e renderer job; e2e-tauri-driver job (Linux + Windows; macOS skipped)
+- [ ] Codecov delta gates pass (project + patch + per-flag)
+- [ ] cargo audit + cargo deny clean
+- [ ] No new third-party deps without ADR per CLAUDE.md §6 (Stage A added @xyflow/react + zustand + json-schema-to-typescript; Stage D added @dagrejs/dagre; Stage F added @crabnebula/tauri-driver + @wdio/* — all justified inline)
+- [ ] schemas/event.v1.json bumped (Stage D) + xtask drift check passes
+- [ ] No telemetry / phone-home additions; no secrets in commits
+- [ ] M02 smoke test still works end-to-end (regression check); now produces a graph instead of an event list
+- [ ] Three-artifact review by user: code diff + retros/summary + gap-analysis entry — pushback on any blocks merge
 
 ---
 
