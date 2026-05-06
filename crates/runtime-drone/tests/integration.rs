@@ -184,16 +184,16 @@ async fn query_session_db_roundtrip_returns_rows() {
         let n = tokio::time::timeout(Duration::from_millis(500), reader.read_line(&mut line))
             .await
             .ok()
-            .and_then(|r| r.ok())
+            .and_then(Result::ok)
             .unwrap_or(0);
         if n == 0 {
             continue;
         }
-        if let Ok(evt) = serde_json::from_str::<runtime_core::DroneEvent>(line.trim()) {
-            if let runtime_core::DroneEvent::QueryResult { rows } = evt {
-                got = Some(rows);
-                break;
-            }
+        if let Ok(runtime_core::DroneEvent::QueryResult { rows }) =
+            serde_json::from_str::<runtime_core::DroneEvent>(line.trim())
+        {
+            got = Some(rows);
+            break;
         }
     }
     let rows = got.expect("expected QueryResult event");
@@ -280,16 +280,16 @@ async fn read_signals_roundtrip_preserves_ordering() {
         let n = tokio::time::timeout(Duration::from_millis(500), reader.read_line(&mut line))
             .await
             .ok()
-            .and_then(|r| r.ok())
+            .and_then(Result::ok)
             .unwrap_or(0);
         if n == 0 {
             continue;
         }
-        if let Ok(evt) = serde_json::from_str::<runtime_core::DroneEvent>(line.trim()) {
-            if let runtime_core::DroneEvent::SignalLog { signals } = evt {
-                got = Some(signals);
-                break;
-            }
+        if let Ok(runtime_core::DroneEvent::SignalLog { signals }) =
+            serde_json::from_str::<runtime_core::DroneEvent>(line.trim())
+        {
+            got = Some(signals);
+            break;
         }
     }
     let signals = got.expect("expected SignalLog event");

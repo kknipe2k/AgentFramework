@@ -3006,8 +3006,10 @@ export const config: Options.Testrunner = {
       'tauri:options': {
         application: APP_BIN_PATH,
       },
-      // browserName mapped per platform: webkit2gtk on Linux, edge on Windows.
-      browserName: process.platform === 'win32' ? 'edge' : 'webkit2gtk',
+      // Per Tauri 2.x WebDriver docs, browserName must be 'wry' on every
+      // platform — tauri-driver proxies to the native driver (WebKitWebDriver
+      // on Linux, msedgedriver on Windows) under the hood.
+      browserName: 'wry',
     } as WebdriverIO.Capabilities,
   ],
   hostname: '127.0.0.1',

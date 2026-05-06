@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed — M03.F (post-merge CI fixes on PR #47)
+
+Two post-merge CI fixes on the M03 PR. Both surfaced after Stage F landed; neither is in scope for the M03 gap-analysis entry (immutable per CLAUDE.md §20) and both will reappear as M04 carry-forward.
+
+- **`wdio.conf.ts`** — fixes `browserName` capability. Stage F shipped `browserName: process.platform === 'win32' ? 'edge' : 'webkit2gtk'` per the M03 build prompt §F.3 example, but per the official Tauri 2.x WebDriver docs (<https://v2.tauri.app/develop/tests/webdriver/>) the correct value is `'wry'` on every platform — `tauri-driver` proxies to the platform-native driver (WebKitWebDriver on Linux, msedgedriver on Windows) under the hood. Capability now hardcoded to `'wry'`. Same fix applied to the M03 build-prompt example at `docs/build-prompts/M03-live-graph.md` §F.3 so future readers don't repeat the bug.
+- **`crates/runtime-drone/tests/integration.rs`** — fixes 4 clippy errors that fired on Linux (stable + MSRV) + macOS (stable) but not Windows because the test file is `#![cfg(unix)]`. Two `clippy::redundant_closure_for_method_calls` (`.and_then(|r| r.ok())` → `.and_then(Result::ok)`) and two `clippy::collapsible_match` (nested `if let Ok(evt) = … { if let DroneEvent::Variant { … } = evt { … } }` collapsed to single `if let Ok(DroneEvent::Variant { … }) = …`). Source-level fixes per CLAUDE.md §7 anti-patterns; no `#[allow(...)]`.
+
 ### Added — M03.F (Tauri-driver E2E + Phase Closeout)
 
 Final stage of M03. Two workstreams in one commit: full Tauri 2.x desktop-shell E2E framework + M03 Phase Closeout artifacts.

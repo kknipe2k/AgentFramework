@@ -47,10 +47,11 @@ export const config = {
       maxInstances: 1,
       // The application binary tauri-driver launches and attaches to.
       'tauri:options': { application: APP_BIN_PATH },
-      // Per-platform WebDriver target. tauri-driver translates these to the
-      // appropriate underlying driver: webkit2gtk-driver on Linux,
-      // msedgedriver against the WebView2 runtime on Windows.
-      browserName: process.platform === 'win32' ? 'edge' : 'webkit2gtk',
+      // Per Tauri 2.x WebDriver docs (https://v2.tauri.app/develop/tests/webdriver/),
+      // capabilities must use `browserName: 'wry'` on every platform —
+      // tauri-driver proxies WebDriver requests to the platform-native driver
+      // (WebKitWebDriver on Linux, msedgedriver on Windows) under the hood.
+      browserName: 'wry',
     },
   ],
   hostname: '127.0.0.1',
