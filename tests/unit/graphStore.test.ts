@@ -157,11 +157,13 @@ describe('graphStore.applyEvent', () => {
     expect(edge!.data).toMatchObject({ kind: 'skill-load' });
   });
 
-  it('stream_text_decision_record_session_start_are_no_ops', () => {
+  it('stream_text_and_decision_record_are_no_ops', () => {
+    // Stage C wires session_start to spawn a FrameworkNode, so it is no
+    // longer in the no-op set. stream_text + decision_record remain
+    // store-no-ops in v0.1 (Stage D's inspector consumes them as detail).
     useGraphStore.getState().applyEvent(spawnA);
     const before = useGraphStore.getState();
     const noopEvents: AgentEvent[] = [
-      { type: 'session_start', session_id: 's1', framework: 'aria', model: 'haiku' },
       { type: 'stream_text', agent_id: 'a1', text: 'hello' },
       {
         type: 'decision_record',
@@ -175,7 +177,6 @@ describe('graphStore.applyEvent', () => {
       useGraphStore.getState().applyEvent(e);
     }
     const after = useGraphStore.getState();
-    // No new nodes or edges added by these events.
     expect(after.nodes).toHaveLength(before.nodes.length);
     expect(after.edges).toHaveLength(before.edges.length);
   });
@@ -218,10 +219,9 @@ describe('graphStore.applyEvent', () => {
 
   it('every_other_AgentEvent_variant_is_a_safe_no_op', () => {
     // Coverage discipline: assert that every variant the v0.1 schema can
-    // emit but the Stage B store does NOT surface as nodes leaves the
-    // store unchanged. Locks the exhaustiveness contract — Stage C
-    // adding new wiring (e.g., session_start → FrameworkNode) lights
-    // up the switch case, not a `default` accident.
+    // emit but the store does NOT surface as nodes leaves the store
+    // unchanged. Stage C lit up session_start (FrameworkNode root) so
+    // it leaves this list; the remaining variants stay no-ops until M4+.
     useGraphStore.getState().applyEvent(spawnA);
     const before = useGraphStore.getState();
     const noopVariants: AgentEvent[] = [
@@ -259,5 +259,133 @@ describe('graphStore.applyEvent', () => {
     const after = useGraphStore.getState();
     expect(after.nodes).toEqual(before.nodes);
     expect(after.edges).toEqual(before.edges);
+  });
+
+  // ---- Stage C: FrameworkNode root + MCP lazy spawn + animated edges ----
+
+  const sessionStart: AgentEvent = {
+    type: 'session_start',
+    session_id: 's1',
+    framework: 'aria',
+    model: 'haiku',
+  };
+
+  const mcpToolInvoked: AgentEvent = {
+    type: 'tool_invoked',
+    agent_id: 'a1',
+    tool_name: 'list_prs',
+    source: 'mcp',
+    server: 'github-mcp',
+    input: { repo: 'kknipe2k/agent-runtime' },
+  };
+
+  const mcpToolInvokedSecond: AgentEvent = {
+    type: 'tool_invoked',
+    agent_id: 'a1',
+    tool_name: 'comment_pr',
+    source: 'mcp',
+    server: 'github-mcp',
+    input: {},
+  };
+
+  const mcpToolResult: AgentEvent = {
+    type: 'tool_result',
+    agent_id: 'a1',
+    tool_name: 'list_prs',
+    output: { ok: true },
+    duration_ms: 7,
+  };
+
+  it('session_start_spawns_FrameworkNode_at_root', () => {
+    useGraphStore.getState().applyEvent(sessionStart);
+    const { nodes } = useGraphStore.getState();
+    const fw = nodes.find((n) => n.type === 'framework');
+    expect(fw).toBeDefined();
+    expect(fw!.id).toBe('framework:aria');
+    expect(fw!.data).toMatchObject({
+      frameworkName: 'aria',
+      model: 'haiku',
+      status: 'active',
+    });
+  });
+
+  it('session_start_is_idempotent_on_same_framework', () => {
+    useGraphStore.getState().applyEvent(sessionStart);
+    useGraphStore.getState().applyEvent(sessionStart);
+    const fw = useGraphStore.getState().nodes.filter((n) => n.type === 'framework');
+    expect(fw).toHaveLength(1);
+  });
+
+  it('tool_invoked_with_source_mcp_lazily_spawns_parent_MCPNode', () => {
+    useGraphStore.getState().applyEvent(spawnA);
+    useGraphStore.getState().applyEvent(mcpToolInvoked);
+    const { nodes, edges } = useGraphStore.getState();
+    const mcp = nodes.find((n) => n.type === 'mcp');
+    const tool = nodes.find((n) => n.type === 'tool');
+    expect(mcp).toBeDefined();
+    expect(mcp!.id).toBe('mcp:github-mcp');
+    expect(mcp!.data).toMatchObject({
+      serverId: 'github-mcp',
+      serverName: 'github-mcp',
+      status: 'active',
+    });
+    expect(tool).toBeDefined();
+    // Edge wiring: agent → MCP and MCP → tool. NOT agent → tool.
+    const agentToTool = edges.find(
+      (e) => e.source === 'agent:a1' && e.target === 'tool:a1:list_prs',
+    );
+    expect(agentToTool).toBeUndefined();
+    const agentToMcp = edges.find((e) => e.source === 'agent:a1' && e.target === 'mcp:github-mcp');
+    expect(agentToMcp).toBeDefined();
+    const mcpToTool = edges.find(
+      (e) => e.source === 'mcp:github-mcp' && e.target === 'tool:a1:list_prs',
+    );
+    expect(mcpToTool).toBeDefined();
+  });
+
+  it('tool_invoked_with_source_mcp_reuses_MCPNode_across_tools', () => {
+    useGraphStore.getState().applyEvent(spawnA);
+    useGraphStore.getState().applyEvent(mcpToolInvoked);
+    useGraphStore.getState().applyEvent(mcpToolInvokedSecond);
+    const { nodes, edges } = useGraphStore.getState();
+    const mcps = nodes.filter((n) => n.type === 'mcp');
+    expect(mcps).toHaveLength(1);
+    const tools = nodes.filter((n) => n.type === 'tool');
+    expect(tools).toHaveLength(2);
+    // Two MCP→tool edges, one per tool, but only one agent→MCP edge.
+    const agentToMcpEdges = edges.filter(
+      (e) => e.source === 'agent:a1' && e.target === 'mcp:github-mcp',
+    );
+    expect(agentToMcpEdges).toHaveLength(1);
+    const mcpToToolEdges = edges.filter((e) => e.source === 'mcp:github-mcp');
+    expect(mcpToToolEdges).toHaveLength(2);
+  });
+
+  it('tool_invoked_creates_edge_with_animated_true', () => {
+    useGraphStore.getState().applyEvent(spawnA);
+    useGraphStore.getState().applyEvent(toolInvoked);
+    const edge = useGraphStore.getState().edges.find((e) => e.target === 'tool:a1:read_file');
+    expect(edge).toBeDefined();
+    expect(edge!.animated).toBe(true);
+  });
+
+  it('tool_result_clears_animated_flag_on_matching_edge', () => {
+    useGraphStore.getState().applyEvent(spawnA);
+    useGraphStore.getState().applyEvent(toolInvoked);
+    useGraphStore.getState().applyEvent(toolResult);
+    const edge = useGraphStore.getState().edges.find((e) => e.target === 'tool:a1:read_file');
+    expect(edge).toBeDefined();
+    expect(edge!.animated).toBe(false);
+  });
+
+  it('mcp_tool_result_clears_animated_flag_on_mcp_to_tool_edge', () => {
+    useGraphStore.getState().applyEvent(spawnA);
+    useGraphStore.getState().applyEvent(mcpToolInvoked);
+    useGraphStore.getState().applyEvent(mcpToolResult);
+    const edge = useGraphStore
+      .getState()
+      .edges.find((e) => e.source === 'mcp:github-mcp' && e.target === 'tool:a1:list_prs');
+    expect(edge).toBeDefined();
+    expect(edge!.animated).toBe(false);
   });
 });

@@ -1,8 +1,23 @@
-/* M03 Stage B: graph canvas + 3 basic node types layered on the M02
+/* M03 Stage B+C: graph canvas + 11 node types layered on the M02
  * smoke-renderer baseline. Spec §3 Visual Design: dark background,
- * color-encoded status (active blue, complete green, error red),
- * dashed outline + no-flow-animation for SkillNode. Stage C extends
- * with the remaining 8 node types + animated edges + gap/hitl colors. */
+ * color-encoded status, animated edges during active tool calls,
+ * dashed edges for skill loads. Stage C extends Stage B's foundation
+ * with the remaining 8 node types + the full color palette + edge
+ * keyframes. */
+
+/* Spec §3 Visual Design Principles — color encoding palette. */
+:root {
+  --node-active: #4a90e2;
+  --node-complete: #4caf50;
+  --node-error: #e53935;
+  --node-gap: #ffa726;
+  --node-hitl: #ffffff;
+  --node-base-border: #2a3045;
+  --node-bg: #15192a;
+  --node-bg-alt: #1a1f33;
+  --node-fg: #e6e6e6;
+  --node-fg-muted: #a8a8a8;
+}
 
 * {
   box-sizing: border-box;
@@ -88,7 +103,7 @@ p.error {
   height: 70vh;
   margin-top: 1rem;
   background: #0e1014;
-  border: 1px solid #2a3045;
+  border: 1px solid var(--node-base-border);
   border-radius: 4px;
 }
 
@@ -102,19 +117,19 @@ p.error {
     -apple-system,
     sans-serif;
   font-size: 13px;
-  border: 2px solid #2a3045;
-  background: #15192a;
-  color: #e6e6e6;
+  border: 2px solid var(--node-base-border);
+  background: var(--node-bg);
+  color: var(--node-fg);
   min-width: 140px;
 }
 .agent-node--active {
-  border-color: #4a90e2;
+  border-color: var(--node-active);
 }
 .agent-node--complete {
-  border-color: #4caf50;
+  border-color: var(--node-complete);
 }
 .agent-node--error {
-  border-color: #e53935;
+  border-color: var(--node-error);
 }
 .agent-node__name {
   font-weight: 600;
@@ -122,7 +137,7 @@ p.error {
 .agent-node__id {
   font-family: 'SF Mono', 'Cascadia Mono', Consolas, monospace;
   font-size: 11px;
-  color: #a8a8a8;
+  color: var(--node-fg-muted);
   margin-top: 2px;
 }
 
@@ -136,26 +151,26 @@ p.error {
     -apple-system,
     sans-serif;
   font-size: 12px;
-  border: 2px solid #2a3045;
-  background: #1a1f33;
-  color: #e6e6e6;
+  border: 2px solid var(--node-base-border);
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
   min-width: 110px;
 }
 .tool-node--active {
-  border-color: #4a90e2;
+  border-color: var(--node-active);
 }
 .tool-node--complete {
-  border-color: #4caf50;
+  border-color: var(--node-complete);
 }
 .tool-node--error {
-  border-color: #e53935;
+  border-color: var(--node-error);
 }
 .tool-node__name {
   font-family: 'SF Mono', 'Cascadia Mono', Consolas, monospace;
 }
 .tool-node__duration {
   font-size: 11px;
-  color: #a8a8a8;
+  color: var(--node-fg-muted);
   margin-top: 2px;
 }
 
@@ -169,8 +184,8 @@ p.error {
     -apple-system,
     sans-serif;
   font-size: 12px;
-  background: #15192a;
-  color: #e6e6e6;
+  background: var(--node-bg);
+  color: var(--node-fg);
   min-width: 110px;
 }
 .skill-node--dashed {
@@ -183,7 +198,330 @@ p.error {
 }
 .skill-node__mode {
   font-size: 11px;
-  color: #a8a8a8;
+  color: var(--node-fg-muted);
   margin-top: 2px;
   text-transform: uppercase;
+}
+
+/* ---- MCPNode (Stage C) — server hosting tools ---- */
+
+.mcp-node {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 13px;
+  border: 2px solid var(--node-base-border);
+  background: var(--node-bg);
+  color: var(--node-fg);
+  min-width: 160px;
+}
+.mcp-node--active {
+  border-color: var(--node-active);
+}
+.mcp-node--complete {
+  border-color: var(--node-complete);
+}
+.mcp-node--error {
+  border-color: var(--node-error);
+}
+.mcp-node__name {
+  font-weight: 600;
+}
+.mcp-node__tool-count {
+  font-size: 11px;
+  color: var(--node-fg-muted);
+  margin-top: 2px;
+}
+
+/* ---- GapNode (Stage C) — missing tool/skill, amber per spec §3 ---- */
+
+.gap-node {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 13px;
+  border: 2px solid var(--node-base-border);
+  background: var(--node-bg);
+  color: var(--node-fg);
+  min-width: 140px;
+}
+.gap-node--gap {
+  border-color: var(--node-gap);
+  animation: gap-pulse 1.4s ease-in-out infinite;
+}
+.gap-node__kind {
+  font-size: 10px;
+  color: var(--node-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.gap-node__name {
+  font-weight: 600;
+  font-family: 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+}
+
+@keyframes gap-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 167, 38, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(255, 167, 38, 0);
+  }
+}
+
+/* ---- HITLNode (Stage C) — blocking on human input, white/bright ---- */
+
+.hitl-node {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 13px;
+  border: 2px solid var(--node-base-border);
+  background: var(--node-bg);
+  color: var(--node-fg);
+  min-width: 180px;
+}
+.hitl-node--hitl {
+  border-color: var(--node-hitl);
+  background: rgba(255, 255, 255, 0.08);
+}
+.hitl-node--complete {
+  border-color: var(--node-complete);
+}
+.hitl-node__prompt {
+  font-style: italic;
+}
+
+/* ---- PlanNode (Stage C) — spec §3a; M4 wires data ---- */
+
+.plan-node {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 13px;
+  border: 2px solid var(--node-base-border);
+  background: var(--node-bg);
+  color: var(--node-fg);
+  min-width: 180px;
+}
+.plan-node--pending_approval {
+  border-color: var(--node-hitl);
+}
+.plan-node--approved {
+  border-color: var(--node-active);
+}
+.plan-node--in_progress {
+  border-color: var(--node-active);
+}
+.plan-node--complete {
+  border-color: var(--node-complete);
+}
+.plan-node--aborted {
+  border-color: var(--node-error);
+}
+.plan-node__title {
+  font-weight: 600;
+}
+.plan-node__progress {
+  font-size: 11px;
+  color: var(--node-fg-muted);
+  margin-top: 2px;
+}
+
+/* ---- TaskNode (Stage C) — spec §3a; M4 wires data ---- */
+
+.task-node {
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 12px;
+  border: 2px solid var(--node-base-border);
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  min-width: 130px;
+}
+.task-node--pending {
+  border-color: var(--node-base-border);
+}
+.task-node--running {
+  border-color: var(--node-active);
+}
+.task-node--done {
+  border-color: var(--node-complete);
+}
+.task-node--blocked {
+  border-color: var(--node-hitl);
+}
+.task-node--failed {
+  border-color: var(--node-error);
+}
+.task-node--skipped {
+  border-color: var(--node-fg-muted);
+  opacity: 0.6;
+}
+.task-node__title {
+  font-weight: 600;
+}
+.task-node__hitl-badge {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--node-hitl);
+  color: #15192a;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+/* ---- VerifyNode (Stage C) — spec §4a; M4 wires data ---- */
+
+.verify-node {
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 12px;
+  border: 2px solid var(--node-base-border);
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  min-width: 120px;
+}
+.verify-node--active {
+  border-color: var(--node-active);
+}
+.verify-node--pass {
+  border-color: var(--node-complete);
+}
+.verify-node--fail {
+  border-color: var(--node-error);
+}
+.verify-node__hook {
+  font-family: 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+  font-weight: 600;
+}
+.verify-node__level {
+  font-size: 10px;
+  color: var(--node-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.verify-node__duration {
+  font-size: 11px;
+  color: var(--node-fg-muted);
+  margin-top: 2px;
+}
+
+/* ---- HookNode (Stage C) — spec §4a; M4 wires data ---- */
+
+.hook-node {
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 12px;
+  border: 2px solid var(--node-base-border);
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  min-width: 130px;
+}
+.hook-node--active {
+  border-color: var(--node-active);
+}
+.hook-node--complete {
+  border-color: var(--node-complete);
+}
+.hook-node--error {
+  border-color: var(--node-error);
+}
+.hook-node__name {
+  font-family: 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+  font-weight: 600;
+}
+.hook-node__category {
+  font-size: 10px;
+  color: var(--node-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ---- FrameworkNode (Stage C) — graph root, spec §3 ---- */
+
+.framework-node {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 14px;
+  border: 2px solid var(--node-base-border);
+  background: #1c2238;
+  color: var(--node-fg);
+  min-width: 180px;
+}
+.framework-node--active {
+  border-color: var(--node-active);
+}
+.framework-node--complete {
+  border-color: var(--node-complete);
+}
+.framework-node--error {
+  border-color: var(--node-error);
+}
+.framework-node__name {
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+.framework-node__model {
+  font-family: 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+  font-size: 11px;
+  color: var(--node-fg-muted);
+  margin-top: 2px;
+}
+
+/* ---- Edges (spec §3 Behavior) ---- */
+
+/* Animated edges — active tool calls. React Flow v12 toggles the
+ * .animated class when the Edge.animated field is true; we layer the
+ * dash-flow keyframe on top of React Flow's default stroke styling. */
+.react-flow__edge.animated .react-flow__edge-path {
+  stroke-dasharray: 5 5;
+  animation: dash-flow 1s linear infinite;
+}
+
+@keyframes dash-flow {
+  to {
+    stroke-dashoffset: -10;
+  }
+}
+
+/* Skill-load edges — dashed, no animation; loaded skill stays in
+ * context per spec §3 Behavior. The kind discriminator lives on
+ * Edge.data; we tag the className via a custom class name applied by
+ * Stage D's edge component refactor (deferred). For now the renderer
+ * uses ToolNode's edge by default; SkillNode's dashed appearance is
+ * driven by the node outline. */
+.react-flow__edge--dashed .react-flow__edge-path {
+  stroke-dasharray: 3 3;
 }

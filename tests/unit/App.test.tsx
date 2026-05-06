@@ -63,11 +63,11 @@ describe('App (renderer-level state machine)', () => {
       { timeout: 3000 },
     );
 
-    // Simulate the runtime emitting the canonical M02 happy-path sequence.
-    // The Zustand store is now the assertion target (not a flat
-    // <ul> as in M02): the agent_spawned event creates an AgentNode;
-    // the agent_complete event flips its status to complete.
+    // Simulate the runtime emitting the canonical M02 happy-path
+    // sequence with the Stage C addition: session_start lands first
+    // and spawns the FrameworkNode root that the AgentNode hangs off.
     const sequence: AgentEvent[] = [
+      { type: 'session_start', session_id: 's1', framework: 'aria', model: 'haiku' },
       {
         type: 'agent_spawned',
         agent_id: 'a1',
@@ -88,6 +88,8 @@ describe('App (renderer-level state machine)', () => {
     });
 
     await waitFor(() => {
+      const fw = useGraphStore.getState().nodes.find((n) => n.id === 'framework:aria');
+      expect(fw).toBeDefined();
       const node = useGraphStore.getState().nodes.find((n) => n.id === 'agent:a1');
       expect(node).toBeDefined();
       expect(node!.data).toMatchObject({ status: 'complete' });
