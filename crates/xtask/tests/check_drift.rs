@@ -92,4 +92,34 @@ fn drift_detection_tests() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+
+    // === Case 4: --check detects TS codegen drift ===
+    {
+        use std::fs;
+        let workspace_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let target = workspace_root.join("src/types/agent_event.ts");
+        let original = fs::read_to_string(&target).expect("read original agent_event.ts");
+
+        // Mutate: append a comment line.
+        fs::write(&target, format!("{original}\n// drift-test\n")).expect("write mutation");
+
+        let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+            .args(["regenerate-types", "--check"])
+            .output()
+            .expect("run xtask --check");
+
+        // Restore BEFORE asserting (so a panicking assertion doesn't leave the file dirty).
+        fs::write(&target, &original).expect("restore agent_event.ts");
+
+        assert!(
+            !output.status.success(),
+            "drift check should detect the TS mutation. stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }

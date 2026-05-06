@@ -10,6 +10,7 @@ pub mod heartbeat;
 pub mod ipc;
 pub mod shutdown;
 pub mod snapshot;
+pub mod vdr;
 
 use std::future::Future;
 use std::path::PathBuf;

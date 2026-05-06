@@ -127,6 +127,21 @@ pub enum DroneEvent {
         /// Human-readable alert message.
         message: String,
     },
+    /// Result of a `QuerySessionDb` command — read-only SELECT against
+    /// the session database. Each row is a JSON object keyed by column
+    /// name. Spec §2b VDR projection / Stage E SQL inspector.
+    QueryResult {
+        /// Row data, in execution order. Empty for queries that match
+        /// no rows.
+        rows: Vec<serde_json::Value>,
+    },
+    /// Result of a `ReadSignals` command — full signal log for a
+    /// session, ordered by timestamp. Spec §2b + Stage E replay.
+    SignalLog {
+        /// Each signal as a JSON object mirroring the `signals` table
+        /// columns. Empty for sessions with no signals.
+        signals: Vec<serde_json::Value>,
+    },
 }
 
 /// Commands sent from main to the drone.
@@ -170,6 +185,22 @@ pub enum DroneCommand {
         snapshot_id: String,
         /// Why the revert is happening.
         reason: RevertReason,
+    },
+    /// Read-only SQL query against the session database. Drone validates
+    /// SELECT-only via parser-based check (per Stage E E.1 Decision #3 —
+    /// regex-based ^SELECT is trivially bypassable). Reply is
+    /// [`DroneEvent::QueryResult`].
+    QuerySessionDb {
+        /// SQL string. Must be a single SELECT statement; compound
+        /// statements via semicolons + DDL/DML/PRAGMA are rejected by the
+        /// drone with `DroneEvent::Alert(Critical)`.
+        sql: String,
+    },
+    /// Read all signals for a session, ordered by timestamp. Spec §2b
+    /// + Stage E replay path. Reply is [`DroneEvent::SignalLog`].
+    ReadSignals {
+        /// Session whose signals to return.
+        session_id: String,
     },
 }
 

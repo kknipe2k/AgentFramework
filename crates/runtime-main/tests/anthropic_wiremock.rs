@@ -200,7 +200,7 @@ async fn tool_use_accumulates_and_emits() {
     }
     assert!(matches!(
         events.last(),
-        Some(ProviderEvent::MessageStop { stop_reason }) if stop_reason == "tool_use"
+        Some(ProviderEvent::MessageStop { stop_reason, .. }) if stop_reason == "tool_use"
     ));
 }
 

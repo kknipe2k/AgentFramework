@@ -117,6 +117,14 @@ impl Connection {
         }
     }
 
+    /// Whether this connection is in noop mode. Callers that want to
+    /// short-circuit a read/write before allocating a request can check
+    /// this to skip the IPC round-trip.
+    #[must_use]
+    pub const fn is_noop(&self) -> bool {
+        matches!(self.mode, Mode::Noop)
+    }
+
     /// Take the inbound `DroneEvent` stream. Single-consumer; subsequent
     /// calls return an empty stream.
     pub fn take_event_stream(

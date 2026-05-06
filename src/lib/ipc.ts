@@ -10,6 +10,28 @@ export async function invokeSetApiKey(key: string): Promise<void> {
   await invoke('set_api_key', { key });
 }
 
+/**
+ * Run a SELECT-only query against the session database. The drone-side
+ * validator rejects DDL/DML/PRAGMA + compound statements; rejection
+ * surfaces as a `CmdError::Internal`-shape rejection (use
+ * `unwrapCmdError` to render).
+ *
+ * Returns rows as JSON objects keyed by column name.
+ */
+export async function invokeQuerySessionDb(sql: string): Promise<Record<string, unknown>[]> {
+  return await invoke<Record<string, unknown>[]>('query_session_db', { sql });
+}
+
+/**
+ * Replay a prior session by id. Main reads the signal log via drone
+ * IPC, translates each signal into an `AgentEvent`, and re-emits via
+ * the existing `agent_event` channel so `graphStore.applyEvent`
+ * reconstructs the graph identically.
+ */
+export async function invokeReplaySession(sessionId: string): Promise<void> {
+  await invoke('replay_session', { sessionId });
+}
+
 export async function subscribeAgentEvents(
   handler: (event: AgentEvent) => void,
 ): Promise<UnlistenFn> {

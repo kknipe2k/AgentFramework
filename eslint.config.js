@@ -19,10 +19,9 @@ export default tseslint.config(
       'playwright-report/**',
       'test-results/**',
       'coverage/**',
-      // Pre-existing legacy starter (`8c854c2`) outside the project service.
-      // Out of M02 Stage E scope; tracked as carry-forward in the retro.
-      'src/counter.js',
-      'src/counter.test.js',
+      // Generated TypeScript bindings — owned by `cargo xtask regenerate-types`.
+      // Per CLAUDE.md §14 schemas-as-source-of-truth.
+      'src/types/agent_event.ts',
     ],
   },
   js.configs.recommended,
@@ -67,7 +66,10 @@ export default tseslint.config(
     },
   },
   {
-    files: ['**/*.config.{ts,js}', 'eslint.config.js'],
+    files: ['**/*.config.{ts,js}', 'eslint.config.js', 'wdio.conf.ts'],
+    languageOptions: {
+      parserOptions: { projectService: false, project: null },
+    },
     ...tseslint.configs.disableTypeChecked,
   },
 );

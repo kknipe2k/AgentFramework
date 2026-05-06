@@ -66,6 +66,12 @@ pub enum AgentEvent {
         agent_id: String,
         /// Result summary.
         result: String,
+        /// Total tokens (input + output) consumed by the agent across
+        /// the session, when the provider surfaces it (Anthropic
+        /// `message_delta.usage`). `None` when no token data is
+        /// available; never confused with a real zero.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tokens_total: Option<u64>,
     },
     /// An agent encountered an error.
     AgentError {
@@ -100,6 +106,16 @@ pub enum AgentEvent {
         output: serde_json::Value,
         /// Execution time in milliseconds.
         duration_ms: u64,
+        /// Input tokens charged for this tool call, when the provider
+        /// surfaces per-call attribution. `None` when no token data is
+        /// available; Anthropic does not surface per-tool counts at the
+        /// SSE level, so production paths leave this as `None` for now.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tokens_in: Option<u64>,
+        /// Output tokens charged for this tool call. Same caveat as
+        /// `tokens_in`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tokens_out: Option<u64>,
     },
     /// A tool call errored.
     ToolError {

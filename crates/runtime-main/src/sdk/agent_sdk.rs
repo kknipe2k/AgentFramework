@@ -219,6 +219,7 @@ mod tests {
                 ProviderEvent::TextDelta { text: "hi".into() },
                 ProviderEvent::MessageStop {
                     stop_reason: "end_turn".into(),
+                    total_tokens: None,
                 },
             ])))
         }

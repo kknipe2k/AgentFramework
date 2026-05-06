@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Hoisted mocks for the @tauri-apps/api modules so App's IPC layer
 // resolves to test-controlled functions before App is imported.
@@ -13,22 +13,32 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: (channel: string, cb: (e: { payload: AgentEvent }) => void) => listenMock(channel, cb),
 }));
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from '../../src/App';
+import { useGraphStore } from '../../src/lib/graphStore';
 import type { AgentEvent } from '../../src/types/agent_event';
 
 describe('App (renderer-level state machine)', () => {
   beforeEach(() => {
     invokeMock.mockReset();
     listenMock.mockReset();
-    // Default the listen mock to a no-op subscription so App's useEffect
-    // resolves cleanly when a test doesn't override it.
     listenMock.mockImplementation(async () => () => undefined);
     invokeMock.mockResolvedValue(undefined);
+    useGraphStore.getState().clear();
+    // Stage E added replay-on-mount that fires `invokeReplaySession` when
+    // localStorage.lastSessionId is set. Clean it before each test so the
+    // mount-time IPC call sequence is deterministic; tests that exercise
+    // the replay path set the value explicitly.
+    localStorage.removeItem('lastSessionId');
   });
 
-  it('save_key_then_run_smoke_renders_event_list', async () => {
+  afterEach(() => {
+    useGraphStore.getState().clear();
+    localStorage.removeItem('lastSessionId');
+  });
+
+  it('save_key_then_run_smoke_drives_AgentNode_into_graph_store', async () => {
     let registeredHandler: ((e: { payload: AgentEvent }) => void) | undefined;
     listenMock.mockImplementation(
       async (_channel: string, cb: (e: { payload: AgentEvent }) => void): Promise<() => void> => {
@@ -42,11 +52,8 @@ describe('App (renderer-level state machine)', () => {
     render(<App />);
     await waitFor(() => expect(registeredHandler).toBeDefined());
 
-    // Save key first — Run button is disabled until the key save resolves.
     await user.type(screen.getByLabelText(/anthropic api key/i), 'sk-ant-fixture');
     await user.click(screen.getByRole('button', { name: /save key/i }));
-    // Wait for the "stored in OS keychain" indicator — proves setHasKey(true)
-    // has run and the React tree has re-rendered before we touch Run.
     await screen.findByLabelText(/saved/i);
 
     const runButton = await screen.findByRole('button', {
@@ -62,8 +69,11 @@ describe('App (renderer-level state machine)', () => {
       { timeout: 3000 },
     );
 
-    // Simulate the runtime emitting the canonical M02 happy-path sequence.
+    // Simulate the runtime emitting the canonical M02 happy-path
+    // sequence with the Stage C addition: session_start lands first
+    // and spawns the FrameworkNode root that the AgentNode hangs off.
     const sequence: AgentEvent[] = [
+      { type: 'session_start', session_id: 's1', framework: 'aria', model: 'haiku' },
       {
         type: 'agent_spawned',
         agent_id: 'a1',
@@ -72,24 +82,30 @@ describe('App (renderer-level state machine)', () => {
         session_id: 's1',
       },
       { type: 'stream_text', agent_id: 'a1', text: 'hi' },
-      { type: 'stream_text', agent_id: 'a1', text: ' there' },
       { type: 'agent_complete', agent_id: 'a1', result: 'hi there' },
     ];
-    for (const e of sequence) {
-      registeredHandler!({ payload: e });
-    }
+    // Wrap in act() — registeredHandler() updates the Zustand store
+    // synchronously, which triggers a React re-render in GraphCanvas;
+    // RTL otherwise warns about state updates outside act().
+    act(() => {
+      for (const e of sequence) {
+        registeredHandler!({ payload: e });
+      }
+    });
 
-    await waitFor(() => expect(screen.getAllByRole('listitem').length).toBeGreaterThanOrEqual(4));
-    const last = screen.getAllByRole('listitem').at(-1)!;
-    expect(last).toHaveAttribute('data-event-type', 'agent_complete');
+    await waitFor(() => {
+      const fw = useGraphStore.getState().nodes.find((n) => n.id === 'framework:aria');
+      expect(fw).toBeDefined();
+      const node = useGraphStore.getState().nodes.find((n) => n.id === 'agent:a1');
+      expect(node).toBeDefined();
+      expect(node!.data).toMatchObject({ status: 'complete' });
+    });
   });
 
   it('surfaces_command_error_via_error_paragraph', async () => {
     listenMock.mockImplementation(async () => () => undefined);
     invokeMock.mockReset();
-    invokeMock
-      .mockResolvedValueOnce(undefined) // set_api_key OK
-      .mockRejectedValueOnce(new Error('API key not set'));
+    invokeMock.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('API key not set'));
 
     const user = userEvent.setup();
     render(<App />);
@@ -103,5 +119,87 @@ describe('App (renderer-level state machine)', () => {
 
     const err = await screen.findByText(/API key not set/i);
     expect(err).toBeInTheDocument();
+  });
+
+  // ---- Stage D: InspectorPanel interaction (click → open → ESC → close)
+
+  it('selecting_a_node_opens_inspector_panel_via_store', async () => {
+    listenMock.mockImplementation(async () => () => undefined);
+    render(<App />);
+    // Drive selection via the store rather than simulating a React Flow
+    // node click — the click → selectNode delegation is exercised by
+    // GraphCanvas's onNodeClick prop, which happy-dom can't fully drive
+    // (no zoom-pane / pointer-event simulation). The store-driven path
+    // exercises the same Inspector subscription via Zustand selectors.
+    act(() => {
+      useGraphStore.getState().applyEvent({
+        type: 'agent_spawned',
+        agent_id: 'a1',
+        agent_name: 'smoke',
+        parent_id: null,
+        session_id: 's1',
+      });
+      useGraphStore.getState().selectNode('agent:a1');
+    });
+    await waitFor(() => expect(screen.getByTestId('inspector-panel')).toBeInTheDocument());
+  });
+
+  it('escape_keydown_closes_inspector_panel', async () => {
+    listenMock.mockImplementation(async () => () => undefined);
+    render(<App />);
+    act(() => {
+      useGraphStore.getState().applyEvent({
+        type: 'agent_spawned',
+        agent_id: 'a1',
+        agent_name: 'smoke',
+        parent_id: null,
+        session_id: 's1',
+      });
+      useGraphStore.getState().selectNode('agent:a1');
+    });
+    await waitFor(() => expect(screen.getByTestId('inspector-panel')).toBeInTheDocument());
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+    await waitFor(() => expect(screen.queryByTestId('inspector-panel')).toBeNull());
+  });
+
+  // ---- Stage E: replay-on-mount + session-id persistence
+
+  it('mount_calls_replay_session_with_stored_lastSessionId', async () => {
+    localStorage.setItem('lastSessionId', 'prior-session-xyz');
+    listenMock.mockImplementation(async () => () => undefined);
+    invokeMock.mockResolvedValue(undefined);
+    render(<App />);
+    await waitFor(() => {
+      const calls = invokeMock.mock.calls.map((c) => [String(c[0]), c[1]]);
+      expect(calls).toContainEqual(['replay_session', { sessionId: 'prior-session-xyz' }]);
+    });
+    localStorage.removeItem('lastSessionId');
+  });
+
+  it('session_start_event_persists_session_id_to_localStorage', async () => {
+    let registeredHandler: ((e: { payload: AgentEvent }) => void) | undefined;
+    listenMock.mockImplementation(
+      async (_channel: string, cb: (e: { payload: AgentEvent }) => void): Promise<() => void> => {
+        registeredHandler = cb;
+        return () => undefined;
+      },
+    );
+    localStorage.removeItem('lastSessionId');
+    render(<App />);
+    await waitFor(() => expect(registeredHandler).toBeDefined());
+    act(() => {
+      registeredHandler!({
+        payload: {
+          type: 'session_start',
+          session_id: 'new-session-abc',
+          framework: 'aria',
+          model: 'haiku',
+        },
+      });
+    });
+    expect(localStorage.getItem('lastSessionId')).toBe('new-session-abc');
+    localStorage.removeItem('lastSessionId');
   });
 });

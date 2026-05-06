@@ -26,8 +26,9 @@ use runtime_main::drone_ipc::DroneClient;
 use runtime_main::key_store::{read_api_key, write_api_key, KeyStoreError};
 use runtime_main::providers::anthropic::AnthropicProvider;
 use runtime_main::providers::{AgentConfig, ContentBlock, LLMProvider, Message, MessageRole};
-use runtime_main::sdk::{AgentSdk, SessionId};
+use runtime_main::sdk::{replay_signals_to_events, AgentSdk, SessionId};
 use serde::Serialize;
+use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 use thiserror::Error;
 use tokio::sync::mpsc;
@@ -183,6 +184,119 @@ async fn forward_events(mut rx: mpsc::Receiver<AgentEvent>, app: AppHandle) {
     }
 }
 
+/// Run a SELECT-only query against the session database via drone IPC.
+///
+/// Production wrapper: routes through a noop `DroneClient` (M03 has no
+/// drone subprocess running yet); returns an empty row set. The
+/// drone-side validator (`runtime_drone::vdr::is_select_only`) is the
+/// security boundary regardless of the production wiring state. M04+
+/// wires a real drone subprocess.
+///
+/// # Errors
+///
+/// - [`CmdError::Drone`] if the IPC fails after retry exhaustion.
+#[tauri::command]
+pub async fn query_session_db(sql: String) -> Result<Vec<Value>, CmdError> {
+    let drone = Arc::new(DroneClient::noop());
+    query_session_db_with(sql, |s| {
+        let drone = Arc::clone(&drone);
+        async move {
+            drone
+                .query_session_db(s)
+                .await
+                .map_err(|e| CmdError::Drone {
+                    message: e.to_string(),
+                })
+        }
+    })
+    .await
+}
+
+/// Test-seam for [`query_session_db`] (CLAUDE.md §5 `*_with` archetype).
+/// Accepts an injectable async query function so unit tests exercise the
+/// happy + error paths without needing a real drone subprocess.
+///
+/// # Errors
+///
+/// Surfaces whatever `query` returns.
+pub async fn query_session_db_with<F, Fut>(sql: String, query: F) -> Result<Vec<Value>, CmdError>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<Value>, CmdError>>,
+{
+    tracing::info!(sql_len = sql.len(), "query_session_db invoked");
+    let result = query(sql).await;
+    if let Err(ref e) = result {
+        tracing::warn!(error = %e, "query_session_db failed");
+    } else {
+        tracing::info!("query_session_db succeeded");
+    }
+    result
+}
+
+/// Replay a prior session by id. Reads the signal log via drone IPC,
+/// translates each signal into an `AgentEvent`, and re-emits each via
+/// the existing `agent_event` channel so the renderer reconstructs the
+/// graph identically to the original session.
+///
+/// # Errors
+///
+/// - [`CmdError::Drone`] if the IPC fails after retry exhaustion.
+#[tauri::command]
+pub async fn replay_session(app: AppHandle, session_id: String) -> Result<(), CmdError> {
+    let drone = Arc::new(DroneClient::noop());
+    replay_session_with(
+        session_id,
+        |id| {
+            let drone = Arc::clone(&drone);
+            async move {
+                drone.read_signals(id).await.map_err(|e| CmdError::Drone {
+                    message: e.to_string(),
+                })
+            }
+        },
+        |event| {
+            let _ = app.emit("agent_event", &event);
+            Ok::<(), CmdError>(())
+        },
+    )
+    .await
+}
+
+/// Test-seam for [`replay_session`] (CLAUDE.md §5 `*_with` archetype).
+/// Accepts an injectable signal-reader and an emitter callback so unit
+/// tests exercise the read → translate → emit pipeline without a real
+/// drone or Tauri `AppHandle`.
+///
+/// # Errors
+///
+/// Surfaces whatever `read_signals` returns; emit errors are logged and
+/// dropped (matches `forward_events` in the smoke path).
+pub async fn replay_session_with<F, Fut, Emit>(
+    session_id: String,
+    read_signals: F,
+    mut emit: Emit,
+) -> Result<(), CmdError>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<Value>, CmdError>>,
+    Emit: FnMut(AgentEvent) -> Result<(), CmdError>,
+{
+    tracing::info!(session_id, "replay_session invoked");
+    let signals = read_signals(session_id.clone()).await?;
+    let events = replay_signals_to_events(&signals);
+    let count = events.len();
+    for event in events {
+        // Emit errors mean the renderer has gone away; log and drop so
+        // the pipeline drains cleanly (matches `forward_events`).
+        if let Err(e) = emit(event) {
+            tracing::warn!(error = %e, "replay_session emit failed; continuing");
+        }
+    }
+    tracing::info!(emitted = count, "replay_session finished");
+    Ok(())
+}
+
 fn smoke_config() -> AgentConfig {
     AgentConfig {
         model: "claude-haiku-4-5".to_string(),
@@ -269,6 +383,7 @@ mod tests {
                 },
                 ProviderEvent::MessageStop {
                     stop_reason: "end_turn".to_string(),
+                    total_tokens: None,
                 },
             ])))
         }
@@ -400,6 +515,102 @@ mod tests {
             matches!(err, CmdError::SetupRequired),
             "expected CmdError::SetupRequired, got {err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn query_session_db_with_returns_rows_from_querier() {
+        let rows = query_session_db_with("SELECT id FROM signals".to_string(), |sql| async move {
+            assert_eq!(sql, "SELECT id FROM signals");
+            Ok(vec![serde_json::json!({"id": "x"})])
+        })
+        .await
+        .expect("query");
+        assert_eq!(rows.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn query_session_db_with_propagates_querier_error() {
+        let result = query_session_db_with("SELECT 1".to_string(), |_sql| async move {
+            Err(CmdError::Drone {
+                message: "boom".to_string(),
+            })
+        })
+        .await;
+        assert!(matches!(result, Err(CmdError::Drone { .. })));
+    }
+
+    #[tokio::test]
+    async fn replay_session_with_emits_translated_events() {
+        let signals = vec![
+            serde_json::json!({
+                "type": "session",
+                "payload_json": {"event": "start", "session_id": "s1", "framework": "aria", "model": "haiku"},
+            }),
+            serde_json::json!({
+                "type": "agent",
+                "payload_json": {"event": "spawned", "agent_id": "a1", "agent_name": "n", "session_id": "s1"},
+            }),
+        ];
+        let mut emitted: Vec<AgentEvent> = Vec::new();
+        replay_session_with(
+            "s1".to_string(),
+            move |id| async move {
+                assert_eq!(id, "s1");
+                Ok(signals)
+            },
+            |event| {
+                emitted.push(event);
+                Ok(())
+            },
+        )
+        .await
+        .expect("replay");
+        assert_eq!(emitted.len(), 2);
+        assert!(matches!(emitted[0], AgentEvent::SessionStart { .. }));
+        assert!(matches!(emitted[1], AgentEvent::AgentSpawned { .. }));
+    }
+
+    #[tokio::test]
+    async fn replay_session_with_propagates_reader_error() {
+        let result = replay_session_with(
+            "s1".to_string(),
+            |_id| async move {
+                Err(CmdError::Drone {
+                    message: "boom".to_string(),
+                })
+            },
+            |_event| Ok::<(), CmdError>(()),
+        )
+        .await;
+        assert!(matches!(result, Err(CmdError::Drone { .. })));
+    }
+
+    #[tokio::test]
+    async fn replay_session_with_swallows_emit_errors_and_continues() {
+        let signals = vec![
+            serde_json::json!({
+                "type": "agent",
+                "payload_json": {"event": "spawned", "agent_id": "a1", "agent_name": "n", "session_id": "s1"},
+            }),
+            serde_json::json!({
+                "type": "agent",
+                "payload_json": {"event": "spawned", "agent_id": "a2", "agent_name": "n", "session_id": "s1"},
+            }),
+        ];
+        let mut count = 0;
+        replay_session_with(
+            "s1".to_string(),
+            move |_id| async move { Ok(signals) },
+            |_event| {
+                count += 1;
+                Err(CmdError::Internal {
+                    message: "renderer gone".to_string(),
+                })
+            },
+        )
+        .await
+        .expect("replay must not surface emit errors");
+        assert_eq!(count, 2, "emit must be invoked for every translated event");
     }
 
     #[test]

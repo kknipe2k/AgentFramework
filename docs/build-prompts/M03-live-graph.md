@@ -3003,11 +3003,15 @@ export const config: Options.Testrunner = {
   capabilities: [
     {
       maxInstances: 1,
+      // Per the official Tauri 2.x WebDriver example
+      // (https://github.com/tauri-apps/tauri-docs/blob/v2/src/content/docs/develop/Tests/WebDriver/Example/webdriverio.mdx),
+      // capabilities intentionally OMIT `browserName` — tauri-driver constructs
+      // the native value when proxying to the platform driver (WebKitWebDriver
+      // on Linux, msedgedriver on Windows). Setting it explicitly breaks
+      // the session-creation handshake on both platforms.
       'tauri:options': {
         application: APP_BIN_PATH,
       },
-      // browserName mapped per platform: webkit2gtk on Linux, edge on Windows.
-      browserName: process.platform === 'win32' ? 'edge' : 'webkit2gtk',
     } as WebdriverIO.Capabilities,
   ],
   hostname: '127.0.0.1',
@@ -3236,6 +3240,10 @@ once committed.
 The fresh Stage F session populates this from all six per-stage retrospectives + the actual M03 codebase state. Pre-commit verification: `git show origin/main:docs/gap-analysis.md` produces the prior content; `head -n <prior-line-count> docs/gap-analysis.md` MUST match byte-for-byte (after CRLF/LF normalization). The new content is APPEND-ONLY at the bottom.
 
 CI's `gap-analysis.md append-only check` job (M01.E-shipped) verifies on every PR push.
+
+#### Aspirational note (post-PR #47)
+
+The Tauri 2.x WebDriver setup specified above is non-trivial against wdio v9. PR #47 disabled the `e2e-tauri-driver` CI job after three iterations on the capabilities object (`'edge' / 'webkit2gtk'` → `'wry'` → omit per the official docs) failed to clear both Linux and Windows for independent reasons (Linux: tauri-driver could not exec the built app binary; Windows: msedgedriver not on PATH). Upstream compat between wdio v9 and tauri-driver 2.x is tracked in tauri-apps/tauri#10670 and tauri-apps/tauri#9203; the only confirmed-working community example pins wdio@7. Future readers should treat §F.3 as **aspirational** — check the current status of those issues (and consider downgrading to wdio@7 if they remain open) before re-enabling the CI job in M04.
 
 ### F.4 Tests
 
