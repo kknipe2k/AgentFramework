@@ -66,7 +66,10 @@ export default tseslint.config(
     },
   },
   {
-    files: ['**/*.config.{ts,js}', 'eslint.config.js'],
+    files: ['**/*.config.{ts,js}', 'eslint.config.js', 'wdio.conf.ts'],
+    languageOptions: {
+      parserOptions: { projectService: false, project: null },
+    },
     ...tseslint.configs.disableTypeChecked,
   },
 );

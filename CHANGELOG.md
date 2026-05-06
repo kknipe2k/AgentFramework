@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M03.F (Tauri-driver E2E + Phase Closeout)
+
+Final stage of M03. Two workstreams in one commit: full Tauri 2.x desktop-shell E2E framework + M03 Phase Closeout artifacts.
+
+- **`tests/e2e-tauri/smoke.e2e.ts` (NEW)** — six WebdriverIO v9 + mocha + chai E2E tests covering the M03 user-facing surfaces: app launch + SetupPanel; save-key flow + ✓ keychain indicator; smoke happy path with real Anthropic API call (graph renders); click AgentNode → InspectorPanel; SQL inspector executes SELECT; reload reconstructs graph from persisted signals via M03.E's replay-on-mount path. Tests 3 + 6 require `ANTHROPIC_TEST_KEY` repo secret in CI (~$0.001 per run × 2 OS).
+- **`wdio.conf.ts` (NEW)** — WebdriverIO v9 config. Spawns `tauri-driver` as a service per <https://v2.tauri.app/develop/tests/webdriver/example/webdriverio/>. Per-platform `browserName` (`webkit2gtk` on Linux, `edge` on Windows). macOS early-exit (`process.exit(0)`) so `npm run test:e2e:tauri` is a no-op there rather than a hard failure — `tauri-driver` is upstream-unsupported on macOS.
+- **`.github/workflows/ci.yml`** — new `e2e-tauri-driver` job. Linux + Windows matrix (no macOS). Linux installs WebKitGTK driver + Xvfb; Windows uses pre-installed msedgedriver + Edge WebView2. Both build the app with `npx tauri build --no-bundle`, install `tauri-driver` via `cargo install --locked`, then run `npm run test:e2e:tauri` (Linux wraps in `xvfb-run`).
+- **`tests/e2e/smoke.spec.ts`** — deletes the four `test.skip()`-with-rationale entries that M02.E carried forward; keeps the three active renderer-level Playwright tests (page load + password input type + smoke disabled without key). Two test types now cover two layers: Playwright (Vite dev server, fast feedback, all 3 OSes) + WebdriverIO (built Tauri binary, full integration, Linux + Windows).
+- **`package.json` + `package-lock.json`** — adds devDeps `@wdio/cli ^9`, `@wdio/globals ^9`, `@wdio/local-runner ^9`, `@wdio/mocha-framework ^9`, `@wdio/spec-reporter ^9`, `webdriverio ^9`, `chai ^5`, `@types/mocha ^10`. New script `test:e2e:tauri`. Workspace `overrides.serialize-javascript: ^7.0.5` patches the only high-severity audit finding from the new mocha tree (transitive in @wdio/mocha-framework — pre-7.0.5 RCE/DoS advisories GHSA-5c6j-r48x-rmvq + GHSA-qj8w-gfj5-8c6v).
+- **`eslint.config.js`** — extends the `**/*.config.{ts,js}` override to also match `wdio.conf.ts` (`.conf.ts` not `.config.ts`); sets `parserOptions.projectService: false` for that file so projectService doesn't error on a config not in the tsconfig include.
+- **`docs/build-prompts/retrospectives/M03.F-retrospective.md` (NEW)** — Stage F process retro. Covers tauri-driver setup smoothness, gap-analysis authoring, CI workflow extension. Distinct from M03-summary.md (which aggregates across all six stages).
+- **`docs/build-prompts/retrospectives/M03-summary.md` (NEW)** — per `SUMMARY-TEMPLATE.md`. Aggregates three-axis scores across A–F; cross-stage trends; pattern wins + surprises; time-box accuracy; ~12 explicit decisions to apply before M04 authoring; verdict.
+- **`docs/gap-analysis.md`** — appended M03 entry per CLAUDE.md §20. Six required sections + new v1.2 protocol `<gotchas_graduation>` subsection (28 stage-gotcha entries across A–F with disposition: kept | graduated | resolved | expired). Append-only — M01 + M02 entries unchanged.
+
+This commit is the FINAL commit on `claude/m03-live-graph` per CLAUDE.md §20. The gap-analysis entry is **immutable** once committed; future milestones report status via Carry-forward sections only.
+
+Refs: `docs/build-prompts/M03-live-graph.md` §F; `agent-runtime-spec.md` §3 + §13; `CLAUDE.md` §8 + §20; `STAGE-PROMPT-PROTOCOL.md` v1.2 (closeout schema + gotchas_graduation subsection); `docs/gotchas.md` #23 (tauri-driver matrix); `docs/MVP-v0.1.md` §M3 acceptance criteria.
+
 ### Added — M03.E (VDR projection + SQL inspector + replay)
 
 Largest stage of M03. Three pieces, one stage: drone-internal VDR projection (decision + verify signals → vdr table); renderer-side SELECT-only SQL inspector over the session database; graph persistence via replay-from-signals on app mount. Ships the architecture + full unit/integration test coverage; production drone subprocess wiring is M04+ scope (Tauri commands wrap a `DroneClient::noop()` for v0.1 — the test seams exercise the full chain).
