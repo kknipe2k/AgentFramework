@@ -96,15 +96,87 @@ p.error {
   font-weight: 600;
 }
 
-/* ---- Graph canvas (spec §3) ---- */
+/* ---- Graph canvas + Inspector right-rail (spec §3) ---- */
+
+.graph-layout {
+  display: flex;
+  flex-direction: row;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
 
 .graph-canvas {
-  width: 100%;
+  flex: 1 1 auto;
   height: 70vh;
-  margin-top: 1rem;
   background: #0e1014;
   border: 1px solid var(--node-base-border);
   border-radius: 4px;
+}
+
+/* Stage D Inspector. Right-rail layout per M03.C retro Decision: graph
+ * canvas at 70vh, panel at fixed width. Non-modal per WAI APG dialog
+ * pattern; aria-modal="false" + ESC close + close-button. */
+.inspector-panel {
+  flex: 0 0 320px;
+  height: 70vh;
+  overflow: auto;
+  padding: 0.75rem;
+  background: var(--node-bg);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 4px;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 13px;
+  outline: none;
+}
+
+.inspector-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--node-base-border);
+}
+
+.inspector-panel__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--node-fg-muted);
+}
+
+.inspector-panel__close {
+  padding: 0 0.4rem;
+  background: transparent;
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+  color: var(--node-fg);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.inspector-panel__data {
+  margin: 0;
+  padding: 0.5rem;
+  background: var(--node-bg-alt);
+  border-radius: 3px;
+  font-family: 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Stage D MiniMap container — keep React Flow's default layering but
+ * align the panel border to the project palette. */
+.react-flow__minimap {
+  border: 1px solid var(--node-base-border);
 }
 
 /* ---- AgentNode ---- */

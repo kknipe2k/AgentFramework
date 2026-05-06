@@ -142,16 +142,8 @@ pub struct SseMessageDelta {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct SseUsage {
     #[serde(default)]
-    #[allow(
-        dead_code,
-        reason = "accepted for forward-compat; not surfaced at Stage C"
-    )]
     pub input_tokens: u64,
     #[serde(default)]
-    #[allow(
-        dead_code,
-        reason = "accepted for forward-compat; not surfaced at Stage C"
-    )]
     pub output_tokens: u64,
 }
 
@@ -163,10 +155,17 @@ pub struct SseError {
 }
 
 /// Per-stream parsing state. Tracks open content blocks so partial-JSON
-/// tool-input deltas can be accumulated into a complete `ToolUse` event.
+/// tool-input deltas can be accumulated into a complete `ToolUse` event,
+/// and accumulates `usage` data from `message_start` + `message_delta` so
+/// `MessageStop` can carry a running total-token count forward.
 #[derive(Debug, Default)]
 pub struct SseState {
     open_blocks: std::collections::HashMap<usize, OpenBlock>,
+    /// Sum of `input_tokens` + `output_tokens` seen across `message_start`
+    /// and `message_delta` events. `None` until any usage data arrives.
+    /// Surfaced on the `MessageStop` translation so downstream code can
+    /// attach the count to `AgentEvent::AgentComplete.tokens_total`.
+    cumulative_tokens: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -187,10 +186,16 @@ impl SseState {
 
     /// Translate one `SseEvent` to zero-or-one `ProviderEvent`. State is
     /// mutated to accumulate tool-input partial-JSON deltas; the complete
-    /// `ToolUse` is emitted on the corresponding `ContentBlockStop`.
+    /// `ToolUse` is emitted on the corresponding `ContentBlockStop`. Token
+    /// `usage` from `message_start` + `message_delta` is summed into
+    /// `cumulative_tokens` and attached to the `MessageStop` translation.
     pub fn translate(&mut self, event: SseEvent) -> Option<ProviderEvent> {
         match event {
-            SseEvent::MessageStart { .. } | SseEvent::MessageStop | SseEvent::Ping => None,
+            SseEvent::MessageStart { message } => {
+                self.add_usage(&message.usage);
+                None
+            }
+            SseEvent::MessageStop | SseEvent::Ping => None,
 
             SseEvent::ContentBlockStart {
                 index,
@@ -245,15 +250,31 @@ impl SseState {
                 }
             }
 
-            SseEvent::MessageDelta { delta, .. } => delta
-                .stop_reason
-                .map(|stop_reason| ProviderEvent::MessageStop { stop_reason }),
+            SseEvent::MessageDelta { delta, usage } => {
+                if let Some(u) = usage.as_ref() {
+                    self.add_usage(u);
+                }
+                delta
+                    .stop_reason
+                    .map(|stop_reason| ProviderEvent::MessageStop {
+                        stop_reason,
+                        total_tokens: self.cumulative_tokens,
+                    })
+            }
 
             SseEvent::Error { error } => Some(ProviderEvent::Error {
                 code: error.kind,
                 message: error.message,
             }),
         }
+    }
+
+    fn add_usage(&mut self, usage: &SseUsage) {
+        let delta = usage.input_tokens.saturating_add(usage.output_tokens);
+        if delta == 0 {
+            return;
+        }
+        self.cumulative_tokens = Some(self.cumulative_tokens.unwrap_or(0).saturating_add(delta));
     }
 }
 
@@ -376,6 +397,61 @@ mod tests {
         };
         let out = state.translate(evt);
         assert!(matches!(out, Some(ProviderEvent::MessageStop { .. })));
+    }
+
+    #[test]
+    fn cumulative_tokens_attached_to_message_stop() {
+        // Stage D: SseState accumulates input + output tokens across
+        // message_start + message_delta and surfaces the running total
+        // on the MessageStop translation.
+        let mut state = SseState::new();
+        // message_start carries initial usage.
+        let _ = state.translate(SseEvent::MessageStart {
+            message: SseMessage {
+                id: "m1".into(),
+                model: "haiku".into(),
+                usage: SseUsage {
+                    input_tokens: 25,
+                    output_tokens: 1,
+                },
+            },
+        });
+        // message_delta with usage adds to the running total and triggers
+        // the MessageStop translation.
+        let out = state.translate(SseEvent::MessageDelta {
+            delta: SseMessageDelta {
+                stop_reason: Some("end_turn".into()),
+                stop_sequence: None,
+            },
+            usage: Some(SseUsage {
+                input_tokens: 0,
+                output_tokens: 15,
+            }),
+        });
+        match out {
+            Some(ProviderEvent::MessageStop { total_tokens, .. }) => {
+                assert_eq!(total_tokens, Some(41));
+            }
+            other => panic!("expected MessageStop with total_tokens, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn missing_usage_keeps_total_tokens_none() {
+        let mut state = SseState::new();
+        let out = state.translate(SseEvent::MessageDelta {
+            delta: SseMessageDelta {
+                stop_reason: Some("end_turn".into()),
+                stop_sequence: None,
+            },
+            usage: None,
+        });
+        match out {
+            Some(ProviderEvent::MessageStop { total_tokens, .. }) => {
+                assert_eq!(total_tokens, None);
+            }
+            other => panic!("expected MessageStop, got {other:?}"),
+        }
     }
 
     #[test]

@@ -114,4 +114,47 @@ describe('App (renderer-level state machine)', () => {
     const err = await screen.findByText(/API key not set/i);
     expect(err).toBeInTheDocument();
   });
+
+  // ---- Stage D: InspectorPanel interaction (click → open → ESC → close)
+
+  it('selecting_a_node_opens_inspector_panel_via_store', async () => {
+    listenMock.mockImplementation(async () => () => undefined);
+    render(<App />);
+    // Drive selection via the store rather than simulating a React Flow
+    // node click — the click → selectNode delegation is exercised by
+    // GraphCanvas's onNodeClick prop, which happy-dom can't fully drive
+    // (no zoom-pane / pointer-event simulation). The store-driven path
+    // exercises the same Inspector subscription via Zustand selectors.
+    act(() => {
+      useGraphStore.getState().applyEvent({
+        type: 'agent_spawned',
+        agent_id: 'a1',
+        agent_name: 'smoke',
+        parent_id: null,
+        session_id: 's1',
+      });
+      useGraphStore.getState().selectNode('agent:a1');
+    });
+    await waitFor(() => expect(screen.getByTestId('inspector-panel')).toBeInTheDocument());
+  });
+
+  it('escape_keydown_closes_inspector_panel', async () => {
+    listenMock.mockImplementation(async () => () => undefined);
+    render(<App />);
+    act(() => {
+      useGraphStore.getState().applyEvent({
+        type: 'agent_spawned',
+        agent_id: 'a1',
+        agent_name: 'smoke',
+        parent_id: null,
+        session_id: 's1',
+      });
+      useGraphStore.getState().selectNode('agent:a1');
+    });
+    await waitFor(() => expect(screen.getByTestId('inspector-panel')).toBeInTheDocument());
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+    await waitFor(() => expect(screen.queryByTestId('inspector-panel')).toBeNull());
+  });
 });

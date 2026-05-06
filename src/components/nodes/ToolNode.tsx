@@ -1,13 +1,16 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { ToolNodeData, ToolReactFlowNode } from '../../lib/graphStore';
+import { tokenScale } from '../../lib/tokenScale';
 
 export function ToolNode({ data }: NodeProps<ToolReactFlowNode>): JSX.Element {
-  const { agentId, toolName, status, durationMs }: ToolNodeData = data;
+  const { agentId, toolName, status, durationMs, tokensIn, tokensOut }: ToolNodeData = data;
+  const scale = tokenScale(tokensIn + tokensOut);
   return (
     <div
       className={`tool-node tool-node--${status}`}
       data-testid={`tool-node-${agentId}-${toolName}`}
       data-status={status}
+      style={{ transform: `scale(${scale})`, transformOrigin: 'center' }}
       aria-label={`tool ${toolName} (${status})`}
     >
       <Handle type="target" position={Position.Top} />

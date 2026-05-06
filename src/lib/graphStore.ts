@@ -34,6 +34,22 @@ export interface AgentNodeData extends Record<string, unknown> {
   agentName: string;
   status: NodeStatus;
   parentAgentId: string | null;
+  /**
+   * Cumulative input tokens charged across this agent's tool calls
+   * (sum of `tool_result.tokens_in` per call). Stage D drives the
+   * node-weight CSS scaling; defaults to 0 when no token data has
+   * been observed.
+   */
+  tokensIn: number;
+  /** Cumulative output tokens. Same semantics as `tokensIn`. */
+  tokensOut: number;
+  /**
+   * Total session tokens reported on `agent_complete.tokens_total`
+   * (Anthropic `message_delta.usage` running total). Distinct from the
+   * `tokensIn + tokensOut` sum: providers report total + per-tool
+   * separately, so the renderer carries both rather than re-deriving.
+   */
+  tokensTotal: number;
 }
 
 export interface ToolNodeData extends Record<string, unknown> {
@@ -41,6 +57,14 @@ export interface ToolNodeData extends Record<string, unknown> {
   agentId: string;
   status: NodeStatus;
   durationMs: number | null;
+  /**
+   * Per-call input tokens (`tool_result.tokens_in`); 0 when the
+   * provider does not surface per-tool attribution. Drives this
+   * tool's weight in the node-scale CSS variable.
+   */
+  tokensIn: number;
+  /** Per-call output tokens. Same semantics as `tokensIn`. */
+  tokensOut: number;
 }
 
 export interface SkillNodeData extends Record<string, unknown> {
@@ -289,6 +313,9 @@ export const useGraphStore = create<GraphState>((set) => ({
               agentName: event.agent_name,
               status: 'active',
               parentAgentId: event.parent_id ?? null,
+              tokensIn: 0,
+              tokensOut: 0,
+              tokensTotal: 0,
             },
           };
           const nodes = [...state.nodes, newNode];
@@ -306,8 +333,22 @@ export const useGraphStore = create<GraphState>((set) => ({
           return { ...state, nodes, edges };
         }
 
-        case 'agent_complete':
-          return withAgentStatus(state, event.agent_id, 'complete');
+        case 'agent_complete': {
+          const next = withAgentStatus(state, event.agent_id, 'complete');
+          if (event.tokens_total === undefined || event.tokens_total === null) {
+            return next;
+          }
+          const total = event.tokens_total;
+          const target = `agent:${event.agent_id}`;
+          return {
+            ...next,
+            nodes: next.nodes.map((n) =>
+              n.id === target && n.type === 'agent'
+                ? { ...n, data: { ...n.data, tokensTotal: total } }
+                : n,
+            ),
+          };
+        }
 
         case 'agent_error':
           return withAgentStatus(state, event.agent_id, 'error');
@@ -345,6 +386,8 @@ export const useGraphStore = create<GraphState>((set) => ({
                 agentId: event.agent_id,
                 status: 'active',
                 durationMs: null,
+                tokensIn: 0,
+                tokensOut: 0,
               },
             };
             const agentToMcpId = `edge:agent:${event.agent_id}->${mcpId}`;
@@ -386,6 +429,8 @@ export const useGraphStore = create<GraphState>((set) => ({
               agentId: event.agent_id,
               status: 'active',
               durationMs: null,
+              tokensIn: 0,
+              tokensOut: 0,
             },
           };
           return {
@@ -406,20 +451,36 @@ export const useGraphStore = create<GraphState>((set) => ({
 
         case 'tool_result': {
           const id = `tool:${event.agent_id}:${event.tool_name}`;
+          const tokensIn = event.tokens_in ?? 0;
+          const tokensOut = event.tokens_out ?? 0;
+          const agentTarget = `agent:${event.agent_id}`;
           return {
             ...state,
-            nodes: state.nodes.map((n) =>
-              n.id === id && n.type === 'tool'
-                ? {
-                    ...n,
-                    data: {
-                      ...n.data,
-                      status: 'complete',
-                      durationMs: event.duration_ms,
-                    },
-                  }
-                : n,
-            ),
+            nodes: state.nodes.map((n) => {
+              if (n.id === id && n.type === 'tool') {
+                return {
+                  ...n,
+                  data: {
+                    ...n.data,
+                    status: 'complete',
+                    durationMs: event.duration_ms,
+                    tokensIn,
+                    tokensOut,
+                  },
+                };
+              }
+              if (n.id === agentTarget && n.type === 'agent') {
+                return {
+                  ...n,
+                  data: {
+                    ...n.data,
+                    tokensIn: n.data.tokensIn + tokensIn,
+                    tokensOut: n.data.tokensOut + tokensOut,
+                  },
+                };
+              }
+              return n;
+            }),
             // Clear the animated flag on the inbound edge (whether
             // sourced from the agent directly or from an MCPNode parent
             // — match by target so both shapes resolve).

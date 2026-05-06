@@ -1,13 +1,21 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { AgentNodeData, AgentReactFlowNode } from '../../lib/graphStore';
+import { tokenScale } from '../../lib/tokenScale';
 
 export function AgentNode({ data }: NodeProps<AgentReactFlowNode>): JSX.Element {
-  const { agentId, agentName, status }: AgentNodeData = data;
+  const { agentId, agentName, status, tokensIn, tokensOut }: AgentNodeData = data;
+  // Spec §3 Visual Design: "Token spend shown as node weight — larger
+  // spend = visually larger node". CSS `transform: scale()` keeps the
+  // renderer fast (GPU-accelerated, no layout cost). Tests can disable
+  // by setting `data-token-scale-disabled` on a parent so visual
+  // regressions don't trip the suite.
+  const scale = tokenScale(tokensIn + tokensOut);
   return (
     <div
       className={`agent-node agent-node--${status}`}
       data-testid={`agent-node-${agentId}`}
       data-status={status}
+      style={{ transform: `scale(${scale})`, transformOrigin: 'center' }}
       aria-label={`agent ${agentName} (${status})`}
     >
       <Handle type="target" position={Position.Top} />

@@ -388,4 +388,88 @@ describe('graphStore.applyEvent', () => {
     expect(edge).toBeDefined();
     expect(edge!.animated).toBe(false);
   });
+
+  // ---- Stage D: token-spend tracking on AgentNode + ToolNode ----
+
+  // Schema bump (additive minor in-place): tool_result + agent_complete
+  // gain optional snake_case token fields (`tokens_in`, `tokens_out`,
+  // `tokens_total`). The reducer translates these to camelCase data
+  // fields on the renderer node interfaces.
+
+  it('tool_result_with_tokens_populates_ToolNode_tokensIn_and_tokensOut', () => {
+    useGraphStore.getState().applyEvent(spawnA);
+    useGraphStore.getState().applyEvent(toolInvoked);
+    const toolResultWithTokens: AgentEvent = {
+      type: 'tool_result',
+      agent_id: 'a1',
+      tool_name: 'read_file',
+      output: { ok: true },
+      duration_ms: 12,
+      tokens_in: 80,
+      tokens_out: 35,
+    };
+    useGraphStore.getState().applyEvent(toolResultWithTokens);
+    const tool = useGraphStore.getState().nodes.find((n) => n.id === 'tool:a1:read_file')!;
+    expect(tool.data).toMatchObject({ tokensIn: 80, tokensOut: 35 });
+  });
+
+  it('tool_result_with_tokens_accumulates_AgentNode_totals', () => {
+    useGraphStore.getState().applyEvent(spawnA);
+    useGraphStore.getState().applyEvent(toolInvoked);
+    useGraphStore.getState().applyEvent({
+      type: 'tool_result',
+      agent_id: 'a1',
+      tool_name: 'read_file',
+      output: { ok: true },
+      duration_ms: 12,
+      tokens_in: 80,
+      tokens_out: 35,
+    });
+    // Add a second tool call so the agent total is the sum.
+    useGraphStore.getState().applyEvent({
+      type: 'tool_invoked',
+      agent_id: 'a1',
+      tool_name: 'write_file',
+      source: 'builtin',
+      server: null,
+      input: {},
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'tool_result',
+      agent_id: 'a1',
+      tool_name: 'write_file',
+      output: { ok: true },
+      duration_ms: 5,
+      tokens_in: 20,
+      tokens_out: 10,
+    });
+    const agent = useGraphStore.getState().nodes.find((n) => n.id === 'agent:a1')!;
+    expect(agent.data).toMatchObject({ tokensIn: 100, tokensOut: 45 });
+  });
+
+  it('agent_complete_with_tokens_total_updates_AgentNode_tokensTotal', () => {
+    useGraphStore.getState().applyEvent(spawnA);
+    const completeWithTokens: AgentEvent = {
+      type: 'agent_complete',
+      agent_id: 'a1',
+      result: 'done',
+      tokens_total: 250,
+    };
+    useGraphStore.getState().applyEvent(completeWithTokens);
+    const agent = useGraphStore.getState().nodes.find((n) => n.id === 'agent:a1')!;
+    expect(agent.data).toMatchObject({ status: 'complete', tokensTotal: 250 });
+  });
+
+  it('tool_result_without_optional_token_fields_leaves_token_state_at_zero', () => {
+    useGraphStore.getState().applyEvent(spawnA);
+    useGraphStore.getState().applyEvent(toolInvoked);
+    // Original toolResult fixture has no token fields — covers the
+    // additive optionality path. State must remain at the default 0,
+    // never NaN/undefined.
+    useGraphStore.getState().applyEvent(toolResult);
+    const tool = useGraphStore.getState().nodes.find((n) => n.id === 'tool:a1:read_file')!;
+    expect(tool.data).toMatchObject({ tokensIn: 0, tokensOut: 0 });
+    const agent = useGraphStore.getState().nodes.find((n) => n.id === 'agent:a1')!;
+    expect(agent.data).toMatchObject({ tokensIn: 0, tokensOut: 0 });
+  });
 });

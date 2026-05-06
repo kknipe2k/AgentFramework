@@ -61,20 +61,31 @@ impl EventPipeline {
                     input,
                 });
             }
-            ProviderEvent::ToolResult { id, output: result } => {
+            ProviderEvent::ToolResult {
+                id,
+                output: result,
+                tokens_in,
+                tokens_out,
+            } => {
                 self.flush_text_buffer(&mut output);
                 output.push(AgentEvent::ToolResult {
                     agent_id: self.agent_id.clone(),
                     tool_name: format!("tool_{id}"),
                     output: result,
                     duration_ms: 0,
+                    tokens_in,
+                    tokens_out,
                 });
             }
-            ProviderEvent::MessageStop { stop_reason } => {
+            ProviderEvent::MessageStop {
+                stop_reason,
+                total_tokens,
+            } => {
                 self.flush_text_buffer(&mut output);
                 output.push(AgentEvent::AgentComplete {
                     agent_id: self.agent_id.clone(),
                     result: stop_reason,
+                    tokens_total: total_tokens,
                 });
             }
             ProviderEvent::Error { code, message } => {
@@ -133,6 +144,7 @@ mod tests {
         assert!(pre.is_empty(), "text deltas buffer until a boundary");
         let post = p.next_event(ProviderEvent::MessageStop {
             stop_reason: "end_turn".into(),
+            total_tokens: None,
         });
         assert!(post
             .iter()

@@ -269,6 +269,7 @@ mod tests {
                 },
                 ProviderEvent::MessageStop {
                     stop_reason: "end_turn".to_string(),
+                    total_tokens: None,
                 },
             ])))
         }

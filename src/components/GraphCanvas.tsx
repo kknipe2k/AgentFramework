@@ -1,5 +1,7 @@
-import { Background, Controls, ReactFlow, type NodeTypes } from '@xyflow/react';
+import { Background, Controls, MiniMap, ReactFlow, type NodeTypes } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { useMemo } from 'react';
+import { layoutGraph } from '../lib/layout';
 import { useGraphStore } from '../lib/graphStore';
 import { AgentNode } from './nodes/AgentNode';
 import { FrameworkNode } from './nodes/FrameworkNode';
@@ -38,10 +40,20 @@ export function GraphCanvas(): JSX.Element {
   const edges = useGraphStore((s) => s.edges);
   const selectNode = useGraphStore((s) => s.selectNode);
 
+  // Layout is a visualization concern, not state — keep dagre out of
+  // the store. Recomputation cost is bounded by node + edge count
+  // changes; deps deliberately exclude the full nodes/edges arrays so
+  // status flips and token-spend updates don't re-run layout.
+  const layoutedNodes = useMemo(
+    () => layoutGraph(nodes, edges),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [nodes.length, edges.length],
+  );
+
   return (
     <div className="graph-canvas" data-testid="graph-canvas">
       <ReactFlow
-        nodes={nodes}
+        nodes={layoutedNodes}
         edges={edges}
         nodeTypes={nodeTypes}
         fitView
@@ -50,6 +62,7 @@ export function GraphCanvas(): JSX.Element {
       >
         <Background />
         <Controls />
+        <MiniMap nodeStrokeWidth={3} pannable zoomable />
       </ReactFlow>
     </div>
   );

@@ -37,6 +37,7 @@ fn lone_text_then_message_stop_flushes_one_stream_text() {
         ProviderEvent::TextDelta { text: "hi".into() },
         ProviderEvent::MessageStop {
             stop_reason: "end_turn".into(),
+            total_tokens: None,
         },
     ]);
     let text_count = out
@@ -57,6 +58,7 @@ fn multiple_text_deltas_bundle_to_one_stream_text() {
         },
         ProviderEvent::MessageStop {
             stop_reason: "end_turn".into(),
+            total_tokens: None,
         },
     ]);
     let stream_texts: Vec<&str> = out
@@ -85,6 +87,7 @@ fn text_then_tool_then_text_flushes_at_each_boundary() {
         },
         ProviderEvent::MessageStop {
             stop_reason: "end_turn".into(),
+            total_tokens: None,
         },
     ]);
     // Sequence: StreamText("before"), ToolInvoked, StreamText("after"), AgentComplete.
@@ -110,6 +113,7 @@ fn tool_use_first_no_leading_stream_text() {
         },
         ProviderEvent::MessageStop {
             stop_reason: "tool_use".into(),
+            total_tokens: None,
         },
     ]);
     assert!(matches!(out.first(), Some(AgentEvent::ToolInvoked { .. })));
@@ -134,6 +138,7 @@ fn thinking_delta_emits_stream_text_and_flushes_buffer() {
         },
         ProviderEvent::MessageStop {
             stop_reason: "end_turn".into(),
+            total_tokens: None,
         },
     ]);
     // x is flushed (because thinking is a non-text boundary), then the
@@ -177,6 +182,8 @@ fn tool_result_passthrough_emits_tool_result() {
     let out = run(vec![ProviderEvent::ToolResult {
         id: "tu_1".into(),
         output: serde_json::json!({"ok": true}),
+        tokens_in: None,
+        tokens_out: None,
     }]);
     let result = out.iter().find_map(|e| match e {
         AgentEvent::ToolResult { output, .. } => Some(output.clone()),
@@ -189,12 +196,89 @@ fn tool_result_passthrough_emits_tool_result() {
 fn message_stop_carries_stop_reason_into_result() {
     let out = run(vec![ProviderEvent::MessageStop {
         stop_reason: "max_tokens".into(),
+        total_tokens: None,
     }]);
     let result = out.iter().find_map(|e| match e {
         AgentEvent::AgentComplete { result, .. } => Some(result.clone()),
         _ => None,
     });
     assert_eq!(result, Some("max_tokens".into()));
+}
+
+// ── Token surfacing (Stage D) ───────────────────────────────────────────
+
+#[test]
+fn tool_result_translation_surfaces_tokens_in_and_tokens_out() {
+    // Stage D: when ProviderEvent::ToolResult carries token data, the
+    // resulting AgentEvent::ToolResult must surface the same fields. The
+    // schema fields are `tokens_in` + `tokens_out` (snake_case, matching
+    // the existing `duration_ms` convention).
+    let out = run(vec![ProviderEvent::ToolResult {
+        id: "tu_1".into(),
+        output: serde_json::json!({"ok": true}),
+        tokens_in: Some(120),
+        tokens_out: Some(45),
+    }]);
+    let surfaced = out.iter().find_map(|e| match e {
+        AgentEvent::ToolResult {
+            tokens_in,
+            tokens_out,
+            ..
+        } => Some((*tokens_in, *tokens_out)),
+        _ => None,
+    });
+    assert_eq!(surfaced, Some((Some(120), Some(45))));
+}
+
+#[test]
+fn message_stop_translation_surfaces_tokens_total_into_agent_complete() {
+    // Stage D: when ProviderEvent::MessageStop carries a total-token
+    // count (sourced from Anthropic's message_delta.usage), the resulting
+    // AgentEvent::AgentComplete surfaces it in `tokens_total`.
+    let out = run(vec![ProviderEvent::MessageStop {
+        stop_reason: "end_turn".into(),
+        total_tokens: Some(280),
+    }]);
+    let total = out.iter().find_map(|e| match e {
+        AgentEvent::AgentComplete { tokens_total, .. } => Some(*tokens_total),
+        _ => None,
+    });
+    assert_eq!(total, Some(Some(280)));
+}
+
+#[test]
+fn missing_token_fields_default_to_none_not_zero() {
+    // Schema declares the fields optional; absence must surface as None,
+    // never as Some(0). Renderer-side count accumulation is then
+    // unambiguous about "no data" vs "real zero".
+    let out = run(vec![
+        ProviderEvent::ToolResult {
+            id: "tu_1".into(),
+            output: serde_json::json!({}),
+            tokens_in: None,
+            tokens_out: None,
+        },
+        ProviderEvent::MessageStop {
+            stop_reason: "end_turn".into(),
+            total_tokens: None,
+        },
+    ]);
+    for e in &out {
+        match e {
+            AgentEvent::ToolResult {
+                tokens_in,
+                tokens_out,
+                ..
+            } => {
+                assert_eq!(*tokens_in, None);
+                assert_eq!(*tokens_out, None);
+            }
+            AgentEvent::AgentComplete { tokens_total, .. } => {
+                assert_eq!(*tokens_total, None);
+            }
+            _ => {}
+        }
+    }
 }
 
 // ── Tool-invoked source defaulting ──────────────────────────────────────
@@ -223,6 +307,7 @@ fn decision_pattern_in_text_emits_decision_record() {
         ProviderEvent::TextDelta { text: text.into() },
         ProviderEvent::MessageStop {
             stop_reason: "end_turn".into(),
+            total_tokens: None,
         },
     ]);
     // Decision extraction emits BOTH DecisionRecord and StreamText (the raw
@@ -253,6 +338,7 @@ fn no_decision_pattern_no_decision_record() {
         },
         ProviderEvent::MessageStop {
             stop_reason: "end_turn".into(),
+            total_tokens: None,
         },
     ]);
     assert!(!out
@@ -277,6 +363,7 @@ fn consecutive_tool_uses_emit_multiple_tool_invoked_no_spurious_text() {
         },
         ProviderEvent::MessageStop {
             stop_reason: "tool_use".into(),
+            total_tokens: None,
         },
     ]);
     let tool_count = out
@@ -321,6 +408,7 @@ fn bundled_stream_text_preserves_concatenation_order() {
         ProviderEvent::TextDelta { text: "4".into() },
         ProviderEvent::MessageStop {
             stop_reason: "end_turn".into(),
+            total_tokens: None,
         },
     ]);
     let combined = out.iter().find_map(|e| match e {
@@ -341,6 +429,7 @@ fn agent_id_propagates_to_every_event() {
         },
         ProviderEvent::MessageStop {
             stop_reason: "end_turn".into(),
+            total_tokens: None,
         },
     ]);
     for e in &out {
@@ -364,6 +453,7 @@ fn empty_text_delta_does_not_emit_empty_stream_text() {
         },
         ProviderEvent::MessageStop {
             stop_reason: "end_turn".into(),
+            total_tokens: None,
         },
     ]);
     // Empty buffer flush must not emit a zero-length StreamText.
@@ -401,9 +491,11 @@ fn message_stop_after_message_stop_emits_two_agent_completes() {
     let out = run(vec![
         ProviderEvent::MessageStop {
             stop_reason: "end_turn".into(),
+            total_tokens: None,
         },
         ProviderEvent::MessageStop {
             stop_reason: "end_turn".into(),
+            total_tokens: None,
         },
     ]);
     let count = out
@@ -427,8 +519,13 @@ fn arb_provider_event() -> impl Strategy<Value = ProviderEvent> {
         any::<String>().prop_map(|id| ProviderEvent::ToolResult {
             id,
             output: serde_json::json!({"ok": true}),
+            tokens_in: None,
+            tokens_out: None,
         }),
-        any::<String>().prop_map(|stop_reason| ProviderEvent::MessageStop { stop_reason }),
+        any::<String>().prop_map(|stop_reason| ProviderEvent::MessageStop {
+            stop_reason,
+            total_tokens: None,
+        }),
         (any::<String>(), any::<String>())
             .prop_map(|(code, message)| ProviderEvent::Error { code, message }),
     ]

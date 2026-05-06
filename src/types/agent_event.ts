@@ -81,6 +81,7 @@ export interface AgentComplete {
   type: "agent_complete";
   agent_id: string;
   result: string;
+  tokens_total?: number | null;
 }
 export interface AgentError {
   type: "agent_error";
@@ -101,6 +102,8 @@ export interface ToolResult {
   tool_name: string;
   output: unknown;
   duration_ms: number;
+  tokens_in?: number | null;
+  tokens_out?: number | null;
 }
 export interface ToolError {
   type: "tool_error";

@@ -30,6 +30,8 @@ const baseData: ToolNodeData = {
   agentId: 'a1',
   status: 'active',
   durationMs: null,
+  tokensIn: 0,
+  tokensOut: 0,
 };
 
 describe('ToolNode', () => {

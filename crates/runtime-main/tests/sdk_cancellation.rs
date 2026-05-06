@@ -142,6 +142,7 @@ async fn completes_cleanly_when_stream_ends() {
         },
         ProviderEvent::MessageStop {
             stop_reason: "end_turn".into(),
+            total_tokens: None,
         },
     ]);
     sdk.run_agent_with_provider_stream(stream)

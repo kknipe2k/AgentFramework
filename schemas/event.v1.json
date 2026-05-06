@@ -56,7 +56,8 @@
       "properties": {
         "type": { "const": "agent_complete" },
         "agent_id": { "type": "string" },
-        "result": { "type": "string" }
+        "result": { "type": "string" },
+        "tokens_total": { "type": ["integer", "null"], "minimum": 0 }
       }
     },
     {
@@ -94,7 +95,9 @@
         "agent_id": { "type": "string" },
         "tool_name": { "type": "string" },
         "output": {},
-        "duration_ms": { "type": "integer", "minimum": 0 }
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "tokens_in": { "type": ["integer", "null"], "minimum": 0 },
+        "tokens_out": { "type": ["integer", "null"], "minimum": 0 }
       }
     },
     {

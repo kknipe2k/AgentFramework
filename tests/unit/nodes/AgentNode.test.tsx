@@ -34,6 +34,9 @@ const baseData: AgentNodeData = {
   agentName: 'smoke',
   status: 'active',
   parentAgentId: null,
+  tokensIn: 0,
+  tokensOut: 0,
+  tokensTotal: 0,
 };
 
 describe('AgentNode', () => {

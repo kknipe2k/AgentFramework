@@ -42,6 +42,16 @@ pub enum ProviderEvent {
         id: String,
         /// Tool output value.
         output: serde_json::Value,
+        /// Input tokens charged for this tool call. `None` when the
+        /// provider does not surface per-tool attribution (Anthropic
+        /// does not at the SSE level today). Stage D wires the field
+        /// through the translation pipeline so future providers + the
+        /// renderer-test-seam populate it.
+        #[serde(default)]
+        tokens_in: Option<u64>,
+        /// Output tokens charged for this tool call. Same caveat.
+        #[serde(default)]
+        tokens_out: Option<u64>,
     },
     /// Extended-thinking chunk (Anthropic feature; only when supported + enabled).
     ThinkingDelta {
@@ -52,6 +62,14 @@ pub enum ProviderEvent {
     MessageStop {
         /// Provider stop reason (e.g., `end_turn`, `max_tokens`).
         stop_reason: String,
+        /// Total tokens (input + output) consumed across the session,
+        /// when the provider surfaces it. Anthropic's
+        /// `message_delta.usage` is the source for the Anthropic
+        /// provider; `SseState` accumulates `message_start.usage` +
+        /// `message_delta.usage` and attaches the running total here.
+        /// `None` when the wire format omits usage data.
+        #[serde(default)]
+        total_tokens: Option<u64>,
     },
     /// Provider-side error during the stream.
     Error {
@@ -414,12 +432,15 @@ mod tests {
             ProviderEvent::ToolResult {
                 id: "tu_1".into(),
                 output: serde_json::json!({"ok": true}),
+                tokens_in: Some(10),
+                tokens_out: Some(5),
             },
             ProviderEvent::ThinkingDelta {
                 text: "thinking...".into(),
             },
             ProviderEvent::MessageStop {
                 stop_reason: "end_turn".into(),
+                total_tokens: Some(120),
             },
             ProviderEvent::Error {
                 code: "rate_limit".into(),

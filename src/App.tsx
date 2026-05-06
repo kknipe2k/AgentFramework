@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { GraphCanvas } from './components/GraphCanvas';
+import { InspectorPanel } from './components/InspectorPanel';
 import { SetupPanel } from './components/SetupPanel';
 import { SmokeButton } from './components/SmokeButton';
 import {
@@ -61,7 +62,10 @@ export function App(): JSX.Element {
       <SetupPanel onSave={handleSetKey} />
       <SmokeButton disabled={!hasKey || running} onClick={handleSmoke} />
       {error && <p className="error">{error}</p>}
-      <GraphCanvas />
+      <div className="graph-layout">
+        <GraphCanvas />
+        <InspectorPanel />
+      </div>
     </main>
   );
 }
