@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Hoisted mocks for the @tauri-apps/api modules so App's IPC layer
 // resolves to test-controlled functions before App is imported.
@@ -13,22 +13,26 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: (channel: string, cb: (e: { payload: AgentEvent }) => void) => listenMock(channel, cb),
 }));
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from '../../src/App';
+import { useGraphStore } from '../../src/lib/graphStore';
 import type { AgentEvent } from '../../src/types/agent_event';
 
 describe('App (renderer-level state machine)', () => {
   beforeEach(() => {
     invokeMock.mockReset();
     listenMock.mockReset();
-    // Default the listen mock to a no-op subscription so App's useEffect
-    // resolves cleanly when a test doesn't override it.
     listenMock.mockImplementation(async () => () => undefined);
     invokeMock.mockResolvedValue(undefined);
+    useGraphStore.getState().clear();
   });
 
-  it('save_key_then_run_smoke_renders_event_list', async () => {
+  afterEach(() => {
+    useGraphStore.getState().clear();
+  });
+
+  it('save_key_then_run_smoke_drives_AgentNode_into_graph_store', async () => {
     let registeredHandler: ((e: { payload: AgentEvent }) => void) | undefined;
     listenMock.mockImplementation(
       async (_channel: string, cb: (e: { payload: AgentEvent }) => void): Promise<() => void> => {
@@ -42,11 +46,8 @@ describe('App (renderer-level state machine)', () => {
     render(<App />);
     await waitFor(() => expect(registeredHandler).toBeDefined());
 
-    // Save key first — Run button is disabled until the key save resolves.
     await user.type(screen.getByLabelText(/anthropic api key/i), 'sk-ant-fixture');
     await user.click(screen.getByRole('button', { name: /save key/i }));
-    // Wait for the "stored in OS keychain" indicator — proves setHasKey(true)
-    // has run and the React tree has re-rendered before we touch Run.
     await screen.findByLabelText(/saved/i);
 
     const runButton = await screen.findByRole('button', {
@@ -63,6 +64,9 @@ describe('App (renderer-level state machine)', () => {
     );
 
     // Simulate the runtime emitting the canonical M02 happy-path sequence.
+    // The Zustand store is now the assertion target (not a flat
+    // <ul> as in M02): the agent_spawned event creates an AgentNode;
+    // the agent_complete event flips its status to complete.
     const sequence: AgentEvent[] = [
       {
         type: 'agent_spawned',
@@ -72,24 +76,28 @@ describe('App (renderer-level state machine)', () => {
         session_id: 's1',
       },
       { type: 'stream_text', agent_id: 'a1', text: 'hi' },
-      { type: 'stream_text', agent_id: 'a1', text: ' there' },
       { type: 'agent_complete', agent_id: 'a1', result: 'hi there' },
     ];
-    for (const e of sequence) {
-      registeredHandler!({ payload: e });
-    }
+    // Wrap in act() — registeredHandler() updates the Zustand store
+    // synchronously, which triggers a React re-render in GraphCanvas;
+    // RTL otherwise warns about state updates outside act().
+    act(() => {
+      for (const e of sequence) {
+        registeredHandler!({ payload: e });
+      }
+    });
 
-    await waitFor(() => expect(screen.getAllByRole('listitem').length).toBeGreaterThanOrEqual(4));
-    const last = screen.getAllByRole('listitem').at(-1)!;
-    expect(last).toHaveAttribute('data-event-type', 'agent_complete');
+    await waitFor(() => {
+      const node = useGraphStore.getState().nodes.find((n) => n.id === 'agent:a1');
+      expect(node).toBeDefined();
+      expect(node!.data).toMatchObject({ status: 'complete' });
+    });
   });
 
   it('surfaces_command_error_via_error_paragraph', async () => {
     listenMock.mockImplementation(async () => () => undefined);
     invokeMock.mockReset();
-    invokeMock
-      .mockResolvedValueOnce(undefined) // set_api_key OK
-      .mockRejectedValueOnce(new Error('API key not set'));
+    invokeMock.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('API key not set'));
 
     const user = userEvent.setup();
     render(<App />);

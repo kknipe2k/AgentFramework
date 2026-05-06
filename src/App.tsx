@@ -1,25 +1,26 @@
-import { useEffect, useReducer, useState } from 'react';
-import { initialState, reducer } from './lib/eventReducer';
+import { useEffect, useState } from 'react';
+import { GraphCanvas } from './components/GraphCanvas';
+import { SetupPanel } from './components/SetupPanel';
+import { SmokeButton } from './components/SmokeButton';
 import {
   invokeRunSmokeSession,
   invokeSetApiKey,
   subscribeAgentEvents,
   unwrapCmdError,
 } from './lib/ipc';
-import { EventList } from './components/EventList';
-import { SetupPanel } from './components/SetupPanel';
-import { SmokeButton } from './components/SmokeButton';
+import { useGraphStore } from './lib/graphStore';
 import './styles.css';
 
 export function App(): JSX.Element {
-  const [state, dispatch] = useReducer(reducer, initialState);
   const [hasKey, setHasKey] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubscribePromise = subscribeAgentEvents((event) => {
-      dispatch({ type: 'event_received', event });
+      useGraphStore.getState().applyEvent(event);
       if (event.type === 'agent_complete' || event.type === 'agent_error') {
-        dispatch({ type: 'completed' });
+        setRunning(false);
       }
     });
     return () => {
@@ -33,32 +34,34 @@ export function App(): JSX.Element {
       setHasKey(true);
     } catch (e) {
       console.error('Set API key error:', e);
-      dispatch({ type: 'error', message: unwrapCmdError(e) });
+      setError(unwrapCmdError(e));
     }
   }
 
   async function handleSmoke(): Promise<void> {
-    dispatch({ type: 'clear' });
-    dispatch({ type: 'started' });
+    useGraphStore.getState().clear();
+    setRunning(true);
+    setError(null);
     try {
       await invokeRunSmokeSession();
     } catch (e) {
-      // Always log structured errors to DevTools console — `state.error`
-      // carries the user-facing string but the full object is needed for
+      // Always log structured errors to DevTools console — `error` carries
+      // the user-facing string but the full object is needed for
       // diagnostics (per docs/gotchas.md #29 keyring-stub case the renderer
       // alone showed "[object Object]" with no usable signal).
       console.error('Smoke test error:', e);
-      dispatch({ type: 'error', message: unwrapCmdError(e) });
+      setError(unwrapCmdError(e));
+      setRunning(false);
     }
   }
 
   return (
     <main>
-      <h1>Agent Runtime — M02 smoke</h1>
+      <h1>Agent Runtime — M03 live graph</h1>
       <SetupPanel onSave={handleSetKey} />
-      <SmokeButton disabled={!hasKey || state.running} onClick={handleSmoke} />
-      {state.error && <p className="error">{state.error}</p>}
-      <EventList events={state.events} />
+      <SmokeButton disabled={!hasKey || running} onClick={handleSmoke} />
+      {error && <p className="error">{error}</p>}
+      <GraphCanvas />
     </main>
   );
 }

@@ -1,5 +1,8 @@
-/* Minimal stylesheet for the M02 Stage E smoke renderer.
- * M03 brings React Flow + real graph styling. */
+/* M03 Stage B: graph canvas + 3 basic node types layered on the M02
+ * smoke-renderer baseline. Spec §3 Visual Design: dark background,
+ * color-encoded status (active blue, complete green, error red),
+ * dashed outline + no-flow-animation for SkillNode. Stage C extends
+ * with the remaining 8 node types + animated edges + gap/hitl colors. */
 
 * {
   box-sizing: border-box;
@@ -65,8 +68,7 @@ ul {
 li {
   padding: 0.4rem 0.5rem;
   border-bottom: 1px solid #eee;
-  font-family:
-    'SF Mono', 'Cascadia Mono', Consolas, monospace;
+  font-family: 'SF Mono', 'Cascadia Mono', Consolas, monospace;
   font-size: 0.85rem;
 }
 
@@ -77,4 +79,111 @@ li:last-child {
 p.error {
   color: #b00020;
   font-weight: 600;
+}
+
+/* ---- Graph canvas (spec §3) ---- */
+
+.graph-canvas {
+  width: 100%;
+  height: 70vh;
+  margin-top: 1rem;
+  background: #0e1014;
+  border: 1px solid #2a3045;
+  border-radius: 4px;
+}
+
+/* ---- AgentNode ---- */
+
+.agent-node {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 13px;
+  border: 2px solid #2a3045;
+  background: #15192a;
+  color: #e6e6e6;
+  min-width: 140px;
+}
+.agent-node--active {
+  border-color: #4a90e2;
+}
+.agent-node--complete {
+  border-color: #4caf50;
+}
+.agent-node--error {
+  border-color: #e53935;
+}
+.agent-node__name {
+  font-weight: 600;
+}
+.agent-node__id {
+  font-family: 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+  font-size: 11px;
+  color: #a8a8a8;
+  margin-top: 2px;
+}
+
+/* ---- ToolNode ---- */
+
+.tool-node {
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 12px;
+  border: 2px solid #2a3045;
+  background: #1a1f33;
+  color: #e6e6e6;
+  min-width: 110px;
+}
+.tool-node--active {
+  border-color: #4a90e2;
+}
+.tool-node--complete {
+  border-color: #4caf50;
+}
+.tool-node--error {
+  border-color: #e53935;
+}
+.tool-node__name {
+  font-family: 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+}
+.tool-node__duration {
+  font-size: 11px;
+  color: #a8a8a8;
+  margin-top: 2px;
+}
+
+/* ---- SkillNode ---- */
+
+.skill-node {
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 12px;
+  background: #15192a;
+  color: #e6e6e6;
+  min-width: 110px;
+}
+.skill-node--dashed {
+  /* Spec §3 Behavior: skill-load edges + node outline are dashed; no
+   * flow animation since the skill is loaded into context, not called. */
+  border: 2px dashed #6a7090;
+}
+.skill-node__name {
+  font-style: italic;
+}
+.skill-node__mode {
+  font-size: 11px;
+  color: #a8a8a8;
+  margin-top: 2px;
+  text-transform: uppercase;
 }

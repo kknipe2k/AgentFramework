@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M03.B (React Flow + Zustand foundation + 3 basic node types)
+
+Lays the foundation for the live graph. Replaces M02's flat `<ul>` event list with a React Flow canvas backed by a Zustand store. Three of the eleven spec §3 node types ship: AgentNode, ToolNode, SkillNode. The remaining eight (MCP, Gap, HITL, Plan, Task, Verify, Hook, Framework) land in Stage C.
+
+- **`src/lib/graphStore.ts` (NEW)** — Zustand v5 store; the canonical source of graph state. Exports `applyEvent(event)`, `clear()`, `selectNode(id)` actions plus `nodes` / `edges` / `selectedNodeId` slices. `applyEvent` is the single entry point for translating `AgentEvent` into node + edge mutations. Idempotent on duplicate events; exhaustive over the 36-variant discriminated union via TS `_exhaustive: never` check. Stage B handles 6 variants as render mutations (`agent_spawned` + parent edge; `agent_complete`/`agent_error` status flips; `tool_invoked` + edge; `tool_result` complete + duration; `skill_loaded` + dashed edge); the remaining 30 are explicit no-ops Stage C/D/M4+ light up. Coverage: 96.37% line.
+- **`src/components/nodes/AgentNode.tsx` (NEW)** — React Flow v12 custom node with `Handle` + `Position` primitives. Renders agent name + 8-char-truncated id + status class. ARIA-labeled. `data-testid` + `data-status` for E2E selectability (Stage F).
+- **`src/components/nodes/ToolNode.tsx` (NEW)** — same shape, renders tool name + duration (when complete).
+- **`src/components/nodes/SkillNode.tsx` (NEW)** — dashed outline (`skill-node--dashed` class) per spec §3 Behavior; no flow animation. Renders skill name + mode-variant (when present).
+- **`src/components/GraphCanvas.tsx` (NEW)** — wraps `<ReactFlow>` from `@xyflow/react`; subscribes to the store via Zustand selectors (`useGraphStore((s) => s.nodes)` form) so re-renders trigger only on the relevant slice change. `nodeTypes` map defined at module level per @xyflow/react v12 docs (inline definition forces per-render remounts and kills the streaming UX). Includes `<Background />` + `<Controls />`. `onNodeClick` / `onPaneClick` wired to `selectNode` for Stage D's inspector seam.
+- **`src/App.tsx`** — refactored: Zustand store replaces the M02 `useReducer`. SetupPanel + SmokeButton + handleSetKey + handleSmoke + `console.error` + `unwrapCmdError` preserved verbatim. Heading flipped from "M02 smoke" to "M03 live graph".
+- **`src/styles.css`** — appended graph canvas + 3 node-type styles per spec §3 Visual Design (dark background, color-encoded status: blue=active, green=complete, red=error; dashed SkillNode outline). M02 component styles preserved.
+- **Tests** — `tests/unit/graphStore.test.ts` (13 tests covering each Stage B AgentEvent branch + idempotence + clear/select + an exhaustive no-op coverage test for the other 27 schema variants); `tests/unit/nodes/{Agent,Tool,Skill}Node.test.tsx` (5 tests each: render + status classes + accessibility + handles); `tests/unit/App.test.tsx` refactored to assert on `useGraphStore.getState().nodes` instead of listitem count; `tests/unit/components.test.tsx` refactored — dropped EventList tests, added GraphCanvas empty-state smoke. 41 frontend tests pass; coverage 93.47% global, 96.37% on graphStore primitive.
+- **Deletions** — `src/lib/eventReducer.ts`, `src/components/EventList.tsx`, `tests/unit/eventReducer.test.ts` (replaced by graphStore architecture).
+
+Refs: `docs/build-prompts/M03-live-graph.md` §B; `agent-runtime-spec.md` §3; `CLAUDE.md` §5 (TDD discipline) §14 (schemas-as-source-of-truth — schema's snake_case field names used throughout); `docs/gotchas.md` #21 (clippy traps — N/A for TS), #25 (Vite root — preserved), #26 (serde tag-shape — N/A for TS), #27 (Vitest+RTL DOM-ref staleness — observed via `act()` wrap of synchronous Zustand dispatch in App.test.tsx).
+
 ### Added — M03.A (Build hygiene + carry-forward closures + new deps)
 
 Closes the M02 🟡 Important carry-forward items + adds the deps Stages B–F need. No React Flow code yet; that lands in Stage B. Per `docs/gap-analysis.md` M02 entry §"Carry-forward to M03 prep" + `M02-summary.md` §"Decisions to apply before the next parent milestone".
