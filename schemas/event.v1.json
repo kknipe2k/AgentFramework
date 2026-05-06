@@ -1,0 +1,442 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aria-runtime.dev/event.v1.json",
+  "title": "AgentEvent",
+  "description": "Canonical AgentEvent union emitted by the runtime. Source-of-truth for renderer TypeScript types (generated via `cargo xtask regenerate-types`). Mirrors `runtime_core::event::AgentEvent` (crates/runtime-core/src/event.rs). Variants span spec sections §2 (session/agent/tool/skill/stream/decision/token), §3a (plan/task), §3b (mode), §4a (verify+rails), §4b (gap), §6a (HITL), §8.security (capability), §2a (budget). Variants the v0.1 runtime does not yet emit are still defined here so future milestones extend the union additively.",
+  "$defs": {
+    "ToolSource": {
+      "type": "string",
+      "enum": ["builtin", "mcp", "generated"],
+      "description": "Origin of a tool invocation. Spec §0b + §2."
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "title": "SessionStart",
+      "additionalProperties": false,
+      "required": ["type", "session_id", "framework", "model"],
+      "properties": {
+        "type": { "const": "session_start" },
+        "session_id": { "type": "string" },
+        "framework": { "type": "string" },
+        "model": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "SessionEnd",
+      "additionalProperties": false,
+      "required": ["type", "session_id", "duration_ms", "end_reason"],
+      "properties": {
+        "type": { "const": "session_end" },
+        "session_id": { "type": "string" },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "end_reason": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "AgentSpawned",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "agent_name", "session_id"],
+      "properties": {
+        "type": { "const": "agent_spawned" },
+        "agent_id": { "type": "string" },
+        "agent_name": { "type": "string" },
+        "parent_id": { "type": ["string", "null"] },
+        "session_id": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "AgentComplete",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "result"],
+      "properties": {
+        "type": { "const": "agent_complete" },
+        "agent_id": { "type": "string" },
+        "result": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "AgentError",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "error"],
+      "properties": {
+        "type": { "const": "agent_error" },
+        "agent_id": { "type": "string" },
+        "error": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "ToolInvoked",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "tool_name", "source", "input"],
+      "properties": {
+        "type": { "const": "tool_invoked" },
+        "agent_id": { "type": "string" },
+        "tool_name": { "type": "string" },
+        "source": { "$ref": "#/$defs/ToolSource" },
+        "server": { "type": ["string", "null"] },
+        "input": {}
+      }
+    },
+    {
+      "type": "object",
+      "title": "ToolResult",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "tool_name", "output", "duration_ms"],
+      "properties": {
+        "type": { "const": "tool_result" },
+        "agent_id": { "type": "string" },
+        "tool_name": { "type": "string" },
+        "output": {},
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    {
+      "type": "object",
+      "title": "ToolError",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "tool_name", "error"],
+      "properties": {
+        "type": { "const": "tool_error" },
+        "agent_id": { "type": "string" },
+        "tool_name": { "type": "string" },
+        "error": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "SkillLoaded",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "skill_name"],
+      "properties": {
+        "type": { "const": "skill_loaded" },
+        "agent_id": { "type": "string" },
+        "skill_name": { "type": "string" },
+        "mode": { "type": ["string", "null"] }
+      }
+    },
+    {
+      "type": "object",
+      "title": "PlanCreated",
+      "additionalProperties": false,
+      "required": ["type", "plan_id", "task_count"],
+      "properties": {
+        "type": { "const": "plan_created" },
+        "plan_id": { "type": "string" },
+        "task_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    {
+      "type": "object",
+      "title": "PlanApproved",
+      "additionalProperties": false,
+      "required": ["type", "plan_id"],
+      "properties": {
+        "type": { "const": "plan_approved" },
+        "plan_id": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "PlanRejected",
+      "additionalProperties": false,
+      "required": ["type", "plan_id", "reason"],
+      "properties": {
+        "type": { "const": "plan_rejected" },
+        "plan_id": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "TaskStarted",
+      "additionalProperties": false,
+      "required": ["type", "plan_id", "task_id", "agent_id"],
+      "properties": {
+        "type": { "const": "task_started" },
+        "plan_id": { "type": "string" },
+        "task_id": { "type": "string" },
+        "agent_id": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "TaskCompleted",
+      "additionalProperties": false,
+      "required": ["type", "plan_id", "task_id", "duration_ms"],
+      "properties": {
+        "type": { "const": "task_completed" },
+        "plan_id": { "type": "string" },
+        "task_id": { "type": "string" },
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    {
+      "type": "object",
+      "title": "TaskFailed",
+      "additionalProperties": false,
+      "required": ["type", "plan_id", "task_id", "error", "failure_count"],
+      "properties": {
+        "type": { "const": "task_failed" },
+        "plan_id": { "type": "string" },
+        "task_id": { "type": "string" },
+        "error": { "type": "string" },
+        "failure_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    {
+      "type": "object",
+      "title": "TaskRolledBack",
+      "additionalProperties": false,
+      "required": ["type", "plan_id", "task_id", "snapshot_id"],
+      "properties": {
+        "type": { "const": "task_rolled_back" },
+        "plan_id": { "type": "string" },
+        "task_id": { "type": "string" },
+        "snapshot_id": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "TaskEscalated",
+      "additionalProperties": false,
+      "required": ["type", "plan_id", "task_id", "reason"],
+      "properties": {
+        "type": { "const": "task_escalated" },
+        "plan_id": { "type": "string" },
+        "task_id": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "ModeChanged",
+      "additionalProperties": false,
+      "required": ["type", "from", "to", "reason"],
+      "properties": {
+        "type": { "const": "mode_changed" },
+        "from": { "type": "string" },
+        "to": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "VerifyStarted",
+      "additionalProperties": false,
+      "required": ["type", "hook_id", "level"],
+      "properties": {
+        "type": { "const": "verify_started" },
+        "hook_id": { "type": "string" },
+        "level": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "VerifyPassed",
+      "additionalProperties": false,
+      "required": ["type", "hook_id", "duration_ms"],
+      "properties": {
+        "type": { "const": "verify_passed" },
+        "hook_id": { "type": "string" },
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    {
+      "type": "object",
+      "title": "VerifyFailed",
+      "additionalProperties": false,
+      "required": ["type", "hook_id", "error"],
+      "properties": {
+        "type": { "const": "verify_failed" },
+        "hook_id": { "type": "string" },
+        "error": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "RailTriggered",
+      "additionalProperties": false,
+      "required": ["type", "rail_id", "severity", "message"],
+      "properties": {
+        "type": { "const": "rail_triggered" },
+        "rail_id": { "type": "string" },
+        "severity": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "SkillMissing",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "skill_name", "severity"],
+      "properties": {
+        "type": { "const": "skill_missing" },
+        "agent_id": { "type": "string" },
+        "skill_name": { "type": "string" },
+        "severity": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "ToolMissing",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "tool_name", "severity"],
+      "properties": {
+        "type": { "const": "tool_missing" },
+        "agent_id": { "type": "string" },
+        "tool_name": { "type": "string" },
+        "severity": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "GapResolved",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "capability", "kind"],
+      "properties": {
+        "type": { "const": "gap_resolved" },
+        "agent_id": { "type": "string" },
+        "capability": { "type": "string" },
+        "kind": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "HitlRequested",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "prompt", "hitl_kind"],
+      "properties": {
+        "type": { "const": "hitl_requested" },
+        "agent_id": { "type": "string" },
+        "prompt": { "type": "string" },
+        "hitl_kind": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "HitlResolved",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "response", "duration_ms"],
+      "properties": {
+        "type": { "const": "hitl_resolved" },
+        "agent_id": { "type": "string" },
+        "response": { "type": "string" },
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    {
+      "type": "object",
+      "title": "CapabilityViolation",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "declared", "attempted"],
+      "properties": {
+        "type": { "const": "capability_violation" },
+        "agent_id": { "type": "string" },
+        "declared": { "type": "string" },
+        "attempted": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "CapabilityGrant",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "capability", "scope"],
+      "properties": {
+        "type": { "const": "capability_grant" },
+        "agent_id": { "type": "string" },
+        "capability": { "type": "string" },
+        "scope": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "BudgetWarn",
+      "additionalProperties": false,
+      "required": ["type", "spent_usd", "cap_usd", "percent"],
+      "properties": {
+        "type": { "const": "budget_warn" },
+        "spent_usd": { "type": "number" },
+        "cap_usd": { "type": "number" },
+        "percent": { "type": "integer", "minimum": 0 }
+      }
+    },
+    {
+      "type": "object",
+      "title": "BudgetDownshift",
+      "additionalProperties": false,
+      "required": ["type", "from_model", "to_model", "reason"],
+      "properties": {
+        "type": { "const": "budget_downshift" },
+        "from_model": { "type": "string" },
+        "to_model": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "BudgetSuspended",
+      "additionalProperties": false,
+      "required": ["type", "spent_usd", "cap_usd"],
+      "properties": {
+        "type": { "const": "budget_suspended" },
+        "spent_usd": { "type": "number" },
+        "cap_usd": { "type": "number" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "BudgetExceeded",
+      "additionalProperties": false,
+      "required": ["type", "spent_usd", "cap_usd"],
+      "properties": {
+        "type": { "const": "budget_exceeded" },
+        "spent_usd": { "type": "number" },
+        "cap_usd": { "type": "number" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "StreamText",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "text"],
+      "properties": {
+        "type": { "const": "stream_text" },
+        "agent_id": { "type": "string" },
+        "text": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "DecisionRecord",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "decision", "rationale"],
+      "properties": {
+        "type": { "const": "decision_record" },
+        "agent_id": { "type": "string" },
+        "decision": { "type": "string" },
+        "rationale": { "type": "string" },
+        "tool_used": { "type": ["string", "null"] }
+      }
+    },
+    {
+      "type": "object",
+      "title": "TokenUsage",
+      "additionalProperties": false,
+      "required": ["type", "input", "output", "model", "cost_usd"],
+      "properties": {
+        "type": { "const": "token_usage" },
+        "input": { "type": "integer", "minimum": 0 },
+        "output": { "type": "integer", "minimum": 0 },
+        "model": { "type": "string" },
+        "cost_usd": { "type": "number" }
+      }
+    }
+  ]
+}

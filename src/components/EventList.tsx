@@ -38,5 +38,10 @@ function renderSummary(event: AgentEvent): string {
       return `task ${event.task_id}`;
     case 'task_completed':
       return `task ${event.task_id} (${event.duration_ms}ms)`;
+    default:
+      // Variants beyond the M02 smoke-session subset surface as the bare
+      // `event.type` label until M03 Stage B replaces this list with the
+      // React Flow Canvas + per-node renderers.
+      return '';
   }
 }

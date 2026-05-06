@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M03.A (Build hygiene + carry-forward closures + new deps)
+
+Closes the M02 🟡 Important carry-forward items + adds the deps Stages B–F need. No React Flow code yet; that lands in Stage B. Per `docs/gap-analysis.md` M02 entry §"Carry-forward to M03 prep" + `M02-summary.md` §"Decisions to apply before the next parent milestone".
+
+- **`schemas/event.v1.json` (NEW)** — canonical AgentEvent schema covering all variants of `runtime_core::event::AgentEvent` (session/agent/tool/skill/plan/task/mode/verify/rails/gap/HITL/capability/budget/stream/decision/token + `ToolSource` enum). Source-of-truth for renderer TypeScript types per `CLAUDE.md` §14 schemas-as-source-of-truth. Replaces hand-mirrored `src/types/agent_event.ts`.
+- **`crates/xtask/src/main.rs`** — extends `regenerate-types` + `regenerate-types --check` to also generate TypeScript types via `npx --yes json-schema-to-typescript`. New testable seam `regenerate_typescript_types_with(schemas, output_dir, runner, check)` mirrors the M01.C / M02.C / M02.D / M02.E `*_with` archetype; production wires `runner = run_npx_json_schema_to_typescript`. Drift list merges with the existing typify Rust-codegen drift list so a single bail message covers both Rust and TS regressions.
+- **`src/types/agent_event.ts`** — regenerated. Hand-mirrored content replaced by `cargo xtask regenerate-types` output. Header banner makes the generated nature explicit; `.prettierignore` + `eslint.config.js` exclude the path so prettier/eslint don't fight the codegen formatter. The drift check in CI catches future divergence between schema and generated TS.
+- **`crates/xtask/tests/check_drift.rs`** — Case 4 added: mutates `src/types/agent_event.ts`, runs `regenerate-types --check`, asserts non-zero exit, restores. Mirrors existing Case 3 for Rust drift.
+- **`crates/runtime-drone/tests/integration.rs` + `integration_windows.rs`** — `drone_binary()` retrofitted to derive paths from `std::env::current_exe()` instead of `CARGO_MANIFEST_DIR`-relative `target/debug/runtime-drone`. Per `docs/gotchas.md` #22: `cargo llvm-cov --workspace` uses a distinct target dir that breaks hard-coded paths. Archetype: `crates/runtime-main/tests/drone_ipc_loopback.rs::drone_binary`.
+- **`package.json`** — `"test"` script flipped from `vitest run` → `vitest run --coverage` so the 80% threshold in `vitest.config.ts` is enforced on every run (M02.E carry-forward — the threshold was configured but only triggered when `--coverage` was passed explicitly).
+- **`src/counter.{js,test.js}`** — deleted. Legacy CommonJS files predating the M02 `"type": "module"` flip; were carried forward via `.prettierignore` + `eslint.config.js ignores`. The ignore-list entries are now removed.
+- **Workspace `Cargo.toml`** — `secrecy` dropped the `serde` feature. Per `docs.rs/secrecy/0.10`: `SecretString` does NOT serialize via serde by default (the feature requires the `SerializableSecret` marker trait, which no M02 code implements). The feature was dead weight; verified by grep on `secrecy::Serialize` / `serialize_with` / `Deserialize` over `SecretString`.
+- **`package.json`** — Vite 5.4 → ^7.1.0 (the dev-server esbuild advisory in 5.x is in the moderate-vulns chain that `npm audit --audit-level=high` already filters out, but the bump closes the M02.E surprise event 4 carry-forward). Vite 8 (Rolldown) is GA but out-of-scope per the M03 stage prompt's `<execution_warnings>`; defer to M04+.
+- **`package.json`** — added `@xyflow/react ^12.10.0` + `zustand ^5.0.0` (production deps for Stages B–F React Flow + state management) + `json-schema-to-typescript ^15.0.0` (devDep used by the new xtask TS codegen). `keyring 3.6` stays per the M03 stage prompt's `<execution_warnings>` — 4.0 has breaking API surface and is deferred to a dedicated chore PR after M03 ships.
+
+Refs: `docs/build-prompts/M03-live-graph.md` §A; `agent-runtime-spec.md` §3 §13.5; `CLAUDE.md` §5 §14; `docs/gotchas.md` #21–#28 (especially #22 `current_exe`); `M02-summary.md` §"Decisions to apply before the next parent milestone"; `docs/gap-analysis.md` M02 entry §"Carry-forward to M03 prep".
+
 ### Fixed — Post-M02 smoke-test live debugging
 
 Live debugging a "[object Object]" smoke-test failure in the M02 desktop app surfaced four overlapping issues. All four are fixed here in one PR; the underlying spec/process gap (dev-logging discipline) is locked into the spec so future milestones don't repeat the silent-stub trap.

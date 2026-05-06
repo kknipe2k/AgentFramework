@@ -22,16 +22,17 @@ use tokio::time::timeout;
 
 use runtime_core::{DroneCommand, DroneEvent, HeartbeatStatus};
 
+/// Locate the `runtime-drone.exe` binary alongside the test binary.
+///
+/// Per `docs/gotchas.md` #22: `cargo test` and `cargo llvm-cov` use
+/// different target dirs; deriving from `std::env::current_exe()` works
+/// for both. Archetype: `crates/runtime-main/tests/drone_ipc_loopback.rs::drone_binary`.
 fn drone_binary() -> std::path::PathBuf {
-    let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.push("..");
-    p.push("..");
-    p.push("target");
-    p.push(if cfg!(debug_assertions) {
-        "debug"
-    } else {
-        "release"
-    });
+    let mut p = std::env::current_exe().expect("current_exe");
+    p.pop(); // drop the test exe filename
+    if p.ends_with("deps") {
+        p.pop(); // up to the profile dir
+    }
     p.push("runtime-drone.exe");
     p
 }
