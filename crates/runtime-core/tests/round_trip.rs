@@ -127,7 +127,8 @@ fn drone_event_variant_count_matches_spec() {
     // If this test fails, you removed a variant — that's a breaking change.
     // Update this count if you added a variant in a later milestone (additive
     // changes are fine; keep this assertion in sync with spec §1d).
-    let variants_in_drone_event = 7; // Heartbeat, SnapshotWritten, ActivityStateChange, ProcessSpawned, ProcessStopped, RecoveryAvailable, Alert
+    // M03 Stage E added QueryResult + SignalLog (read-only IPC commands), bumping the count to 9.
+    let variants_in_drone_event = 9;
     let _check = match (DroneEvent::Heartbeat {
         status: runtime_core::HeartbeatStatus::Ok,
         timestamp: 0,
@@ -139,6 +140,8 @@ fn drone_event_variant_count_matches_spec() {
         DroneEvent::ProcessStopped { .. } => 5,
         DroneEvent::RecoveryAvailable { .. } => 6,
         DroneEvent::Alert { .. } => 7,
+        DroneEvent::QueryResult { .. } => 8,
+        DroneEvent::SignalLog { .. } => 9,
     };
     let _ = variants_in_drone_event;
     // Test passes if it compiles — the match exhaustiveness check enforces variant count.

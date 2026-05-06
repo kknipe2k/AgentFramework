@@ -16,7 +16,13 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: (...args: unknown[]) => listenMock(...args),
 }));
 
-import { invokeRunSmokeSession, invokeSetApiKey, subscribeAgentEvents } from '../../src/lib/ipc';
+import {
+  invokeQuerySessionDb,
+  invokeReplaySession,
+  invokeRunSmokeSession,
+  invokeSetApiKey,
+  subscribeAgentEvents,
+} from '../../src/lib/ipc';
 import type { AgentEvent } from '../../src/types/agent_event';
 
 describe('ipc', () => {
@@ -83,5 +89,20 @@ describe('ipc', () => {
     expect(handler).not.toHaveBeenCalled();
     stop();
     expect(unlisten).toHaveBeenCalledTimes(1);
+  });
+
+  it('invokeQuerySessionDb_passes_sql_arg_and_returns_rows', async () => {
+    invokeMock.mockResolvedValueOnce([{ id: 1 }, { id: 2 }]);
+    const rows = await invokeQuerySessionDb('SELECT id FROM signals');
+    expect(invokeMock).toHaveBeenCalledWith('query_session_db', {
+      sql: 'SELECT id FROM signals',
+    });
+    expect(rows).toEqual([{ id: 1 }, { id: 2 }]);
+  });
+
+  it('invokeReplaySession_passes_session_id_arg', async () => {
+    invokeMock.mockResolvedValueOnce(undefined);
+    await invokeReplaySession('s-xyz');
+    expect(invokeMock).toHaveBeenCalledWith('replay_session', { sessionId: 's-xyz' });
   });
 });

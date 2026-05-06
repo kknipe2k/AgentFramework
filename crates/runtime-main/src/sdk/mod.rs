@@ -12,7 +12,9 @@
 mod agent_sdk;
 mod decision_extractor;
 mod event_pipeline;
+pub mod replay;
 
 pub use agent_sdk::{AgentSdk, SdkError, SessionId};
 pub use decision_extractor::{extract_decision, DecisionRecord};
 pub use event_pipeline::EventPipeline;
+pub use replay::replay_signals_to_events;

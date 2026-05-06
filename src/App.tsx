@@ -3,7 +3,9 @@ import { GraphCanvas } from './components/GraphCanvas';
 import { InspectorPanel } from './components/InspectorPanel';
 import { SetupPanel } from './components/SetupPanel';
 import { SmokeButton } from './components/SmokeButton';
+import { SqlInspector } from './components/SqlInspector';
 import {
+  invokeReplaySession,
   invokeRunSmokeSession,
   invokeSetApiKey,
   subscribeAgentEvents,
@@ -12,13 +14,30 @@ import {
 import { useGraphStore } from './lib/graphStore';
 import './styles.css';
 
+const LAST_SESSION_KEY = 'lastSessionId';
+
 export function App(): JSX.Element {
   const [hasKey, setHasKey] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Replay-on-mount: if a previous session id was stashed in
+    // localStorage by a prior session_start, ask main to read its
+    // signal log and re-emit AgentEvents through the existing
+    // `agent_event` channel. graphStore.applyEvent's idempotence
+    // guarantees the reconstructed graph matches the original.
+    const lastSessionId = localStorage.getItem(LAST_SESSION_KEY);
+    if (lastSessionId !== null && lastSessionId.length > 0) {
+      void invokeReplaySession(lastSessionId).catch((e) => {
+        console.error('Replay session error:', e);
+      });
+    }
+
     const unsubscribePromise = subscribeAgentEvents((event) => {
+      if (event.type === 'session_start') {
+        localStorage.setItem(LAST_SESSION_KEY, event.session_id);
+      }
       useGraphStore.getState().applyEvent(event);
       if (event.type === 'agent_complete' || event.type === 'agent_error') {
         setRunning(false);
@@ -66,6 +85,7 @@ export function App(): JSX.Element {
         <GraphCanvas />
         <InspectorPanel />
       </div>
+      <SqlInspector />
     </main>
   );
 }

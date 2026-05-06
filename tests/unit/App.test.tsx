@@ -26,10 +26,16 @@ describe('App (renderer-level state machine)', () => {
     listenMock.mockImplementation(async () => () => undefined);
     invokeMock.mockResolvedValue(undefined);
     useGraphStore.getState().clear();
+    // Stage E added replay-on-mount that fires `invokeReplaySession` when
+    // localStorage.lastSessionId is set. Clean it before each test so the
+    // mount-time IPC call sequence is deterministic; tests that exercise
+    // the replay path set the value explicitly.
+    localStorage.removeItem('lastSessionId');
   });
 
   afterEach(() => {
     useGraphStore.getState().clear();
+    localStorage.removeItem('lastSessionId');
   });
 
   it('save_key_then_run_smoke_drives_AgentNode_into_graph_store', async () => {
@@ -156,5 +162,44 @@ describe('App (renderer-level state machine)', () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     });
     await waitFor(() => expect(screen.queryByTestId('inspector-panel')).toBeNull());
+  });
+
+  // ---- Stage E: replay-on-mount + session-id persistence
+
+  it('mount_calls_replay_session_with_stored_lastSessionId', async () => {
+    localStorage.setItem('lastSessionId', 'prior-session-xyz');
+    listenMock.mockImplementation(async () => () => undefined);
+    invokeMock.mockResolvedValue(undefined);
+    render(<App />);
+    await waitFor(() => {
+      const calls = invokeMock.mock.calls.map((c) => [String(c[0]), c[1]]);
+      expect(calls).toContainEqual(['replay_session', { sessionId: 'prior-session-xyz' }]);
+    });
+    localStorage.removeItem('lastSessionId');
+  });
+
+  it('session_start_event_persists_session_id_to_localStorage', async () => {
+    let registeredHandler: ((e: { payload: AgentEvent }) => void) | undefined;
+    listenMock.mockImplementation(
+      async (_channel: string, cb: (e: { payload: AgentEvent }) => void): Promise<() => void> => {
+        registeredHandler = cb;
+        return () => undefined;
+      },
+    );
+    localStorage.removeItem('lastSessionId');
+    render(<App />);
+    await waitFor(() => expect(registeredHandler).toBeDefined());
+    act(() => {
+      registeredHandler!({
+        payload: {
+          type: 'session_start',
+          session_id: 'new-session-abc',
+          framework: 'aria',
+          model: 'haiku',
+        },
+      });
+    });
+    expect(localStorage.getItem('lastSessionId')).toBe('new-session-abc');
+    localStorage.removeItem('lastSessionId');
   });
 });

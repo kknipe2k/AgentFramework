@@ -4,7 +4,7 @@
 //! against the `SQLite` database. Emits `DroneEvent` results on the
 //! broadcast channel. Six command variants per `agent-runtime-spec.md` §1d.
 
-use crate::snapshot;
+use crate::{snapshot, vdr};
 use runtime_core::{AlertLevel, DroneCommand, DroneEvent, ProcessConfig, ProcessType};
 use rusqlite::Connection;
 use std::sync::Arc;
@@ -23,6 +23,10 @@ pub enum CommandError {
     /// Underlying rusqlite error.
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
+
+    /// VDR projection / read-only query error.
+    #[error(transparent)]
+    Vdr(#[from] vdr::VdrError),
 }
 
 /// Run the command-dispatch loop until `cmd_rx` closes or
@@ -81,9 +85,82 @@ pub async fn run(
                     message: format!("set_activity_timeout not yet implemented (ms={ms})"),
                 });
             }
+            DroneCommand::QuerySessionDb { sql } => {
+                handle_query_session_db(&conn, &sql, &event_tx).await;
+            }
+            DroneCommand::ReadSignals { session_id } => {
+                handle_read_signals(&conn, &session_id, &event_tx).await;
+            }
         }
     }
     Ok(())
+}
+
+async fn handle_query_session_db(
+    conn: &Arc<Mutex<Connection>>,
+    sql: &str,
+    event_tx: &broadcast::Sender<DroneEvent>,
+) {
+    if !vdr::is_select_only(sql) {
+        let _ = event_tx.send(DroneEvent::Alert {
+            level: AlertLevel::Critical,
+            message: format!(
+                "query_session_db rejected: only SELECT statements permitted; got: {}",
+                truncate_for_log(sql, 80)
+            ),
+        });
+        return;
+    }
+    let result = {
+        let guard = conn.lock().await;
+        vdr::execute_select(&guard, sql)
+    };
+    match result {
+        Ok(rows) => {
+            let _ = event_tx.send(DroneEvent::QueryResult { rows });
+        }
+        Err(e) => {
+            let _ = event_tx.send(DroneEvent::Alert {
+                level: AlertLevel::Critical,
+                message: format!("query_session_db failed: {e}"),
+            });
+        }
+    }
+}
+
+async fn handle_read_signals(
+    conn: &Arc<Mutex<Connection>>,
+    session_id: &str,
+    event_tx: &broadcast::Sender<DroneEvent>,
+) {
+    let result = {
+        let guard = conn.lock().await;
+        vdr::signals_for_session(&guard, session_id)
+    };
+    match result {
+        Ok(signals) => {
+            let _ = event_tx.send(DroneEvent::SignalLog { signals });
+        }
+        Err(e) => {
+            let _ = event_tx.send(DroneEvent::Alert {
+                level: AlertLevel::Critical,
+                message: format!("read_signals failed: {e}"),
+            });
+        }
+    }
+}
+
+fn truncate_for_log(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        s
+    } else {
+        // Find a UTF-8 boundary at-or-below max so str slicing is safe.
+        let mut end = max;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        &s[..end]
+    }
 }
 
 async fn handle_snapshot_now(
@@ -345,6 +422,145 @@ mod tests {
             .await
             .expect("shutdown");
         let _ = timeout(Duration::from_secs(1), task).await;
+    }
+
+    #[tokio::test]
+    async fn query_session_db_returns_rows_via_event() {
+        let (_dir, conn) = open();
+        // Seed two signals.
+        {
+            let g = conn.lock().await;
+            g.execute(
+                "INSERT INTO signals (id, session_id, type, event, timestamp, payload_json, context_type) \
+                 VALUES ('sig1', 's1', 'tool', 'invoked', '0', '{}', 'agent_loop')",
+                [],
+            )
+            .expect("seed sig1");
+            g.execute(
+                "INSERT INTO signals (id, session_id, type, event, timestamp, payload_json, context_type) \
+                 VALUES ('sig2', 's1', 'decision', 'decision', '1', '{}', 'agent_loop')",
+                [],
+            )
+            .expect("seed sig2");
+        }
+        let (cmd_tx, cmd_rx) = mpsc::channel::<DroneCommand>(8);
+        let (event_tx, mut event_rx) = broadcast::channel::<DroneEvent>(16);
+        let task = tokio::spawn(run("s1".to_string(), conn, cmd_rx, event_tx, None));
+        cmd_tx
+            .send(DroneCommand::QuerySessionDb {
+                sql: "SELECT id FROM signals ORDER BY id".to_string(),
+            })
+            .await
+            .expect("send query");
+
+        let mut got = None;
+        for _ in 0..10 {
+            if let Ok(Ok(DroneEvent::QueryResult { rows })) =
+                timeout(Duration::from_millis(500), event_rx.recv()).await
+            {
+                got = Some(rows);
+                break;
+            }
+        }
+        let rows = got.expect("expected QueryResult event");
+        assert_eq!(rows.len(), 2);
+        cmd_tx
+            .send(DroneCommand::GracefulShutdown { timeout_ms: 50 })
+            .await
+            .expect("shutdown");
+        let _ = timeout(Duration::from_secs(1), task).await;
+    }
+
+    #[tokio::test]
+    async fn query_session_db_rejects_non_select_with_alert() {
+        let (_dir, conn) = open();
+        let (cmd_tx, cmd_rx) = mpsc::channel::<DroneCommand>(8);
+        let (event_tx, mut event_rx) = broadcast::channel::<DroneEvent>(16);
+        let task = tokio::spawn(run("s1".to_string(), conn, cmd_rx, event_tx, None));
+        cmd_tx
+            .send(DroneCommand::QuerySessionDb {
+                sql: "DROP TABLE signals".to_string(),
+            })
+            .await
+            .expect("send bad query");
+
+        let mut got_alert = false;
+        for _ in 0..10 {
+            if let Ok(Ok(DroneEvent::Alert {
+                level: AlertLevel::Critical,
+                message,
+            })) = timeout(Duration::from_millis(500), event_rx.recv()).await
+            {
+                if message.contains("only SELECT") {
+                    got_alert = true;
+                    break;
+                }
+            }
+        }
+        assert!(got_alert, "non-SELECT must emit a Critical alert");
+        cmd_tx
+            .send(DroneCommand::GracefulShutdown { timeout_ms: 50 })
+            .await
+            .expect("shutdown");
+        let _ = timeout(Duration::from_secs(1), task).await;
+    }
+
+    #[tokio::test]
+    async fn read_signals_returns_signal_log_event() {
+        let (_dir, conn) = open();
+        {
+            let g = conn.lock().await;
+            for (id, ts) in [("a", "1"), ("b", "2")] {
+                g.execute(
+                    "INSERT INTO signals (id, session_id, type, event, timestamp, payload_json, context_type) \
+                     VALUES (?1, 's1', 'agent', 'spawned', ?2, '{}', 'agent_loop')",
+                    rusqlite::params![id, ts],
+                )
+                .expect("seed signal");
+            }
+        }
+        let (cmd_tx, cmd_rx) = mpsc::channel::<DroneCommand>(8);
+        let (event_tx, mut event_rx) = broadcast::channel::<DroneEvent>(16);
+        let task = tokio::spawn(run("s1".to_string(), conn, cmd_rx, event_tx, None));
+        cmd_tx
+            .send(DroneCommand::ReadSignals {
+                session_id: "s1".to_string(),
+            })
+            .await
+            .expect("send read");
+        let mut got = None;
+        for _ in 0..10 {
+            if let Ok(Ok(DroneEvent::SignalLog { signals })) =
+                timeout(Duration::from_millis(500), event_rx.recv()).await
+            {
+                got = Some(signals);
+                break;
+            }
+        }
+        let signals = got.expect("expected SignalLog event");
+        assert_eq!(signals.len(), 2);
+        cmd_tx
+            .send(DroneCommand::GracefulShutdown { timeout_ms: 50 })
+            .await
+            .expect("shutdown");
+        let _ = timeout(Duration::from_secs(1), task).await;
+    }
+
+    #[test]
+    fn truncate_for_log_handles_short_strings() {
+        assert_eq!(truncate_for_log("abc", 80), "abc");
+    }
+
+    #[test]
+    fn truncate_for_log_respects_utf8_boundaries() {
+        // 3-byte UTF-8 chars; truncating to 4 must back off to 3 (the
+        // boundary before the second multibyte char).
+        let s = "été café"; // contains multi-byte é
+        let truncated = truncate_for_log(s, 4);
+        // Just must be a valid &str slice — assertion is implicit; this
+        // exercises the boundary-walk loop.
+        assert!(truncated.is_char_boundary(truncated.len()));
+        assert!(truncated.len() <= 4);
     }
 
     #[tokio::test]

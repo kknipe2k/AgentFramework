@@ -51,6 +51,21 @@ pub fn init(path: &Path) -> Result<Connection, DbError> {
     Ok(conn)
 }
 
+/// Run the schema-creation step against an already-open `Connection`.
+///
+/// Intended for callers that want to pre-seed an existing database (e.g.
+/// integration tests that need to write fixture rows BEFORE the drone
+/// subprocess opens the same path). Idempotent over the schema —
+/// `CREATE TABLE IF NOT EXISTS` lets a subsequent `init` call coexist.
+///
+/// # Errors
+///
+/// Returns `DbError::Sqlite` if any `CREATE TABLE` / `ALTER TABLE`
+/// fails.
+pub fn init_in_existing(conn: &Connection) -> Result<(), DbError> {
+    init_schema(conn)
+}
+
 fn set_pragmas(conn: &Connection) -> Result<(), DbError> {
     // journal_mode is a query pragma — must be read via query_row.
     let _: String = conn.query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))?;
@@ -128,9 +143,12 @@ fn init_schema(conn: &Connection) -> Result<(), DbError> {
           snapshot_id TEXT,
           signal_ids TEXT,
           context_type TEXT,
+          contributing_signal_id TEXT,
           FOREIGN KEY (session_id) REFERENCES sessions(id),
           FOREIGN KEY (snapshot_id) REFERENCES snapshots(id)
         );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_vdr_contributing_signal
+          ON vdr(contributing_signal_id);
 
         CREATE TABLE IF NOT EXISTS token_usage (
           id TEXT PRIMARY KEY,
