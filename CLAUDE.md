@@ -291,6 +291,8 @@ After 3 rounds without all-green, **stop and surface**:
 
 Do not silently try a fourth round. The user prefers a 90-second pause to discuss over a 3-hour rabbit hole.
 
+**Cross-stack integration bugs: escalate at iteration 2.** The standard 3-round budget assumes each fix narrows the failure surface. For cross-stack integration bugs specifically (third-party protocol setup, OS-platform integration, build-tool config), if iteration 2 advances the error to a *new* error class rather than clearing it, that's a structural signal — the bug isn't one fix away. Escalate immediately and consider deferral or scope-down rather than iterating further. M03 PR #47 hit this exactly: 'edge'/'webkit2gtk' → 'wry' → omit, each iteration produced a different error mode on Linux and Windows independently; the right call at iteration 2 was to defer to M04, not iterate. Pairs with `docs/gotchas.md` #32 (the prompt-authoring side of the same pattern).
+
 ### Anti-patterns in self-correction
 
 - **"This test is flaky, I'll just retry."** Flaky tests are failing tests. Diagnose the source of nondeterminism (clock, network, ordering) and fix it. Never `#[ignore]` a flaky test as a "fix."
@@ -603,7 +605,7 @@ cargo xtask regenerate-types
 
 ## 15. Common gotchas (lessons learned)
 
-The full numbered list of 20 traps lives in **`docs/gotchas.md`** — read it once at session start when working in unfamiliar areas. The cluster:
+The full numbered list of traps (currently 32, growing) lives in **`docs/gotchas.md`** — read it once at session start when working in unfamiliar areas. The cluster:
 
 - **Concept boundaries:** Tool ≠ Skill ≠ Agent; Drone ≠ Main ≠ Sandbox; capability narrowing on Agent→Agent edges.
 - **v0.1 scope locks:** STANDARD mode only, `fresh_context_per_task` only, Novice + Promoted tiers only, single-session, Windows-only (CI on all three OSes).
