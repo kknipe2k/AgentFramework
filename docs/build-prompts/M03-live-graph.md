@@ -3003,13 +3003,15 @@ export const config: Options.Testrunner = {
   capabilities: [
     {
       maxInstances: 1,
+      // Per the official Tauri 2.x WebDriver example
+      // (https://github.com/tauri-apps/tauri-docs/blob/v2/src/content/docs/develop/Tests/WebDriver/Example/webdriverio.mdx),
+      // capabilities intentionally OMIT `browserName` — tauri-driver constructs
+      // the native value when proxying to the platform driver (WebKitWebDriver
+      // on Linux, msedgedriver on Windows). Setting it explicitly breaks
+      // the session-creation handshake on both platforms.
       'tauri:options': {
         application: APP_BIN_PATH,
       },
-      // Per Tauri 2.x WebDriver docs, browserName must be 'wry' on every
-      // platform — tauri-driver proxies to the native driver (WebKitWebDriver
-      // on Linux, msedgedriver on Windows) under the hood.
-      browserName: 'wry',
     } as WebdriverIO.Capabilities,
   ],
   hostname: '127.0.0.1',

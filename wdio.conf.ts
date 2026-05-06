@@ -46,12 +46,16 @@ export const config = {
     {
       maxInstances: 1,
       // The application binary tauri-driver launches and attaches to.
+      // Per the official Tauri 2.x WebDriver example
+      // (https://github.com/tauri-apps/tauri-docs/blob/v2/src/content/docs/develop/Tests/WebDriver/Example/webdriverio.mdx),
+      // the capabilities object intentionally OMITS `browserName` — tauri-driver
+      // constructs the native value when proxying to the platform driver
+      // (WebKitWebDriver on Linux, msedgedriver against WebView2 on Windows).
+      // Setting `browserName` here breaks the match: Linux returns "Failed to
+      // match capabilities" from POST /session, Windows returns "no msedge
+      // binary at <APP_BIN_PATH>" because msedgedriver tries to launch the
+      // application as if it were Edge.
       'tauri:options': { application: APP_BIN_PATH },
-      // Per Tauri 2.x WebDriver docs (https://v2.tauri.app/develop/tests/webdriver/),
-      // capabilities must use `browserName: 'wry'` on every platform —
-      // tauri-driver proxies WebDriver requests to the platform-native driver
-      // (WebKitWebDriver on Linux, msedgedriver on Windows) under the hood.
-      browserName: 'wry',
     },
   ],
   hostname: '127.0.0.1',
