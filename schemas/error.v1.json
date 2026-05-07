@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aria-runtime.dev/error.v1.json",
+  "title": "CmdError",
+  "description": "Wire-format error envelope for Tauri renderer↔main IPC error responses. Mirrors the runtime-main `CmdError` enum's serde(tag = \"type\", rename_all = \"snake_case\") encoding. Used by src/lib/ipc.ts::unwrapCmdError.",
+  "oneOf": [
+    {
+      "type": "object",
+      "title": "setup_required",
+      "description": "API key not present in OS keychain; renderer prompts user to invoke set_api_key. Unit variant — no message field.",
+      "properties": { "type": { "const": "setup_required" } },
+      "required": ["type"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "title": "provider",
+      "description": "LLMProvider error (Anthropic API failure, network, parsing).",
+      "properties": {
+        "type": { "const": "provider" },
+        "message": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type", "message"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "title": "drone",
+      "description": "Drone IPC failure (subprocess died, framing error, timeout).",
+      "properties": {
+        "type": { "const": "drone" },
+        "message": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type", "message"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "title": "key_store",
+      "description": "OS keychain failure. Wraps keyring crate errors.",
+      "properties": {
+        "type": { "const": "key_store" },
+        "message": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type", "message"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "title": "internal",
+      "description": "Catch-all for unexpected runtime errors. Should be rare.",
+      "properties": {
+        "type": { "const": "internal" },
+        "message": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type", "message"],
+      "additionalProperties": false
+    }
+  ]
+}
