@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M03.5 (Pre-M04 prep — doc/protocol-only mini-milestone)
+
+Two-stage doc/protocol prep landing the doc-level debt M03 closeout flagged plus the next iteration of the stage-prompt protocol, before M04 prompt authoring begins. Doc-only — no source code touched, no gap-analysis entry (per CLAUDE.md §20 the immutable ledger is reserved for code-shipping milestones).
+
+- **Stage A — combined doc PR.** 22 surgical edits across 3 existing files plus 1 new schema file. Spec polish (M03 carry-forward): §2c.3 token tracking + count_tokens M04-deferral; §3 InspectorPanel layout + per-node-type handle conventions (M03.B–C–D shipped); §1c ⚠️ production drone wiring deferred to M04 Stage A2; §2b SQL inspector lexical validation rationale; §3 replay-from-signals expanded model; §10 ⚠️ v0.1 renderer-side localStorage exception. M02 carry-forward (still open at M03 close): §3a + §10 plans/tasks SQLite DDL; §957 ⚠️ decision extractor → structured emitter migration; §1120 ⚠️ ContextType reconciliation expanded; §839 ⚠️ long-lived events() reconnect M03→M04 update; new `schemas/error.v1.json` (CmdError wire format) + §1d reference. Gotchas graduation: 8 entries (#33–#40) graduated from per-stage M03 retros to durable `docs/gotchas.md`. CLAUDE.md §15 stale-count refresh "32 → 40".
+- **Stage B — STAGE-PROMPT-PROTOCOL.md v1.3 iteration.** Five additive optional tags (`<pre_flight_check>`, `<schema_drift_check>`, `<fan_out_grep>`, `<dependency_audit_check>`, `<runtime_environment>`) in §7 work-stage-only, informed by M01–M03 friction. Three new anti-patterns in §13 covering the v1.3-introduced failure shapes. v1.3 hardening rule appended to §10. v1.3 validator behavior added to §11 errors + warnings. v1.3 changelog entry at top of §14. Lean-validator pattern continued from v1.2 — structural-only checks; cross-checks deferred to v1.4. M01–M03 prompts continue to validate unchanged under v1.3 (additive contract preserved). M04 is the first milestone authored on v1.3.
+
 ### Fixed — M03.F (post-merge CI fixes on PR #47)
 
 Two post-merge CI fixes on the M03 PR. Both surfaced after Stage F landed; neither is in scope for the M03 gap-analysis entry (immutable per CLAUDE.md §20) and both will reappear as M04 carry-forward.

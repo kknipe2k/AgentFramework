@@ -210,6 +210,8 @@ For work stages, default order: diff stat → gate results → retrospective →
 ```
 ## 7. Work-stage-only tags
 These tags are valid only inside `<work_stage_prompt>`.
+
+v1.3 adds five additive optional tags — `<pre_flight_check>`, `<schema_drift_check>`, `<fan_out_grep>`, `<dependency_audit_check>`, `<runtime_environment>` — informed by M01–M03 friction. See sections below.
 ### `<deliverable>`
 Required. What this stage produces. Concrete: files, modules, capabilities. Not aspirational. If you can't enumerate it, the stage isn't ready to start.
 Inline form (use only when no Phase doc section enumerates the deliverable — e.g., a stage with a one-or-two-item produce-list that doesn't warrant a Phase doc section):
@@ -279,6 +281,134 @@ For Stage C+, list all prior stages of the same milestone:
   <retrospective section="decisions">retrospectives/M01.B-retrospective.md</retrospective>
 </read_prior_stages>
 ```
+### `<pre_flight_check>`
+
+Optional. Pre-stage sanity checks the agent runs BEFORE any code is written or test plan executed. Distinct from `<read_first>` (orientation reads) and `<execution_steps>` (procedural sequence): pre-flight checks are environmental verifications — branch state, prior-stage commit presence, dependency installation, environment variables — that gate the stage from starting if violated.
+
+Children: `<check>` elements with `name="..."` and inline body describing the check + expected outcome. Each `<check>` is a single shell command or condition; the agent runs them in order before STEP 1 of `<execution_steps>`.
+
+Validator behavior (v1.3 lean): structural — error if the tag appears outside a work-stage prompt; warning if `<check>` children lack a `name` attribute.
+
+Schema: work-stage only.
+
+Example:
+
+```xml
+<pre_flight_check>
+  <check name="branch_correct">git rev-parse --abbrev-ref HEAD must equal claude/m04-plan-verify-hitl-budget</check>
+  <check name="prior_stage_committed">git log --oneline -1 must show "M04 Stage A" subject (Stage A.2 is current)</check>
+  <check name="anthropic_key_set">Test-Path env:ANTHROPIC_API_KEY must succeed (Stage B verify gates need live API)</check>
+</pre_flight_check>
+```
+
+If any check fails, the agent surfaces the failure and stops — does not proceed to STEP 1. Authoring rule §10 cross-stack-integration-must-be-verified pairs naturally with this tag for cross-stack stages.
+
+### `<schema_drift_check>`
+
+Optional. Verify `schemas/*.v1.json` matches the generated Rust + TS types committed to the repo. Wraps `cargo xtask regenerate-types --check` as a stage-level gate so the failure surfaces at pre-flight rather than mid-implementation. Specifically addresses the M03.D + M03 gap-analysis pattern where hand-maintained `event.rs` drifted from the schema source-of-truth (per CLAUDE.md §14).
+
+Self-closing form supported. Optional `gate="..."` attribute names a specific gate command to run; defaults to `cargo xtask regenerate-types --check`.
+
+Validator behavior (v1.3 lean): structural — error if the tag appears outside a work-stage prompt.
+
+Schema: work-stage only.
+
+Example:
+
+```xml
+<schema_drift_check/>
+```
+
+Or with explicit gate:
+
+```xml
+<schema_drift_check gate="cargo xtask regenerate-types --check"/>
+```
+
+When this tag appears in a stage prompt, the agent runs the gate command after STEP 2 (implement) and BEFORE STEP 3 (verify_gates); a non-zero exit fails the stage immediately and the agent surfaces "schema drift detected — regenerate types or update the schema."
+
+### `<fan_out_grep>`
+
+Optional. Explicit grep searches the agent must run before changing a name, type signature, or schema field — to find all call-sites that need coordinated updates. Addresses rename/move surprise bugs where a stage changes a type and the agent misses one consumer (M02 + M03 retros recurring pattern).
+
+Children: `<grep>` elements with `pattern="..."` and `purpose="..."` attributes. Each `<grep>` is a literal pattern (not regex unless purpose names regex); the agent runs them and lists matched files BEFORE making the rename or signature change.
+
+Validator behavior (v1.3 lean): structural — error if the tag appears outside a work-stage prompt; warning if `<grep>` children lack `pattern` or `purpose` attributes.
+
+Schema: work-stage only.
+
+Example (from a hypothetical M04 stage renaming a type):
+
+```xml
+<fan_out_grep>
+  <grep pattern="ContextType" purpose="all callsites of the Rust enum being renamed; expect runtime-core, runtime-main, drone, and any Tauri commands referencing it"/>
+  <grep pattern="context_type" purpose="snake_case TS field name corresponding to the Rust enum; renderer-side"/>
+  <grep pattern='"context"' purpose="serde-renamed JSON field name on the wire; check schemas/ and any test fixtures"/>
+</fan_out_grep>
+```
+
+The agent runs each grep and surfaces matched-file count per pattern. If any pattern matches files outside the stage's `<deliverable>` scope, the agent surfaces "rename fan-out exceeds stage scope" and asks for direction before proceeding.
+
+A second use is value-consistency verification — confirming a hard-coded value (URL, version pin, identifier) in the stage's `<deliverable>` ref-content matches the convention already established in the codebase. Worked example: when authoring a new `schemas/*.v1.json` file, grep for `"$id"` across `schemas/` to confirm the base URL pattern matches existing schemas before writing the value into the new file. M03.5 Stage A retroactively validated this pattern when the Phase doc's verbatim `$id` value diverged from the existing `schemas/` convention; a `<fan_out_grep pattern='"$id"' purpose="verify schema $id base URL pattern is consistent across schemas/*"/>` would have caught the discrepancy at pre-flight.
+
+### `<dependency_audit_check>`
+
+Optional. Explicit verification of dependency tree state — version pins, feature flags, transitive audit findings — before code that depends on those deps is written. Addresses gotcha #29 (`keyring` 3.x stub backend silently passing writes; M02 PR #45 hotfix) and gotcha #39 (`npm audit` transitive overrides; M03.F).
+
+Children: `<dep>` elements with `name="..."` (crate or npm package), optional `required_features="..."` (comma-separated), optional `min_version="..."`, optional `audit="..."` (e.g., `audit="high"`). Each `<dep>` is a fact the agent verifies via the appropriate dep-tree inspection (`cargo tree -p <name> -e features`; `npm ls <name>`; `npm audit --audit-level=<audit>`) before writing dependent code.
+
+Validator behavior (v1.3 lean): structural — error if the tag appears outside a work-stage prompt; warning if `<dep>` children lack a `name` attribute.
+
+Schema: work-stage only.
+
+Example:
+
+```xml
+<dependency_audit_check>
+  <dep name="keyring" required_features="apple-native,windows-native,sync-secret-service" min_version="3.6"/>
+  <dep name="reqwest" required_features="rustls,rustls-native-certs,json,stream"/>
+  <dep name="serialize-javascript" min_version="7.0.5" audit="high"/>
+</dependency_audit_check>
+```
+
+When this tag appears in a stage prompt, the agent runs the verification commands during STEP 2 (implement) before adding code that depends on the verified deps. A failed verification surfaces as a blocker — the agent stops and asks for direction before proceeding.
+
+### `<runtime_environment>`
+
+Optional. Explicit declaration of the OS the build agent is expected to run on for this stage, plus platform-specific command variants where the prompt body contains commands that differ across OS (e.g., `Select-String` vs `grep`, `Test-Path` vs `test -f`). Addresses CRLF warnings (PR #48), PowerShell-vs-bash command differences in stage prompts, and the macOS-unsupported caveats (gotcha #23 tauri-driver, gotchas #25-#27 various Vite/test patterns).
+
+Self-closing form with `os="..."` attribute, OR child `<command>` elements with `os="..."` and `cmd="..."` attributes for platform-specific commands.
+
+Attributes:
+- `os` — one of `windows | linux | macos | any`. Default `any`.
+- `note` — optional inline rationale for the OS pin (e.g., "Tauri-driver requires Linux or Windows; macOS unsupported per gotcha #23").
+
+Validator behavior (v1.3 lean): structural — error if the tag appears outside a work-stage prompt; warning if `os` attribute is missing on the root tag.
+
+Schema: work-stage only.
+
+Examples:
+
+Single-OS:
+
+```xml
+<runtime_environment os="windows" note="Build agent runs on Windows 11 per the established M01-M03 pattern; Select-String is the assumed grep equivalent throughout the prompt"/>
+```
+
+Multi-OS with command variants:
+
+```xml
+<runtime_environment os="any">
+  <command os="windows" cmd="Select-String -Path schemas/error.v1.json -Pattern 'CmdError'"/>
+  <command os="linux" cmd="grep -n 'CmdError' schemas/error.v1.json"/>
+  <command os="macos" cmd="grep -n 'CmdError' schemas/error.v1.json"/>
+</runtime_environment>
+```
+
+When this tag appears in a stage prompt, the agent runs only the commands matching the current `$RUNNER_OS` (or local equivalent). Authors using inline OS-specific commands (e.g., a `Select-String` command in the prompt body) should pair them with this tag so the validator can flag missing variants in v1.4+.
+
+A common realistic case for the build agent's local environment: PowerShell shell with the Bash tool available as a fallback. Authors pinning `os="windows"` should note in the `note` attribute whether the Phase doc's verification commands assume native PowerShell invocation (avoiding bash variable expansion of `$_`, `$checks`, etc. in heredoc-wrapped scripts) or bash-tool-wrapped invocation (which requires the commands to be safe under bash's variable interpolation).
+
 ## 8. Closeout-only tags
 These tags are valid only inside `<closeout_stage_prompt>`.
 ### `<cumulative_reads>`
@@ -405,6 +535,8 @@ Section-name resolution (drops URI fragments — v1.2 anchor-stability fix). Ref
 Never use both forms in the same tag. A tag with `ref="..."` must be self-closing (or contain only nested allowed children like `<gotchas_graduation>` for `<gap_analysis_requirements>`); a tag with inline list-content must not have a `ref` attribute. Validation enforces this.
 Gotchas graduation rule (v1.2 enforcement). Stage-specific `<gotchas>` are **per-stage scratch space**. Across a milestone, every per-stage `<gotchas>` entry must be evaluated at closeout via `<gotchas_graduation>` (see Section 8) and assigned a disposition: `kept | graduated | resolved | expired`. If a trap recurs in 2+ stages of the same milestone (or across milestones), promote it to `docs/gotchas.md` and remove it from per-stage tags. The closeout `<gotchas_graduation>` slot is the forcing function — without it, per-stage `<gotchas>` would accumulate as discipline decay sets in.
 **Cross-stack integration examples must be verified before shipping (v1.2 hardening).** When a stage prompt contains an inline code example for a cross-stack integration — Rust ↔ TS glue, Rust ↔ OS-platform integration (keychain, sandbox, IPC), runtime ↔ third-party protocol (MCP, OAuth, WebDriver), build-tool config (tauri.conf.json, eslint.config.js, vite.config.ts) — the example must either: (a) be quoted verbatim from a known-working upstream example, with the source repo + commit SHA referenced in a comment above the example, OR (b) carry an explicit "verify against upstream reference X before shipping" instruction inside `<execution_warnings>` naming the upstream file or issue to check. Hand-authoring examples from docs/memory is a named failure mode — see `docs/gotchas.md` #32. Pattern bit M02 (PR #45 keyring stub; gotcha #29) and M03 (PR #47 tauri-driver capabilities, three iterations). Pure-Rust and pure-React/TS examples don't trigger this rule; the discriminator is whether the example crosses a stack boundary. Validator does not enforce this rule mechanically (impractical to detect "this is a cross-stack example"); it's an authoring discipline backed by §13 anti-pattern and the gotcha entry.
+
+**v1.3 hardening — pre-flight + drift + fan-out + dep + environment slots are additive and lean.** The five new optional tags introduced in v1.3 are structural-only at the validator level (lean validator pattern continued from v1.2). Authors use them where the corresponding failure mode applies; absence is not flagged. Promotion to required-on-conditions (e.g., "schema_drift_check required if the stage edits `schemas/*.v1.json` or `crates/runtime-core/src/`") is a v1.4+ decision after observing v1.3 in 2+ milestones.
 ## 11. Validation
 A validation script lives at `scripts/validate-stage-prompts.py` (or your preferred language). It runs in CI on every PR that touches `docs/build-prompts/M[NN]-*.md`.
 **v1.2 ships lean.** Structural checks are errors (block CI); cross-file resolution checks are warnings (surface in PR check output, do not block). Cross-checks promote to errors in v1.3 once the cross-check logic survives 3+ milestones without false positives.
@@ -420,11 +552,13 @@ A validation script lives at `scripts/validate-stage-prompts.py` (or your prefer
 - `<disposition>` values inside `<gotchas_graduation>` must be one of: `kept`, `graduated`, `resolved`, `expired`
 - Every prior stage in the milestone must have a `<stage_review id="...">` entry inside the closeout's `<gotchas_graduation>` (counted by parsing the milestone's Phase doc for stage headings)
 - For `expired` disposition, `<target>` must include rationale beyond bare `n/a` (a single line minimum; validator checks length > "n/a" alone)
+- v1.3 tags `<pre_flight_check>`, `<schema_drift_check>`, `<fan_out_grep>`, `<dependency_audit_check>`, `<runtime_environment>` must appear inside a work-stage prompt only — appearing in a closeout-stage prompt is a structural error
 **Warnings (surface in PR output, don't block):**
 - Confirms ordering matches the recommended order
 - Cross-checks: every retrospective referenced in `<read_prior_stages>` exists; every milestone in `<read_prior_milestones>` has the named gap-analysis section + summary section; every file in `<read_first>` and `<read_reference>` exists; every `section="..."` value on a reference tag resolves to a real Phase doc heading via markdown-AST lookup; the milestone in `<gates milestone="...">` matches the Phase doc's milestone
 - `<read_reference>` entries without a `purpose` attribute (warning in v1.2; promotes to error in v1.3)
 - Recognized `<execution_steps>` step names (`write_failing_tests`, `implement`, `verify_gates`, `fill_retrospective`, `surface`); custom step names emit a warning encouraging Phase doc documentation
+- v1.3 tags' child elements with required-but-missing attributes (`<check>` without `name`, `<grep>` without `pattern`/`purpose`, `<dep>` without `name`, `<runtime_environment>` without `os`) emit warnings; promote to errors in v1.4 once the cross-check logic has 2+ milestones of clean signal
 **Section-name resolution (replaces URI-fragment lookup — v1.2 anchor-stability fix).** The validator parses the referenced markdown file's AST, finds the heading whose text matches the `section="..."` attribute (case-sensitive, exact match), and confirms the heading exists. Renderer-agnostic. The fragment notation (e.g., `ref="...md#A.6"`) is no longer recognized; v1.2 prompts must use `ref="...md" section="A.6 Commit Message"`. v1.0-grandfathered prompts (M01-M02) skip this check via the version banner in the Phase doc header (see Authoring Rules §10 grandfathering).
 CI fails on any error; warnings are surfaced in the PR check output.
 ## 12. Worked examples
@@ -642,6 +776,14 @@ Foreign `<disposition>` value. The enum is exhaustive: `kept | graduated | resol
 `<read_reference>` without `purpose` attribute. Each `<file>` inside `<read_reference>` must have a `purpose="..."` attribute naming *why* the agent reads it. Without `purpose`, the slot degrades into "miscellaneous reads" and loses its discriminator value vs `<read_first>`. Validator warns in v1.2; promotes to error in v1.3.
 `<execution_warnings>` used for `<gotchas>` content (or vice versa). The distinction matters: `<gotchas>` warns about code-shape traps the agent might write into a file; `<execution_warnings>` warns about *commands* the agent might run during the stage. "Use `[workspace.lints.rust]` not `[lints]`" is a `<gotchas>` entry (artifact-shape trap). "Don't run `cargo test --features integration` — hits live API" is an `<execution_warnings>` entry (command-time guardrail). Mixing them loses the action-vs-artifact discriminator.
 Inline cross-stack integration example without upstream-verification guard (v1.2). Symptom: build agent ships the prompt's example verbatim, CI fails with a setup-shaped error (capability mismatch, "no binary at...", silent stub backend, "Failed to match capabilities"). Pattern bit M02 PR #45 (keyring 3.x stub backend) and M03 PR #47 (tauri-driver capabilities, three iterations). Authoring rule §10 ("Cross-stack integration examples must be verified before shipping") covers the prevention; this anti-pattern names the failure shape so future authors recognize it on inspection. The fix is at the prompt-authoring layer, not the execution layer — the build agent is doing exactly what it's told.
+
+**v1.3 anti-patterns (new):**
+
+`<pre_flight_check>` used as a substitute for `<read_first>`. Pre-flight checks are environmental verifications (branch, prior-commit, env vars, deps); they are NOT for orientation reads. If your "check" is "agent reads CLAUDE.md", that's `<read_first>`. If your "check" is "git rev-parse HEAD matches expected branch", that's `<pre_flight_check>`. The discriminator is whether the check fails imperatively (command exit non-zero) vs informationally (read the file).
+
+`<fan_out_grep>` enumerating the change set instead of finding consumers. Fan-out grep is for finding consumers of a name BEFORE the rename — to verify nothing is missed. If your `<grep>` patterns are the same as the files in `<deliverable>`, you've conflated "files I'll edit" with "files that reference the thing I'm renaming." The grep should find files OUTSIDE `<deliverable>` that need coordinated updates (or confirm none exist).
+
+`<runtime_environment>` declared without command variants when the prompt body contains OS-specific commands. If the prompt body has `Select-String` commands, declare `os="windows"` (single-OS pin) or provide `<command os="...">` variants for the supported OSes. Authors who pin to one OS without rationale in the `note` attribute are setting a trap for future authors who fork the prompt to a different platform.
 ## 14. Versioning this protocol
 This protocol changes when:
 A new tag is needed across all stages (additive)
@@ -651,6 +793,15 @@ Validation rules change (e.g., a previously-warning becomes an error)
 Substantive changes get clear `docs(stage-prompt-protocol): ...` commit messages and a CHANGELOG entry. The commit history of this file is itself an audit of how stage prompts evolved.
 If this protocol disagrees with `BUILD-PLAYBOOK.md`, the playbook wins. This protocol is the schema; the playbook is the authority on what stages are and how they run.
 ### Changelog
+v1.3 — Five additive optional tags + three anti-patterns informed by M01–M03 friction. Lean-validator pattern continued from v1.2 (structural checks only; cross-checks deferred to v1.4):
+1. **New optional slot `<pre_flight_check>`** in work stages. Children: `<check name="..." />` elements. Pre-stage environmental verifications (branch, prior-commit, env vars, deps) that gate the stage from starting if violated. Addresses M03.F Stage E sequencing slip.
+2. **New optional slot `<schema_drift_check>`** in work stages. Self-closing with optional `gate="..."` attribute (defaults to `cargo xtask regenerate-types --check`). Forces schema-as-source-of-truth invariant (CLAUDE.md §14) at stage level. Addresses M03.D hand-maintained event.rs brittleness.
+3. **New optional slot `<fan_out_grep>`** in work stages. Children: `<grep pattern="..." purpose="..." />` elements. Pre-rename consumer enumeration AND value-consistency verification (e.g., schema `$id` URL conventions). Addresses M02–M03 recurring rename/move surprise pattern + M03.5.A `$id` discrepancy catch.
+4. **New optional slot `<dependency_audit_check>`** in work stages. Children: `<dep name="..." required_features="..." min_version="..." audit="..." />` elements. Pre-code dependency-tree verification. Addresses gotcha #29 (keyring stub) + gotcha #39 (npm audit overrides).
+5. **New optional slot `<runtime_environment>`** in work stages. Self-closing with `os="..."` attribute, OR child `<command os="..." cmd="..." />` elements. Explicit OS pin + platform-specific command variants. Addresses CRLF warnings (PR #48) + PowerShell-vs-bash differences (M03.5.A friction event).
+6. **Lean validator continued.** All five new tags are structural-only at the v1.3 validator level. Cross-checks (e.g., "schema_drift_check is required if stage edits schemas/*.v1.json") deferred to v1.4 once v1.3 has 2+ milestones of clean signal.
+7. **Three new anti-patterns** in §13 covering the v1.3-introduced failure shapes (pre-flight as orientation; fan-out enumerating change set; runtime_environment without command variants).
+8. **M01-M03 grandfathered as v1.0/v1.2.** M03.5 (this milestone) was authored on v1.2; M04+ are the first milestones authored on v1.3. M01-M03 prompts retain their version banners and are exempt from v1.3 validator rules.
 v1.2 — Eight additive/hardening changes informed by M01 + M02 retrospective + opinion review (M02 Phase Closeout). Anchor stability, procedural slot, two new content slots, strict reference-first, lean validator, gotchas-graduation enforcement, grandfathering of M01 + M02:
 1. **Anchor stability fix.** Reference tags use `section="..."` attribute instead of URI fragment notation (e.g., `ref="...md" section="A.6 Commit Message"` not `ref="...md#A.6"`). Renderer-agnostic, slugifier-agnostic. Validator resolves headings by markdown-AST lookup. Applies to `<commit_message>`, `<deliverable>`, `<acceptance_criteria>`, `<scope_locks>`, `<gap_analysis_requirements>`, `<commit_protocol>`. Old fragment form no longer recognized by the validator (v1.0-grandfathered prompts exempt via header banner).
 2. **New required slot `<execution_steps>`** in work stages. Named procedural anchor — `write_failing_tests → implement → verify_gates → fill_retrospective → surface`. Replaces inline STEP 1–5 prose that previously lived in each prompt; the slot resolves to playbook sections rather than restating them.
