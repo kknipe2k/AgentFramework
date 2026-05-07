@@ -681,6 +681,8 @@ For v1: resume continues; replay does not exist.
 
 Each session spawns its own drone process (`tokio::process::Command::new("runtime-drone").args(["--session-id", &s, "--db-path", &db, "--ipc-socket", &sock]).spawn()`). Drones do not share state in memory; coordination happens through the shared SQLite database.
 
+> **⚠️ Production drone wiring deferred to M04 Stage A2.** M03 ships `DroneClient::noop()` stubs for the Tauri command seams (`query_session_db`, `replay_session`); the architecture above describes the M04+ steady state. M04 Stage A2 owns the production subprocess spawn, `Arc<DroneClient>` Tauri-managed-state lifecycle, and graceful shutdown on app exit. Until M04 Stage A2 lands, the SQL inspector and replay-from-signals surfaces show empty/canned data. Per docs/gap-analysis.md M03 entry 🟡.
+
 Rationale:
 - Crash isolation — one drone dying cannot corrupt another session.
 - Resource accounting — easy to attribute snapshots, signals, and budget to the drone owning the session.
@@ -743,6 +745,8 @@ async fn load_framework(path: String, app: tauri::AppHandle) -> Result<Framework
 ```
 
 Tauri's `tauri.conf.json` allowlist enumerates which commands and which file/network operations the renderer can request. Anything not on the allowlist is hard-denied at the bridge — capability enforcement starts here.
+
+Error responses follow the `CmdError` envelope schema'd in `schemas/error.v1.json` (`serde(tag = "type", rename_all = "snake_case")` encoding); the canonical renderer-side unwrapper is `unwrapCmdError` at `src/lib/ipc.ts`.
 
 #### Layer 2: Main ↔ Drone (framed JSON over Unix socket / named pipe)
 
@@ -836,7 +840,7 @@ Main is the **client** in the main↔drone IPC; drone is the server. When the co
 
 This applies only to the **main → drone** direction. Drone → main events flow over the same connection; if main loses the connection, the drone treats this as an authoritative shutdown signal and emits its emergency snapshot before exiting (per §1 + §11). Drone does not reconnect to main on its own — main owns the lifecycle.
 
-> **⚠️ Long-lived events() subscription survival pending (M03 carry-forward).** Whether the renderer's long-lived `agent_event` subscription survives a main↔drone reconnect (i.e., does the renderer see a continuous event stream or a session-restart) is undefined for v0.1. M02 sessions are short enough that reconnect mid-stream hasn't been observed; M03 live-graph + longer-running sessions will force the call. Per `docs/gap-analysis.md` M02 entry "Open questions".
+> **⚠️ Long-lived events() subscription survival pending (M04 carry-forward).** Whether the renderer's long-lived `agent_event` subscription survives a main↔drone reconnect (i.e., does the renderer see a continuous event stream or a session-restart) is undefined for v0.1. M02 sessions are short enough that reconnect mid-stream hasn't been observed; M03 live-graph + longer-running sessions will force the call. Per `docs/gap-analysis.md` M02 entry "Open questions". M03's `replay_session` is a one-shot-on-mount call (renderer requests current signal history at page load), not a live long-lived subscription; the open question is specifically whether a long-lived `agent_event` subscription survives a mid-session main↔drone reconnect — M03 sessions don't exercise that path.
 
 Reference implementation: `crates/runtime-main/src/drone_ipc/client.rs::DroneClient::send_with_reconnect` (M02.D) + `crates/runtime-main/src/drone_ipc/connection.rs::Connection::from_streams` (testable seam).
 
@@ -961,6 +965,8 @@ impl<P: LLMProvider> AgentSdk<P> {
     }
 }
 ```
+
+> **⚠️ Decision extractor migration pending (M04).** v0.1 ships a heuristic line-by-line text-scan extractor at `crates/runtime-main/src/sdk/decision_extractor.rs` (M02). M04 replaces it with a structured emitter where the prompt template injects a delimited block (e.g., `<<DECISION>>...<<END>>`) and the SDK parses the block directly — reduces extraction false-positive rate. Per docs/gap-analysis.md M02 entry 🟡, still open at M03 close.
 
 Provider implementation hits the Anthropic HTTP+SSE API directly:
 
@@ -1094,6 +1100,14 @@ Rationale (per ADR-future / M02 gap-analysis resolution): automatic retry within
 
 Cancellation-safety: `provider.stream(config).await` returns a `BoxStream` that is **cancellation-safe** — dropping the stream mid-burst (e.g., when the renderer cancels the smoke session) drops any pending HTTP body without leaking the underlying `reqwest::Response`. The implementation must use `eventsource-stream` (which holds the connection in the `Stream` handle), not a manual buffered reader. Verified by `crates/runtime-main/tests/sdk_cancellation.rs` (5 cancellation tests covering stream-mid-burst, mid-tool-use, mid-snapshot drops).
 
+#### §2c.3 Token tracking and context limits (locked 2026-05-07, post-M03)
+
+Per-message token counts are tracked on every `agent_event` of variant `agent_text_delta` / `agent_text_complete` / `tool_call` / `tool_result` via the union's `tokens_in?` and `tokens_out?` fields. v0.1 ships a chars/4 approximation (`tokens ≈ message.text.length / 4`) computed renderer-side; the `count_tokens` trait method on `LLMProvider` is a stub returning the same approximation. **M04 swaps the implementation to a real call to Anthropic's `POST /v1/messages/count_tokens` endpoint** for budget enforcement integration (§2a). The trait signature does not change.
+
+Context-window limits are provider-specific and surface via `LLMProvider::context_window_tokens() -> u64` (added M04). v0.1 hardcodes Anthropic limits per model.
+
+Renderer-side node-weight scaling (M03.D) maps cumulative agent-token-spend to a 0.8×–1.5× node-size multiplier via `clamp(0.8, 1 + tokens/1000, 1.5)` (`src/lib/tokenScale.ts`). The formula is intentionally conservative — sub-linear past 1000 tokens to keep large agents readable in the live graph.
+
 -----
 
 ### §2b Signals & VDR Projection
@@ -1117,7 +1131,7 @@ A signal is a persisted, schema-validated record of one operation. Eight signal 
 
 Pre/post events are correlated via a `pre_signal_id` field. Retry chains via `retry_of`. Parent-child via `parent_signal_id`. Context classification via `context.type ∈ {skill, framework, code, search, verify, commit, subagent}`.
 
-> **⚠️ ContextType reconciliation pending (M04 closeout).** M02's runtime scaffold defined the `signal::ContextType` enum (`crates/runtime-core/src/signal.rs`) with operation-context variants — `AgentLoop / SkillLoad / ToolInvoke / HookExecute / PlanCreate / HitlPrompt / SessionLifecycle` — diverging from the artifact-source set listed above (`skill / framework / code / search / verify / commit / subagent`). No emission code consumes the enum yet; M04 verify+rails integration is the first consumer. Reconciliation deferred to M04 closeout: the call could go either direction depending on which shape is correct (runtime's operational discovery vs spec's theoretical enum). The decision lock from M02 is "defer, don't pre-commit"; the M04 milestone document will reopen the question with emission-integration evidence. Per `docs/gap-analysis.md` M02 entry + M03 carry-forward.
+> **⚠️ ContextType reconciliation pending (M04 closeout).** M02's runtime scaffold defined the `signal::ContextType` enum (`crates/runtime-core/src/signal.rs`) with operation-context variants — `AgentLoop / SkillLoad / ToolInvoke / HookExecute / PlanCreate / HitlPrompt / SessionLifecycle` — diverging from the artifact-source set listed above (`skill / framework / code / search / verify / commit / subagent`). No emission code consumes the enum yet; M04 verify+rails integration is the first consumer. Reconciliation deferred to M04 closeout: the call could go either direction depending on which shape is correct (runtime's operational discovery vs spec's theoretical enum). The decision lock from M02 is "defer, don't pre-commit"; the M04 milestone document will reopen the question with emission-integration evidence. Per `docs/gap-analysis.md` M02 entry + M03 carry-forward. M04 emission integration evidence determines which set is preserved; the spec's artifact-source set (`skill | framework | code | search | verify | commit | subagent`) is the default unless operational-context variants (`AgentLoop / SkillLoad / ToolInvoke / HookExecute / PlanCreate / HitlPrompt / SessionLifecycle`) prove irreplaceable in M04 signal writes. Decision records the disposition in the M04 closeout gap-analysis entry.
 
 Full schema in `.aria/docs/SIGNAL-SCHEMA-V2.md`. The runtime ports this verbatim — adding new fields only when justified.
 
@@ -1132,6 +1146,17 @@ VDR is a **projection** of signals 4 (decision) + 5 (verify), narrowed to decisi
 - Snapshot ID linking to drone snapshot at decision time
 
 **Why two layers:** signals are write-heavy and forensic (every Read, every Bash); VDR is read-heavy and decision-focused (dashboard, query-decisions, postmortems). Splitting keeps signal writes fast and VDR queries cheap.
+
+#### SQL inspector query validation (v0.1, M03.E shipped)
+
+The renderer-side SQL inspector accepts user-typed queries and proxies them via the Tauri `query_session_db` command. v0.1 validates queries lexically rather than via `Connection::open_in_memory().prepare()`-style probes:
+
+- Empty input → reject
+- Compound `;`-separated statements → reject (single statement only)
+- Lowercase `select` allowlist on the leading non-whitespace token (case-folded)
+- `pragma` rejected explicitly
+
+The lexical pass is intentionally narrow. An in-memory probe DB has no schema and would reject every legitimate `SELECT signal_id FROM signals`, so prepare()-based validation was rejected. v0.1 is single-user single-session; v1.0 multi-session tightens via parameter binding + read-only connection enforcement.
 
 #### SQLite schema additions
 
@@ -1275,6 +1300,8 @@ VerifyNode     — post-task hook firing, pass/fail (added by WI-02)
 FrameworkNode  — root node, the active framework (e.g., examples/aria)
 ```
 
+**Handle conventions (M03.B–C shipped).** Nodes use the top handle for incoming edges and the bottom handle for outgoing edges. Leaf nodes — SkillNode (context-load), ToolNode (invocation), GapNode (terminal: session suspends) — have only the top (target) handle. Root nodes — FrameworkNode — have only the bottom (source) handle. Branching nodes — PlanNode (children TaskNodes), MCPNode (hosted ToolNodes) — use both. Per-component implementation: `src/components/nodes/*.tsx`.
+
 ### Graph Behavior
 
 - Nodes spawn in real time as events arrive from the pipeline
@@ -1285,7 +1312,8 @@ FrameworkNode  — root node, the active framework (e.g., examples/aria)
 - Completed agents and skills collapse to summary state, remain inspectable
 - Full graph is zoomable, pannable, selectable
 - Click any node for full VDR trace, input/output, timing
-- Graph state is persisted per session — reopen a session and the graph reconstructs
+- **InspectorPanel layout (M03.D shipped).** Click-to-inspect surfaces a fixed right-side overlay panel showing: event type discriminator, agent/tool/skill id, timestamp, `tokens_in` / `tokens_out` where applicable, and the full event payload (JSON). Dismissible via close button, Escape key, or click outside the panel. Non-modal (`aria-modal="false"`); the graph remains zoomable and pannable underneath. Component: `src/components/InspectorPanel.tsx`.
+- Graph state is persisted per session — reopen a session and the graph reconstructs by replaying the `signals` table through the renderer's event reducer (M03.E shipped). The renderer calls the Tauri `replay_session` command on mount, receives a `Vec<AgentEvent>` translated from signal rows, and feeds them through `graphStore.applyEvent` to rebuild the React Flow state. `lastSessionId` lives in `localStorage` on the renderer side (webview-local; sufficient for v0.1 single-instance — see §10).
 
 ### Visual Design Principles
 
@@ -1342,6 +1370,46 @@ type LoopPolicy =
   | { kind: 'fresh_context_per_task' }              // ARIA pattern: each task gets a new agent with clean context
   | { kind: 'continuous'; goal_store: string }       // Ralph pattern: one persistent agent; goal_store points to PRD-style file
 ```
+
+Persistence: plans and tasks land in SQLite tables `plans` and `tasks`. DDL added to §10:
+
+```sql
+CREATE TABLE plans (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id),
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL,           -- pending_approval | approved | in_progress | complete | aborted | awaiting_replan
+  approval_required INTEGER NOT NULL,
+  loop_policy TEXT NOT NULL,      -- one_shot | fresh_context_per_task | continuous
+  hitl_checkpoints TEXT NOT NULL, -- JSON array
+  risks TEXT NOT NULL,            -- JSON array
+  created_by TEXT,                -- agent_id or 'user'
+  created_at INTEGER NOT NULL,
+  approved_at INTEGER,
+  completed_at INTEGER
+);
+
+CREATE TABLE tasks (
+  id TEXT PRIMARY KEY,
+  plan_id TEXT NOT NULL REFERENCES plans(id),
+  title TEXT NOT NULL,
+  status TEXT NOT NULL,           -- pending | running | done | blocked | failed | skipped
+  hitl INTEGER NOT NULL,
+  hitl_reason TEXT,
+  failure_count INTEGER NOT NULL DEFAULT 0,
+  max_failures INTEGER NOT NULL DEFAULT 3,
+  files_affected TEXT,            -- JSON array of glob strings
+  acceptance_criteria TEXT,       -- JSON array
+  created_at INTEGER NOT NULL,
+  started_at INTEGER,
+  completed_at INTEGER,
+  estimated_minutes INTEGER,
+  actual_minutes INTEGER
+);
+```
+
+The Task TypeScript shape additionally includes timestamp fields (`created_at`, `started_at?`, `completed_at?`) backing the SQLite columns. The Plan shape adds `created_by?: string` (agent_id or `'user'`).
 
 ### Events (added to Phase 2 union)
 
@@ -2441,6 +2509,8 @@ Tester (modal — opens from Inspector)
 ## §10 Persistence Layer
 
 All state lives in SQLite. Schema:
+
+> **⚠️ v0.1 renderer-side localStorage exception.** The renderer stores `lastSessionId` in browser-side `localStorage` to support live-graph restoration on page reload without a Tauri round-trip for session discovery. Webview-local; sufficient for v0.1 single-instance. v1.0 multi-session migrates this lookup to a `last_active_session_id` column on the SQLite `sessions` table. Per docs/gap-analysis.md M03 entry 🟢.
 
 ```sql
 -- Sessions
