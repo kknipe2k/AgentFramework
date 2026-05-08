@@ -605,7 +605,7 @@ cargo xtask regenerate-types
 
 ## 15. Common gotchas (lessons learned)
 
-The full numbered list of traps (currently 40, growing) lives in **`docs/gotchas.md`** — read it once at session start when working in unfamiliar areas. The cluster:
+The full numbered list of traps (currently 41, growing) lives in **`docs/gotchas.md`** — read it once at session start when working in unfamiliar areas. The cluster:
 
 - **Concept boundaries:** Tool ≠ Skill ≠ Agent; Drone ≠ Main ≠ Sandbox; capability narrowing on Agent→Agent edges.
 - **v0.1 scope locks:** STANDARD mode only, `fresh_context_per_task` only, Novice + Promoted tiers only, single-session, Windows-only (CI on all three OSes).
