@@ -1,0 +1,1072 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ARIA: Agentic Rail-based Intent Architecture</title>
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-yellow: #d29922;
+            --accent-red: #f85149;
+            --accent-purple: #a371f7;
+            --border-color: #30363d;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* Header */
+        header {
+            text-align: center;
+            padding: 3rem 0;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1.2rem;
+        }
+
+        /* Navigation */
+        nav {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin: 2rem 0;
+            flex-wrap: wrap;
+        }
+
+        .nav-btn {
+            padding: 0.75rem 1.5rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.9rem;
+        }
+
+        .nav-btn:hover {
+            background: var(--bg-tertiary);
+            border-color: var(--accent-blue);
+        }
+
+        .nav-btn.active {
+            background: var(--accent-blue);
+            border-color: var(--accent-blue);
+            color: #fff;
+        }
+
+        /* Sections */
+        section {
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+
+        section.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        h2 {
+            font-size: 1.8rem;
+            margin-bottom: 1.5rem;
+            color: var(--accent-blue);
+        }
+
+        h3 {
+            font-size: 1.3rem;
+            margin: 1.5rem 0 1rem;
+            color: var(--text-primary);
+        }
+
+        p {
+            margin-bottom: 1rem;
+            color: var(--text-secondary);
+        }
+
+        /* Cards */
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .card-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+        }
+
+        .card-icon.blue { background: rgba(88, 166, 255, 0.2); }
+        .card-icon.green { background: rgba(63, 185, 80, 0.2); }
+        .card-icon.yellow { background: rgba(210, 153, 34, 0.2); }
+        .card-icon.red { background: rgba(248, 81, 73, 0.2); }
+        .card-icon.purple { background: rgba(163, 113, 247, 0.2); }
+
+        /* Interactive Demo */
+        .demo-container {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .demo-header {
+            background: var(--bg-tertiary);
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .demo-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .demo-dot.red { background: #ff5f56; }
+        .demo-dot.yellow { background: #ffbd2e; }
+        .demo-dot.green { background: #27c93f; }
+
+        .demo-content {
+            padding: 1.5rem;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.9rem;
+            min-height: 300px;
+        }
+
+        .demo-line {
+            margin-bottom: 0.5rem;
+            opacity: 0;
+            animation: typeLine 0.3s ease forwards;
+        }
+
+        .demo-line.prompt {
+            color: var(--accent-green);
+        }
+
+        .demo-line.output {
+            color: var(--text-secondary);
+        }
+
+        .demo-line.highlight {
+            color: var(--accent-yellow);
+        }
+
+        .demo-line.hitl {
+            background: rgba(210, 153, 34, 0.1);
+            border-left: 3px solid var(--accent-yellow);
+            padding: 0.5rem;
+            margin: 0.5rem 0;
+        }
+
+        @keyframes typeLine {
+            to { opacity: 1; }
+        }
+
+        /* Interactive Router */
+        .router-demo {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+            margin-top: 1.5rem;
+        }
+
+        @media (max-width: 768px) {
+            .router-demo {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .router-input {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+
+        .router-output {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            margin-bottom: 1rem;
+        }
+
+        .slider-value {
+            text-align: right;
+            color: var(--accent-blue);
+            font-weight: bold;
+        }
+
+        .checkbox-group {
+            margin: 1rem 0;
+        }
+
+        .checkbox-group label {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            cursor: pointer;
+            margin-bottom: 0.5rem;
+        }
+
+        .mode-result {
+            text-align: center;
+            padding: 2rem;
+        }
+
+        .mode-badge {
+            display: inline-block;
+            padding: 0.5rem 1.5rem;
+            border-radius: 20px;
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin-bottom: 1rem;
+        }
+
+        .mode-badge.lite { background: var(--accent-green); color: #000; }
+        .mode-badge.standard { background: var(--accent-blue); color: #000; }
+        .mode-badge.full { background: var(--accent-yellow); color: #000; }
+        .mode-badge.fullplus { background: var(--accent-red); color: #fff; }
+
+        /* Decision Trace */
+        .trace-container {
+            margin-top: 1.5rem;
+        }
+
+        .trace-item {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .trace-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--bg-tertiary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .trace-content {
+            flex: 1;
+        }
+
+        .trace-action {
+            font-weight: bold;
+            margin-bottom: 0.25rem;
+        }
+
+        .trace-meta {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .confidence-bar {
+            width: 100px;
+            height: 6px;
+            background: var(--bg-tertiary);
+            border-radius: 3px;
+            overflow: hidden;
+            display: inline-block;
+            vertical-align: middle;
+            margin-left: 0.5rem;
+        }
+
+        .confidence-fill {
+            height: 100%;
+            background: var(--accent-green);
+            border-radius: 3px;
+        }
+
+        /* Workflow Diagram */
+        .workflow {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            justify-content: center;
+            margin: 2rem 0;
+        }
+
+        .workflow-step {
+            background: var(--bg-secondary);
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem 1.5rem;
+            text-align: center;
+            min-width: 120px;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .workflow-step:hover {
+            border-color: var(--accent-blue);
+            transform: translateY(-2px);
+        }
+
+        .workflow-step.active {
+            border-color: var(--accent-green);
+            background: rgba(63, 185, 80, 0.1);
+        }
+
+        .workflow-step::after {
+            content: '→';
+            position: absolute;
+            right: -1.5rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-secondary);
+        }
+
+        .workflow-step:last-child::after {
+            display: none;
+        }
+
+        .workflow-step-icon {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .workflow-step-label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        /* Code blocks */
+        pre {
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+            padding: 1rem;
+            overflow-x: auto;
+            margin: 1rem 0;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.85rem;
+        }
+
+        code {
+            font-family: 'Monaco', 'Menlo', monospace;
+            background: var(--bg-tertiary);
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            font-size: 0.9em;
+        }
+
+        /* Tooltip */
+        .tooltip {
+            position: relative;
+            cursor: help;
+            border-bottom: 1px dashed var(--accent-blue);
+        }
+
+        .tooltip:hover::after {
+            content: attr(data-tip);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            padding: 0.5rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            white-space: nowrap;
+            z-index: 100;
+            color: var(--text-primary);
+        }
+
+        /* Feature grid */
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+            margin: 1.5rem 0;
+        }
+
+        .feature-item {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem;
+        }
+
+        .feature-item h4 {
+            color: var(--accent-blue);
+            margin-bottom: 0.5rem;
+        }
+
+        /* HITL simulation */
+        .hitl-demo {
+            background: var(--bg-secondary);
+            border: 2px solid var(--accent-yellow);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+        }
+
+        .hitl-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            color: var(--accent-yellow);
+            font-weight: bold;
+        }
+
+        .hitl-options {
+            display: flex;
+            gap: 0.75rem;
+            margin-top: 1rem;
+        }
+
+        .hitl-btn {
+            padding: 0.5rem 1rem;
+            border: 1px solid var(--border-color);
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .hitl-btn:hover {
+            border-color: var(--accent-blue);
+            background: var(--bg-secondary);
+        }
+
+        .hitl-btn.selected {
+            border-color: var(--accent-green);
+            background: rgba(63, 185, 80, 0.2);
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 2rem;
+            margin-top: 2rem;
+            border-top: 1px solid var(--border-color);
+            color: var(--text-secondary);
+        }
+
+        footer a {
+            color: var(--accent-blue);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>ARIA</h1>
+            <p class="subtitle">Agentic Rail-based Intent Architecture</p>
+            <p style="color: var(--text-secondary); margin-top: 1rem;">
+                An orchestration system for autonomous AI-assisted development with safety rails
+            </p>
+        </header>
+
+        <nav>
+            <button class="nav-btn active" data-section="overview">Overview</button>
+            <button class="nav-btn" data-section="router">Router Demo</button>
+            <button class="nav-btn" data-section="workflow">Workflow</button>
+            <button class="nav-btn" data-section="hitl">HITL Gates</button>
+            <button class="nav-btn" data-section="traces">Decision Traces</button>
+            <button class="nav-btn" data-section="try">Try It</button>
+        </nav>
+
+        <!-- Overview Section -->
+        <section id="overview" class="active">
+            <h2>What is ARIA?</h2>
+
+            <p style="font-size: 1.1rem; color: var(--text-primary); margin-bottom: 2rem;">
+                ARIA is an orchestration layer that sits between you and an AI coding assistant.
+                It adds <strong>structure, verification, and human oversight</strong> to autonomous development.
+            </p>
+
+            <div class="feature-grid">
+                <div class="feature-item">
+                    <h4>Rails, Not Rules</h4>
+                    <p>Safety guardrails that guide without blocking. The AI stays productive while respecting boundaries.</p>
+                </div>
+                <div class="feature-item">
+                    <h4>Right-Sized Process</h4>
+                    <p>A 5-line bug fix shouldn't need the same ceremony as a new feature. ARIA adapts its process to task complexity.</p>
+                </div>
+                <div class="feature-item">
+                    <h4>Human-in-the-Loop</h4>
+                    <p>Strategic checkpoints before risky actions. You stay in control without micromanaging every step.</p>
+                </div>
+                <div class="feature-item">
+                    <h4>Full Traceability</h4>
+                    <p>Every decision logged with rationale. Know why the AI did what it did, not just what changed.</p>
+                </div>
+            </div>
+
+            <h3>The Problem ARIA Solves</h3>
+
+            <div class="card">
+                <p><strong>Without ARIA:</strong></p>
+                <ul style="color: var(--text-secondary); margin-left: 1.5rem;">
+                    <li>AI makes changes without verification → bugs ship</li>
+                    <li>No stopping point for risky actions → unintended consequences</li>
+                    <li>No record of decisions → "why did it do that?"</li>
+                    <li>Same process for simple and complex tasks → inefficient</li>
+                </ul>
+            </div>
+
+            <div class="card" style="border-color: var(--accent-green);">
+                <p><strong>With ARIA:</strong></p>
+                <ul style="color: var(--text-secondary); margin-left: 1.5rem;">
+                    <li>Mandatory verification after every code change</li>
+                    <li>HITL checkpoints before deletions, config changes, risky actions</li>
+                    <li>Decision trace: action → context → rationale → alternatives → confidence</li>
+                    <li>LITE/STANDARD/FULL modes scale process to task size</li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- Router Demo Section -->
+        <section id="router">
+            <h2>Router: Right-Sizing Your Task</h2>
+
+            <p>ARIA's router analyzes your task and selects the appropriate mode. Try adjusting the parameters:</p>
+
+            <div class="router-demo">
+                <div class="router-input">
+                    <h3>Task Parameters</h3>
+
+                    <label>Number of Tasks: <span id="tasks-value" class="slider-value">5</span></label>
+                    <input type="range" id="tasks-slider" min="1" max="50" value="5">
+
+                    <label>Lines of Code: <span id="loc-value" class="slider-value">1,000</span></label>
+                    <input type="range" id="loc-slider" min="100" max="60000" value="1000" step="100">
+
+                    <label>Files Affected: <span id="files-value" class="slider-value">3</span></label>
+                    <input type="range" id="files-slider" min="1" max="60" value="3">
+
+                    <div class="checkbox-group">
+                        <label>
+                            <input type="checkbox" id="auth-check">
+                            Touches auth/security code
+                        </label>
+                        <label>
+                            <input type="checkbox" id="db-check">
+                            Database migrations
+                        </label>
+                        <label>
+                            <input type="checkbox" id="payment-check">
+                            Payment processing
+                        </label>
+                    </div>
+                </div>
+
+                <div class="router-output">
+                    <h3>Selected Mode</h3>
+                    <div class="mode-result">
+                        <div id="mode-badge" class="mode-badge lite">LITE</div>
+                        <p id="mode-reason">Simple task, low risk. Direct execution.</p>
+                        <div id="mode-features" style="text-align: left; margin-top: 1rem;">
+                            <!-- Features populated by JS -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Workflow Section -->
+        <section id="workflow">
+            <h2>The ARIA Workflow</h2>
+
+            <p>Click each step to see what happens:</p>
+
+            <div class="workflow">
+                <div class="workflow-step" data-step="router">
+                    <div class="workflow-step-icon">📊</div>
+                    <div class="workflow-step-label">Router</div>
+                </div>
+                <div class="workflow-step" data-step="plan">
+                    <div class="workflow-step-icon">📝</div>
+                    <div class="workflow-step-label">Plan</div>
+                </div>
+                <div class="workflow-step" data-step="approve">
+                    <div class="workflow-step-icon">✋</div>
+                    <div class="workflow-step-label">Approve</div>
+                </div>
+                <div class="workflow-step" data-step="execute">
+                    <div class="workflow-step-icon">⚡</div>
+                    <div class="workflow-step-label">Execute</div>
+                </div>
+                <div class="workflow-step" data-step="verify">
+                    <div class="workflow-step-icon">✅</div>
+                    <div class="workflow-step-label">Verify</div>
+                </div>
+                <div class="workflow-step" data-step="commit">
+                    <div class="workflow-step-icon">📦</div>
+                    <div class="workflow-step-label">Commit</div>
+                </div>
+            </div>
+
+            <div id="step-detail" class="card">
+                <div class="card-header">
+                    <div class="card-icon blue">📊</div>
+                    <h3>Router</h3>
+                </div>
+                <p>The router analyzes your request and determines the right process level:</p>
+                <ul style="color: var(--text-secondary); margin-left: 1.5rem;">
+                    <li>How many tasks?</li>
+                    <li>How many files affected?</li>
+                    <li>Any risky areas (auth, payments, DB)?</li>
+                </ul>
+                <p style="margin-top: 1rem;">Output: <code>SIZE: SMALL → MODE: LITE</code></p>
+            </div>
+        </section>
+
+        <!-- HITL Section -->
+        <section id="hitl">
+            <h2>Human-in-the-Loop Checkpoints</h2>
+
+            <p>ARIA stops and asks for confirmation before risky actions. Try the interactive demo:</p>
+
+            <div class="hitl-demo">
+                <div class="hitl-header">
+                    ⚠️ HITL CHECKPOINT
+                </div>
+                <p>About to <strong>delete</strong> the file <code>src/legacy/auth-v1.ts</code></p>
+                <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                    This file contains 247 lines of authentication code. It appears to be replaced by <code>src/auth/index.ts</code>.
+                </p>
+                <div class="hitl-options">
+                    <button class="hitl-btn" data-action="yes">[y]es - proceed</button>
+                    <button class="hitl-btn" data-action="no">[n]o - skip</button>
+                    <button class="hitl-btn" data-action="explain">[e]xplain - more info</button>
+                </div>
+                <div id="hitl-result" style="margin-top: 1rem; display: none;"></div>
+            </div>
+
+            <h3>When HITL Triggers</h3>
+
+            <div class="feature-grid">
+                <div class="feature-item">
+                    <h4>File Deletions</h4>
+                    <p>Any file deletion requires explicit approval.</p>
+                </div>
+                <div class="feature-item">
+                    <h4>Config Changes</h4>
+                    <p>package.json, tsconfig, CI/CD files trigger checkpoints.</p>
+                </div>
+                <div class="feature-item">
+                    <h4>"Don't Touch" Areas</h4>
+                    <p>Files marked in project-context.md require approval.</p>
+                </div>
+                <div class="feature-item">
+                    <h4>New Dependencies</h4>
+                    <p>Installing new packages triggers review.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Traces Section -->
+        <section id="traces">
+            <h2>Decision Traces</h2>
+
+            <p>Every significant decision is logged with full context. Here's a real trace:</p>
+
+            <div class="trace-container">
+                <div class="trace-item">
+                    <div class="trace-icon">🔧</div>
+                    <div class="trace-content">
+                        <div class="trace-action">Use existing retry pattern from utils/retry.ts</div>
+                        <div class="trace-meta">
+                            <strong>Context:</strong> Read src/utils/retry.ts, found 3 similar implementations<br>
+                            <strong>Rationale:</strong> Consistency with existing codebase patterns<br>
+                            <strong>Alternatives:</strong> Custom retry implementation, No retry<br>
+                            <strong>Confidence:</strong> 0.85
+                            <div class="confidence-bar"><div class="confidence-fill" style="width: 85%"></div></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="trace-item">
+                    <div class="trace-icon">🛡️</div>
+                    <div class="trace-content">
+                        <div class="trace-action">Add input validation before API call</div>
+                        <div class="trace-meta">
+                            <strong>Context:</strong> Security review, OWASP guidelines<br>
+                            <strong>Rationale:</strong> Prevent injection attacks and malformed input<br>
+                            <strong>Alternatives:</strong> Trust caller, Validate server-side only<br>
+                            <strong>Confidence:</strong> 0.92
+                            <div class="confidence-bar"><div class="confidence-fill" style="width: 92%"></div></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="trace-item">
+                    <div class="trace-icon">⏭️</div>
+                    <div class="trace-content">
+                        <div class="trace-action">Skip edge case tests for now</div>
+                        <div class="trace-meta">
+                            <strong>Context:</strong> Time constraint, happy path working<br>
+                            <strong>Rationale:</strong> Core functionality verified, edge cases can follow<br>
+                            <strong>Alternatives:</strong> Full test coverage, Delay feature<br>
+                            <strong>Confidence:</strong> 0.60
+                            <div class="confidence-bar"><div class="confidence-fill" style="width: 60%"></div></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <h3>Why Traces Matter</h3>
+
+            <div class="card">
+                <ul style="color: var(--text-secondary); margin-left: 1.5rem;">
+                    <li><strong>Debugging:</strong> When something goes wrong, understand the reasoning</li>
+                    <li><strong>Learning:</strong> Improve the AI's decisions over time</li>
+                    <li><strong>Compliance:</strong> Audit trail for regulated industries</li>
+                    <li><strong>Handoff:</strong> New team members understand why code looks the way it does</li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- Try It Section -->
+        <section id="try">
+            <h2>Try ARIA</h2>
+
+            <h3>Quick Start</h3>
+
+            <div class="card">
+                <p><strong>1. Clone the repository:</strong></p>
+                <pre>git clone https://github.com/your-org/aria
+cd aria</pre>
+
+                <p><strong>2. Run setup:</strong></p>
+                <pre>bash .aria/scripts/setup-project.sh</pre>
+
+                <p><strong>3. Use with Claude Code:</strong></p>
+                <pre># ARIA loads automatically via CLAUDE.md
+# Just start coding - ARIA handles the rest
+
+"Add a retry mechanism to the API client"</pre>
+            </div>
+
+            <h3>Example Session</h3>
+
+            <div class="demo-container">
+                <div class="demo-header">
+                    <div class="demo-dot red"></div>
+                    <div class="demo-dot yellow"></div>
+                    <div class="demo-dot green"></div>
+                    <span style="margin-left: 1rem; color: var(--text-secondary);">Terminal</span>
+                </div>
+                <div class="demo-content" id="demo-terminal">
+                    <div class="demo-line prompt">$ "Add retry logic to the API client"</div>
+                    <div class="demo-line output" style="animation-delay: 0.5s">SIZE: SMALL</div>
+                    <div class="demo-line output" style="animation-delay: 0.7s">MODE: LITE</div>
+                    <div class="demo-line output" style="animation-delay: 0.9s">Reason: 1 task, ~50 lines, no risky areas</div>
+                    <div class="demo-line output" style="animation-delay: 1.2s">&nbsp;</div>
+                    <div class="demo-line highlight" style="animation-delay: 1.4s">Planning...</div>
+                    <div class="demo-line output" style="animation-delay: 1.6s">Task 1: Add exponential backoff retry to fetch calls</div>
+                    <div class="demo-line output" style="animation-delay: 1.8s">&nbsp;</div>
+                    <div class="demo-line highlight" style="animation-delay: 2.0s">Implementing...</div>
+                    <div class="demo-line output" style="animation-delay: 2.2s">Reading src/api/client.ts</div>
+                    <div class="demo-line output" style="animation-delay: 2.4s">Reading src/utils/retry.ts (found existing pattern)</div>
+                    <div class="demo-line output" style="animation-delay: 2.6s">Editing src/api/client.ts</div>
+                    <div class="demo-line output" style="animation-delay: 2.8s">&nbsp;</div>
+                    <div class="demo-line highlight" style="animation-delay: 3.0s">Verifying...</div>
+                    <div class="demo-line output" style="animation-delay: 3.2s">$ bash .aria/verify.sh</div>
+                    <div class="demo-line output" style="animation-delay: 3.4s">✓ No secrets detected</div>
+                    <div class="demo-line output" style="animation-delay: 3.6s">✓ Tests passing (47/47)</div>
+                    <div class="demo-line output" style="animation-delay: 3.8s">✓ Lint clean</div>
+                    <div class="demo-line output" style="animation-delay: 4.0s">✓ TypeScript OK</div>
+                    <div class="demo-line output" style="animation-delay: 4.2s">&nbsp;</div>
+                    <div class="demo-line prompt" style="animation-delay: 4.4s">✅ Task complete. Committed: abc123</div>
+                </div>
+            </div>
+
+            <h3>Use Cases</h3>
+
+            <div class="feature-grid">
+                <div class="feature-item">
+                    <h4>Build</h4>
+                    <p>New projects from scratch with iterative planning and verification.</p>
+                </div>
+                <div class="feature-item">
+                    <h4>Modify</h4>
+                    <p>Changes to existing codebases with "don't touch" area protection.</p>
+                </div>
+                <div class="feature-item">
+                    <h4>Research</h4>
+                    <p>Analyze papers/articles → generate docs → optional prototype.</p>
+                </div>
+                <div class="feature-item">
+                    <h4>Deep Research</h4>
+                    <p>Web research with source tracking and confidence scoring.</p>
+                </div>
+            </div>
+        </section>
+
+        <footer>
+            <p>ARIA: Agentic Rail-based Intent Architecture</p>
+            <p style="margin-top: 0.5rem;">
+                <a href="https://github.com/your-org/aria">GitHub</a> ·
+                <a href="CLAUDE.md">Full Documentation</a>
+            </p>
+        </footer>
+    </div>
+
+    <script>
+        // Navigation
+        document.querySelectorAll('.nav-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('section').forEach(s => s.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById(btn.dataset.section).classList.add('active');
+            });
+        });
+
+        // Router Demo
+        function updateRouter() {
+            const tasks = parseInt(document.getElementById('tasks-slider').value);
+            const loc = parseInt(document.getElementById('loc-slider').value);
+            const files = parseInt(document.getElementById('files-slider').value);
+            const hasAuth = document.getElementById('auth-check').checked;
+            const hasDb = document.getElementById('db-check').checked;
+            const hasPayment = document.getElementById('payment-check').checked;
+
+            document.getElementById('tasks-value').textContent = tasks;
+            document.getElementById('loc-value').textContent = loc.toLocaleString();
+            document.getElementById('files-value').textContent = files;
+
+            // Determine size
+            let size = 'SMALL';
+            let mode = 'LITE';
+            let reason = 'Simple task, low risk. Direct execution.';
+
+            const sensitiveAreas = hasAuth || hasDb || hasPayment;
+
+            if (tasks > 40 || loc > 50000 || files > 50 || (sensitiveAreas && (hasAuth && hasDb && hasPayment))) {
+                size = 'X-LARGE';
+                mode = 'FULL+';
+                reason = 'Enterprise scale. Design doc required, epic-level tracking.';
+            } else if (tasks > 15 || loc > 10000 || files > 20 || (sensitiveAreas && (hasAuth || hasDb || hasPayment))) {
+                size = 'LARGE';
+                mode = 'FULL';
+                reason = 'Complex task. Full verification, detailed planning, risk assessment.';
+            } else if (tasks > 5 || loc > 2000 || files > 5) {
+                size = 'MEDIUM';
+                mode = 'STANDARD';
+                reason = 'Moderate complexity. Planning required, verification gates active.';
+            }
+
+            const badge = document.getElementById('mode-badge');
+            badge.textContent = mode;
+            badge.className = 'mode-badge ' + mode.toLowerCase().replace('+', 'plus');
+            document.getElementById('mode-reason').textContent = reason;
+
+            // Update features
+            const features = {
+                'LITE': ['Quick planning (optional)', 'Basic verification', 'Git commit on completion'],
+                'STANDARD': ['Planning phase', 'Verification gates', 'HITL checkpoints', 'Progress tracking'],
+                'FULL': ['Risk assessment', 'Detailed planning', 'Mandatory verification', 'Design notes', 'Failure escalation'],
+                'FULL+': ['Design doc required', 'Architecture review', 'Epic-level HITL gates', 'Context refresh between epics']
+            };
+
+            const featureHtml = features[mode].map(f => `<div style="color: var(--accent-green);">✓ ${f}</div>`).join('');
+            document.getElementById('mode-features').innerHTML = featureHtml;
+        }
+
+        document.querySelectorAll('#tasks-slider, #loc-slider, #files-slider').forEach(el => {
+            el.addEventListener('input', updateRouter);
+        });
+        document.querySelectorAll('#auth-check, #db-check, #payment-check').forEach(el => {
+            el.addEventListener('change', updateRouter);
+        });
+
+        // Workflow steps
+        const stepDetails = {
+            router: {
+                icon: '📊',
+                title: 'Router',
+                content: `<p>The router analyzes your request and determines the right process level:</p>
+                    <ul style="color: var(--text-secondary); margin-left: 1.5rem;">
+                        <li>How many tasks?</li>
+                        <li>How many files affected?</li>
+                        <li>Any risky areas (auth, payments, DB)?</li>
+                    </ul>
+                    <p style="margin-top: 1rem;">Output: <code>SIZE: SMALL → MODE: LITE</code></p>`
+            },
+            plan: {
+                icon: '📝',
+                title: 'Plan',
+                content: `<p>ARIA creates a structured plan saved to <code>.aria/state/current-plan.json</code>:</p>
+                    <pre>{
+  "id": "plan-20240114-103000",
+  "title": "Add retry logic",
+  "tasks": [
+    { "id": 1, "title": "Add exponential backoff", "hitl": false }
+  ],
+  "risks": ["May affect request timing"]
+}</pre>`
+            },
+            approve: {
+                icon: '✋',
+                title: 'Approve',
+                content: `<p>Before execution, you review and approve the plan:</p>
+                    <div class="hitl-demo" style="margin-top: 1rem;">
+                        <p><strong>Plan: Add retry logic</strong></p>
+                        <p style="color: var(--text-secondary);">1 task, ~15 minutes estimated</p>
+                        <div style="margin-top: 1rem; color: var(--accent-yellow);">[a]pprove / [r]evise / [c]ancel</div>
+                    </div>`
+            },
+            execute: {
+                icon: '⚡',
+                title: 'Execute',
+                content: `<p>Tasks execute one at a time with full logging:</p>
+                    <ul style="color: var(--text-secondary); margin-left: 1.5rem;">
+                        <li>Progress announcements: "Starting task 1/3: Add retry"</li>
+                        <li>File reads/writes logged to signals</li>
+                        <li>Decisions logged with rationale</li>
+                        <li>HITL checkpoints before risky actions</li>
+                    </ul>`
+            },
+            verify: {
+                icon: '✅',
+                title: 'Verify',
+                content: `<p>After each task, <code>verify.sh</code> runs mandatory checks:</p>
+                    <pre>bash .aria/verify.sh
+✓ No secrets detected
+✓ Tests passing (47/47)
+✓ Lint clean
+✓ TypeScript OK
+✓ Build succeeds</pre>
+                    <p style="margin-top: 1rem; color: var(--accent-red);">If verification fails, execution STOPS. No proceeding past failures.</p>`
+            },
+            commit: {
+                icon: '📦',
+                title: 'Commit',
+                content: `<p>After verification passes, changes are committed:</p>
+                    <pre>git add src/api/client.ts
+git commit -m "Add retry logic with exponential backoff
+
+- Uses existing pattern from utils/retry.ts
+- 3 retries with 1s, 2s, 4s delays
+- Logs retry attempts for debugging"</pre>
+                    <p style="margin-top: 1rem;">One commit per verified task. Clean history.</p>`
+            }
+        };
+
+        document.querySelectorAll('.workflow-step').forEach(step => {
+            step.addEventListener('click', () => {
+                document.querySelectorAll('.workflow-step').forEach(s => s.classList.remove('active'));
+                step.classList.add('active');
+
+                const detail = stepDetails[step.dataset.step];
+                document.getElementById('step-detail').innerHTML = `
+                    <div class="card-header">
+                        <div class="card-icon blue">${detail.icon}</div>
+                        <h3>${detail.title}</h3>
+                    </div>
+                    ${detail.content}
+                `;
+            });
+        });
+
+        // HITL Demo
+        document.querySelectorAll('.hitl-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.hitl-btn').forEach(b => b.classList.remove('selected'));
+                btn.classList.add('selected');
+
+                const result = document.getElementById('hitl-result');
+                result.style.display = 'block';
+
+                const responses = {
+                    yes: '<span style="color: var(--accent-green);">✓ Proceeding with deletion. File will be removed and change committed.</span>',
+                    no: '<span style="color: var(--accent-yellow);">⏭️ Skipping deletion. File preserved. Moving to next task.</span>',
+                    explain: '<span style="color: var(--accent-blue);">ℹ️ This file was created in 2019 for v1 auth. It\'s imported by 0 files. The new auth module (src/auth/index.ts) handles all auth flows. Safe to delete.</span>'
+                };
+
+                result.innerHTML = responses[btn.dataset.action];
+            });
+        });
+
+        // Initialize
+        updateRouter();
+    </script>
+</body>
+</html>
