@@ -3,10 +3,18 @@
   "$id": "https://schemas.aria-runtime.dev/error.v1.json",
   "title": "CmdError",
   "description": "Wire-format error envelope for Tauri renderer↔main IPC error responses. Mirrors the runtime-main `CmdError` enum's serde(tag = \"type\", rename_all = \"snake_case\") encoding. Used by src/lib/ipc.ts::unwrapCmdError.",
+  "$defs": {
+    "ErrorMessage": {
+      "type": "string",
+      "minLength": 1,
+      "title": "ErrorMessage",
+      "description": "Human-readable error message body. Non-empty per validation; not localized at v0.1."
+    }
+  },
   "oneOf": [
     {
       "type": "object",
-      "title": "setup_required",
+      "title": "SetupRequired",
       "description": "API key not present in OS keychain; renderer prompts user to invoke set_api_key. Unit variant — no message field.",
       "properties": { "type": { "const": "setup_required" } },
       "required": ["type"],
@@ -14,44 +22,44 @@
     },
     {
       "type": "object",
-      "title": "provider",
+      "title": "Provider",
       "description": "LLMProvider error (Anthropic API failure, network, parsing).",
       "properties": {
         "type": { "const": "provider" },
-        "message": { "type": "string", "minLength": 1 }
+        "message": { "$ref": "#/$defs/ErrorMessage" }
       },
       "required": ["type", "message"],
       "additionalProperties": false
     },
     {
       "type": "object",
-      "title": "drone",
+      "title": "Drone",
       "description": "Drone IPC failure (subprocess died, framing error, timeout).",
       "properties": {
         "type": { "const": "drone" },
-        "message": { "type": "string", "minLength": 1 }
+        "message": { "$ref": "#/$defs/ErrorMessage" }
       },
       "required": ["type", "message"],
       "additionalProperties": false
     },
     {
       "type": "object",
-      "title": "key_store",
+      "title": "KeyStore",
       "description": "OS keychain failure. Wraps keyring crate errors.",
       "properties": {
         "type": { "const": "key_store" },
-        "message": { "type": "string", "minLength": 1 }
+        "message": { "$ref": "#/$defs/ErrorMessage" }
       },
       "required": ["type", "message"],
       "additionalProperties": false
     },
     {
       "type": "object",
-      "title": "internal",
+      "title": "Internal",
       "description": "Catch-all for unexpected runtime errors. Should be rare.",
       "properties": {
         "type": { "const": "internal" },
-        "message": { "type": "string", "minLength": 1 }
+        "message": { "$ref": "#/$defs/ErrorMessage" }
       },
       "required": ["type", "message"],
       "additionalProperties": false

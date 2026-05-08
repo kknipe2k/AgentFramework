@@ -331,6 +331,55 @@ mod tests {
         assert!(matches!(result, Err(DroneIpcError::Codec(_))));
     }
 
+    /// `await_event` returns `DroneIpcError::Io(TimedOut)` when the peer
+    /// keeps the stream open but never writes a matching response.
+    /// Closes the M03.E coverage regression on the 5s timeout branch
+    /// in `await_event` — the existing `*_stream_close_*` test exercises
+    /// EOF, not timeout. Pattern: `connection.rs::backoff_grows_*`.
+    #[tokio::test(start_paused = true)]
+    async fn await_event_timeout_when_peer_silent() {
+        use std::pin::Pin;
+        use tokio::io::{AsyncRead, AsyncWrite};
+
+        type DynRead = Pin<Box<dyn AsyncRead + Send + Unpin>>;
+        type DynWrite = Pin<Box<dyn AsyncWrite + Send + Unpin>>;
+        let (a, b) = tokio::io::duplex(4096);
+        let (a_rd, a_wr) = tokio::io::split(a);
+        // Hold both peer halves alive (do NOT drop) — this distinguishes
+        // the timeout branch from the EOF branch covered by the
+        // `*_stream_close_*` test below.
+        let (b_rd, b_wr) = tokio::io::split(b);
+        let conn = Connection::from_streams(
+            "/test",
+            Box::pin(a_rd) as DynRead,
+            Box::pin(a_wr) as DynWrite,
+        );
+        let client = DroneClient {
+            inner: tokio::sync::Mutex::new(conn),
+        };
+        let task =
+            tokio::spawn(async move { client.query_session_db("SELECT 1".to_string()).await });
+        // Advance well past the 5s `RESPONSE_TIMEOUT` so the `tokio::time::
+        // timeout` future inside `await_event` resolves to its
+        // elapsed-Err branch.
+        for _ in 0..7 {
+            tokio::time::advance(std::time::Duration::from_secs(1)).await;
+            tokio::task::yield_now().await;
+        }
+        let result = task.await.expect("join");
+        assert!(
+            matches!(
+                &result,
+                Err(DroneIpcError::Io(e)) if e.kind() == std::io::ErrorKind::TimedOut
+            ),
+            "expected Io(TimedOut), got {result:?}"
+        );
+        // Explicit drop ordering: peer halves outlive the spawned client
+        // task so the duplex stream stays open during the timeout window.
+        drop(b_rd);
+        drop(b_wr);
+    }
+
     /// Stream that ends without a matching response surfaces as an
     /// error (Codec or Disconnected depending on whether the send
     /// succeeded before the read EOFs) rather than hanging the call.

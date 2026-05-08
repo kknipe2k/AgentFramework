@@ -9,6 +9,16 @@
 pub mod agent;
 /// Types generated from `schemas/common.v1.json`.
 pub mod common;
+/// Types generated from `schemas/error.v1.json` — wire-format `CmdError`
+/// envelope for Tauri renderer↔main IPC. Stage A2 (M04) refactors
+/// `src-tauri/src/commands.rs::CmdError` + `src/lib/ipc.ts::unwrapCmdError`
+/// to consume this generated shape.
+pub mod error;
+/// Types generated from `schemas/event.v1.json` — canonical `AgentEvent`
+/// union. Stage A1 (M04) commits the generated parallel artifact alongside
+/// the hand-curated `crates/runtime-core/src/event.rs`; consumer
+/// reconciliation is downstream-stage scope.
+pub mod event;
 /// Types generated from `schemas/framework.v1.json`.
 pub mod framework;
 /// Types generated from `schemas/skill.v1.json`.

@@ -42,7 +42,15 @@ fn regenerate_types(check: bool) -> Result<()> {
     let schemas_dir = workspace_root.join("schemas");
     let target_dir = workspace_root.join("crates/runtime-core/src/generated");
 
-    let schemas = ["common", "framework", "skill", "tool", "agent"];
+    let schemas = [
+        "common",
+        "framework",
+        "skill",
+        "tool",
+        "agent",
+        "event",
+        "error",
+    ];
     let mut all_drift = Vec::new();
 
     for name in schemas {
@@ -70,8 +78,10 @@ fn regenerate_types(check: bool) -> Result<()> {
     // prompt should add event.v1.json schema + cargo xtask regenerate-types
     // for TS types").
     let ts_output_dir = workspace_root.join("src/types");
-    let ts_targets: Vec<(&str, std::path::PathBuf)> =
-        vec![("agent_event", schemas_dir.join("event.v1.json"))];
+    let ts_targets: Vec<(&str, std::path::PathBuf)> = vec![
+        ("agent_event", schemas_dir.join("event.v1.json")),
+        ("error", schemas_dir.join("error.v1.json")),
+    ];
     let ts_targets_refs: Vec<(&str, &std::path::Path)> = ts_targets
         .iter()
         .map(|(name, p)| (*name, p.as_path()))

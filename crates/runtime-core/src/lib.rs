@@ -22,4 +22,10 @@ pub use drone::{
 };
 pub use error::RuntimeError;
 pub use event::{AgentEvent, ToolSource};
-pub use generated::*;
+// Re-export only schema-derived modules whose names don't collide with the
+// hand-curated top-level modules above. `generated::event` and
+// `generated::error` (M04 Stage A1 codegen extensions) are reachable via
+// `runtime_core::generated::{event, error}`; lifting them here would
+// shadow `runtime_core::event` / `runtime_core::error`. Stage A2 owns the
+// reconciliation that may collapse the two.
+pub use generated::{agent, common, framework, skill, tool};

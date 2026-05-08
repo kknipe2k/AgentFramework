@@ -19,6 +19,26 @@ Closes the cross-session-blindness failure mode that produced PR #53 (M04 phase 
 - **STAGE-PROMPT-PROTOCOL.md §10 — new v1.4 hardening rule.** "Build-machine state must be confirmed before phase-doc edits." Companion to v1.3 grep-verify-claims rule: v1.3 covers WHAT codebase claims need verification; v1.4 covers WHICH codebase to verify against when origin and build-machine diverge. Validator does not enforce mechanically; authoring discipline backed by gotcha #42 + §19 rule 7.
 - **docs/gotchas.md #42** (companion to #41). "Origin is a partial view of project state when CLAUDE.md §8 forbids per-stage pushes." Pattern bit M04 PR #53 → revert PR #54.
 
+### Added — M04 Stage A1 (build hygiene + xtask codegen extensions + coverage retrofits)
+
+First implementation stage of M04 (Plan + Verify + HITL + Budget). Closes three M03 carry-forward 🟡 build-hygiene items so Stages A2–G focus on production wiring + new primitive surface. Doc + codegen + test additions; no shipped runtime behavior change.
+
+- **`crates/xtask/src/main.rs`** — extends Rust schemas codegen list with `event` + `error` (was `[common, framework, skill, tool, agent]`); extends TS targets list with `("error", error.v1.json)`. New generated artifacts: `crates/runtime-core/src/generated/event.rs` + `crates/runtime-core/src/generated/error.rs` (typify) + `src/types/error.ts` (json-schema-to-typescript). The hand-curated `crates/runtime-core/src/event.rs` (with proptest module + per-variant docs) and `crates/runtime-core/src/error.rs` (`RuntimeError` thiserror enum) remain unchanged — Stage A1 commits the generated parallel artifacts; consumer reconciliation is downstream-stage scope.
+- **`crates/runtime-core/src/lib.rs`** — replaces `pub use generated::*;` with explicit `pub use generated::{agent, common, framework, skill, tool};`. Necessary because the new `generated::event` and `generated::error` modules collide with the top-level `pub mod event;` / `pub mod error;` if glob-re-exported. Generated `CmdError` + typify-`AgentEvent` reachable via `runtime_core::generated::{event,error}` for Stage A2 consumers.
+- **`crates/runtime-core/src/generated/mod.rs`** — adds `pub mod event;` + `pub mod error;` declarations.
+- **`schemas/error.v1.json`** — metadata clarification (no validation behavior change): variant `title` fields PascalCased (`SetupRequired` / `Provider` / `Drone` / `KeyStore` / `Internal`) so typify derives Rust enum variant names cleanly; `message` string extracted to `$defs/ErrorMessage` so typify can name the `minLength: 1` validation newtype (typify 0.6.2 panics on root-oneOf string subschemas with validation but no name source). Same wire format, same `const` discriminator values, same `additionalProperties: false`.
+- **`crates/runtime-main/src/drone_ipc/client.rs`** — adds `await_event_timeout_when_peer_silent` test using `#[tokio::test(start_paused = true)]` + duplex peer kept alive (not dropped) + paused-time advance past 5s. Asserts `Err(DroneIpcError::Io)` with `ErrorKind::TimedOut`. Distinguishes the 5s timeout branch from the EOF branch covered by the existing `read_signals_stream_close_surfaces_as_error_not_hang`. Closes M03 carry-forward 🟡 "tokio::time::pause() coverage for await_event timeout path"; `client.rs` line coverage 94.00% (M03.E baseline) → 96.75% (M04.A1).
+- **`crates/runtime-drone/tests/integration*.rs`** — verified clean of `target/debug` literals via grep. Only matches are doc comments at `tests/integration.rs:16–17` describing the gotcha #22 rationale; production code uses `current_exe()`-derived paths per the M02.D + M03.A archetype. No retrofit needed.
+- **`.prettierignore` + `eslint.config.js`** — append `src/types/error.ts` to the existing generated-TS ignore lists (matches the `agent_event.ts` precedent at lines 25 + eslint.config.js:24). Prettier sees `error.ts` as ignored so its json-schema-to-typescript double-quote output doesn't trip the `singleQuote: true` rule; eslint sees it as ignored so its `/* eslint-disable */` header doesn't surface as an unused-directive warning.
+
+Closes M03 gap-analysis 🟡 entries:
+
+1. "Extend xtask Rust typify list to include `event.v1.json`" — DONE (event added; error added as bonus).
+2. "tokio::time::pause()-driven coverage for `await_event` timeout path" — DONE (client.rs 94.00% → 96.75% with new deterministic timeout test).
+3. "Retrofit `crates/runtime-drone/tests/integration*.rs` to `current_exe()`-derived paths" — VERIFIED still clean (M03.A retrofit durable; only doc-comment mentions of `target/debug` remain).
+
+Carry-forward to Stage A2: src-tauri/src/commands.rs::CmdError replacement with re-export of generated CmdError; src/lib/ipc.ts::unwrapCmdError refactor to consume generated `CmdError` from `src/types/error.ts`; eventual reconciliation of hand-curated `event.rs` with typify-generated `generated/event.rs`.
+
 ### Added — M03.5 (Pre-M04 prep — doc/protocol-only mini-milestone)
 
 Two-stage doc/protocol prep landing the doc-level debt M03 closeout flagged plus the next iteration of the stage-prompt protocol, before M04 prompt authoring begins. Doc-only — no source code touched, no gap-analysis entry (per CLAUDE.md §20 the immutable ledger is reserved for code-shipping milestones).
