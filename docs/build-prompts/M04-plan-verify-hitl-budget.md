@@ -925,58 +925,60 @@ EOF
 <!-- STAGE B — §3a Plan & Task primitive                            -->
 <!-- ============================================================ -->
 
-## Stage B — §3a Plan & Task primitive (schemas + types + events + state machine + persistence)
-
-> **🔧 Audit corrections (post-M04.A2 audit, 2026-05-08).** Apply these to the X.2/X.3/X.4 sections below — the original prose in those sections predates the audit and contains drift.
-> 1. **8 of 11 plan/task events ALREADY exist in `crates/runtime-core/src/event.rs` and `schemas/event.v1.json`** (audit-confirmed). Identify the 3 missing variants by diffing spec §3a's 11-event list against the existing `event.rs` enum + `event.v1.json` `oneOf`. Author only the missing 3; the existing 8 get state-machine wiring not re-authoring.
-> 2. **Path correction:** `event_translation.rs` is a phantom — actual translation lives in `crates/runtime-main/src/sdk/event_pipeline.rs`. Read references and any X.3 instructions that name `event_translation.rs` should be read as `event_pipeline.rs`.
-> 3. **Folds A2 deferrals** (per user-approved post-A2 sequencing): WriteSignal IPC command variant + drone-side handler + main-side emission path; structured-emitter prompt-template module + AgentSdk plumbing. Stage B has scope slack from already-shipped events to absorb these. New schema items: WriteSignal added to drone IPC enum; structured-emitter regex + prompt-template module new in `crates/runtime-main/src/sdk/`.
-> 4. **`crates/runtime-drone/migrations/` directory does not exist yet** (audit-confirmed). The first migration file Stage B authors creates the directory; no existing-numbered-sequence to fit into.
-> 5. **Plan state machine ≥95% safety primitive coverage** is unchanged. Stage B's authoring doesn't reduce the safety gate.
->
-> All other X.1–X.6 content stays. Audit-driven scope reduction is real (8/11 events done) but offset by the A2 deferrals folding in. Net Stage B scope: similar size to original Phase doc, different content mix.
+## Stage B — §3a Plan & Task primitive (schemas + types + 5 missing events + state machine + persistence + folded-A3 work)
 
 **WEBCHECK:** verify each URL against this stage's prompt body **before** the fresh session opens.
 
 - <https://docs.rs/typify/latest/typify/> — typify codegen for plan.v1.json + task.v1.json (extends Stage A1 pattern)
 - <https://json-schema.org/draft/2020-12/schema> — JSON Schema 2020-12 spec; plan.v1.json + task.v1.json author against this draft (matches existing schemas)
 - <https://docs.rs/rusqlite/latest/rusqlite/> — rusqlite for new `plans` + `tasks` table migrations; verify `journal_mode = WAL` + `foreign_keys = ON` pragma pattern unchanged from M01.C `db.rs`
+- <https://docs.rs/regex/latest/regex/> — structured-emitter regex pattern for `<<DECISION>>...<<END>>` delimited blocks (folded from original-A3 work); confirm `regex` crate is in workspace deps
 
 ### B.1 Problem Statement
 
-§3a Plan & Task primitive is the single largest deliverable in M04. Spec §3a (with M03.5's DDL addition) locks the field shapes; Stage B builds the implementation end-to-end:
+§3a Plan & Task primitive is the single largest deliverable in M04. Spec §3a (with M03.5's DDL addition) locks the field shapes. Stage B builds the implementation end-to-end AND folds the original-A3 work (WriteSignal IPC + structured emitter) per the post-M03.5 audit re-staging:
 
-1. **Schemas** — author `schemas/plan.v1.json` + `schemas/task.v1.json` per spec §3a TypeScript shapes + M03.5 DDL. Extend `crates/xtask/src/main.rs` codegen list per the Stage A1 pattern. Generated targets: `crates/runtime-core/src/plan.rs` + `crates/runtime-core/src/task.rs` (Rust); `src/types/plan.ts` + `src/types/task.ts` (TS).
+1. **Schemas** — author `schemas/plan.v1.json` + `schemas/task.v1.json` per spec §3a TypeScript shapes + M03.5 DDL. Extend `crates/xtask/src/main.rs` codegen list per the Stage A1 archetype. Generated targets: `crates/runtime-core/src/generated/plan.rs` + `crates/runtime-core/src/generated/task.rs` (Rust; under `generated/` per the typify convention A1 confirmed); `src/types/plan.ts` + `src/types/task.ts` (TS).
 
-2. **Eleven new event variants** — `plan_created`, `plan_approval_requested`, `plan_approved`, `plan_revised`, `plan_aborted`, `plan_complete`, `task_started`, `task_completed`, `task_failed`, `task_skipped`, `task_escalated` added to `schemas/event.v1.json`. Regen propagates to `event.rs` + `agent_event.ts`. Renderer `graphStore.applyEvent` exhaustive switch must handle all 11 (gotcha #36 _exhaustive: never forces it).
+2. **5 missing spec event variants + 6 already-shipped wired + 2 codebase extras dispositioned** (audit-grounded). Per the post-M03.5 audit: `crates/runtime-core/src/event.rs` already contains 6 spec-canonical variants (`PlanCreated:141`, `PlanApproved:148`, `TaskStarted:160`, `TaskCompleted:169`, `TaskFailed:178`, `TaskEscalated:198`) + 2 codebase-only extras NOT in spec (`PlanRejected:153`, `TaskRolledBack:189`). Stage B authors the 5 spec variants missing from `event.v1.json` + `event.rs`: `plan_approval_requested`, `plan_revised`, `plan_aborted`, `plan_complete`, `task_skipped`. Stage B WIRES the 6 existing variants into the new state machine (does NOT re-author them). Stage B documents the disposition of the 2 extras at execution time — likely keep both as additive (`PlanRejected` covers the user-cancels-at-approval-gate flow distinct from `plan_aborted` in-progress; `TaskRolledBack` covers rollback via verify hooks). Renderer `graphStore.applyEvent` exhaustive switch already handles the 8 existing variants; Stage B adds 5 new cases (gotcha #36 `_exhaustive: never` forces it).
 
-3. **Plan state machine** — `crates/runtime-main/src/plan/state_machine.rs` (new module) implements the FSM over Plan.status transitions per spec §3a. Safety primitive — ≥95% coverage gate per CLAUDE.md §5 (declare exclusions inline if any).
+3. **Plan state machine** — `crates/runtime-main/src/plan/state_machine.rs` (new module; verify `crates/runtime-main/src/plan/` does not yet exist before authoring per `<pre_flight_check>`) implements the FSM over Plan.status + Task.status transitions per spec §3a. Safety primitive — ≥95% coverage gate per CLAUDE.md §5 (declare exclusions inline if any; pure-logic module so likely 100%).
 
-4. **fresh_context_per_task loop policy** — only loop policy lit in v0.1 per spec §0d + CLAUDE.md §3. Implementation: after each `task_completed`, the SDK clears the agent's message history and starts the next task with the full plan + completed-tasks summary in the system prompt.
+4. **fresh_context_per_task loop policy** — only loop policy lit in v0.1 per spec §0d + CLAUDE.md §3. Implementation: after each `task_completed`, the SDK clears the agent's message history and starts the next task with the full plan + completed-tasks summary in the system prompt. The `one_shot` and `continuous` variants in the schema return `NotImplemented` at this seam.
 
 5. **Failure escalation** — `failure_count++` on `task_failed`; if `>= max_failures` → emit `task_escalated` (routed to HITL in Stage E). Default `max_failures = 3` per spec §3a.
 
-6. **SQLite persistence** — migrations land `plans` + `tasks` tables per the DDL added to spec §10 in M03.5. Drone-side migration runner (existing M01.C pattern) picks up the new migration files.
+6. **SQLite persistence** — migrations land `plans` + `tasks` tables per the DDL added to spec §10 in M03.5. **First migration creates the `crates/runtime-drone/migrations/` directory** — audit-confirmed the directory does not yet exist. Drone-side migration runner (existing `crates/runtime-drone/src/db.rs::run_migrations` from M01.C) picks up the new migration file. Verify migration version increment is `001` (no existing-numbered-sequence to fit into).
 
-7. **Approval-gate primitive** — when `Plan.approval_required = true` and a `plan_created` fires, the runtime emits `plan_approval_requested` and SUSPENDS the plan until `plan_approved` (via HITL flow — Stage E wires this; Stage B exposes the suspend/resume seam).
+7. **Approval-gate primitive** — when `Plan.approval_required = true` and a `plan_created` fires, the runtime emits `plan_approval_requested` and SUSPENDS the plan until `plan_approved` (via HITL flow — Stage E wires this; Stage B exposes the suspend/resume seam as a channel/oneshot the SDK awaits on, NOT the HITL UI).
 
-**Success criterion:** unit tests cover plan state machine transitions exhaustively (hot path + every error transition); SDK can spawn a 3-task plan that emits `plan_created` → `plan_approval_requested` → (manual approval shim) → `plan_approved` → `task_started`/`task_completed` × 3 → `plan_complete`; SQLite contains the plan + task rows with correct status transitions; coverage gate met.
+8. **WriteSignal IPC + drone-side `vdr::project_signal` handler arm + main-side emission path** (folded from original-A3). Stage B authors the new `WriteSignal { signal_id, ... }` variant on `DroneCommand` enum at `crates/runtime-core/src/drone.rs` (verified: no `WriteSignal` variant present today); adds the handler arm to `crates/runtime-drone/src/command_handler.rs` (existing arms: `SnapshotNow`, `GracefulShutdown`, `SpawnProcess`, `StopProcess`, `SetActivityTimeout`, `RevertToSnapshot:64`, `QuerySessionDb`, `ReadSignals`); the new arm calls `vdr::project_signal(&conn, signal_id)` from `crates/runtime-drone/src/vdr.rs:50`. Main-side emission lands at `crates/runtime-main/src/sdk/event_pipeline.rs` — when the SDK writes a Decision signal, it emits `DroneCommand::WriteSignal` rather than direct rusqlite (which `runtime-main` doesn't have as a dep). Closes M03 carry-forward 🟡 "vdr.rs projector wired at signal-write call-site" (folded from A2's deferrals into Stage B per audit re-staging).
+
+9. **Structured-emitter prompt-template module + AgentSdk plumbing** (folded from original-A3). Replaces the M02 line-by-line heuristic in `crates/runtime-main/src/sdk/decision_extractor.rs` with regex-based delimited-block extraction matching `<<DECISION>>{json}<<END>>` per the M03.5 spec §2b ⚠️ note. New module `crates/runtime-main/src/sdk/prompt_template.rs` injects the format instructions into the system prompt. AgentSdk plumbing wires the template into the prompt-builder. Closes M02 carry-forward 🟡 "Decision extractor → structured emitter migration" (folded from A2's deferrals).
+
+**Success criterion:** unit tests cover plan state machine transitions exhaustively (hot path + every error transition); SDK can spawn a 3-task plan that emits `plan_created` → `plan_approval_requested` → (manual approval shim) → `plan_approved` → `task_started`/`task_completed` × 3 → `plan_complete`; SQLite contains the plan + task rows with correct status transitions; structured emitter parses delimited blocks correctly; WriteSignal IPC round-trip emits `vdr` projection on drone side; coverage gate met (≥95% on `state_machine.rs`; ≥95% maintained on `runtime-main`; ≥95% maintained on `runtime-drone`).
 
 **New artifacts:**
 - `schemas/plan.v1.json`, `schemas/task.v1.json` (new)
-- `crates/runtime-core/src/plan.rs`, `crates/runtime-core/src/task.rs` (new; generated)
+- `crates/runtime-core/src/generated/plan.rs`, `crates/runtime-core/src/generated/task.rs` (new; generated under `generated/` per A1 convention)
 - `src/types/plan.ts`, `src/types/task.ts` (new; generated)
-- `crates/runtime-main/src/plan/mod.rs`, `crates/runtime-main/src/plan/state_machine.rs` (new)
-- `crates/runtime-drone/migrations/00X_plans_tasks.sql` (new; X = next available)
+- `crates/runtime-main/src/plan/mod.rs`, `crates/runtime-main/src/plan/state_machine.rs` (new module)
+- `crates/runtime-main/src/sdk/prompt_template.rs` (new; folded-A3 structured-emitter prompt-template module)
+- `crates/runtime-drone/migrations/001_plans_tasks.sql` (new; first migration file — creates the `migrations/` directory which does not yet exist)
+- `crates/runtime-main/tests/plan_lifecycle.rs` (new integration test)
 
 **Edited artifacts:**
-- `crates/xtask/src/main.rs` (extend codegen list with plan + task schemas)
-- `schemas/event.v1.json` (add 11 plan/task event variants)
-- `crates/runtime-core/src/event.rs` (regenerated)
-- `src/types/agent_event.ts` (regenerated)
-- `src/lib/graphStore.ts` or equivalent (extend `applyEvent` exhaustive switch for 11 new variants — even if rendering wiring lands in Stage C, the store must compile under `_exhaustive: never`)
-- `crates/runtime-main/src/sdk/mod.rs` or equivalent (wire plan state machine into SDK event loop)
-- `CHANGELOG.md` (`[Unreleased]` notes M04 Stage B Plan & Task primitive)
+- `crates/xtask/src/main.rs` (extend codegen list with `plan` + `task` schemas; generated/ outputs)
+- `schemas/event.v1.json` (add 5 missing spec event variants to the `oneOf`; do NOT touch the 8 existing plan/task variants)
+- `crates/runtime-core/src/event.rs` OR `crates/runtime-core/src/generated/event.rs` (regenerated; depends on A1's namespace strategy outcome)
+- `crates/runtime-core/src/drone.rs` (add `WriteSignal { signal_id: String, ... }` variant to `DroneCommand` enum at line 152+; folded-A3 work)
+- `crates/runtime-drone/src/command_handler.rs` (add handler arm for `WriteSignal`; calls `vdr::project_signal`; folded-A3 work)
+- `crates/runtime-main/src/sdk/event_pipeline.rs` (emit `DroneCommand::WriteSignal` at signal-write call-site; folded-A3 work)
+- `crates/runtime-main/src/sdk/decision_extractor.rs` (replace heuristic with regex-based structured emitter; folded-A3 work)
+- `crates/runtime-main/src/sdk/agent_sdk.rs` or `mod.rs` (wire plan state machine into SDK event loop; wire structured emitter via prompt template)
+- `src/types/agent_event.ts` (regenerated with 5 new variants)
+- `src/lib/graphStore.ts` (extend `applyEvent` exhaustive switch with 5 new cases — even if rendering wiring lands in Stage C, the store must compile under `_exhaustive: never`)
+- `CHANGELOG.md` (`[Unreleased]` notes M04 Stage B Plan & Task primitive + folded-A3 work)
 
 ### B.2 Files to Change
 
@@ -984,15 +986,23 @@ EOF
 |---|---|
 | `schemas/plan.v1.json` | **New** — JSON Schema 2020-12 for Plan per spec §3a + M03.5 DDL field shapes |
 | `schemas/task.v1.json` | **New** — JSON Schema 2020-12 for Task per spec §3a + M03.5 DDL field shapes |
-| `crates/xtask/src/main.rs` | **Edited** — add `plan` + `task` to codegen list (Rust + TS targets) |
-| `schemas/event.v1.json` | **Edited** — add 11 plan/task event variants to the `oneOf` |
-| `crates/runtime-core/src/{plan,task,event}.rs` + `lib.rs` | **Edited (regen)** — typify output for new + updated schemas; module exports |
+| `crates/xtask/src/main.rs` | **Edited** — extend codegen list (currently 7 entries post-A1) with `plan` + `task` (Rust outputs to `generated/`; TS outputs to `src/types/`) |
+| `schemas/event.v1.json` | **Edited** — add 5 missing spec event variants (`plan_approval_requested`, `plan_revised`, `plan_aborted`, `plan_complete`, `task_skipped`); existing 8 plan/task variants stay unchanged |
+| `crates/runtime-core/src/generated/{plan,task}.rs` | **New (regen)** — typify outputs |
+| `crates/runtime-core/src/event.rs` OR `generated/event.rs` | **Edited (regen)** — adds 5 new variants; path depends on A1 namespace strategy |
+| `crates/runtime-core/src/drone.rs` | **Edited** — add `WriteSignal { signal_id: String, ... }` variant to `DroneCommand` (line 152+); folded-A3 |
+| `crates/runtime-core/src/lib.rs` | **Edited** — declare new `plan` + `task` re-exports per A1 namespace strategy |
 | `src/types/{plan,task,agent_event}.ts` | **Edited (regen)** — json-schema-to-typescript output |
 | `crates/runtime-main/src/plan/mod.rs` | **New** — module root + public API |
-| `crates/runtime-main/src/plan/state_machine.rs` | **New** — Plan/Task FSM per spec §3a |
-| `crates/runtime-main/src/sdk/mod.rs` (or where plan integration lands) | **Edited** — wire state machine into SDK event loop; failure-escalation logic |
-| `crates/runtime-drone/migrations/00X_plans_tasks.sql` | **New** — migration for plans + tasks tables per M03.5 spec §10 DDL |
-| `src/lib/graphStore.ts` | **Edited** — extend `applyEvent` exhaustive switch for 11 new variants |
+| `crates/runtime-main/src/plan/state_machine.rs` | **New** — Plan/Task FSM per spec §3a (≥95% safety primitive) |
+| `crates/runtime-main/src/sdk/prompt_template.rs` | **New** — folded-A3 structured-emitter prompt template module |
+| `crates/runtime-main/src/sdk/decision_extractor.rs` | **Edited (rewrite)** — replace M02 heuristic with regex-based structured emitter for `<<DECISION>>...<<END>>` |
+| `crates/runtime-main/src/sdk/event_pipeline.rs` | **Edited** — emit `DroneCommand::WriteSignal` at signal-write call-site; folded-A3 |
+| `crates/runtime-main/src/sdk/agent_sdk.rs` (or `mod.rs`) | **Edited** — wire state machine into SDK event loop; failure-escalation logic; structured-emitter prompt-template plumbing |
+| `crates/runtime-drone/src/command_handler.rs` | **Edited** — add `WriteSignal` handler arm (calls `vdr::project_signal`); existing arms at lines 64+ stay |
+| `crates/runtime-drone/migrations/001_plans_tasks.sql` | **New** — first migration file; creates the `migrations/` directory (currently does not exist) |
+| `src/lib/graphStore.ts` | **Edited** — extend `applyEvent` exhaustive switch with 5 new cases |
+| `crates/runtime-main/tests/plan_lifecycle.rs` | **New** — integration test for plan-end-to-end flow |
 | `CHANGELOG.md` | **Edited** — `[Unreleased]` notes |
 
 ### B.3 Detailed Changes
@@ -1008,23 +1018,29 @@ Pre-flight: `<schema_drift_check>` on Stage A1 + A2 outputs must be clean before
 
 #### `crates/xtask/src/main.rs` — codegen list extension
 
-Add two entries to the existing codegen list (Stage A1 archetype):
-- `("plan", "schemas/plan.v1.json")` → `crates/runtime-core/src/plan.rs` + `src/types/plan.ts`
-- `("task", "schemas/task.v1.json")` → `crates/runtime-core/src/task.rs` + `src/types/task.ts`
+Add two entries to the existing 7-entry codegen list (post-A1: `["common", "framework", "skill", "tool", "agent", "event", "error"]` at line 45):
 
-Run `cargo xtask regenerate-types` to produce the generated files. Run `--check` to verify deterministic output.
-
-#### `schemas/event.v1.json` — 11 new event variants
-
-Locate the existing `oneOf` array of event variants. Append 11 new variants:
-
-```json
-{ "type": "object", "title": "plan_created", "properties": { "type": { "const": "plan_created" }, "plan_id": { "type": "string" }, "agent_id": { "type": "string" }, "timestamp": { "type": "integer" } }, "required": ["type", "plan_id", "agent_id", "timestamp"], "additionalProperties": false },
-{ "type": "object", "title": "plan_approval_requested", "properties": { "type": { "const": "plan_approval_requested" }, "plan_id": { "type": "string" }, "timestamp": { "type": "integer" } }, "required": ["type", "plan_id", "timestamp"], "additionalProperties": false },
-... (9 more, mirror per spec §3a event shapes)
+```rust
+let schemas = ["common", "framework", "skill", "tool", "agent", "event", "error", "plan", "task"];
 ```
 
-Field shapes per spec §3a Events subsection (lines 1349–1359 per M03.5 reference). Run `cargo xtask regenerate-types` to propagate to `event.rs` + `agent_event.ts`.
+Outputs land at `crates/runtime-core/src/generated/{plan,task}.rs` + `src/types/{plan,task}.ts` per the existing A1 archetype. Run `cargo xtask regenerate-types` to produce; run `--check` to verify deterministic output.
+
+#### `schemas/event.v1.json` — 5 missing spec event variants (audit-grounded)
+
+**Audit-grounded.** The existing `oneOf` already contains 8 plan/task variants (`PlanCreated`, `PlanApproved`, `PlanRejected`, `TaskStarted`, `TaskCompleted`, `TaskFailed`, `TaskRolledBack`, `TaskEscalated` — verified by `grep '"const":' schemas/event.v1.json`). Stage B adds the 5 spec-canonical variants missing from the schema:
+
+```json
+{ "type": "object", "title": "plan_approval_requested", "properties": { "type": { "const": "plan_approval_requested" }, "plan_id": { "type": "string" }, "timestamp": { "type": "integer" } }, "required": ["type", "plan_id", "timestamp"], "additionalProperties": false },
+{ "type": "object", "title": "plan_revised", "properties": { "type": { "const": "plan_revised" }, "plan_id": { "type": "string" }, "revision_reason": { "type": "string" }, "timestamp": { "type": "integer" } }, "required": ["type", "plan_id", "revision_reason", "timestamp"], "additionalProperties": false },
+{ "type": "object", "title": "plan_aborted", "properties": { "type": { "const": "plan_aborted" }, "plan_id": { "type": "string" }, "abort_reason": { "type": "string" }, "timestamp": { "type": "integer" } }, "required": ["type", "plan_id", "abort_reason", "timestamp"], "additionalProperties": false },
+{ "type": "object", "title": "plan_complete", "properties": { "type": { "const": "plan_complete" }, "plan_id": { "type": "string" }, "timestamp": { "type": "integer" } }, "required": ["type", "plan_id", "timestamp"], "additionalProperties": false },
+{ "type": "object", "title": "task_skipped", "properties": { "type": { "const": "task_skipped" }, "task_id": { "type": "string" }, "skip_reason": { "type": "string" }, "timestamp": { "type": "integer" } }, "required": ["type", "task_id", "skip_reason", "timestamp"], "additionalProperties": false }
+```
+
+Field shapes per spec §3a Events subsection. Run `cargo xtask regenerate-types` to propagate to the regen target (`event.rs` or `generated/event.rs` per A1 namespace strategy).
+
+**Disposition of 2 codebase-only extras (`PlanRejected`, `TaskRolledBack`):** keep both as additive variants. `PlanRejected` semantically distinct from `plan_aborted` (rejected = user declined at approval gate; aborted = in-progress plan stops). `TaskRolledBack` semantically distinct from `task_failed` (rolled back via verify hook revert; failed = task execution errored). Document both in the retrospective + propose a spec follow-up to canonicalize them.
 
 #### `crates/runtime-main/src/plan/state_machine.rs` — Plan/Task FSM
 
@@ -1049,38 +1065,129 @@ Locate the SDK's existing event-emit logic. Add plan-state hooks:
 
 Do not implement the orchestrator agent's prompt template here — that's framework-JSON territory (loaded via `examples/aria/framework.json`). The SDK provides the FSM + event emission + loop-policy machinery; framework JSON wires it.
 
-#### `crates/runtime-drone/migrations/00X_plans_tasks.sql` — DDL migration
+#### `crates/runtime-drone/migrations/001_plans_tasks.sql` — first migration file
 
-Author the SQL migration matching the M03.5 §10 spec DDL verbatim. The migration runner is the existing `crates/runtime-drone/src/db.rs::run_migrations` (M01.C). Verify migration version increment (`X` = next available).
+**Audit-grounded.** The `crates/runtime-drone/migrations/` directory does NOT yet exist (verified). Stage B's first migration creates the directory; version `001` (no existing-numbered-sequence to fit into).
 
-#### `src/lib/graphStore.ts` — applyEvent exhaustive switch
+Author the SQL migration matching the M03.5 §10 spec DDL verbatim. The migration runner is the existing `crates/runtime-drone/src/db.rs::run_migrations` (M01.C). Verify the runner correctly picks up files from `migrations/` (it currently looks for the directory; an absent directory is treated as zero migrations, which is fine for M03 but Stage B's run must succeed once the file exists).
 
-The `applyEvent(state, event)` function uses TS `switch (event.type)` over `AgentEvent['type']`. Adding 11 new variants triggers a `_exhaustive: never` compile error if any case is missing. Stage B implements the case bodies as **pass-through to graph state** (no UI rendering yet — Stage C lights up the visual surface):
+#### `crates/runtime-core/src/drone.rs` — `WriteSignal` IPC variant (folded-A3)
 
-- `plan_created`: insert a `PlanNode` placeholder into the graph state (no edges yet)
-- `plan_approval_requested`: mark the PlanNode as `awaiting_approval`
-- `plan_approved`: mark the PlanNode as `approved`; render becomes active
-- `task_started`: insert a `TaskNode` linked to the parent PlanNode
-- ... etc per spec §3a graph integration
+Locate the existing `pub enum DroneCommand` at line 152. The current variants are: `SnapshotNow`, `GracefulShutdown`, `SpawnProcess`, `StopProcess`, `SetActivityTimeout`, `RevertToSnapshot`, `QuerySessionDb`, `ReadSignals` (8 variants). Add a 9th:
 
-Stage C builds out the actual visual treatment + ApprovalPanel; Stage B's job is to ensure the store handles all 11 events without crashing or losing state.
+```rust
+WriteSignal {
+    signal_id: String,
+    session_id: String,
+    /// Decision-signal payload as serde-serialized JSON; drone-side handler
+    /// inserts into `signals` table then calls `vdr::project_signal`.
+    payload: String,
+},
+```
+
+The schema source (`schemas/drone.v1.json` if present, or `runtime-core` hand-curated `drone.rs` per `lib.rs:4-5`) gets updated correspondingly — `drone.rs` is hand-curated so this is a direct edit. Document the variant added in the retrospective.
+
+#### `crates/runtime-drone/src/command_handler.rs` — `WriteSignal` handler arm (folded-A3)
+
+The existing `pub async fn run` at this file has arms for `SnapshotNow`, `GracefulShutdown`, etc. — including `RevertToSnapshot` at line 64 (audit-confirmed). Add a new arm for `WriteSignal`:
+
+```rust
+DroneCommand::WriteSignal { signal_id, session_id, payload } => {
+    // Insert into signals table (existing M01.C pattern via db.rs)
+    db::insert_signal(&conn, &signal_id, &session_id, &payload).await?;
+    // Project to VDR; non-fatal failure per spec §2b separation of concerns
+    if let Err(e) = vdr::project_signal(&conn, &signal_id) {
+        tracing::warn!(signal_id = %signal_id, error = ?e, "vdr projection failed");
+    }
+    Ok(DroneEvent::SignalLog { signal_id })
+}
+```
+
+`vdr::project_signal` lives at `crates/runtime-drone/src/vdr.rs:50` (audit-confirmed). The handler returns `DroneEvent::SignalLog` (existing variant) so main-side tracking is unchanged.
+
+#### `crates/runtime-main/src/sdk/event_pipeline.rs` — main-side WriteSignal emission (folded-A3)
+
+Locate the existing decision-signal write path. Replace direct rusqlite calls (or stubs from M02/M03) with `DroneCommand::WriteSignal` emission via the `DroneClient` from Stage A2's managed state:
+
+```rust
+let cmd = DroneCommand::WriteSignal {
+    signal_id: signal.id.clone(),
+    session_id: ctx.session_id.clone(),
+    payload: serde_json::to_string(&signal)?,
+};
+client.send_command(cmd).await?;
+```
+
+Non-blocking: a drone-side projection failure logs but does not fail the signal write per the handler arm above + spec §2b.
+
+#### `crates/runtime-main/src/sdk/decision_extractor.rs` — structured emitter (folded-A3)
+
+Replace the M02 line-by-line heuristic at this file with regex-based delimited-block extraction. Pattern:
+
+```rust
+// Match the structured-decision block injected by the prompt template:
+// <<DECISION>>
+// {
+//   "type": "...",
+//   "subject": "...",
+//   "rationale": "..."
+// }
+// <<END>>
+static DECISION_BLOCK: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?s)<<DECISION>>\s*(\{.*?\})\s*<<END>>").unwrap()
+});
+
+pub fn extract_decisions(text: &str) -> Vec<Decision> {
+    DECISION_BLOCK
+        .captures_iter(text)
+        .filter_map(|cap| serde_json::from_str::<Decision>(&cap[1]).ok())
+        .collect()
+}
+```
+
+Note the `(?s)` flag (DOTALL mode) so the regex can match multi-line JSON inside the delimiters.
+
+Unit tests: round-trip a known decision through the regex; multi-decision text; malformed-JSON tolerance (skip + log, do not error); no-decision text returns empty.
+
+#### `crates/runtime-main/src/sdk/prompt_template.rs` — new module (folded-A3)
+
+New module exposing `build_system_prompt(base_prompt: &str, decision_format: &str) -> String` that injects the `<<DECISION>>...<<END>>` format instructions into the system prompt. Called by `agent_sdk.rs` when the SDK builds the agent's initial system message.
+
+The format-instruction text is verbatim per the M03.5 spec §2b ⚠️ note (do NOT alter the delimiter format without a paired spec edit).
+
+#### `src/lib/graphStore.ts` — applyEvent exhaustive switch (5 new cases)
+
+The `applyEvent(state, event)` function already has cases for the 8 existing plan/task variants (verified). Stage B adds 5 new cases for the spec-missing variants:
+
+- `plan_approval_requested`: mark the existing PlanNode (created by the prior `plan_created` case) as `awaiting_approval`
+- `plan_revised`: bump the PlanNode's `revision_count`; render side-effect lands in Stage C
+- `plan_aborted`: mark the PlanNode as `aborted`; cascade to all child TaskNodes that aren't terminal
+- `plan_complete`: mark the PlanNode as `complete`
+- `task_skipped`: mark the TaskNode as `skipped`
+
+Stage B implements the case bodies as **pass-through to graph state** (no visual treatment yet — Stage C lights up the surface). The 8 existing cases are NOT touched. The `_exhaustive: never` discriminator ensures the compiler enforces all 5 are handled.
 
 ### B.4 Tests
 
 #### Pedantic-pass preflight
 
-Apply per `docs/gotchas.md` #21 to the new modules: `plan/state_machine.rs`, `plan/mod.rs`, generated files exempt.
+Apply per `docs/gotchas.md` #21 to the new modules: `plan/state_machine.rs`, `plan/mod.rs`, `prompt_template.rs`. Generated files exempt.
 
 #### Test files
 
 - `crates/runtime-main/src/plan/state_machine.rs` — unit tests for legal/illegal transitions; failure-escalation boundary; plan-status invariants
-- `crates/runtime-main/tests/plan_lifecycle.rs` (new integration test) — full plan flow: orchestrator emits `plan_created` → approval requested → approved (manual shim) → 3 tasks executed → `plan_complete`; SQLite assertions after each phase
-- `tests/unit/graphStore.test.ts` (extended) — applyEvent exhaustive coverage for all 11 new variants; state assertions
+- `crates/runtime-main/src/sdk/decision_extractor.rs` — unit tests for structured-emitter regex (round-trip; multi-decision text; malformed-JSON tolerance; no-decision returns empty)
+- `crates/runtime-main/src/sdk/prompt_template.rs` — unit tests for system-prompt builder
+- `crates/runtime-main/tests/plan_lifecycle.rs` (new integration test) — full plan flow: orchestrator emits `plan_created` → approval requested → approved (manual shim) → 3 tasks executed → `plan_complete`; SQLite assertions after each phase via the new `WriteSignal` IPC path; verifies `vdr` table populated drone-side
+- `crates/runtime-drone/src/command_handler.rs` — extended unit tests for the new `WriteSignal` arm (calls vdr; non-fatal projection failure; signal inserted regardless)
+- `tests/unit/graphStore.test.ts` (extended) — applyEvent exhaustive coverage for the 5 new variants; state assertions; existing 8 variants unchanged
 
 #### Coverage target
 
 - `crates/runtime-main/src/plan/state_machine.rs` ≥95% (safety primitive per CLAUDE.md §5)
+- `crates/runtime-main/src/sdk/decision_extractor.rs` ≥95% (structured emitter; pure-logic, easy to fully cover)
 - `crates/runtime-main` ≥95% maintained
+- `crates/runtime-drone` ≥95% maintained (new `WriteSignal` arm + `vdr::project_signal` integration testable via the existing seam pattern)
 - workspace ≥80% maintained
 - Generated files excluded via existing regex
 
@@ -1089,34 +1196,49 @@ Apply per `docs/gotchas.md` #21 to the new modules: `plan/state_machine.rs`, `pl
 ```xml
 <work_stage_prompt id="M04.B">
   <context>
-    Stage B of M04. §3a Plan & Task primitive — schemas + types + 11 new events + state machine + fresh_context_per_task loop policy + failure escalation + SQLite persistence + approval-gate seam. Largest deliverable in M04 by file count + LOC. Stage A2's commit must be on the milestone branch claude/m04-plan-verify-hitl-budget. Plan state machine is a NEW safety primitive subject to ≥95% coverage gate.
+    Stage B of M04. §3a Plan & Task primitive — largest deliverable in M04 by file count + LOC. Audit-grounded scope: author 5 missing spec event variants (`plan_approval_requested`, `plan_revised`, `plan_aborted`, `plan_complete`, `task_skipped` — currently absent from `schemas/event.v1.json` + `crates/runtime-core/src/event.rs`); WIRE the 6 spec-canonical variants already in `event.rs` (`PlanCreated:141`, `PlanApproved:148`, `TaskStarted:160`, `TaskCompleted:169`, `TaskFailed:178`, `TaskEscalated:198`) into the new state machine — do NOT re-author them; document disposition of the 2 codebase-only extras NOT in spec (`PlanRejected:153`, `TaskRolledBack:189`) in the retrospective. Plus: `plan.v1.json` + `task.v1.json` schemas, plan/task FSM (≥95% safety primitive), `fresh_context_per_task` loop policy, failure escalation (`max_failures = 3`), plans + tasks SQLite tables (first migration creates the `crates/runtime-drone/migrations/` directory which does not yet exist), approval-gate seam exposed for Stage E. **Folds the original-A3 work** per audit re-staging: WriteSignal IPC variant on `DroneCommand` enum at `crates/runtime-core/src/drone.rs:152+` + drone-side handler arm at `crates/runtime-drone/src/command_handler.rs` (existing arms include `RevertToSnapshot:64`) calling `vdr::project_signal` at `crates/runtime-drone/src/vdr.rs:50` + main-side emission path at `crates/runtime-main/src/sdk/event_pipeline.rs`; structured-emitter prompt-template module replacing M02 heuristic in `crates/runtime-main/src/sdk/decision_extractor.rs` (per spec §2b ⚠️ note — `<<DECISION>>...<<END>>` delimiter format); new `crates/runtime-main/src/sdk/prompt_template.rs` module + AgentSdk plumbing. Stage A2's commit must be on the milestone branch claude/m04-plan-verify-hitl-budget. Plan state machine is a NEW safety primitive subject to ≥95% coverage gate.
   </context>
 
   <pre_flight_check>
     <check name="branch_correct">git rev-parse --abbrev-ref HEAD must equal claude/m04-plan-verify-hitl-budget</check>
     <check name="prior_stage_committed">git log --oneline -1 must show "M04 Stage A2" subject</check>
-    <check name="a1_a2_artifacts_present">Test-Path crates/runtime-core/src/error.rs (A1) AND grep -q "DroneLifecycle" src-tauri/src/drone_lifecycle.rs (A2) must succeed</check>
-    <check name="schemas_drift_clean">cargo xtask regenerate-types --check exit 0 (A1+A2 codegen state durable)</check>
+    <check name="prior_retrospective_staged">git log -1 --name-only must include docs/build-prompts/retrospectives/M04.A2-retrospective.md (per M03.5.B retro [END] decision)</check>
+    <check name="a1_artifacts_present">Test-Path crates/runtime-core/src/generated/error.rs AND Test-Path src/types/error.ts (A1 deliverables; path under generated/ NOT top-level since top-level error.rs is hand-curated RuntimeError)</check>
+    <check name="a2_drone_lifecycle_present">Test-Path src-tauri/src/drone_lifecycle.rs (A2 deliverable; sibling of main.rs, NOT under lib.rs which doesn't exist)</check>
+    <check name="a2_arc_droneclient_managed">grep -q "manage(.*DroneClient\|manage(.*Arc" src-tauri/src/main.rs (A2 deliverable; Stage B's plan-lifecycle integration test consumes this state)</check>
+    <check name="a2_count_tokens_real">grep -q "messages/count_tokens" crates/runtime-main/src/providers/anthropic.rs (A2 deliverable; budget calculations downstream require)</check>
+    <check name="schemas_drift_clean">cargo xtask regenerate-types --check exit 0 (A1+A2 codegen state durable; Stage B regenerate is over the same baseline)</check>
+    <check name="audit_baseline_event_inventory">grep '"const":' schemas/event.v1.json | grep -E "plan_|task_" | wc -l must equal 8 (audit baseline; Stage B adds 5 new = 13 total post-implement; if not 8 the codebase has drifted between authoring and execution and Stage B's plan needs revisiting)</check>
+    <check name="audit_baseline_no_writesignal">! grep -q "WriteSignal" crates/runtime-core/src/drone.rs (audit baseline; Stage B adds the variant)</check>
+    <check name="audit_baseline_no_migrations_dir">! Test-Path crates/runtime-drone/migrations (audit baseline; Stage B's first migration creates it)</check>
+    <check name="audit_baseline_no_plan_module">! Test-Path crates/runtime-main/src/plan (audit baseline; Stage B creates it)</check>
+    <check name="vdr_in_drone">Test-Path crates/runtime-drone/src/vdr.rs (the drone-side projector Stage B's WriteSignal handler calls)</check>
   </pre_flight_check>
 
   <read_first>
     <file>CLAUDE.md</file>
     <file>STAGE-PROMPT-PROTOCOL.md</file>
     <file>docs/build-prompts/M04-plan-verify-hitl-budget.md (Stage B sections B.1–B.4)</file>
-    <file>agent-runtime-spec.md §3a (full section, especially Data types + Events + Approval-gate primitive + Loop policy primitive + Failure escalation + Graph integration + Framework JSON), §10 (plans/tasks DDL added M03.5)</file>
+    <file>agent-runtime-spec.md §3a (full section, especially Data types + Events + Approval-gate primitive + Loop policy primitive + Failure escalation + Graph integration + Framework JSON), §10 (plans/tasks DDL added M03.5), §2b (signals + structured-emitter delimiter format ⚠️ note)</file>
     <file>docs/MVP-v0.1.md §M4</file>
-    <file>docs/gotchas.md (especially #14 snake_case discipline; #34 fmt-first; #36 synthetic-state inversion — Stage B starts the live-event path so the inversion no longer applies)</file>
-    <file>docs/build-prompts/retrospectives/M04.A1-retrospective.md</file>
-    <file>docs/build-prompts/retrospectives/M04.A2-retrospective.md (apply [END] Decisions)</file>
+    <file>docs/gotchas.md (especially #14 snake_case discipline; #34 fmt-first; #36 synthetic-state inversion — Stage B starts the live-event path so the inversion no longer applies; #41 grep-verify-claims)</file>
+    <file>docs/build-prompts/retrospectives/M04.A1-retrospective.md (apply [END] Decisions, especially A1 namespace strategy outcome — affects how Stage B's regenerate paths land)</file>
+    <file>docs/build-prompts/retrospectives/M04.A2-retrospective.md (apply [END] Decisions, especially the A1 strategy applied to commands.rs + the long-lived events() reconnect outcome)</file>
   </read_first>
 
   <read_reference>
-    <file purpose="xtask codegen archetype Stage A1 established">crates/xtask/src/main.rs</file>
-    <file purpose="existing schemas archetype to mirror for plan + task schema authoring">schemas/event.v1.json</file>
-    <file purpose="existing FSM/state-machine archetype if any in runtime-main; otherwise spec §3a is the contract">crates/runtime-main/src</file>
-    <file purpose="db.rs migration runner archetype">crates/runtime-drone/src/db.rs</file>
-    <file purpose="graphStore applyEvent archetype Stage M03.B established">src/lib/graphStore.ts</file>
-    <file purpose="renderer event-translation pipeline that propagates new event variants">crates/runtime-main/src/sdk/event_translation.rs</file>
+    <file purpose="xtask codegen archetype Stage A1 established at line 45; Stage B extends to 9 schemas">crates/xtask/src/main.rs</file>
+    <file purpose="existing schemas archetype to mirror for plan + task schema authoring; verify $id base URL convention before writing new schemas">schemas/event.v1.json</file>
+    <file purpose="hand-curated event variants — 8 plan/task already present (6 spec + 2 extras); Stage B WIRES not re-authors">crates/runtime-core/src/event.rs</file>
+    <file purpose="hand-curated DroneCommand enum at line 152+; Stage B adds WriteSignal as new variant">crates/runtime-core/src/drone.rs</file>
+    <file purpose="db.rs migration runner archetype; Stage B's first migration file lands under new migrations/ directory">crates/runtime-drone/src/db.rs</file>
+    <file purpose="existing command-handler arms (including RevertToSnapshot at line 64); Stage B adds WriteSignal arm">crates/runtime-drone/src/command_handler.rs</file>
+    <file purpose="vdr::project_signal at line 50; Stage B's WriteSignal handler calls this">crates/runtime-drone/src/vdr.rs</file>
+    <file purpose="actual event-translation pipeline (NOT phantom event_translation.rs); Stage B emits DroneCommand::WriteSignal from here">crates/runtime-main/src/sdk/event_pipeline.rs</file>
+    <file purpose="M02 heuristic decision extractor; Stage B replaces with regex on `&lt;&lt;DECISION&gt;&gt;...&lt;&lt;END&gt;&gt;` per spec §2b">crates/runtime-main/src/sdk/decision_extractor.rs</file>
+    <file purpose="AgentSdk where the structured-emitter prompt-template plumbing lands">crates/runtime-main/src/sdk/agent_sdk.rs</file>
+    <file purpose="graphStore applyEvent archetype with 8 existing plan/task cases; Stage B adds 5 new cases">src/lib/graphStore.ts</file>
+    <file purpose="if the A1 namespace strategy renamed the existing error.rs (option a), this provides the archetype for the plan/task generated paths">crates/runtime-core/src/lib.rs</file>
   </read_reference>
 
   <read_prior_stages>
@@ -1146,38 +1268,57 @@ Apply per `docs/gotchas.md` #21 to the new modules: `plan/state_machine.rs`, `pl
 
   <schema_drift_check gate="cargo xtask regenerate-types --check"/>
 
-  <runtime_environment os="windows" note="Build agent on Windows 11; Test-Path replaces test -f; named pipe paths differ from Unix sockets in any drone-IPC test"/>
+  <fan_out_grep>
+    <grep pattern="AgentEvent::" purpose="exhaustive matches that must add 5 new arms (plan_approval_requested, plan_revised, plan_aborted, plan_complete, task_skipped); existing 8 plan/task arms stay"/>
+    <grep pattern="case 'plan_\|case 'task_\|case &quot;plan_\|case &quot;task_" purpose="graphStore exhaustive switch must add 5 new cases without breaking the 8 existing"/>
+    <grep pattern="DroneCommand::" purpose="exhaustive matches; WriteSignal IPC variant adds a new arm; existing 8 arms stay"/>
+    <grep pattern="&quot;\$id&quot;" purpose="confirm schema $id base URL convention before authoring plan.v1.json + task.v1.json (M03.5.A retro: https://schemas.aria-runtime.dev/&lt;name&gt;.v1.json)"/>
+  </fan_out_grep>
+
+  <runtime_environment os="windows" note="Build agent on Windows 11; Test-Path replaces test -f; named pipe paths differ from Unix sockets in any drone-IPC test; PowerShell-via-bash discipline applies"/>
 
   <gotchas>
+    <trap>AUDIT-GROUNDED EVENT INVENTORY: 6 spec-canonical plan/task variants ALREADY exist in event.rs (PlanCreated, PlanApproved, TaskStarted, TaskCompleted, TaskFailed, TaskEscalated). Stage B WIRES these into the state machine — do NOT re-author them. The 5 NEW variants Stage B adds are the spec-missing ones (plan_approval_requested, plan_revised, plan_aborted, plan_complete, task_skipped). The 2 codebase-only extras (PlanRejected, TaskRolledBack) stay; document disposition in retrospective.</trap>
+    <trap>FOLDED-A3 WORK: vdr WriteSignal IPC + structured emitter are Stage B's territory per audit re-staging (NOT Stage A2's). DroneCommand::WriteSignal is a NEW variant on the enum; the drone-side handler arm calls vdr::project_signal at runtime-drone/src/vdr.rs:50 (vdr lives in drone, NOT main; runtime-main has no rusqlite dep). Structured-emitter delimiter format (`&lt;&lt;DECISION&gt;&gt;...&lt;&lt;END&gt;&gt;`) is verbatim per spec §2b ⚠️ note — do NOT change without paired spec edit.</trap>
     <trap>v0.1 hardcodes STANDARD mode + fresh_context_per_task — schemas declare 3 loop policies but only fresh_context_per_task is lit; the `one_shot` and `continuous` variants in the schema are spec-prep, not v0.1 implementation. Stage B's loop-policy seam returns NotImplemented for the other two.</trap>
-    <trap>plan.v1.json $id MUST follow https://schemas.aria-runtime.dev/<name>.v1.json pattern (M03.5.A retro decision). Verify against existing schemas BEFORE authoring.</trap>
-    <trap>11 new event variants in event.v1.json — the renderer's graphStore.applyEvent exhaustive switch will fail to compile if any case is missing. This is the forcing function (gotcha #36 _exhaustive: never); rely on the compiler to catch missing cases rather than running tests.</trap>
+    <trap>plan.v1.json + task.v1.json $id MUST follow https://schemas.aria-runtime.dev/&lt;name&gt;.v1.json pattern (M03.5.A retro decision; verified by `&lt;fan_out_grep pattern='&quot;$id&quot;'/&gt;` above against existing schemas BEFORE authoring).</trap>
+    <trap>5 new event variants in event.v1.json — the renderer's graphStore.applyEvent exhaustive switch will fail to compile if any case is missing. This is the forcing function (gotcha #36 _exhaustive: never); rely on the compiler. Existing 8 cases stay; do NOT touch them.</trap>
     <trap>Plan state machine is a SAFETY PRIMITIVE — coverage gate ≥95%. Document any exclusions inline (likely none — pure-logic module). Per CLAUDE.md §5 + M01.C precedent.</trap>
     <trap>Approval-gate seam (Stage B's deliverable) must be the channel/oneshot the SDK awaits on, NOT the HITL UI itself (Stage E). Stage B's SDK code calls `approval_seam.await_approval(plan_id).await?` and Stage E wires the seam to the HITL flow. Do NOT implement the HITL UI in Stage B.</trap>
-    <trap>fresh_context_per_task implementation — clearing the agent's `messages` vec mid-session must NOT clear the SDK's plan-state. Plan state lives in the SDK + SQLite, NOT in the agent's message history.</trap>
+    <trap>fresh_context_per_task implementation — clearing the agent's `messages` vec mid-session must NOT clear the SDK's plan-state. Plan state lives in the SDK + SQLite (drone-side), NOT in the agent's message history.</trap>
+    <trap>migrations/ directory does NOT exist yet (audit-confirmed). Stage B's migration is the first; version `001`. The db.rs::run_migrations runner currently treats absent dir as zero migrations — Stage B's run is the first non-zero invocation.</trap>
+    <trap>WriteSignal IPC payload field shape — `payload: String` (serde-serialized JSON) is the natural shape since `runtime-main` doesn't have rusqlite for direct typed insertion. Drone-side handler deserializes if needed for typed inserts. Document the shape choice in retro.</trap>
+    <trap>Per gotcha #41 (grep-verify-claims): every codebase-state claim in this stage's deliverable section is verified against end-of-A2 reality via &lt;pre_flight_check&gt;. If verifications fail (codebase drifted between A2 commit and Stage B execution), surface before proceeding.</trap>
   </gotchas>
 
   <execution_warnings>
-    <warning>DO NOT implement the orchestrator agent's prompt template — that's framework-JSON territory (loaded from examples/aria/framework.json at session start). Stage B provides the SDK machinery (state machine + event emission + loop policy + failure escalation); framework JSON wires the orchestrator.</warning>
+    <warning>DO NOT implement the orchestrator agent's prompt template — that's framework-JSON territory (loaded from examples/aria/framework.json at session start). Stage B provides the SDK machinery (state machine + event emission + loop policy + failure escalation + structured-emitter regex); framework JSON wires the orchestrator.</warning>
     <warning>DO NOT wire the renderer's PlanNode/TaskNode to active visual treatment — Stage B's graphStore changes are pass-through state updates only. Stage C builds the visual surface + ApprovalPanel.</warning>
-    <warning>DO NOT push between stages.</warning>
+    <warning>DO NOT touch the existing 8 plan/task variants in event.rs or event.v1.json — Stage B's regen target adds only the 5 missing spec variants. The 2 codebase-only extras (PlanRejected, TaskRolledBack) stay; do NOT remove or rename.</warning>
+    <warning>DO NOT change the structured-emitter delimiter format (`&lt;&lt;DECISION&gt;&gt;...&lt;&lt;END&gt;&gt;`) without a paired edit to spec §2b ⚠️ note — surface as a design call rather than silently changing.</warning>
+    <warning>DO NOT push between stages — Stage B commits locally only.</warning>
+    <warning>Stage B's commit MUST include docs/build-prompts/retrospectives/M04.B-retrospective.md in the staged files.</warning>
   </execution_warnings>
 
-  <time_box estimate_hours="5"/>
+  <time_box estimate_hours="6"/>
 
   <retrospective_requirements ref="docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md" section="M[NN].&lt;X&gt; — Stage Retrospective">
-    <special_log>Decisions for Stage C: which plan-state fields the renderer's PlanNode actually needs to render (likely subset of the full Plan struct — token-spend, status badge, task count); whether the approval-gate seam exposed in Stage B requires renderer-side state reflection (likely yes — the ApprovalPanel needs the plan + risks + hitl_checkpoints); whether _exhaustive: never caught all 11 new event variants in graphStore (forcing function discipline); plan state machine coverage % achieved + any holdouts.</special_log>
+    <special_log>Decisions for Stage C: which plan-state fields the renderer's PlanNode actually needs to render (likely subset of the full Plan struct — token-spend, status badge, task count); whether the approval-gate seam exposed in Stage B requires renderer-side state reflection (likely yes — the ApprovalPanel needs the plan + risks + hitl_checkpoints); whether _exhaustive: never caught all 5 new event variants in graphStore (forcing function discipline); plan state machine coverage % achieved + any holdouts; disposition of PlanRejected + TaskRolledBack codebase extras (kept additive? renamed? removed via spec follow-up?); WriteSignal payload field shape decision (String JSON vs typed enum); structured-emitter regex DOTALL flag handling.</special_log>
   </retrospective_requirements>
 
   <commit_protocol ref="CLAUDE.md" section="8. PR + commit workflow (CRITICAL — read carefully)"/>
   <commit_message ref="docs/build-prompts/M04-plan-verify-hitl-budget.md" section="B.6 Commit Message"/>
 
   <approval_surface>
-    <item>diff stat (git diff --stat HEAD)</item>
-    <item>gate results (each gate, pass/fail; plan state machine coverage % must be ≥95)</item>
-    <item>schema drift check exit 0</item>
-    <item>generated file shape preview — first 30 lines of crates/runtime-core/src/plan.rs + plan.ts</item>
-    <item>plan_lifecycle.rs integration test outcome — full 3-task plan flow end-to-end</item>
+    <item>diff stat (git diff --stat HEAD) including M04.B-retrospective.md in staged set</item>
+    <item>gate results (each gate, pass/fail; plan state machine coverage % must be ≥95; runtime-drone ≥95% maintained with WriteSignal arm covered)</item>
+    <item>schema drift check exit 0 (regenerated 9 schemas: existing 7 from A1 + new plan + task)</item>
+    <item>fan_out_grep results — AgentEvent::/case 'plan_*'/case 'task_*' counts before vs after; expected: 8 existing → 13 (5 added)</item>
+    <item>WriteSignal IPC integration verification — drone handler arm exists; main-side emission at event_pipeline.rs replaces direct rusqlite (or stub); plan_lifecycle.rs integration test confirms `vdr` table populated after each Decision signal</item>
+    <item>generated file shape preview — first 30 lines of crates/runtime-core/src/generated/plan.rs + plan.ts</item>
+    <item>plan_lifecycle.rs integration test outcome — full 3-task plan flow end-to-end; SQLite assertions per phase</item>
+    <item>structured-emitter unit test outcome — round-trip + multi-decision + malformed-JSON + no-decision cases all pass</item>
+    <item>disposition decisions for PlanRejected + TaskRolledBack codebase extras (kept additive / renamed / removed)</item>
     <item>retrospective with [END] decisions for Stage C</item>
     <item>draft commit message from B.6 (filled with session URL)</item>
     <item>"Stage M04.B is ready. I will not commit until you approve."</item>
@@ -1189,53 +1330,96 @@ Apply per `docs/gotchas.md` #21 to the new modules: `plan/state_machine.rs`, `pl
 
 ```bash
 git commit -s -m "$(cat <<'EOF'
-feat(runtime): M04 Stage B — §3a Plan & Task primitive (schemas + types + state machine + persistence)
+feat(runtime): M04 Stage B — §3a Plan & Task primitive + folded-A3 work
 
-Builds the §3a Plan & Task primitive end-to-end. Largest single
-deliverable in M04 by file count + LOC. Plan state machine is a new
-safety primitive at ≥95% coverage per CLAUDE.md §5.
+Builds the §3a Plan & Task primitive end-to-end + folds the original-A3
+work (WriteSignal IPC + structured emitter) per the post-M03.5 audit
+re-staging. Plan state machine is a new safety primitive at ≥95%
+coverage per CLAUDE.md §5.
 
 New artifacts:
 - schemas/plan.v1.json + schemas/task.v1.json (JSON Schema 2020-12;
   $id follows https://schemas.aria-runtime.dev/<name>.v1.json
   convention per M03.5.A retro decision)
-- crates/runtime-core/src/plan.rs + task.rs (typify-generated)
+- crates/runtime-core/src/generated/plan.rs + generated/task.rs
+  (typify-generated; under generated/ per A1 convention — top-level
+  paths reserved for hand-curated modules per lib.rs:4-5)
 - src/types/plan.ts + task.ts (json-schema-to-typescript-generated)
 - crates/runtime-main/src/plan/state_machine.rs — Plan + Task FSM per
   spec §3a (legal transitions, illegal-transition errors, exhaustive
   transition matrix in unit tests; ≥95% coverage gate met)
 - crates/runtime-main/src/plan/mod.rs
-- crates/runtime-drone/migrations/00X_plans_tasks.sql — matches
-  spec §10 DDL added in M03.5
+- crates/runtime-main/src/sdk/prompt_template.rs (folded-A3) —
+  structured-emitter prompt-template module injects <<DECISION>>...
+  <<END>> format instructions per spec §2b ⚠️ note
+- crates/runtime-drone/migrations/001_plans_tasks.sql — first
+  migration file; creates the migrations/ directory which did not
+  yet exist (audit-confirmed); matches spec §10 DDL added M03.5
+- crates/runtime-main/tests/plan_lifecycle.rs — integration test for
+  plan-end-to-end flow (orchestrator emits plan_created → approval
+  requested → approved → 3 tasks executed → plan_complete; SQLite
+  assertions per phase via the new WriteSignal IPC path)
 
-Edits:
-- crates/xtask/src/main.rs: codegen list extended with plan + task
-- schemas/event.v1.json: 11 plan/task event variants added
-  (plan_created, plan_approval_requested, plan_approved, plan_revised,
-  plan_aborted, plan_complete, task_started, task_completed,
-  task_failed, task_skipped, task_escalated)
-- crates/runtime-core/src/event.rs + src/types/agent_event.ts:
-  regenerated with 11 new variants
-- crates/runtime-main/src/sdk/mod.rs: plan state machine wired into
-  SDK event loop; failure-escalation logic (failure_count >=
+Edits (audit-grounded):
+- crates/xtask/src/main.rs: codegen list extended from 7 entries
+  (post-A1) to 9 entries (adds plan + task)
+- schemas/event.v1.json: 5 missing spec event variants added
+  (plan_approval_requested, plan_revised, plan_aborted, plan_complete,
+  task_skipped). The 8 already-present plan/task variants stay; 6 are
+  spec-canonical (PlanCreated, PlanApproved, TaskStarted, TaskCompleted,
+  TaskFailed, TaskEscalated) and 2 are codebase-only extras
+  (PlanRejected — distinct from plan_aborted; TaskRolledBack —
+  distinct from task_failed). Disposition documented in retro.
+- crates/runtime-core/src/event.rs (or generated/event.rs per A1
+  namespace strategy): regenerated with 5 new variants; existing
+  variants unchanged
+- crates/runtime-core/src/drone.rs (folded-A3): WriteSignal { signal_id,
+  session_id, payload } variant added to DroneCommand enum at line
+  152+; enum grows from 8 to 9 variants
+- crates/runtime-drone/src/command_handler.rs (folded-A3): WriteSignal
+  handler arm added; calls vdr::project_signal at vdr.rs:50; non-fatal
+  projection failure logged via tracing::warn! per spec §2b
+- crates/runtime-main/src/sdk/event_pipeline.rs (folded-A3): main-side
+  emits DroneCommand::WriteSignal at signal-write call-site (replaces
+  direct rusqlite or M02 stub; runtime-main has no rusqlite dep)
+- crates/runtime-main/src/sdk/decision_extractor.rs (folded-A3): M02
+  line-by-line heuristic replaced with regex on <<DECISION>>(.*?)<<END>>
+  delimited blocks; (?s) DOTALL flag for multi-line JSON
+- crates/runtime-main/src/sdk/agent_sdk.rs: plan state machine wired
+  into SDK event loop; failure-escalation logic (failure_count >=
   max_failures triggers task_escalated); fresh_context_per_task loop
   policy (clears agent messages between tasks; preserves SDK plan
-  state in SQLite)
-- src/lib/graphStore.ts: applyEvent exhaustive switch handles all 11
-  new variants as pass-through state updates (Stage C builds visual
-  treatment); _exhaustive: never forcing function held
+  state in SQLite); structured-emitter prompt-template plumbing
+- src/types/agent_event.ts: regenerated with 5 new variants
+- src/lib/graphStore.ts: applyEvent exhaustive switch extended with
+  5 new cases as pass-through state updates (Stage C builds visual
+  treatment); _exhaustive: never forcing function held; existing 8
+  cases unchanged
 
 Approval-gate seam exposed (channel/oneshot the SDK awaits on); Stage E
 wires the seam to HITL UI.
+
+Carry-forward closures (folded from A2 deferrals into Stage B per audit
+re-staging):
+- M03 🟡 vdr.rs projector wired at signal-write call-site (via new
+  WriteSignal IPC variant + drone-side handler arm calling
+  vdr::project_signal; main-side emission at event_pipeline.rs)
+- M02 🟡 Decision extractor → structured emitter migration (regex on
+  <<DECISION>>...<<END>> delimited blocks per spec §2b ⚠️ note;
+  prompt-template module injects format instructions)
 
 v0.1 scope locks held: STANDARD mode hardcoded, fresh_context_per_task
 only (one_shot + continuous return NotImplemented), Novice + Promoted
 tiers only.
 
-Refs: M04-plan-verify-hitl-budget.md §B, spec §3a, MVP §M4
+Refs: M04-plan-verify-hitl-budget.md §B, spec §3a, §2b ⚠️, §10 (DDL),
+gap-analysis.md M03 + M02 entries 🟡 (2 carry-forward items closed via
+fold from A2)
 Retrospective: docs/build-prompts/retrospectives/M04.B-retrospective.md
 
 https://claude.ai/code
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -1248,11 +1432,6 @@ EOF
 
 ## Stage C — §3a Plan UI + ApprovalPanel + graph wiring (renderer surface for plan/task events)
 
-> **🔧 Audit corrections (post-M04.A2 audit, 2026-05-08).**
-> 1. **Add `<pre_flight_check>` for `Arc<DroneClient>` Tauri-managed-state** (Stage A2 wired it; Stages C/E/F all consume it). Verification: `Test-Path src-tauri/src/drone_lifecycle.rs` succeeds; `grep -q "manage(.*DroneClient" src-tauri/src/main.rs` returns a match.
-> 2. **Verify PlanNode/TaskNode synthetic-state assumption still holds** before authoring — the audit scope didn't deeply read the components, only confirmed they exist. If Stage B's revised wiring emitted state shapes that differ from M03.C synthetic fixtures, Stage C's tests need to follow the new state shape.
-> 3. Otherwise scope appears intact per audit.
-
 **WEBCHECK:** verify each URL against this stage's prompt body **before** the fresh session opens.
 
 - <https://reactflow.dev/api-reference/types/node> — confirm React Flow v12 Node + custom-node API for PlanNode/TaskNode visual upgrades unchanged from M03.B
@@ -1262,7 +1441,7 @@ EOF
 
 Stage B exposed the approval-gate seam (channel/oneshot the SDK awaits on); Stage C builds the renderer surface that resolves it.
 
-1. **Wire PlanNode + TaskNode to live event variants.** M03.B-C shipped the components with synthetic-state tests (gotcha #36); Stage B's graphStore now forwards 11 plan/task events through `applyEvent`. Stage C consumes those state updates: PlanNode shows status badge + task count + cumulative token spend; TaskNode shows status + HITL flag + failure_count when > 0. Per spec §3a Graph integration.
+1. **Wire PlanNode + TaskNode to live event variants.** M03.B-C shipped the components with synthetic-state tests (gotcha #36); Stage B's graphStore now forwards 13 plan/task events (8 already-shipped + 5 newly authored by Stage B) through `applyEvent`. Stage C consumes those state updates: PlanNode shows status badge + task count + cumulative token spend; TaskNode shows status + HITL flag + failure_count when > 0. Per spec §3a Graph integration. **Pre-flight verifies PlanNode/TaskNode synthetic-state assumption still holds** — the audit scope didn't deep-read the components, only confirmed they exist; if Stage B's wiring emitted state shapes that differ from M03.C synthetic fixtures, Stage C's tests follow the new shape.
 
 2. **Build ApprovalPanel.** When `plan_approval_requested` fires, the renderer surfaces an ApprovalPanel showing: plan title, description, risks, hitl_checkpoints, the full task list. User actions: Approve / Revise / Cancel. ARIA non-modal pattern (matches M03.D InspectorPanel discipline). Per spec §3a Approval-gate primitive.
 
@@ -1403,7 +1582,13 @@ Per gotcha #23, this is renderer-level Playwright (Vite dev server + module-mock
   <pre_flight_check>
     <check name="branch_correct">git rev-parse --abbrev-ref HEAD must equal claude/m04-plan-verify-hitl-budget</check>
     <check name="prior_stage_committed">git log --oneline -1 must show "M04 Stage B" subject</check>
-    <check name="plan_state_machine_present">Test-Path crates/runtime-main/src/plan/state_machine.rs must succeed</check>
+    <check name="prior_retrospective_staged">git log -1 --name-only must include docs/build-prompts/retrospectives/M04.B-retrospective.md</check>
+    <check name="plan_state_machine_present">Test-Path crates/runtime-main/src/plan/state_machine.rs (Stage B deliverable)</check>
+    <check name="plan_schema_present">Test-Path schemas/plan.v1.json AND Test-Path schemas/task.v1.json (Stage B deliverables)</check>
+    <check name="approval_seam_exposed">grep -q "approval_seam\|ApprovalSeam\|await_approval" crates/runtime-main/src/plan/mod.rs (Stage B's seam channel must exist; Stage C consumes via the new Tauri commands)</check>
+    <check name="arc_droneclient_managed">grep -q "manage(.*DroneClient\|manage(.*Arc" src-tauri/src/main.rs (A2 deliverable; Stage C's 3 new Tauri commands consume tauri::State&lt;'_, Arc&lt;DroneClient&gt;&gt;)</check>
+    <check name="plan_task_node_synthetic">Test-Path src/components/nodes/PlanNode.tsx AND Test-Path src/components/nodes/TaskNode.tsx (M03.C synthetic-state archetypes; Stage C drives live)</check>
+    <check name="schema_drift_clean">cargo xtask regenerate-types --check exit 0</check>
   </pre_flight_check>
 
   <read_first>
@@ -1411,18 +1596,20 @@ Per gotcha #23, this is renderer-level Playwright (Vite dev server + module-mock
     <file>STAGE-PROMPT-PROTOCOL.md</file>
     <file>docs/build-prompts/M04-plan-verify-hitl-budget.md (Stage C sections C.1–C.4)</file>
     <file>agent-runtime-spec.md §3 (Graph Behavior + Visual Design Principles + InspectorPanel layout), §3a (Approval-gate primitive + Graph integration)</file>
-    <file>docs/gotchas.md (especially #35 React Flow + happy-dom; #36 synthetic-state inversion now lifted; #37 trust TS narrowing)</file>
-    <file>docs/build-prompts/retrospectives/M04.B-retrospective.md (apply [END] Decisions)</file>
+    <file>docs/gotchas.md (especially #35 React Flow + happy-dom; #36 synthetic-state inversion now lifted; #37 trust TS narrowing; #41 grep-verify-claims)</file>
+    <file>docs/build-prompts/retrospectives/M04.B-retrospective.md (apply [END] Decisions, especially: which plan-state fields PlanNode actually needs to render; ApprovalPanel state-shape requirements; PlanRejected/TaskRolledBack disposition)</file>
   </read_first>
 
   <read_reference>
     <file purpose="M03.D InspectorPanel layout archetype + ARIA non-modal pattern + dismissal semantics">src/components/InspectorPanel.tsx</file>
-    <file purpose="existing PlanNode synthetic-state component to drive live">src/components/nodes/PlanNode.tsx</file>
+    <file purpose="existing PlanNode synthetic-state component to drive live (M03.C archetype; Stage B may have added pass-through state-update calls)">src/components/nodes/PlanNode.tsx</file>
     <file purpose="existing TaskNode synthetic-state component to drive live">src/components/nodes/TaskNode.tsx</file>
-    <file purpose="Tauri command archetype + error unwrap pattern">src-tauri/src/commands.rs</file>
-    <file purpose="renderer-side typed invoke wrapper archetype">src/lib/ipc.ts</file>
+    <file purpose="Tauri command archetype + Arc&lt;DroneClient&gt; managed-state pattern from A2; Stage C adds 3 new commands following same shape">src-tauri/src/commands.rs</file>
+    <file purpose="renderer-side typed invoke wrapper archetype with generated CmdError unwrap (A2 pattern)">src/lib/ipc.ts</file>
     <file purpose="Playwright renderer-level archetype with module-mocked Tauri">tests/e2e/smoke.spec.ts</file>
-    <file purpose="graphStore applyEvent extended in Stage B">src/lib/graphStore.ts</file>
+    <file purpose="graphStore applyEvent extended in Stage B with 5 new cases (5 missing spec variants); 8 existing plan/task cases unchanged">src/lib/graphStore.ts</file>
+    <file purpose="M03.D tokenScale.ts archetype for token-spend rendering on PlanNode (DO NOT reinvent the formula renderer-side; import the helper)">src/lib/tokenScale.ts</file>
+    <file purpose="Stage B's plan state machine + approval_seam — Stage C's 3 new Tauri commands resolve the seam via drone IPC">crates/runtime-main/src/plan/mod.rs</file>
   </read_reference>
 
   <read_prior_stages>
@@ -1455,16 +1642,26 @@ Per gotcha #23, this is renderer-level Playwright (Vite dev server + module-mock
 
   <gotchas>
     <trap>ApprovalPanel is NON-MODAL (aria-modal="false") — graph stays interactive underneath. Don't follow Modal pattern from gotcha-37 territory; mirror M03.D InspectorPanel.</trap>
-    <trap>Stage B's graphStore handles 11 new event variants as pass-through state. Stage C consumes the state — does NOT re-implement event handling. If a new visual treatment needs a new state field, add it to Stage B's graphStore (via an amendment commit pre-Stage-C if needed) rather than computing it renderer-side.</trap>
-    <trap>The 3 Tauri commands take user-typed strings (revisions + reason). Pass-through opaque per CLAUDE.md §8.security; do NOT parse/interpret the user input on the renderer side beyond length validation.</trap>
+    <trap>Stage B's graphStore handles 8 existing + 5 new plan/task event variants as pass-through state. Stage C consumes the state — does NOT re-implement event handling. If a new visual treatment needs a new state field, add it to Stage B's graphStore (via an amendment commit pre-Stage-C if needed) rather than computing it renderer-side.</trap>
+    <trap>The 3 new Tauri commands (approve_plan, revise_plan, abort_plan) take user-typed strings (revisions + reason). Pass-through opaque per CLAUDE.md §8.security; do NOT parse/interpret the user input on the renderer side beyond length validation. Drone-side validates length + sanitizes per existing string-handling pattern.</trap>
+    <trap>The 3 new Tauri commands consume `tauri::State&lt;'_, Arc&lt;DroneClient&gt;&gt;` registered by A2; do NOT re-spawn drone subprocesses or construct fresh DroneClient instances. The managed-state pattern A2 established is the only approved access path.</trap>
+    <trap>Drone-side IPC for the 3 new commands — Stage C extends the DroneCommand enum (in `crates/runtime-core/src/drone.rs`) with `ApprovePlan`, `RevisePlan`, `AbortPlan` variants that resolve Stage B's approval_seam. Each new variant grows the exhaustive match in `command_handler.rs` — fan-out grep `DroneCommand::` enumerates all matches.</trap>
     <trap>Playwright test uses module-mocked Tauri (renderer-level), NOT tauri-driver (still disabled per Key constraints). Reuse the M02.E test setup pattern.</trap>
     <trap>Token-spend on PlanNode reuses M03.D tokenScale.ts — DO NOT re-implement the formula renderer-side; import the helper.</trap>
+    <trap>Per gotcha #41 (grep-verify-claims): every codebase claim in this stage is verified against post-B reality via &lt;pre_flight_check&gt;. If verifications fail, surface drift before proceeding.</trap>
   </gotchas>
+
+  <fan_out_grep>
+    <grep pattern="DroneCommand::" purpose="exhaustive matches; Stage C's 3 new variants (ApprovePlan, RevisePlan, AbortPlan) extend the enum"/>
+    <grep pattern="invoke('approve_plan\|invoke('revise_plan\|invoke('abort_plan" purpose="renderer-side invoke calls; should be exactly 3 callsites (one per command); ipc.ts wrappers are the canonical entry"/>
+  </fan_out_grep>
 
   <execution_warnings>
     <warning>DO NOT touch the SDK approval seam (Stage B's deliverable) — Stage C only consumes its result via the event stream. The drone-side resolution of the seam happens via the 3 new IPC commands.</warning>
     <warning>DO NOT add new graph state fields without Stage B amendment — if Stage C needs them, surface and pause; the right fix is in Stage B's store.</warning>
+    <warning>DO NOT touch the existing 8 plan/task graphStore cases — Stage B authored 5 new cases as pass-through; Stage C drives them visual.</warning>
     <warning>DO NOT push between stages.</warning>
+    <warning>Stage C's commit MUST include docs/build-prompts/retrospectives/M04.C-retrospective.md in the staged files.</warning>
   </execution_warnings>
 
   <time_box estimate_hours="4"/>
@@ -1477,8 +1674,9 @@ Per gotcha #23, this is renderer-level Playwright (Vite dev server + module-mock
   <commit_message ref="docs/build-prompts/M04-plan-verify-hitl-budget.md" section="C.6 Commit Message"/>
 
   <approval_surface>
-    <item>diff stat (git diff --stat HEAD)</item>
-    <item>gate results (each gate, pass/fail; src/ coverage maintained)</item>
+    <item>diff stat (git diff --stat HEAD) including M04.C-retrospective.md in staged set</item>
+    <item>gate results (each gate, pass/fail; src/ coverage maintained ≥80%; runtime-main + runtime-drone ≥95% with 3 new IPC arms covered)</item>
+    <item>fan_out_grep results — DroneCommand:: + invoke('approve_plan/etc count verification</item>
     <item>Playwright plan_approval.spec.ts pass result</item>
     <item>screenshot or DOM snapshot of ApprovalPanel rendered with a sample plan</item>
     <item>retrospective with [END] decisions for Stage D</item>
@@ -1541,16 +1739,7 @@ EOF
 <!-- STAGE D — §4a Verify & Rails primitive                         -->
 <!-- ============================================================ -->
 
-## Stage D — §4a Verify & Rails primitive (hooks + rails + don't-touch; consume existing RevertToSnapshot)
-
-> **🔧 Audit corrections (post-M04.A2 audit, 2026-05-08).** Apply these to the X.2/X.3 sections below.
-> 1. **Event names already exist as `verify_started/passed/failed` + `rail_triggered`** in `crates/runtime-core/src/event.rs` and `schemas/event.v1.json` (audit-confirmed). The original Phase doc planned new `hook_started/passed/failed` events — adopt the existing `verify_*` names instead. The Hook *primitive* (HookRef + HookCategory + Hook in `hook.v1.json`) keeps the "hook" terminology where appropriate (the framework-config primitive that fires the events); the *event variants* stay as `verify_*` per codebase convention.
-> 2. **`RevertToSnapshot` already exists in `crates/runtime-core/src/drone.rs::DroneCommand`** with the correct `RevertReason` enum (`HookRollback`, `UserRollback`, `GapRecovery`) (audit-confirmed). Stage D consumes the existing variant — does NOT re-add it. Verify the `RevertReason` enum shape matches spec §4a + Stage D's needs; if any variant is missing, that's an additive edit, not a rebuild.
-> 3. **`pre_file_edit` is the genuinely-new firing point** — verify spec §4a firing-point table currently lists 6 firing points; Stage D's `hook.v1.json` adds the 7th. Spec text edit either lands in-stage (if <5 lines) or as a follow-up doc PR per retro decision.
-> 4. **Add `<pre_flight_check>` for `Arc<DroneClient>` Tauri-managed-state** (consumed via `RevertToSnapshot` IPC dispatch).
-> 5. Hook executor (shell|tool|agent variants), Rails (hard/soft + JSONLogic), don't-touch glob matcher are all genuinely new per the audit.
->
-> Net: Stage D scope is moderately smaller than original — events done, drone command done. Hook primitive + Rails + don't-touch + pre_file_edit firing point + cross-platform shell wrapper are still substantial new work.
+## Stage D — §4a Verify & Rails primitive (hooks + rails + don't-touch; consume existing verify_* events + RevertToSnapshot)
 
 **WEBCHECK:** verify each URL against this stage's prompt body **before** the fresh session opens.
 
@@ -1561,55 +1750,65 @@ EOF
 
 ### D.1 Problem Statement
 
-§4a Verify & Rails is the second-largest M04 deliverable. Spec §4a locks the primitives (Hook + HookRef + HookCategory + 7 firing points + Rails hard/soft + don't-touch + revert_to_snapshot drone command); Stage D builds them.
+§4a Verify & Rails is a major M04 deliverable. Spec §4a locks the primitives (Hook + HookRef + HookCategory + 7 firing points + Rails hard/soft + don't-touch); Stage D builds them. **Audit-grounded scope:** the 4 verify+rails event variants (`VerifyStarted`, `VerifyPassed`, `VerifyFailed`, `RailTriggered`) ALREADY exist in `crates/runtime-core/src/event.rs:220–248` and `schemas/event.v1.json` — Stage D WIRES them to the new Hook executor + Rails evaluator (does NOT re-author or rename them as `hook_*`). The `RevertToSnapshot` drone command + `RevertReason` enum + handler arm at `crates/runtime-drone/src/command_handler.rs:64` ALREADY exist in `crates/runtime-core/src/drone.rs:183, :266` — Stage D CONSUMES them (does NOT re-add). The genuinely-new work: Hook primitive, Rails primitive, don't-touch glob matcher, `pre_file_edit` firing point, cross-platform shell wrapper.
 
 1. **Hook primitive** — `schemas/hook.v1.json` declares `HookRef = shell{command,timeout_ms?,cwd?} | tool{tool_name,input?} | agent{agent_id,prompt?}` and `HookCategory = verify | lint | build | test | custom`. Hook execution: shell variant spawns subprocess via `tokio::process::Command` with cross-platform PowerShell wrapper on Windows (`pwsh -NoProfile -Command "..."`); tool variant invokes the runtime tool dispatcher; agent variant spawns a child agent.
 
-2. **Seven firing points** — existing 6 (`pre_task`, `post_task`, `post_file_edit`, `pre_commit`, `pre_agent_spawn`, `session_end`) + new `pre_file_edit` for don't-touch interception. Spec §4a's firing-point table (line 1689) lists 6; Stage D's hook.v1.json adds the 7th and a follow-up doc PR (post-M04) updates the spec text. Document this drift in retro decisions.
+2. **Seven firing points** — existing 6 (`pre_task`, `post_task`, `post_file_edit`, `pre_commit`, `pre_agent_spawn`, `session_end`) + new `pre_file_edit` for don't-touch interception. Spec §4a's firing-point table currently lists 6; Stage D's `hook.v1.json` adds the 7th. Spec edit lands in-stage (if <5 lines) or as a post-M04 follow-up doc PR (analogous to M03.5 pattern) — decision in retro.
 
-3. **Rails primitive** — `Rails { hard: Rail[], soft: Rail[] }` declared in framework JSON. Each `Rail` has `id`, `fires_on` (firing-point reference), `check` (JSONLogic expression), `message`. Hard rails block; soft rails warn. Emits `rail_triggered { rail_id, policy: 'hard' | 'soft', firing_point, message, agent_id? }`.
+3. **Rails primitive** — `Rails { hard: Rail[], soft: Rail[] }` declared in framework JSON. Each `Rail` has `id`, `fires_on` (firing-point reference), `check` (JSONLogic expression), `message`. Hard rails block; soft rails warn. Emits the existing `rail_triggered { rail_id, policy: 'hard' | 'soft', firing_point, message, agent_id? }` event from `event.rs:241` (already there; Stage D fires it from the new Rails evaluator).
 
-4. **Don't-touch primitive** — glob array in framework JSON; built-in pre-edit rail; fires on `pre_file_edit` firing point. Implementation: every `Write` tool call from any agent intercepts at the rail evaluator; if any glob matches, emit `rail_triggered { rail_id: 'dont_touch', policy: 'hard' }` and block the edit.
+4. **Don't-touch primitive** — glob array in framework JSON; built-in pre-edit rail; fires on the new `pre_file_edit` firing point. Implementation: every `Write` tool call from any agent intercepts at the rail evaluator; if any glob matches, emit `rail_triggered { rail_id: 'dont_touch', policy: 'hard' }` and block the edit.
 
-5. **revert_to_snapshot drone command** — new variant: `RevertToSnapshot { snapshot_id, reason: 'hook_rollback' | 'user_rollback' | 'gap_recovery' }`. Drone-side handler restores state from the named snapshot; emits `task_failed { error: 'rolled_back_after_hook_<hook_id>' }` for hook_rollback case.
+5. **`RevertToSnapshot` drone command — CONSUME, do NOT re-add.** The variant already exists at `crates/runtime-core/src/drone.rs:183` with the `RevertReason` enum at `:266` (variants: `HookRollback`, `UserRollback`, `GapRecovery` — all currently UNIT variants, no fields). The drone-side handler arm exists at `crates/runtime-drone/src/command_handler.rs:64`. Stage D consumes the existing variant from the Hook executor's `on_failure: rollback` path. **Design surface (decided at execution time):** spec §4a's `revert_to_snapshot` description implies `HookRollback` should carry a `hook_id: String` field (so the resulting `task_failed` event can name which hook caused the rollback); code currently has it as a unit variant. Stage D either (a) extends `RevertReason::HookRollback` to carry `hook_id`, paired with a small spec text edit confirming the field, OR (b) keeps the unit variant and updates spec to match codebase, OR (c) defers the field-add to a v1.0 milestone. Decision documented in retrospective.
 
-6. **VerifyNode + HookNode wired** — already shipped as M03.C synthetic-state components; Stage D wires them to live `hook_started` / `hook_passed` / `hook_failed` / `rail_triggered` events.
+6. **VerifyNode + HookNode wired to live events.** Already shipped as M03.C synthetic-state components; Stage D wires them to the existing 4 live event variants (`verify_started`, `verify_passed`, `verify_failed`, `rail_triggered` — codebase NAMES, NOT `hook_*`). The `graphStore.applyEvent` exhaustive switch already handles these 4 variants per M03 — Stage D leaves the switch alone; only the visual treatment in `VerifyNode.tsx` + `HookNode.tsx` changes.
 
-**Success criterion:** Loading a fixture framework JSON with a `post_task` hook ("`bash .aria/verify.sh`" on Linux/macOS; `pwsh -NoProfile -Command ".aria\verify.ps1"` on Windows) running after each task; pass → next task; fail with `on_failure: rollback` → drone reverts to snapshot, task retries; rail violations on `pre_file_edit` fire `rail_triggered` events with don't-touch glob match; Playwright + integration tests cover the flows; ≥95% coverage on the new modules (rails + hooks are part of the capability enforcer surface; safety-primitive gate per CLAUDE.md §5).
+**Success criterion:** Loading a fixture framework JSON with a `post_task` hook ("`bash .aria/verify.sh`" on Linux/macOS; `pwsh -NoProfile -Command ".aria\verify.ps1"` on Windows) running after each task; pass → emits `verify_passed` → next task; fail with `on_failure: rollback` → drone reverts via existing `RevertToSnapshot`, task retries; rail violations on `pre_file_edit` fire `rail_triggered` events with don't-touch glob match; Playwright + integration tests cover the flows; ≥95% coverage on the new hooks/ + rails/ modules (capability-enforcer-adjacent safety primitives per CLAUDE.md §5).
 
 **New artifacts:**
 - `schemas/hook.v1.json` (new)
-- `crates/runtime-core/src/hook.rs` (new; generated)
+- `crates/runtime-core/src/generated/hook.rs` (new; generated under `generated/` per A1 convention)
 - `src/types/hook.ts` (new; generated)
 - `crates/runtime-main/src/hooks/mod.rs`, `crates/runtime-main/src/hooks/executor.rs`, `crates/runtime-main/src/hooks/rails.rs`, `crates/runtime-main/src/hooks/dont_touch.rs` (new)
 - `crates/runtime-main/src/hooks/shell.rs` (new — cross-platform shell wrapper)
-- `crates/runtime-drone/src/snapshot.rs` (extended with `revert_to_snapshot` handler)
+- `crates/runtime-main/tests/hook_integration.rs` (new — full lifecycle integration test)
 
 **Edited artifacts:**
-- `crates/xtask/src/main.rs` (codegen list: hook)
-- `schemas/event.v1.json` (add `hook_started`, `hook_passed`, `hook_failed`, `rail_triggered`)
-- `crates/runtime-core/src/event.rs` + `src/types/agent_event.ts` (regen)
-- Drone IPC schema (extend with `RevertToSnapshot` variant + handler)
-- `src/components/nodes/VerifyNode.tsx`, `src/components/nodes/HookNode.tsx` (live-event wiring)
-- `src/lib/graphStore.ts` (extend exhaustive switch for 4 new variants)
-- Spec §4a (add `pre_file_edit` to firing-point table — or note as M04 follow-up doc PR per retro decision)
+- `crates/xtask/src/main.rs` (codegen list: add `hook`)
+- `crates/runtime-main/src/sdk/agent_sdk.rs` (wire Hook executor at firing-point sites; intercept Write tool dispatch for `pre_file_edit`)
+- `src/components/nodes/VerifyNode.tsx`, `src/components/nodes/HookNode.tsx` (synthetic-state → live-event-driven; already-shipped event variants drive)
+- Possibly `crates/runtime-core/src/drone.rs` (`RevertReason::HookRollback` shape decision — extend with `hook_id: String` per execution-time call)
+- Possibly `agent-runtime-spec.md` §4a (add `pre_file_edit` to firing-point table — in-stage if <5 lines, else follow-up PR; AND/OR edit to confirm `hook_id` field on `HookRollback` if Stage D extends the variant)
 - `CHANGELOG.md`
+
+**Items NOT in Stage D scope (audit-grounded; would have been incorrectly listed in the previous draft):**
+- Authoring `hook_started`/`hook_passed`/`hook_failed`/`rail_triggered` events — they ALREADY exist as `verify_started`/`verify_passed`/`verify_failed`/`rail_triggered` per codebase NAMES.
+- Authoring `RevertToSnapshot` variant on `DroneCommand` — already at `drone.rs:183`.
+- Authoring drone-side handler for `RevertToSnapshot` — already at `command_handler.rs:64`.
+- Extending `graphStore.applyEvent` for verify/rails events — already there per M03.
 
 ### D.2 Files to Change
 
 | File | Change |
 |---|---|
 | `schemas/hook.v1.json` | **New** — Hook + HookRef + HookCategory + Rail per spec §4a |
-| `crates/runtime-core/src/hook.rs`, `src/types/hook.ts` | **New** — generated |
-| `crates/xtask/src/main.rs` | **Edited** — codegen list extension |
-| `schemas/event.v1.json` | **Edited** — 4 new event variants |
+| `crates/runtime-core/src/generated/hook.rs`, `src/types/hook.ts` | **New** — generated under `generated/` per A1 convention |
+| `crates/xtask/src/main.rs` | **Edited** — codegen list extends from 9 entries (post-B) to 10 entries (adds `hook`) |
 | `crates/runtime-main/src/hooks/{mod,executor,rails,dont_touch,shell}.rs` | **New** — Hook/Rails/don't-touch implementation |
-| `crates/runtime-drone/src/snapshot.rs` | **Edited** — add `revert_to_snapshot` handler |
-| Drone IPC enum (location TBD per existing layout) | **Edited** — add `RevertToSnapshot` variant |
-| `src/components/nodes/VerifyNode.tsx`, `HookNode.tsx` | **Edited** — live-event wiring |
-| `src/lib/graphStore.ts` | **Edited** — exhaustive switch + 4 new variants |
-| `agent-runtime-spec.md` §4a | **Edited (or follow-up note)** — add `pre_file_edit` to firing-point table; if deferred, document as follow-up PR target |
-| `CHANGELOG.md` | **Edited** |
+| `crates/runtime-main/src/sdk/agent_sdk.rs` | **Edited** — wire Hook executor at firing-point sites (existing `pre_task`/`post_task`/etc); intercept Write tool dispatch for new `pre_file_edit` |
+| `crates/runtime-main/tests/hook_integration.rs` | **New** — full lifecycle integration test |
+| `src/components/nodes/VerifyNode.tsx`, `HookNode.tsx` | **Edited** — synthetic-state → live-event-driven wiring (events already exist; only visual treatment changes) |
+| `crates/runtime-core/src/drone.rs` | **Edited (conditional)** — `RevertReason::HookRollback` may extend with `hook_id: String` field per Stage D design decision; otherwise unchanged |
+| `agent-runtime-spec.md` §4a | **Edited (or follow-up note)** — add `pre_file_edit` to firing-point table (in-stage if <5 lines, else post-M04 follow-up PR); plus optional confirmation of `HookRollback` field-add per design decision |
+| `CHANGELOG.md` | **Edited** — Stage D summary; design-decision outcomes noted |
+
+**Files explicitly NOT in this table** (audit-grounded; already exist per codebase reality):
+- `schemas/event.v1.json` — Stage D does NOT touch (4 verify+rails events already present)
+- `crates/runtime-core/src/event.rs` — Stage D does NOT touch
+- `src/types/agent_event.ts` — Stage D does NOT regenerate (no new event variants)
+- `crates/runtime-drone/src/snapshot.rs` — Stage D does NOT extend (RevertToSnapshot handler at `command_handler.rs:64` already calls into this; no new handler logic needed unless Stage D extends `RevertReason::HookRollback`)
+- `src/lib/graphStore.ts` — Stage D does NOT touch (verify/rails cases already handled per M03)
 
 ### D.3 Detailed Changes
 
@@ -1666,32 +1865,50 @@ Coverage: ≥95% per safety-primitive gate. Tests: matched-glob blocks; unmatche
 
 Hard + soft rail evaluation per JSONLogic operator allowlist (gotcha #18: `var, ==, !=, <, <=, >, >=, and, or, not, in, +, -, *, /`). Anything beyond the allowlist returns `RailError::UnsupportedOperator`. Hard rails on match → block + emit `rail_triggered { policy: 'hard', ... }`. Soft rails on match → warn + emit `rail_triggered { policy: 'soft', ... }`.
 
-#### `crates/runtime-drone/src/snapshot.rs` — revert_to_snapshot handler
+#### `crates/runtime-core/src/drone.rs` + `command_handler.rs` — CONSUME existing RevertToSnapshot (audit-grounded)
 
-Extend with new IPC variant + handler:
+**Audit-grounded.** The variant + handler already exist:
 
 ```rust
+// crates/runtime-core/src/drone.rs:183 — ALREADY PRESENT
 pub enum DroneCommand {
-    // ... existing variants
-    RevertToSnapshot { snapshot_id: SnapshotId, reason: RevertReason },
+    // ... 7 other variants
+    RevertToSnapshot {
+        snapshot_id: String,
+        reason: RevertReason,
+    },
+    // ...
 }
 
+// crates/runtime-core/src/drone.rs:266 — ALREADY PRESENT (UNIT variants)
 pub enum RevertReason {
-    HookRollback { hook_id: String },
+    HookRollback,
     UserRollback,
     GapRecovery,
 }
 ```
 
-Handler restores state from the named snapshot (existing snapshot read path) + emits `task_failed { error: 'rolled_back_after_hook_<hook_id>' }` (for HookRollback case) or `task_started` (re-emit for retry).
+The drone-side handler arm is at `crates/runtime-drone/src/command_handler.rs:64` (verified). Stage D's Hook executor invokes the existing variant via `client.send_command(DroneCommand::RevertToSnapshot { snapshot_id, reason: RevertReason::HookRollback })` from the `on_failure: rollback` path; no new variant authoring needed.
 
-#### Spec §4a follow-up (or in-stage)
+**Design decision at execution time — `RevertReason::HookRollback` shape.** Spec §4a's `revert_to_snapshot` description implies `HookRollback` should carry a `hook_id: String` field so downstream `task_failed { error: 'rolled_back_after_hook_<hook_id>' }` events can name the cause. Code currently has it as a unit variant. Stage D picks one of three strategies and documents the choice in retro:
 
-Spec §4a's firing-point table at line 1689 lists 6 firing points; Stage D's hook.v1.json adds `pre_file_edit` as the 7th. Two options:
-1. Land a small spec edit in Stage D (add `pre_file_edit` to the table)
-2. Defer to a post-M04 doc PR (analogous to M03.5 pattern)
+(a) **Extend `RevertReason::HookRollback` to carry `hook_id`** — paired with a small spec text edit confirming the field. Migration: existing `RevertReason::HookRollback` callsites (likely zero in current code; the variant is unused pre-M04) update to `RevertReason::HookRollback { hook_id: ... }`. Cleanest semantically.
+
+(b) **Keep the unit variant; update spec to match** — spec §4a edit removes the `hook_id` implication; `task_failed` event uses a generic "rolled_back_after_hook" error string without hook_id. Less informative downstream but minimal code change.
+
+(c) **Defer the field-add to v1.0** — keep both code and spec as-is for v0.1 (each says different things); add a v1.0-roadmap note. Trades short-term correctness for longest deferral.
+
+Recommended baseline: (a). Decision documented in retrospective + applied consistently across `drone.rs`, `command_handler.rs` (if existing handler arm uses the variant), spec §4a, and Stage D's Hook executor `on_failure: rollback` path.
+
+#### Spec §4a follow-up (firing-point table)
+
+Spec §4a's firing-point table currently lists 6 firing points; Stage D's `hook.v1.json` adds `pre_file_edit` as the 7th. Two options:
+1. Land a small spec edit in Stage D (add `pre_file_edit` to the table; <5 lines).
+2. Defer to a post-M04 doc PR (analogous to M03.5 pattern).
 
 Decision per retro: option 1 if the spec edit is < 5 lines and self-contained; option 2 if it ripples to other §4a content.
+
+If Stage D also extends `RevertReason::HookRollback` per the design decision above, both edits land in the same spec PR (in-stage or follow-up).
 
 ### D.4 Tests
 
@@ -1718,30 +1935,42 @@ Apply to: `hooks/executor.rs`, `hooks/rails.rs`, `hooks/dont_touch.rs`, `hooks/s
 ```xml
 <work_stage_prompt id="M04.D">
   <context>
-    Stage D of M04. §4a Verify & Rails primitive. Hook (shell|tool|agent variants × 7 firing points) + Rails (hard/soft + JSONLogic) + don't-touch glob matcher (new pre_file_edit firing point) + revert_to_snapshot drone command. VerifyNode/HookNode wiring to live events. Cross-stack risk: shell hook execution + cross-platform PowerShell wrapper. Stage C's commit must be on the milestone branch.
+    Stage D of M04. §4a Verify & Rails primitive. Audit-grounded scope: 4 verify+rails event variants ALREADY EXIST in `crates/runtime-core/src/event.rs` (`VerifyStarted:220`, `VerifyPassed:227`, `VerifyFailed:234`, `RailTriggered:241`) — Stage D WIRES them to the new Hook executor + Rails evaluator (does NOT re-author or rename to `hook_*`). `RevertToSnapshot` ALREADY EXISTS at `crates/runtime-core/src/drone.rs:183` with `RevertReason` enum at `:266` (variants: `HookRollback`, `UserRollback`, `GapRecovery` — all currently UNIT variants); existing handler arm at `crates/runtime-drone/src/command_handler.rs:64`. Stage D CONSUMES the existing variant from the Hook executor's `on_failure: rollback` path; does NOT re-add. Genuinely-new work: Hook primitive (HookRef + 3 variants × 7 firing points including the new `pre_file_edit`); Rails primitive (hard/soft + JSONLogic operator allowlist per gotcha #18); don't-touch glob matcher (firing on the new `pre_file_edit` point); cross-platform PowerShell shell wrapper (gotcha #32 cross-stack discipline). Design surface: `RevertReason::HookRollback` is currently a UNIT variant in code; spec §4a implies `hook_id: String` field — Stage D decides at execution time per D.3 (extend variant, update spec to match, or defer to v1.0). Cross-stack risk: shell hook execution + cross-platform PowerShell wrapper + Tool dispatcher integration for pre_file_edit. Stage C's commit must be on the milestone branch.
   </context>
 
   <pre_flight_check>
     <check name="branch_correct">git rev-parse --abbrev-ref HEAD must equal claude/m04-plan-verify-hitl-budget</check>
     <check name="prior_stage_committed">git log --oneline -1 must show "M04 Stage C" subject</check>
+    <check name="prior_retrospective_staged">git log -1 --name-only must include docs/build-prompts/retrospectives/M04.C-retrospective.md</check>
     <check name="pwsh_available">where.exe pwsh.exe must succeed (or fall back to powershell.exe with explicit retro decision)</check>
+    <check name="audit_baseline_verify_events">grep -q "VerifyStarted\|VerifyPassed\|VerifyFailed\|RailTriggered" crates/runtime-core/src/event.rs (audit baseline; 4 events must all be present — Stage D does NOT re-author them)</check>
+    <check name="audit_baseline_revert_to_snapshot">grep -q "RevertToSnapshot" crates/runtime-core/src/drone.rs (audit baseline; variant must be present at line 183 — Stage D consumes, does NOT re-add)</check>
+    <check name="audit_baseline_revert_handler">grep -q "DroneCommand::RevertToSnapshot" crates/runtime-drone/src/command_handler.rs (audit baseline; existing handler arm at line 64 — Stage D extends only if HookRollback variant gains a hook_id field)</check>
+    <check name="audit_baseline_revert_reason_unit">grep -A 5 "pub enum RevertReason" crates/runtime-core/src/drone.rs | grep -q "HookRollback,$" (audit baseline; HookRollback is currently a UNIT variant — Stage D decides at execution whether to extend)</check>
+    <check name="arc_droneclient_managed">grep -q "manage(.*DroneClient\|manage(.*Arc" src-tauri/src/main.rs (A2 deliverable; Stage D's Hook executor consumes via the managed-state)</check>
+    <check name="schema_drift_clean">cargo xtask regenerate-types --check exit 0</check>
   </pre_flight_check>
 
   <read_first>
     <file>CLAUDE.md</file>
     <file>STAGE-PROMPT-PROTOCOL.md</file>
     <file>docs/build-prompts/M04-plan-verify-hitl-budget.md (Stage D sections D.1–D.4)</file>
-    <file>agent-runtime-spec.md §4a (full section)</file>
+    <file>agent-runtime-spec.md §4a (full section, especially firing-point table + revert_to_snapshot description for HookRollback shape decision)</file>
     <file>docs/MVP-v0.1.md §M4 (PowerShell wrapper acceptance criterion)</file>
-    <file>docs/gotchas.md (especially #18 JSONLogic operator allowlist; #32 cross-stack discipline applies to shell.rs)</file>
-    <file>docs/build-prompts/retrospectives/M04.C-retrospective.md</file>
+    <file>docs/gotchas.md (especially #18 JSONLogic operator allowlist; #32 cross-stack discipline applies to shell.rs; #41 grep-verify-claims)</file>
+    <file>docs/build-prompts/retrospectives/M04.C-retrospective.md (apply [END] Decisions)</file>
   </read_first>
 
   <read_reference>
     <file purpose="cross-stack archetype: tokio::process::Command from Stage A2 drone subprocess spawn">src-tauri/src/drone_lifecycle.rs</file>
-    <file purpose="snapshot module to extend with revert_to_snapshot">crates/runtime-drone/src/snapshot.rs</file>
-    <file purpose="existing tool dispatcher where don't-touch interception lands">crates/runtime-main/src/sdk</file>
-    <file purpose="VerifyNode/HookNode synthetic components from M03.C">src/components/nodes/VerifyNode.tsx</file>
+    <file purpose="EXISTING RevertToSnapshot variant at line 183 + RevertReason enum at line 266 (unit variants); Stage D consumes; design decision on HookRollback shape lives here">crates/runtime-core/src/drone.rs</file>
+    <file purpose="EXISTING handler arm at line 64; Stage D's Hook executor invokes via DroneClient; only extend if HookRollback variant gains hook_id field">crates/runtime-drone/src/command_handler.rs</file>
+    <file purpose="snapshot read API used by the existing RevertToSnapshot handler; Stage D extends if the field-add design decision lands">crates/runtime-drone/src/snapshot.rs</file>
+    <file purpose="EXISTING 4 verify+rails event variants at event.rs:220-248; Stage D wires Hook executor to fire these (NOT new hook_* events)">crates/runtime-core/src/event.rs</file>
+    <file purpose="existing tool dispatcher where don't-touch pre_file_edit interception lands; locate via fan_out_grep on Write tool dispatch">crates/runtime-main/src/sdk/agent_sdk.rs</file>
+    <file purpose="VerifyNode/HookNode synthetic components from M03.C; Stage D drives live with existing event variants">src/components/nodes/VerifyNode.tsx</file>
+    <file purpose="VerifyNode/HookNode synthetic components from M03.C">src/components/nodes/HookNode.tsx</file>
+    <file purpose="graphStore exhaustive switch already handles 4 verify/rails events per M03; Stage D does NOT touch this file">src/lib/graphStore.ts</file>
   </read_reference>
 
   <read_prior_stages>
@@ -1774,9 +2003,10 @@ Apply to: `hooks/executor.rs`, `hooks/rails.rs`, `hooks/dont_touch.rs`, `hooks/s
   <schema_drift_check gate="cargo xtask regenerate-types --check"/>
 
   <fan_out_grep>
-    <grep pattern="firing_point" purpose="all firing-point references — enum + matchers + tests; new pre_file_edit needs all callsites updated"/>
-    <grep pattern="DroneCommand::" purpose="all drone command variant constructions — RevertToSnapshot adds a new variant; exhaustive matches must add the case"/>
-    <grep pattern="Write tool" purpose="locate the Write tool dispatch site where pre_file_edit interception inserts"/>
+    <grep pattern="firing_point" purpose="all firing-point references — enum + matchers + tests; new pre_file_edit needs all callsites updated to handle the 7th value"/>
+    <grep pattern="DroneCommand::RevertToSnapshot" purpose="exhaustive matches; Stage D's Hook executor adds a new callsite (do NOT add a new enum variant — the existing variant is consumed)"/>
+    <grep pattern="RevertReason::" purpose="all RevertReason variant constructions; if Stage D extends HookRollback to carry hook_id, all callsites update together"/>
+    <grep pattern="invoke('write_file\|Write\\.\\(\|tool_dispatch.*write\|dispatch.*[Ww]rite" purpose="locate the Write tool dispatch site for pre_file_edit interception (do NOT trust 'Write tool' literal pattern alone — actual symbol may vary)"/>
   </fan_out_grep>
 
   <dependency_audit_check>
@@ -1787,35 +2017,43 @@ Apply to: `hooks/executor.rs`, `hooks/rails.rs`, `hooks/dont_touch.rs`, `hooks/s
   <runtime_environment os="windows" note="PowerShell wrapper required per MVP §M4 acceptance criterion; pwsh.exe preferred over powershell.exe; verify availability at pre_flight_check"/>
 
   <gotchas>
+    <trap>AUDIT-GROUNDED EVENT NAMES: 4 verify+rails event variants ALREADY EXIST in event.rs (VerifyStarted:220, VerifyPassed:227, VerifyFailed:234, RailTriggered:241). Stage D WIRES the new Hook executor + Rails evaluator to fire THESE — does NOT author new hook_started/passed/failed events. The Hook *primitive* (HookRef + HookCategory + Hook in hook.v1.json) is genuinely new; the *event variants* are not.</trap>
+    <trap>AUDIT-GROUNDED RevertToSnapshot: variant ALREADY EXISTS at drone.rs:183 with handler arm at command_handler.rs:64. Stage D CONSUMES the existing variant — does NOT re-add. The fan_out_grep on `DroneCommand::RevertToSnapshot` above counts callsites; Stage D's Hook executor adds a new callsite, not a new arm.</trap>
+    <trap>DESIGN DECISION at execution time — RevertReason::HookRollback shape. Currently a UNIT variant (drone.rs:266); spec §4a implies hook_id: String field. Stage D picks: (a) extend variant + update spec; (b) keep unit + update spec to match; (c) defer to v1.0. Document choice in retro [END] Decisions; apply consistently across drone.rs, command_handler.rs (if existing handler uses the variant), spec §4a, Hook executor on_failure: rollback path. Recommended baseline: (a).</trap>
     <trap>shell.rs cross-platform — gotcha #32 cross-stack discipline applies. Verify pwsh.exe -NoProfile -Command semantics against current Microsoft PowerShell docs URL (WEBCHECK) BEFORE authoring; do NOT assume bash -c semantics carry over.</trap>
     <trap>JSONLogic operator allowlist (gotcha #18) — Rails check field. Operators beyond the allowlist return UnsupportedOperator; do NOT silently extend the operator set.</trap>
-    <trap>Don't-touch glob matcher fires on pre_file_edit — every Write tool call routes through it BEFORE the OS write. If the rail evaluator is async, ensure the Write call awaits the rail decision; otherwise edits land before the rail blocks.</trap>
-    <trap>revert_to_snapshot is a NEW DroneCommand variant — fan_out_grep above catches exhaustive-match callsites. Verify all matches add the new arm.</trap>
-    <trap>Spec §4a's firing-point table doesn't list pre_file_edit — Stage D adds it via hook.v1.json; spec text edit is either in-stage or a follow-up doc PR (decide per retro). Do NOT silently add pre_file_edit to the spec without a deliberate edit + commit message note.</trap>
+    <trap>Don't-touch glob matcher fires on pre_file_edit — every Write tool call routes through it BEFORE the OS write. If the rail evaluator is async, ensure the Write call awaits the rail decision; otherwise edits land before the rail blocks. Locate the Write dispatch site via fan_out_grep above (do NOT trust the literal 'Write tool' pattern — actual symbol may differ).</trap>
+    <trap>Spec §4a's firing-point table doesn't list pre_file_edit — Stage D adds it via hook.v1.json; spec text edit is either in-stage (if &lt;5 lines) or a follow-up doc PR (decide per retro). Do NOT silently add pre_file_edit to the spec without a deliberate edit + commit message note.</trap>
+    <trap>Per gotcha #41 (grep-verify-claims): every codebase claim in this stage is verified against post-C reality via &lt;pre_flight_check&gt;. The audit baseline checks (verify_events, RevertToSnapshot, RevertReason unit variants) are load-bearing — if any fail, surface drift before proceeding.</trap>
   </gotchas>
 
   <execution_warnings>
+    <warning>DO NOT author new event variants for hook_started/hook_passed/hook_failed — the existing verify_started/passed/failed at event.rs:220-234 are the codebase NAMES. Wire the new Hook executor to fire these; do NOT rename or add parallel variants.</warning>
+    <warning>DO NOT re-add RevertToSnapshot variant or its handler arm — both already exist (drone.rs:183, command_handler.rs:64). Stage D's Hook executor invokes the existing variant; the only conditional drone-side edit is if RevertReason::HookRollback gains a hook_id field.</warning>
     <warning>DO NOT execute shell hooks against the user's actual filesystem in tests — use test fixtures + the *_with seam to inject mock spawners. Real shell execution is reserved for the integration test in a tempdir.</warning>
     <warning>DO NOT extend the JSONLogic operator allowlist — operators beyond gotcha #18's set need a deliberate spec edit + ADR (CLAUDE.md §11).</warning>
+    <warning>DO NOT touch graphStore.ts — the 4 verify/rails event cases are already handled per M03; Stage D's wiring only changes VerifyNode.tsx + HookNode.tsx visual treatment.</warning>
     <warning>DO NOT push between stages.</warning>
+    <warning>Stage D's commit MUST include docs/build-prompts/retrospectives/M04.D-retrospective.md in the staged files.</warning>
   </execution_warnings>
 
   <time_box estimate_hours="6.5"/>
 
   <retrospective_requirements ref="docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md" section="M[NN].&lt;X&gt; — Stage Retrospective">
-    <special_log>Decisions for Stage E: any cross-platform shell-execution surprises (gotcha #32 territory); whether the JSONLogic operator allowlist needed extension (if so, surface the operator + use case for ADR consideration); spec §4a firing-point table edit disposition (in-stage or follow-up PR); revert_to_snapshot integration with Stage F recovery flow (the same mechanism may apply to v0.1 startup recovery).</special_log>
+    <special_log>Decisions for Stage E: RevertReason::HookRollback shape decision (a/b/c per D.3) and rationale; spec §4a firing-point table edit disposition (in-stage or follow-up PR); spec §4a HookRollback edit (paired with the variant decision); any cross-platform shell-execution surprises (gotcha #32 territory); whether the JSONLogic operator allowlist needed extension (if so, surface the operator + use case for ADR consideration); whether the Write tool dispatch site for pre_file_edit interception was where fan_out_grep located it (file:line cited); revert_to_snapshot integration with Stage F recovery flow (the same mechanism may apply to v0.1 startup recovery — flag if Stage F should reuse).</special_log>
   </retrospective_requirements>
 
   <commit_protocol ref="CLAUDE.md" section="8. PR + commit workflow (CRITICAL — read carefully)"/>
   <commit_message ref="docs/build-prompts/M04-plan-verify-hitl-budget.md" section="D.6 Commit Message"/>
 
   <approval_surface>
-    <item>diff stat (git diff --stat HEAD)</item>
-    <item>gate results (each gate; hooks/ coverage ≥95%)</item>
+    <item>diff stat (git diff --stat HEAD) including M04.D-retrospective.md in staged set</item>
+    <item>gate results (each gate; hooks/ coverage ≥95%; runtime-main + runtime-drone ≥95% maintained)</item>
     <item>schema drift check exit 0</item>
-    <item>fan_out_grep results — firing_point + DroneCommand:: + Write tool callsite counts</item>
-    <item>integration test outcome — hook_integration.rs full lifecycle (post_task → fail → rollback → retry)</item>
+    <item>fan_out_grep results — firing_point + DroneCommand::RevertToSnapshot + RevertReason:: + Write-dispatch callsite counts</item>
+    <item>integration test outcome — hook_integration.rs full lifecycle (post_task → fail → rollback via existing RevertToSnapshot → retry)</item>
     <item>cross-platform shell test outcome (Windows pwsh.exe + Linux bash via test fixtures)</item>
+    <item>RevertReason::HookRollback shape decision — option a/b/c chosen + rationale + paired spec §4a edit</item>
     <item>spec §4a firing-point table disposition (in-stage edit or follow-up PR)</item>
     <item>retrospective with [END] decisions for Stage E</item>
     <item>draft commit message from D.6</item>
@@ -1833,27 +2071,38 @@ feat(runtime+renderer): M04 Stage D — §4a Verify & Rails primitive
 Builds the §4a Verify & Rails primitive end-to-end. Hook primitive
 (shell|tool|agent variants × 7 firing points) + Rails (hard/soft +
 JSONLogic-evaluated) + don't-touch glob matcher (new pre_file_edit
-firing point) + revert_to_snapshot drone command. VerifyNode + HookNode
-upgraded from M03.C synthetic to live-event-driven.
+firing point). Wires the new executor + evaluator to the 4 already-
+shipped verify+rails event variants in event.rs (does NOT author new
+hook_* events). Consumes the existing RevertToSnapshot drone command
+from drone.rs:183 (does NOT re-add). VerifyNode + HookNode upgraded
+from M03.C synthetic to live-event-driven.
 
 New artifacts:
 - schemas/hook.v1.json (Hook + HookRef + HookCategory + Rail)
-- crates/runtime-core/src/hook.rs + src/types/hook.ts (generated)
+- crates/runtime-core/src/generated/hook.rs + src/types/hook.ts (generated)
 - crates/runtime-main/src/hooks/{mod,executor,rails,dont_touch,shell}.rs
-- Drone command RevertToSnapshot { snapshot_id, reason: hook_rollback |
-  user_rollback | gap_recovery }
 - crates/runtime-main/tests/hook_integration.rs (full lifecycle)
 
-Edits:
-- schemas/event.v1.json: 4 new variants (hook_started, hook_passed,
-  hook_failed, rail_triggered)
-- crates/runtime-core/src/event.rs + src/types/agent_event.ts: regen
-- crates/runtime-drone/src/snapshot.rs: revert_to_snapshot handler;
-  emits task_failed for hook_rollback case
+Edits (audit-grounded):
+- crates/xtask/src/main.rs: codegen list extends to 10 entries (adds hook)
+- crates/runtime-main/src/sdk/agent_sdk.rs: Hook executor wired at firing-
+  point sites; pre_file_edit interception inserted at the Write tool
+  dispatch (located via fan_out_grep)
 - src/components/nodes/VerifyNode.tsx + HookNode.tsx: live-event wiring
-- src/lib/graphStore.ts: exhaustive switch handles 4 new variants
+  (consumes existing 4 verify_*/rail_triggered events at event.rs:220-241)
+- crates/runtime-core/src/drone.rs (CONDITIONAL per HookRollback design
+  decision): RevertReason::HookRollback shape — <DECISION> chose option
+  <a/b/c> per D.3 (extend variant with hook_id / keep unit / defer v1.0)
 - agent-runtime-spec.md §4a: pre_file_edit added to firing-point table
-  [in-stage / deferred to follow-up PR per retro decision]
+  [in-stage / deferred to follow-up PR per retro decision]; AND/OR edit
+  to confirm RevertReason::HookRollback shape per design decision
+
+Items NOT in this commit (audit-grounded):
+- schemas/event.v1.json — 4 verify+rails events already there
+- crates/runtime-core/src/event.rs — already there per M03; not regen'd
+- crates/runtime-drone/src/command_handler.rs — RevertToSnapshot arm
+  already at line 64; only extends if HookRollback gains hook_id field
+- src/lib/graphStore.ts — verify+rails cases already there per M03
 
 Cross-stack glue: shell.rs cross-platform shell execution per gotcha
 #32 — pwsh.exe -NoProfile -Command on Windows; bash -c on Linux/macOS.
@@ -1869,6 +2118,8 @@ Refs: M04-plan-verify-hitl-budget.md §D, spec §4a, MVP §M4
 Retrospective: docs/build-prompts/retrospectives/M04.D-retrospective.md
 
 https://claude.ai/code
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
