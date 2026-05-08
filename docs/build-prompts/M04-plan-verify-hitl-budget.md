@@ -1,23 +1,23 @@
 # M04 Plan + Verify + HITL + Budget — Specification + Stage Prompts
 
 **Protocol version:** v1.3 (first milestone authored on the v1.3 XML stage-prompt schema; uses `<pre_flight_check>`, `<schema_drift_check>`, `<fan_out_grep>`, `<dependency_audit_check>`, and `<runtime_environment>` tags per `STAGE-PROMPT-PROTOCOL.md` v1.3).
-**Date:** 2026-05-07 (initial authoring); 2026-05-08 (revised post-M04.A2 audit per `docs/gotchas.md` #41 + STAGE-PROMPT-PROTOCOL.md §10 v1.3 hardening rule)
-**Status:** Design approved — A1 + A2 committed on milestone branch; B–G revised to match codebase reality per post-A2 audit
-**Scope:** Build the four agentic primitives that turn a single-agent smoke into an actual agentic runtime: §3a Plan & Task (with `fresh_context_per_task` loop policy + 11 plan/task events + ApprovalPanel), §4a Verify & Rails (Hook primitive with 7 firing points including new `pre_file_edit` + Rails hard/soft + don't-touch globs + existing `RevertToSnapshot` drone command — already in `DroneCommand`), §6a HITL (9 trigger types + 3 UI variants Panel/Modal/Toast + 3 built-in notifiers terminal_bell/desktop/sound + plugin interface), §2a Budget (3 scopes + 4 threshold actions + downshift_hook + 4 budget events + UI header bar). Plus §1b Recovery (resume rebuilds history, tool-call-uncertain prompt). Seven stages on one feature branch (`claude/m04-plan-verify-hitl-budget`): A1 + A2 committed; B + C + D + E + F + G remaining. Stage G is Phase Closeout per CLAUDE.md §20. Spec §1b + §2a + §3a + §4a + §6a + MVP §M4 acceptance criteria.
+**Date:** 2026-05-07 (initial authoring); 2026-05-08 (revised post-M03.5 codebase audit per `docs/gotchas.md` #41 + STAGE-PROMPT-PROTOCOL.md §10 v1.3 hardening rule).
+**Status:** Design approved — A1–G all unexecuted; staging grounded in verified end-of-M03.5 codebase reality.
+**Scope:** Build the four agentic primitives that turn a single-agent smoke into an actual agentic runtime: §3a Plan & Task (with `fresh_context_per_task` loop policy + 11 spec-canonical plan/task events of which 6 already exist in `event.rs` + ApprovalPanel), §4a Verify & Rails (Hook primitive with 7 firing points including new `pre_file_edit` + Rails hard/soft + don't-touch globs + existing `RevertToSnapshot` drone command already in `DroneCommand`), §6a HITL (9 trigger types + 3 UI variants Panel/Modal/Toast + 3 built-in notifiers terminal_bell/desktop/sound + plugin interface; codebase event names `hitl_requested` + `hitl_resolved` — NOT `hitl_response`), §2a Budget (3 scopes + 4 threshold actions + downshift_hook + 4 budget events already in `event.rs` — wired not added + UI header bar). Plus §1b Recovery (resume rebuilds history, tool-call-uncertain prompt). Seven stages on one feature branch (`claude/m04-plan-verify-hitl-budget`): A1 → A2 → B → C → D → E → F → G (closeout per CLAUDE.md §20). Spec §1b + §2a + §3a + §4a + §6a + MVP §M4 acceptance criteria.
 
 ---
 
 ## Background and Design Decision
 
-> **Revised post-M04.A2 audit (2026-05-08).** A2's execution surfaced that the original Phase doc claimed integration points that didn't exist (`event_translation.rs`, `prompt_template.rs`, `WriteSignal` IPC variant, `vdr.rs` in `runtime-main`). A post-A2 codebase audit then found ~30% of M04's "new work" already landed incidentally during M03 — gap-analysis ledger is append-only and items "carry forward" but don't auto-close when work happens incidentally. Per `docs/gotchas.md` #41 + STAGE-PROMPT-PROTOCOL.md §10 v1.3 hardening rule (PR #51), Stages B + C + D + E + F have been revised to match codebase reality. Summary of audit-driven changes: (1) Stage B was 11 NEW plan/task events — 8 already exist in `event.rs`; revised to "wire 8 + add 3 missing"; folds in the previously-deferred A2 work (vdr WriteSignal IPC + structured-emitter prompt template) since Stage B has scope slack. (2) Stage D was 4 new `hook_*` events + `RevertToSnapshot` drone command — events already exist as `verify_*` + `rail_triggered`; `RevertToSnapshot` already in `DroneCommand`. Adopt codebase names; skip re-adding. (3) Stage E was `hitl_response` event — codebase has `hitl_resolved`. Rename. (4) Stage F was 4 new budget events — all already exist; revised to "wire enforcer + author recovery primitive"; vdr access via drone IPC, not `runtime-main/src/vdr.rs` (phantom). (5) Stage G unchanged. Original eight-stage plan is now seven (no A3; A3 work folded into B). Path corrections throughout: `event_translation.rs` → `event_pipeline.rs`. Audit findings serve as the grep-verification proof per gotcha #41.
+> **Revised post-M03.5 codebase audit (2026-05-08).** Per `docs/gotchas.md` #41 + STAGE-PROMPT-PROTOCOL.md §10 v1.3 hardening rule (PR #51), every Phase doc claim about codebase reality is grep-verified at authoring time. The previous M04 draft (commit `875b84c`) framed itself as a "post-M04.A2 audit" and marked Stages A1 + A2 ✅ DONE; revisiting the codebase showed both were unexecuted — no `M04.A*` retrospectives in `docs/build-prompts/retrospectives/` (per CLAUDE.md §19 every stage produces one); `crates/xtask/src/main.rs:45` still names only `["common", "framework", "skill", "tool", "agent"]`; no `src-tauri/src/drone_lifecycle.rs`; no `src-tauri/src/lib.rs` (only `main.rs`); `src-tauri/src/commands.rs:1` still reads "Tauri command surface for M02 Stage E"; `CmdError` at `src-tauri/src/commands.rs:46` is still hand-maintained; `crates/runtime-main/src/providers/anthropic.rs:135` `count_tokens` still uses chars/4 approximation; the 3 `DroneClient::noop()` callsites at `src-tauri/src/commands.rs:166, 200, 247` remain. The audit findings recorded throughout this doc describe the codebase as of end-of-M03.5 (last shipped milestone), not as if any M04 stage had executed. M04 starts at A1 and proceeds through G; staging reflects what's actually in `event.rs`, `drone.rs`, `vdr.rs`, `graphStore.ts`, and `commands.rs` today. Per STAGE-PROMPT-PROTOCOL.md §10, audit-driven corrections live INSIDE each stage's `<work_stage_prompt>` XML (in `<context>`, `<pre_flight_check>`, `<read_reference>`, `<gotchas>`, and `<execution_warnings>` slots) — the build agent at execution time reads only the XML inside fenced ```xml blocks, not the narrative Markdown wrapper. Three audit findings the previous draft missed are surfaced here for the first time: (a) the "8 of 11 plan/task events already exist" framing is misleading — only 6 of the 11 spec §3a-canonical variants exist in `event.rs` (`PlanCreated`, `PlanApproved`, `TaskStarted`, `TaskCompleted`, `TaskFailed`, `TaskEscalated`); 2 codebase variants are unspecified extras (`PlanRejected`, `TaskRolledBack`); 5 spec variants are missing (`plan_approval_requested`, `plan_revised`, `plan_aborted`, `plan_complete`, `task_skipped`); (b) `crates/runtime-core/src/error.rs` already exists as a hand-curated `RuntimeError` (workspace internal error per `lib.rs:4–5` "Types in `event.rs`, `drone.rs`, and `error.rs` are hand-curated") — Stage A1's codegen target for the IPC `CmdError` is `crates/runtime-core/src/generated/error.rs` and the namespace clash with the existing `error.rs` is a Stage A1 design surface (rename + module split, decided at execution time); (c) `RevertReason::HookRollback` at `crates/runtime-core/src/drone.rs:266` is a unit variant in code; spec §4a's `revert_to_snapshot` description implies it should carry a `hook_id: String` field — Stage D's design surface (decided at execution time).
 
 **Problem.** M03 lit up the live graph for the M02 single-agent smoke session — one AgentNode renders, click-to-inspect works, token weight scales. The other 10 node types (PlanNode, TaskNode, VerifyNode, HookNode, GapNode, HITLNode, MCPNode + four Plan/Task event types) render in unit tests with synthetic state but never light up live: no event source fires their corresponding `AgentEvent` variants. Spec §M4 declares the four primitives (plan, verify, HITL, budget) that produce those events. Loading `examples/aria/framework.json` and seeing a multi-task plan render with verify hooks firing post-task and the budget header bar tracking session spend is the M04 success surface.
 
-**Solution.** Seven stages on one feature branch (`claude/m04-plan-verify-hitl-budget`), each a fresh Claude Code session per the v1.3 XML stage-prompt protocol. **Stage A1 (DONE)** closed M03 build-hygiene carry-forward: xtask codegen extensions for `event.v1.json` + `error.v1.json`, drone-test retrofits, `tokio::time::pause()` coverage. **Stage A2 (DONE)** landed production wiring: drone subprocess lifecycle at Tauri startup with `Arc<DroneClient>` Tauri-managed-state, replaced `DroneClient::noop()` callsites, real `count_tokens` Anthropic endpoint, `unwrapCmdError` consumes generated `CmdError`, long-lived `events()` reconnect locked as v0.1 behavior (subscribers must resubscribe). **Stage B** builds the §3a Plan & Task primitive — wires the 8 already-shipped plan/task event variants in `event.rs`, adds the 3 missing variants, authors `plan.v1.json` + `task.v1.json` schemas (xtask codegen), plan state machine with `fresh_context_per_task` loop policy, failure escalation, plans + tasks SQLite tables (per spec §10 DDL added in M03.5; first migration also creates the `crates/runtime-drone/migrations/` directory). **Stage B also folds in A2's deferred work** (vdr WriteSignal IPC command + handler + main-side emission path; structured-emitter prompt-template module + AgentSdk plumbing) — Stage B has scope slack from already-shipped events to absorb it. **Stage C** lights up the renderer surface — wires already-shipped PlanNode/TaskNode (M03.C synthetic) to live event variants, builds the ApprovalPanel for plan approval gate, threads the approval flow renderer→main→drone→main→renderer; adds `<pre_flight_check>` for `Arc<DroneClient>` from A2. **Stage D** builds §4a Verify & Rails — adopts existing `verify_*` + `rail_triggered` event names (NOT new `hook_*` per audit; events already in `event.rs`); skips re-adding `RevertToSnapshot` drone command (already in `DroneCommand` with `RevertReason` enum). New work: Hook primitive (HookRef + 7 firing points including new `pre_file_edit`), Rails (hard/soft + JSON-declared), don't-touch glob matcher, VerifyNode + HookNode wired to the existing events. **Stage E** builds §6a HITL — 9 trigger types, 3 UI variants (Panel/Modal/Toast), notifier plugin interface, 3 built-in notifiers (terminal_bell/desktop via Tauri notification plugin/sound), 5 HITL events (`hitl_requested` + `hitl_resolved` existing — NOT `hitl_response`; codebase name is `hitl_resolved`; plus `hitl_timeout` + `notifier_dispatched` + `notifier_failed` new), failure-escalation flow (`task_escalated` → `on_failure_threshold` → `hitl_requested` → notifiers parallel → 1h default timeout); `<pre_flight_check>` for `Arc<DroneClient>`. **Stage F** builds §2a Budget + §1b Recovery — 4 budget events ALREADY exist in `event.rs` + `graphStore.ts` (audit confirmed); Stage F wires the budget enforcer to emit them (NOT to add them). VDR access goes through drone IPC, not `runtime-main/src/vdr.rs` (phantom path; vdr lives in `runtime-drone/src/vdr.rs`). New work: budget enforcer logic + 3 scopes + 4 threshold actions + downshift_hook + session header bar UI; Recovery primitive (resume rebuilds history not re-execute, tool-call-uncertain UI prompt, MCP reconnect on resume, plan state restoration). **Stage G** is Phase Closeout — gap-analysis entry per CLAUDE.md §20, M04 summary, three-artifact review, `<gotchas_graduation>` audit of A1–F per-stage gotchas.
+**Solution.** Seven stages on one feature branch (`claude/m04-plan-verify-hitl-budget`), each a fresh Claude Code session per the v1.3 XML stage-prompt protocol. **Stage A1** closes M03 carry-forward 🟡 build-hygiene items: extends `crates/xtask/src/main.rs` codegen list (currently 5 schemas — common/framework/skill/tool/agent) to include `event.v1.json` + `error.v1.json`; regenerates types into `crates/runtime-core/src/generated/`; resolves the namespace clash between the existing hand-curated `crates/runtime-core/src/error.rs` (which holds `RuntimeError`, the workspace internal error) and the new generated `CmdError` (the IPC error) by either renaming the existing file (e.g., to `runtime_error.rs`) or splitting into modules — decision at A1 execution time; retrofits `await_event` `tokio::time::pause()` coverage; verifies `crates/runtime-drone/tests/integration*.rs` use `current_exe()`-derived paths cleanly. **Stage A2** lands production wiring: spawns the drone subprocess at Tauri startup (`Arc<DroneClient>` registered via `app.manage(...)` Tauri-managed-state — new sibling module `src-tauri/src/drone_lifecycle.rs` since `src-tauri/src/lib.rs` does NOT exist; spawn logic lands in the existing `main.rs::main()`); replaces 3 `DroneClient::noop()` callsites at `src-tauri/src/commands.rs:166, 200, 247` (`run_smoke_session`, `query_session_db`, `replay_session`) with real drone IPC; replaces `count_tokens` chars/4 approximation at `crates/runtime-main/src/providers/anthropic.rs:135` with real `POST /v1/messages/count_tokens` (wiremock-tested per spec §2c.3 added M03.5); refactors hand-maintained `CmdError` at `commands.rs:46` to re-export A1's generated type from `runtime-core`; renderer-side `unwrapCmdError` in `src/lib/ipc.ts` consumes the generated `CmdError` from `src/types/error.ts`; resolves long-lived `events()` reconnect behavior under integration test (closes M02 carry-forward 🟡 item; outcome locked as v0.1 behavior either way per CLAUDE.md §12 design-call discretion). **Stage B** builds the §3a Plan & Task primitive — authors `plan.v1.json` + `task.v1.json` schemas (xtask codegen extension over A1's archetype); authors the 5 missing spec event variants (`plan_approval_requested`, `plan_revised`, `plan_aborted`, `plan_complete`, `task_skipped`); wires the 6 existing spec-canonical variants (`PlanCreated`, `PlanApproved`, `TaskStarted`, `TaskCompleted`, `TaskFailed`, `TaskEscalated`) into the new plan state machine (does NOT re-author them); documents the disposition of the 2 codebase-only extras (`PlanRejected`, `TaskRolledBack` — likely keep both as additive) at execution time; plan state machine with `fresh_context_per_task` loop policy + failure escalation (≥95% safety primitive); plans + tasks SQLite tables (first migration creates the `crates/runtime-drone/migrations/` directory which does not yet exist); approval-gate seam exposed for Stage E. **Stage B also folds the original-A3 work** (WriteSignal IPC variant + drone-side handler arm calling `vdr::project_signal` + main-side emission path; structured-emitter prompt-template module + AgentSdk plumbing replacing the M02 heuristic in `crates/runtime-main/src/sdk/decision_extractor.rs`) — Stage B has scope slack from the 6 already-shipped events to absorb both. **Stage C** lights up the renderer surface — wires already-shipped `PlanNode`/`TaskNode` components (M03.C synthetic-state) to live event variants; authors `ApprovalPanel.tsx` for the plan approval gate; threads the approval flow renderer→main→drone→main→renderer via 3 new Tauri commands (`approve_plan`, `revise_plan`, `abort_plan`) using A2's `Arc<DroneClient>` managed state; Playwright E2E for the round-trip. **Stage D** builds §4a Verify & Rails — adopts existing `verify_started`/`passed`/`failed` + `rail_triggered` event names already in `event.rs:220–248` (codebase NAMES, NOT new `hook_*`); consumes existing `RevertToSnapshot` already in `DroneCommand` at `crates/runtime-core/src/drone.rs:183` with `RevertReason` enum at `:266` (existing handler arm at `crates/runtime-drone/src/command_handler.rs:64` — Stage D extends, does NOT re-add). New work: `hook.v1.json` schema; Hook primitive (HookRef + 7 firing points including new `pre_file_edit`); Rails (hard/soft + JSON-declared with JSONLogic operator allowlist); don't-touch glob matcher; VerifyNode + HookNode wired to the existing live events. The `RevertReason::HookRollback` shape (currently unit variant in code; spec §4a implies `hook_id: String`) is a Stage D design surface decided at execution time. **Stage E** builds §6a HITL — `hitl.v1.json` schema; 9 trigger types, 3 UI variants (Panel/Modal/Toast), notifier plugin interface, 3 built-in notifiers (terminal_bell/desktop via Tauri notification plugin v2/sound); 5 HITL events of which 2 already exist (`HitlRequested`, `HitlResolved` at `event.rs:281, 290` — codebase NAMES `hitl_resolved` NOT `hitl_response`) and 3 are new (`hitl_timeout`, `notifier_dispatched`, `notifier_failed`); failure-escalation flow (`task_escalated` → `on_failure_threshold` → `hitl_requested` → notifiers parallel → 1h default timeout). **Stage F** builds §2a Budget + §1b Recovery — `budget.v1.json` schema; budget enforcer wiring the 4 already-shipped budget events at `event.rs:321–353` (`BudgetWarn`, `BudgetDownshift`, `BudgetSuspended`, `BudgetExceeded` — Stage F wires NOT adds); 3 scopes + 4 threshold actions + downshift_hook + session header bar UI; Recovery primitive (resume rebuilds history per spec §1b WI-14, tool-call-uncertain UI prompt with retry/skip/mark-complete/abort, plan + capability state restoration; MCP reconnect-on-resume seam stubbed for M06). VDR access goes through drone IPC (`crates/runtime-drone/src/vdr.rs::project_signal` at `:50`); `runtime-main` has no `rusqlite` dep — there is no `crates/runtime-main/src/vdr.rs`. **Stage G** is Phase Closeout — gap-analysis entry per CLAUDE.md §20, M04 summary, three-artifact review, `<gotchas_graduation>` audit of A1–F per-stage gotchas.
 
 **Why one PR for the parent milestone (not one PR per stage).** Same logic as M01–M03 — seven stages-as-commits-on-one-branch gives incremental discipline (each stage is reviewable; each stage retrospective surfaces friction early) without the overhead of seven PR reviews for one logical milestone. Consistent with the per-milestone-as-PR pattern in `docs/build-prompts/README.md`. M03 (six stages, ~10h actual) proved the pattern at scale.
 
-**Why seven stages, not eight.** Original plan was eight (A1, A2, B, C, D, E, F, G) plus a proposed A3 for VDR + structured-emitter wiring deferred from A2. Post-A2 audit revealed Stage B has scope slack (8/11 plan/task events already exist) — A3's work folds naturally into the revised Stage B without exceeding scope-split threshold. Net: 7 stages, no separate A3. Calibrated estimate: ~25–35h actual (down from original ~39–54h after the audit removed already-done work from B/D/F).
+**Why seven stages, not eight.** Original eight-stage plan included a separate A3 for vdr WriteSignal IPC + structured-emitter prompt-template wiring scoped as deferred-from-A2. The post-M03.5 codebase audit confirms Stage B has scope slack: 6 of the 11 spec-canonical plan/task events already exist in `event.rs`; 4 of 4 budget events; 4 of 4 verify+rails events; the existing `RevertToSnapshot` drone command + handler arm; the existing `HitlRequested` + `HitlResolved`. A3's work folds naturally into the revised Stage B without exceeding the single-session scope-split threshold. Net: 7 work stages + closeout, no separate A3. Calibrated estimate: ~32–45h. Naive estimate without the audit absorption would be ~39–54h; the audit reduces B/D/E/F net new work by ~10h (no re-authoring of already-shipped events; no re-adding of `RevertToSnapshot`; existing `graphStore.applyEvent` exhaustive-switch arms preserved) while Stage B absorbs ~3h of folded-from-A3 work — net trim ~7h vs naive.
 
 **Why first milestone on v1.3 protocol.** M03.5 authored v1.3 (5 new tags + 3 anti-patterns); M04 is the first parent milestone where the new tags apply. Each stage's `X.5 CLI Prompt` uses `<pre_flight_check>` (Stages A2+ verify prior retro committed), `<schema_drift_check>` (every stage adding or modifying schemas — B, D, E, F), `<fan_out_grep>` (Stage A2 production-wiring DroneClient consumer enumeration; Stage F budget downshift_hook fan-out), `<dependency_audit_check>` (Stage E Tauri notification plugin), and `<runtime_environment>` (all stages pin `os="windows"` consistently — build agent runs on Windows per the established M01–M03.5 pattern).
 
@@ -50,12 +50,12 @@ The renderer + Rust workspace are well-maintained. Carry-forward from M03 close 
 | `crates/runtime-core/src/event.rs` | M03 hand-maintained; should match event.v1.json shape | **REGENERATE in Stage A1** via xtask; validate byte-identical or near; address any drift discovered |
 | `src/types/agent_event.ts` | M03.A regenerated from event.v1.json via xtask + json-schema-to-typescript | **REGENERATE in Stage A1** — no shape change expected (event.v1.json unchanged); confirms drift-check pipeline still clean |
 | `src/types/error.ts` | DOES NOT EXIST — error.v1.json has no codegen target yet | **CREATE in Stage A1** via xtask extension; replaces hand-maintained `CmdError` interface in `src/lib/ipc.ts` |
-| `crates/runtime-core/src/error.rs` | DOES NOT EXIST — `CmdError` enum lives at `src-tauri/src/commands.rs` | **CREATE in Stage A1** via xtask extension; runtime-main + runtime-drone consumers can now reference shared error types |
+| `crates/runtime-core/src/error.rs` | EXISTS — hand-curated `RuntimeError` (workspace internal error per `crates/runtime-core/src/lib.rs:4–5` "Types in `event.rs`, `drone.rs`, and `error.rs` are hand-curated"). Distinct from the IPC `CmdError` at `src-tauri/src/commands.rs:46` | **NAMESPACE CLASH in Stage A1.** A1's codegen target for the IPC `CmdError` is `crates/runtime-core/src/generated/error.rs` (mirrors typify's `generated/` convention). Existing `error.rs::RuntimeError` either renames (e.g., to `runtime_error.rs`) or absorbs into `lib.rs`. Decided at A1 execution time per Stage A1 `<gotchas>` |
 | `src/lib/ipc.ts::unwrapCmdError` | M02; hand-maintained `CmdError` discriminated union | **REFACTOR in Stage A2** to import the generated `CmdError` type from `src/types/error.ts`; preserve unwrap semantics per gotcha #30 |
 | `crates/runtime-drone/tests/integration*.rs` | M03.A current_exe()-derived paths landed | **VERIFY clean in Stage A1** — confirm no remaining `target/debug` literals; if any stragglers exist (Stage A1 of M03 missed some), retrofit |
 | `crates/runtime-main/src/drone_ipc/client.rs::await_event` | M02; timeout path lacks `tokio::time::pause()` coverage | **ADD COVERAGE in Stage A1** — closes M03 carry-forward; archetype: `connection.rs::backoff_grows_exponentially_between_attempts` |
-| `src-tauri/src/lib.rs` | M02 Tauri shell setup; runs `DroneClient::noop()` in M03 | **REFACTOR in Stage A2** — spawn drone subprocess at app startup, manage `Arc<DroneClient>` via Tauri managed state, graceful shutdown on app exit |
-| `src-tauri/src/commands.rs::query_session_db` + `replay_session` | M03.E; both noop'd via `DroneClient::noop()` | **REFACTOR in Stage A2** — replace noop with real drone IPC dispatch; SQL inspector + replay-from-signals become end-to-end functional |
+| `src-tauri/src/lib.rs` | DOES NOT EXIST — current Tauri shell is `src-tauri/src/main.rs` only (orchestration directly in `main()`); `lib.rs` was never authored | **NEW SIBLING MODULE in Stage A2.** A2 adds `src-tauri/src/drone_lifecycle.rs` (sibling of `main.rs`, NOT under a new `lib.rs`); spawn + `Arc<DroneClient>` registration + graceful-shutdown logic invoked from `main.rs::main()` |
+| `src-tauri/src/commands.rs::query_session_db` + `replay_session` + `run_smoke_session` | M02/M03.E; 3 callsites at `src-tauri/src/commands.rs:166, 200, 247` all noop'd via `DroneClient::noop()` | **REFACTOR in Stage A2** — replace 3 noop callsites with real drone IPC dispatch via Tauri managed state (`tauri::State<'_, Arc<DroneClient>>`); SQL inspector + replay-from-signals + smoke session become end-to-end functional |
 | `crates/runtime-main/src/sdk/decision_extractor.rs` | M02 heuristic line-by-line extractor | **REPLACE in Stage A2** with structured emitter — prompt template injects delimited block, SDK parses directly |
 | `crates/runtime-main/src/providers/anthropic.rs::count_tokens` | M02 chars/4 approximation | **REPLACE in Stage A2** with real `POST /v1/messages/count_tokens` endpoint call (per spec §2c.3 added M03.5) |
 | `crates/runtime-main/src/sdk/event_pipeline.rs::WriteSignal` | M02 + M03 — writes signal but does not project to VDR | **WIRE in Stage A2** — call `vdr::project_signal(conn, signal_id)` after each insert (per gap-analysis M03 entry 🟡) |
@@ -70,18 +70,18 @@ No legacy from earlier milestones beyond the M03/M03.5 + M02 trees inventoried a
 
 | Stage | Status | Summary | Estimated effort |
 |---|---|---|---|
-| **A1** | ✅ DONE | Build hygiene — xtask codegen extensions for `event.v1.json` + `error.v1.json` (Rust + TS); regenerated types into `crates/runtime-core/src/generated/`; closed `await_event` `tokio::time::pause()` coverage; verified drone integration test current_exe() paths clean | ~1h actual |
-| **A2** | ✅ DONE | Production wiring — drone subprocess lifecycle at Tauri startup with `Arc<DroneClient>` Tauri-managed-state; replaced `DroneClient::noop()` callsites in `query_session_db` + `replay_session` + `run_smoke_session`; real `count_tokens` against `/v1/messages/count_tokens` (wiremock-tested); CmdError migration (full); `unwrapCmdError` consumes generated `CmdError`; long-lived `events()` reconnect locked as v0.1 behavior (subscribers must resubscribe). **Two items deferred from A2 fold into Stage B per post-A2 audit:** vdr WriteSignal IPC + structured-emitter prompt template | ~3h actual |
-| **B** | ⏳ NEXT | §3a Plan & Task primitive — author `plan.v1.json` + `task.v1.json` schemas; xtask codegen; Plan/Task Rust types in runtime-core; **wire 8 already-shipped plan/task events + add 3 missing variants** (audit confirmed 8/11 already in `event.rs`); plan state machine (safety primitive ≥95%); `fresh_context_per_task` loop policy; failure escalation; SQLite `plans` + `tasks` tables (first migration creates `crates/runtime-drone/migrations/`); approval-gate seam. **Folds A2 deferrals:** WriteSignal IPC command + handler + main-side emission path; structured-emitter prompt-template module + AgentSdk plumbing | ~5–7h |
-| **C** | ⏳ | §3a Plan UI + ApprovalPanel + graph wiring — wire already-shipped `PlanNode` + `TaskNode` (M03.C synthetic) to live event variants; ApprovalPanel renderer + approval-gate flow (renderer→main→drone→main→renderer); plan abort + replan + revise flows. Adds `<pre_flight_check>` for `Arc<DroneClient>` from A2 | ~3–5h |
-| **D** | ⏳ | §4a Verify & Rails — `hook.v1.json` schema (HookRef + HookCategory + Hook); Hook primitive with 7 firing points (existing 6 + new `pre_file_edit`); Rails primitive (hard/soft + JSON-declared); don't-touch glob matcher; VerifyNode + HookNode wired to existing live events. **Audit-corrected:** event names are `verify_started/passed/failed` + `rail_triggered` (already in `event.rs` per audit), NOT new `hook_*`; `RevertToSnapshot` already exists in `DroneCommand` with `RevertReason` enum — Stage D consumes it, does NOT re-add | ~5–7h |
-| **E** | ⏳ | §6a HITL — `hitl.v1.json` schema (9 trigger types + 3 UI variants + notifier plugin interface); 3 built-in notifiers (terminal_bell/desktop via Tauri notification plugin/sound); HITL events (codebase has `hitl_requested` + `hitl_resolved` — NOT `hitl_response`; plus 3 new: `hitl_timeout` + `notifier_dispatched` + `notifier_failed`); failure-escalation flow `task_escalated` → `on_failure_threshold` → `hitl_requested` → notifiers parallel → 1h timeout; HITL Panel + Modal + Toast renderer surfaces. Adds `<pre_flight_check>` for `Arc<DroneClient>` | ~5–7h |
-| **F** | ⏳ | §2a Budget + §1b Recovery — `budget.v1.json` schema (3 scopes + 4 actions + downshift_hook); **wire enforcer to emit 4 already-shipped budget events** (audit confirmed all 4 in `event.rs` + `graphStore.ts`); session header bar UI; Recovery (resume rebuilds history per spec §1b; tool-call-uncertain UI prompt with retry/skip/mark-complete/abort options; MCP reconnect on resume; plan state restoration; capability state restoration). **Audit-corrected:** vdr access via drone IPC (vdr lives in `runtime-drone/src/vdr.rs`, NOT `runtime-main/src/vdr.rs` — phantom path). Adds `<pre_flight_check>` for `Arc<DroneClient>` | ~4–6h |
-| **G** | ⏳ | Phase Closeout — gap-analysis entry per CLAUDE.md §20 (cumulative product↔spec audit including M04 + cumulative review); `<gotchas_graduation>` v1.2 closeout subsection auditing all per-stage `<gotchas>` from A1–F (kept | graduated | resolved | expired); M03 + M03.5 carry-forward final disposition; M04-summary.md aggregating across stages; three-artifact review (CLAUDE.md §20) | ~2–3h |
+| **A1** | ⏳ NEXT | Build hygiene — extend `crates/xtask/src/main.rs:45` codegen list (currently 5 schemas) to include `event.v1.json` + `error.v1.json`; regenerate types into `crates/runtime-core/src/generated/`; resolve namespace clash with existing hand-curated `error.rs::RuntimeError` (decision at execution time); retrofit `await_event` `tokio::time::pause()` coverage; verify drone integration tests' `current_exe()`-derived paths clean | ~2.5h |
+| **A2** | ⏳ | Production wiring — drone subprocess lifecycle at Tauri startup (`Arc<DroneClient>` Tauri-managed-state via new `src-tauri/src/drone_lifecycle.rs` sibling module + spawn from existing `main.rs::main()` since `lib.rs` does not exist); replace 3 `DroneClient::noop()` callsites at `src-tauri/src/commands.rs:166, 200, 247`; real `count_tokens` against `/v1/messages/count_tokens` (wiremock-tested); refactor hand-maintained `CmdError` to re-export A1's generated type; `unwrapCmdError` consumes generated `CmdError`; resolve long-lived `events()` reconnect behavior under integration test (closes M02 carry-forward 🟡 item) | ~4.5h |
+| **B** | ⏳ | §3a Plan & Task primitive — author `plan.v1.json` + `task.v1.json` schemas; xtask codegen extension (over A1 archetype); author 5 missing spec event variants (`plan_approval_requested`, `plan_revised`, `plan_aborted`, `plan_complete`, `task_skipped`); wire 6 existing spec-canonical variants into the new state machine (NOT re-author); document disposition of 2 codebase extras (`PlanRejected`, `TaskRolledBack`) at execution time; plan state machine (safety primitive ≥95%); `fresh_context_per_task` loop policy; failure escalation; SQLite `plans` + `tasks` tables (first migration creates `crates/runtime-drone/migrations/`); approval-gate seam exposed for Stage E. **Folds original-A3 work:** WriteSignal IPC command + drone-side `vdr::project_signal` handler + main-side emission path; structured-emitter prompt-template module + AgentSdk plumbing replacing M02 heuristic in `decision_extractor.rs` | ~5–7h |
+| **C** | ⏳ | §3a Plan UI + ApprovalPanel + graph wiring — wire already-shipped `PlanNode` + `TaskNode` (M03.C synthetic) to live event variants; `ApprovalPanel.tsx` renderer + approval-gate flow (renderer→main→drone→main→renderer); plan abort + revise flows via 3 new Tauri commands (`approve_plan`, `revise_plan`, `abort_plan`) using A2's `Arc<DroneClient>`; Playwright E2E. Adds `<pre_flight_check>` for `Arc<DroneClient>` from A2 | ~3–5h |
+| **D** | ⏳ | §4a Verify & Rails — `hook.v1.json` schema (HookRef + HookCategory + Hook); Hook primitive with 7 firing points (existing 6 + new `pre_file_edit`); Rails primitive (hard/soft + JSON-declared with JSONLogic operator allowlist); don't-touch glob matcher; VerifyNode + HookNode wired to existing live events. **Audit-grounded:** event names are `verify_started`/`verify_passed`/`verify_failed` + `rail_triggered` already in `event.rs:220–248` (codebase NAMES, NOT new `hook_*`); `RevertToSnapshot` already in `DroneCommand` at `drone.rs:183` with `RevertReason` enum at `:266` and existing handler arm at `command_handler.rs:64` — Stage D extends, does NOT re-add. **Design surface:** `RevertReason::HookRollback` is a unit variant in code; spec §4a implies `hook_id: String` field — Stage D decides at execution time | ~5–7h |
+| **E** | ⏳ | §6a HITL — `hitl.v1.json` schema (9 trigger types + 3 UI variants + notifier plugin interface); 3 built-in notifiers (terminal_bell/desktop via Tauri notification plugin v2/sound); 5 HITL events of which 2 already exist (`HitlRequested`, `HitlResolved` at `event.rs:281, 290` — codebase NAMES `hitl_resolved` NOT `hitl_response`) and 3 new (`hitl_timeout`, `notifier_dispatched`, `notifier_failed`); failure-escalation flow `task_escalated` → `on_failure_threshold` → `hitl_requested` → notifiers parallel → 1h timeout; HITL Panel + Modal + Toast renderer surfaces. Adds `<pre_flight_check>` for `Arc<DroneClient>` | ~5–7h |
+| **F** | ⏳ | §2a Budget + §1b Recovery — `budget.v1.json` schema (3 scopes + 4 actions + downshift_hook); **wire enforcer to emit 4 already-shipped budget events** at `event.rs:321–353` (`BudgetWarn`, `BudgetDownshift`, `BudgetSuspended`, `BudgetExceeded` — Stage F WIRES not adds); session header bar UI; Recovery (resume rebuilds history per spec §1b WI-14; tool-call-uncertain UI prompt with retry/skip/mark-complete/abort; plan + capability state restoration; MCP reconnect-on-resume seam stubbed for M06). **Audit-grounded:** vdr access via drone IPC (vdr lives in `crates/runtime-drone/src/vdr.rs::project_signal` at `:50`); `runtime-main` has no `rusqlite` dep — there is no `runtime-main/src/vdr.rs`. Adds `<pre_flight_check>` for `Arc<DroneClient>` | ~4–6h |
+| **G** | ⏳ | Phase Closeout — gap-analysis entry per CLAUDE.md §20 (cumulative product↔spec audit including M04 + cumulative review); `<gotchas_graduation>` v1.2 closeout subsection auditing all per-stage `<gotchas>` from A1–F (kept / graduated / resolved / expired); M03 + M03.5 carry-forward final disposition; `M04-summary.md` aggregating across stages; three-artifact review (CLAUDE.md §20) | ~2–3h |
 
-Total revised estimate: ~25–35 hours estimated for B–G (A1+A2 actuals: ~4h). ~10–12 hours human direction (seven approval gates + one PR review).
+Total estimate: ~32–45 hours for A1–G (calibrated). Human direction: ~10–12 hours across seven approval gates + one PR review.
 
-**Estimation calibration (revised post-A2 audit).** Original M04: 32–45h calibrated, 12–17h actual at M03 0.32× ratio + 20% buffer. Post-audit: scope reduction in B/D/F removes ~10h of "already-done" work that the original Phase doc claimed as new. Revised total: ~25–35h calibrated, ~8–12h actual. M01 ran 0.3× of estimate; M02 0.7×; M03 0.32×; M03.5 0.14× (doc-only); M04.A1 0.4× actual on 2.5h estimate; M04.A2 0.67× actual on 4.5h estimate. Stages B–F likely track 0.30×–0.50× (code-shipping with cross-stack glue); Stage G ~0.20× (doc-only closeout per M03.F).
+**Estimation calibration (post-M03.5 codebase audit).** Naive estimate from spec scope alone would be ~39–54h; the audit reduces ~10h of B/D/E/F work that's already-shipped (no re-authoring of the 6 existing plan/task events; no re-authoring of 4 verify+rails events + `RevertToSnapshot`; no re-authoring of `HitlRequested`/`HitlResolved`; no re-authoring of 4 budget events; existing `graphStore.applyEvent` exhaustive-switch arms preserved); Stage B absorbs ~3h of folded-from-A3 work. Net calibrated: ~32–45h. Calibration ratios: M01 ran 0.3× of estimate; M02 0.7×; M03 0.32×; M03.5 0.14× (doc-only). Stages A1–F likely track 0.30×–0.50× (code-shipping with cross-stack glue per gotchas #29, #32, #41); Stage G ~0.20× (doc-only closeout per M03.F precedent). Realistic actual at calibrated ratios: ~10–18h.
 
 ---
 
@@ -173,47 +173,54 @@ Doc-only stage: `CHANGELOG.md` `[Unreleased]` notes the hygiene closures.
 **Success criterion:** `cargo xtask regenerate-types --check` returns zero diff after a clean regen; `cargo llvm-cov --package runtime-main` reports `client.rs` at 100%; `grep -rn 'target/debug' crates/runtime-drone/tests/` returns zero matches; all gates pass.
 
 **New artifacts:**
-- `crates/runtime-core/src/error.rs` (new; generated from `error.v1.json` via xtask)
-- `src/types/error.ts` (new; generated from `error.v1.json` via xtask)
+- `crates/runtime-core/src/generated/error.rs` (new; generated from `error.v1.json` via xtask — typify output. Goes under `generated/` per existing convention; the existing top-level `error.rs::RuntimeError` is a separate hand-curated module the namespace strategy resolves at execution time, see A1.3)
+- `crates/runtime-core/src/generated/event.rs` (new; generated from `event.v1.json` via xtask — typify output. Replaces the hand-curated top-level `event.rs::AgentEvent` only IF the typify output matches the hand-curated shape. If drift is non-trivial — likely given typify's `oneOf`-derivation can produce wrappers the hand-curated form lacks — A1 commits the generated file under `generated/` and leaves the top-level `event.rs` in place; later stages migrate consumers. Decision at A1 execution time.)
+- `src/types/error.ts` (new; generated from `error.v1.json` via xtask — json-schema-to-typescript output)
 
 **Edited artifacts:**
-- `crates/xtask/src/main.rs` (add event.v1.json + error.v1.json to codegen list; wire Rust typify + TS json-schema-to-typescript outputs)
-- `crates/runtime-core/src/lib.rs` (export the new `error` module if codegen produces a freestanding file; otherwise verify integration with existing `event` module)
-- `crates/runtime-core/src/event.rs` (regenerated; verify byte-near-identical to current; address any drift)
-- `src/types/agent_event.ts` (regenerated; verify byte-near-identical)
-- `crates/runtime-main/src/drone_ipc/client.rs` (add `tokio::time::pause()`-driven timeout test; no production-code changes)
+- `crates/xtask/src/main.rs` (extend the existing 5-schema codegen list at line 45 — currently `["common", "framework", "skill", "tool", "agent"]` — to include `event` + `error`; wire Rust typify + TS json-schema-to-typescript outputs)
+- `crates/runtime-core/src/lib.rs` (export the new `generated::error` + `generated::event` paths; resolve the namespace strategy with the existing top-level `error.rs::RuntimeError` and `event.rs::AgentEvent` — strategies: (a) rename existing `error.rs` to `runtime_error.rs` and re-export `CmdError` from `generated::error`; (b) keep existing `error.rs` and put generated `CmdError` under `generated::error::CmdError` only; (c) absorb `RuntimeError` into `lib.rs` directly. Decision at execution time per Stage A1 `<gotchas>`)
+- `crates/runtime-core/src/error.rs` (potentially renamed to `runtime_error.rs` per the namespace decision above — preserves existing `RuntimeError` shape; the file's contents do NOT change beyond the rename)
+- `crates/runtime-core/src/event.rs` (potentially renamed to `event_legacy.rs` or absorbed into `lib.rs` if A1 decides to fully migrate to generated; otherwise stays in place — decision at execution time)
+- `src/types/agent_event.ts` (regenerated via the existing M03.A pipeline path; verify drift-check clean)
+- `crates/runtime-main/src/drone_ipc/client.rs` (add `tokio::time::pause()`-driven timeout test for `await_event` path; no production-code changes)
 - `CHANGELOG.md` (`[Unreleased]` notes the M04 Stage A1 hygiene closures)
 
 ### A1.2 Files to Change
 
 | File | Change |
 |---|---|
-| `crates/xtask/src/main.rs` | **Edited** — extend codegen list with `event.v1.json` + `error.v1.json` (Rust typify + TS json-schema-to-typescript outputs) |
-| `crates/runtime-core/src/error.rs` | **New** — generated from `error.v1.json` via xtask (5-variant tagged enum) |
+| `crates/xtask/src/main.rs` | **Edited** — extend the 5-schema codegen list at `:45` with `"event"` + `"error"`; wire Rust typify + TS json-schema-to-typescript outputs (mirror existing pattern) |
+| `crates/runtime-core/src/generated/error.rs` | **New** — generated from `error.v1.json` via xtask (5-variant tagged enum: `SetupRequired`, `Provider`, `Drone`, `KeyStore`, `Internal`) |
+| `crates/runtime-core/src/generated/event.rs` | **New** — generated from `event.v1.json` via xtask. Likely to drift from existing hand-curated `crates/runtime-core/src/event.rs` (oneOf-derivation can produce wrappers); namespace strategy decided at A1 execution time per A1.3 |
 | `src/types/error.ts` | **New** — generated from `error.v1.json` via xtask (5-variant discriminated union) |
-| `crates/runtime-core/src/lib.rs` | **Edited (if needed)** — export the new `error` module per the codegen file structure |
-| `crates/runtime-core/src/event.rs` | **Edited (regen)** — verify byte-near-identical to current hand-maintained shape; address drift |
-| `src/types/agent_event.ts` | **Edited (regen)** — verify byte-near-identical |
+| `crates/runtime-core/src/lib.rs` | **Edited** — declare `pub mod generated;` (it currently exists; its mod.rs adds re-exports for the new `error` + `event` submodules); resolve namespace strategy with existing top-level `error.rs::RuntimeError` + `event.rs::AgentEvent` — see A1.3 strategies |
+| `crates/runtime-core/src/error.rs` | **Possibly renamed** to `runtime_error.rs` per A1 namespace decision; existing `RuntimeError` content unchanged otherwise |
+| `crates/runtime-core/src/event.rs` | **Decision at execution time** — possibly stays as hand-curated source-of-truth (typify output drifts from this and is committed under `generated/` for forward use), or possibly removed in favor of the generated version (consumer migration becomes A2 work) |
+| `src/types/agent_event.ts` | **Regenerated** via existing M03.A pipeline; drift-check clean |
 | `crates/runtime-main/src/drone_ipc/client.rs` | **Edited (test only)** — add `tokio::time::pause()`-driven timeout test for `await_event` path |
-| `crates/runtime-drone/tests/integration*.rs` | **Verified clean (no edits expected)** — confirm zero `target/debug` literals; retrofit if any remain |
-| `CHANGELOG.md` | **Edited** — `[Unreleased]` notes M04 Stage A1 hygiene closures |
+| `crates/runtime-drone/tests/integration*.rs` | **Verified clean** — `grep -rn 'target/debug' crates/runtime-drone/tests/` returns zero matches per gotcha #22; retrofit if any remain |
+| `CHANGELOG.md` | **Edited** — `[Unreleased]` notes M04 Stage A1 hygiene closures + namespace decision outcome |
 
 ### A1.3 Detailed Changes
 
-#### `crates/xtask/src/main.rs` — extend codegen list
+#### `crates/xtask/src/main.rs` — extend codegen list (audit-grounded)
 
-Locate the existing schemas list in the xtask codegen function (M03.A added it; structure is a `&[(name, path)]` slice or similar). Add two entries after the existing entries:
+The existing schemas list at `crates/xtask/src/main.rs:45` is `let schemas = ["common", "framework", "skill", "tool", "agent"];` (5 entries). Stage A1 extends it to 7 entries:
 
-- `("event", "schemas/event.v1.json")` — outputs to `crates/runtime-core/src/event.rs` (Rust) + `src/types/agent_event.ts` (TS)
-- `("error", "schemas/error.v1.json")` — outputs to `crates/runtime-core/src/error.rs` (Rust) + `src/types/error.ts` (TS)
+```rust
+let schemas = ["common", "framework", "skill", "tool", "agent", "event", "error"];
+```
 
-The Rust output uses typify (existing M03.A integration); TS output uses json-schema-to-typescript via Node CLI invocation (existing M03.A pattern via `std::process::Command::new("npx").args(["json-schema-to-typescript", schema_path]).output()`).
+Verify the surrounding loop produces output paths under `crates/runtime-core/src/generated/{name}.rs` (the existing convention; mod.rs already re-exports `agent`, `common`, `framework`, `skill`, `tool` — A1 adds `event` + `error` to that mod.rs). The TS pipeline downstream (existing M03.A path) emits to `src/types/agent_event.ts` for `event` and (new) `src/types/error.ts` for `error`.
 
-The `--check` flag (drift detection) compares regenerated output to committed file via byte-diff; non-zero exit if any diff.
+The `--check` flag (drift detection) compares regenerated output to committed files via byte-diff; non-zero exit if any diff.
 
-#### `crates/runtime-core/src/error.rs` — new generated file
+#### `crates/runtime-core/src/generated/error.rs` — new generated file (audit-grounded path)
 
-Generated from `schemas/error.v1.json` (5-variant `oneOf`). The output is a Rust enum with `serde(tag = "type", rename_all = "snake_case")` matching the schema's `serde` encoding declared in the existing `src-tauri/src/commands.rs::CmdError` (which becomes a re-export of the generated type after Stage A2 wires it).
+**Path correction from previous draft.** Generated output goes under `crates/runtime-core/src/generated/error.rs` (mirrors the existing `generated/{agent,common,framework,skill,tool}.rs` pattern documented in `crates/runtime-core/src/generated/mod.rs`), NOT at top-level. The top-level `crates/runtime-core/src/error.rs` already exists as hand-curated `RuntimeError` (workspace internal error per `lib.rs:4–5`); putting `CmdError` at the top-level would clobber it.
+
+Generated from `schemas/error.v1.json` (5-variant `oneOf`). The output is a Rust enum with `serde(tag = "type", rename_all = "snake_case")` matching the schema's encoding declared in the existing `src-tauri/src/commands.rs::CmdError:46` (which becomes a re-export of the generated type after Stage A2 wires it).
 
 Expected enum shape (typify-generated; do not hand-edit):
 
@@ -231,13 +238,35 @@ pub enum CmdError {
 
 If typify produces a different shape (e.g., struct variants with `Default`, or an extra `oneOf`-derived wrapper), accept the generated output and update consumers in Stage A2 — do not hand-edit the generated file.
 
+#### Namespace clash decision — top-level `error.rs::RuntimeError` vs generated `generated::error::CmdError`
+
+A1's most subtle decision. The existing top-level `crates/runtime-core/src/error.rs` holds:
+
+```rust
+pub enum RuntimeError { /* hand-curated workspace error variants */ }
+```
+
+A1's codegen lands `CmdError` at `crates/runtime-core/src/generated/error.rs`. Both files coexist by path. The decision is how `lib.rs` exposes the names so consumers (runtime-main, runtime-drone, src-tauri) can use both unambiguously. Three strategies:
+
+(a) **Rename existing `error.rs` to `runtime_error.rs` (recommended baseline).** `lib.rs` then declares `pub mod runtime_error;` and `pub use runtime_error::RuntimeError;` for the workspace internal error. The generated path stays as `pub mod generated;` (already declared) which exposes `generated::error::CmdError`. Consumers of `RuntimeError` update to `runtime_error::RuntimeError` or use the re-export at crate root. Cleanest separation; mirrors the typify `generated/` convention. PR diff is one rename + a few `use` updates.
+
+(b) **Keep existing `error.rs`, qualify generated `CmdError` only.** `lib.rs` keeps the existing `pub mod error;` for `RuntimeError`; `CmdError` is accessed only as `runtime_core::generated::error::CmdError` (long form). Consumers must use the qualified path. No renames; longer use-paths in callers. Simpler PR diff; uglier callsites.
+
+(c) **Absorb `RuntimeError` into `lib.rs` directly.** `lib.rs` inlines `RuntimeError` (single enum, ~30 lines); deletes the existing `error.rs` file. Generated `CmdError` accessed as `generated::error::CmdError` or re-exported. Most disruptive; not recommended unless `RuntimeError` is genuinely tiny.
+
+A1 picks one strategy at execution time, documents the choice in the retrospective `[END] Decisions for Stage A2` section, and applies it consistently. The Stage A1 prompt's `<gotchas>` surfaces this decision; the `<approval_surface>` includes the strategy choice as a review item.
+
+#### `crates/runtime-core/src/generated/event.rs` — new generated file (likely drift-prone)
+
+Generated from `schemas/event.v1.json` via typify. The current top-level `crates/runtime-core/src/event.rs` is hand-curated — 39 variants with extensive doc-comment cross-references to spec sections. Typify's `oneOf`-derivation may produce a structurally different shape (e.g., a wrapper enum + variant types as separate structs). If drift is non-trivial, A1 commits the generated file under `generated/` (per the codegen pipeline) but does NOT delete the top-level hand-curated `event.rs` in the same PR — the consumer migration is Stage A2 work, not A1's. If drift is trivial (byte-near-identical), A1 may choose to delete the top-level file in the same commit. Decision at execution time; surface in retrospective.
+
 #### `src/types/error.ts` — new generated file
 
 Generated from `schemas/error.v1.json` via json-schema-to-typescript. Expected output: a `CmdError` discriminated union matching the existing `src/lib/ipc.ts::CmdError` interface (which becomes a re-export after Stage A2 refactor). The generator may produce an `export type CmdError = { type: 'setup_required' } | { type: 'provider'; message: string } | ...` form or an interface-based form; accept whatever json-schema-to-typescript produces and update consumers in Stage A2.
 
-#### `crates/runtime-core/src/lib.rs` — export `error` module
+#### `crates/runtime-core/src/lib.rs` — namespace updates
 
-Add `pub mod error;` if the codegen produces a freestanding `error.rs` file. Verify the existing `pub mod event;` line is unchanged (regen of `event.rs` should not affect the module declaration).
+Currently: `pub mod drone; pub mod error; pub mod event; pub mod generated; pub mod signal;` plus re-exports `pub use error::RuntimeError; pub use event::{AgentEvent, ToolSource};`. Stage A1 updates per the chosen namespace strategy (typically option (a)): rename the existing `error.rs` declaration to `runtime_error`, leave `generated` as-is (its `mod.rs` adds `pub mod error; pub mod event;` declarations), and update the re-exports accordingly. Verify `pub mod generated;` still works after `mod.rs` adds two new declarations.
 
 #### `crates/runtime-main/src/drone_ipc/client.rs` — `tokio::time::pause()` timeout test
 
@@ -300,7 +329,7 @@ Paste the XML block below into a fresh Claude Code session as the opening messag
 ```xml
 <work_stage_prompt id="M04.A1">
   <context>
-    Stage A1 of M04 (Plan + Verify + HITL + Budget). Build hygiene + xtask codegen extensions + coverage retrofits. Closes three M03 carry-forward 🟡 build-hygiene items so Stages A2-G focus on production wiring + new primitive surface. Stage A2 does not start until Stage A1's commit is on the milestone branch claude/m04-plan-verify-hitl-budget. First milestone authored on the v1.3 XML stage-prompt protocol — uses <schema_drift_check> + <runtime_environment> tags below.
+    Stage A1 of M04 (Plan + Verify + HITL + Budget). First stage of M04; codebase is at end-of-M03.5. Build hygiene + xtask codegen extensions + coverage retrofits. Closes three M03 carry-forward 🟡 build-hygiene items so Stages A2–G focus on production wiring + new primitive surface. The xtask codegen list at `crates/xtask/src/main.rs:45` currently contains 5 schemas (`["common", "framework", "skill", "tool", "agent"]`) — A1 extends to 7 (adds `event` + `error`). Output goes under `crates/runtime-core/src/generated/` (mirrors existing typify convention). The existing top-level `crates/runtime-core/src/error.rs` (hand-curated `RuntimeError`) is a NAMESPACE CLASH — A1 resolves it (rename to `runtime_error.rs`, qualify by path, or absorb into `lib.rs`; decision documented in retrospective). The existing top-level `event.rs` may diverge from typify output; A1 commits the generated file and decides whether to keep or remove the hand-curated version. Stage A2 does not start until Stage A1's commit is on the milestone branch `claude/m04-plan-verify-hitl-budget`. First milestone authored on the v1.3 XML stage-prompt protocol — uses `<schema_drift_check>` + `<runtime_environment>` tags below.
   </context>
 
   <read_first>
@@ -310,15 +339,18 @@ Paste the XML block below into a fresh Claude Code session as the opening messag
     <file>agent-runtime-spec.md §0–§0d, §1d, §2c, §13.5</file>
     <file>docs/MVP-v0.1.md §M4</file>
     <file>docs/style.md</file>
-    <file>docs/gotchas.md</file>
+    <file>docs/gotchas.md (especially #14 snake_case discipline; #41 grep-verify-claims — the rule that produced this audit-grounded prompt)</file>
     <file>docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md</file>
   </read_first>
 
   <read_reference>
-    <file purpose="M03.A xtask codegen archetype to extend">crates/xtask/src/main.rs</file>
-    <file purpose="hand-maintained event types about to be regenerated; verify near-byte-identical post-regen">crates/runtime-core/src/event.rs</file>
+    <file purpose="M03.A xtask codegen archetype to extend; line 45 has the 5-schema list">crates/xtask/src/main.rs</file>
+    <file purpose="existing typify-generated module structure; A1 adds 'error' + 'event' submodules to the existing mod.rs">crates/runtime-core/src/generated/mod.rs</file>
+    <file purpose="EXISTING hand-curated RuntimeError — namespace clash with generated CmdError; A1 resolves">crates/runtime-core/src/error.rs</file>
+    <file purpose="EXISTING hand-curated AgentEvent (39 variants); typify output may drift; A1 decides keep/remove">crates/runtime-core/src/event.rs</file>
+    <file purpose="lib.rs declares the existing pub mod error/event/generated; A1 updates per namespace strategy">crates/runtime-core/src/lib.rs</file>
     <file purpose="schema source for new error type codegen target">schemas/error.v1.json</file>
-    <file purpose="hand-maintained CmdError that error.rs will replace in Stage A2">src-tauri/src/commands.rs</file>
+    <file purpose="hand-maintained CmdError at line 46 that A1's generated type will replace in Stage A2">src-tauri/src/commands.rs</file>
     <file purpose="tokio::time::pause() archetype for await_event timeout test">crates/runtime-main/src/drone_ipc/connection.rs</file>
     <file purpose="current_exe() archetype for any drone integration test retrofits">crates/runtime-main/tests/drone_ipc_loopback.rs</file>
   </read_reference>
@@ -349,40 +381,52 @@ Paste the XML block below into a fresh Claude Code session as the opening messag
 
   <self_correction_budget>3</self_correction_budget>
 
+  <pre_flight_check>
+    <check name="branch_correct">git rev-parse --abbrev-ref HEAD must equal claude/m04-plan-verify-hitl-budget</check>
+    <check name="audit_baseline_xtask">grep -q '\["common", "framework", "skill", "tool", "agent"\]' crates/xtask/src/main.rs (confirms A1 starts from the verified end-of-M03.5 baseline; if the grep fails the codebase has drifted between authoring and execution and A1's plan needs revisiting)</check>
+    <check name="audit_baseline_error_rs">grep -q "pub enum RuntimeError" crates/runtime-core/src/error.rs (confirms the existing hand-curated error.rs is unchanged from audit baseline; namespace strategy applies as written)</check>
+    <check name="audit_baseline_generated_dir">Test-Path crates/runtime-core/src/generated AND Test-Path crates/runtime-core/src/generated/mod.rs (confirms the typify generated/ convention exists; A1 extends mod.rs)</check>
+    <check name="schemas_present">Test-Path schemas/event.v1.json AND Test-Path schemas/error.v1.json</check>
+  </pre_flight_check>
+
   <schema_drift_check gate="cargo xtask regenerate-types --check"/>
 
-  <runtime_environment os="windows" note="Build agent runs on Windows 11 per the established M01-M03.5 pattern; Select-String is the assumed grep equivalent throughout the prompt; Test-Path replaces test -f"/>
+  <runtime_environment os="windows" note="Build agent runs on Windows 11 per the established M01-M03.5 pattern; Select-String is the assumed grep equivalent throughout the prompt; Test-Path replaces test -f. The PowerShell-via-bash discipline from M03.5.A retro applies — variable expansion in heredoc-wrapped scripts must be safe under bash's expansion rules."/>
 
   <gotchas>
-    <trap>Stage A1's job is to close M03 build-hygiene carry-forward + extend xtask codegen, not to start Stage A2's production wiring — resist scope creep into drone subprocess spawning even if the regenerated types make it tempting</trap>
+    <trap>NAMESPACE CLASH: existing top-level crates/runtime-core/src/error.rs holds RuntimeError (hand-curated workspace error per lib.rs:4-5); generated CmdError lands at crates/runtime-core/src/generated/error.rs (per existing generated/ convention). A1 picks the namespace strategy: (a) rename top-level to runtime_error.rs (recommended baseline); (b) qualify generated by full path; (c) absorb RuntimeError into lib.rs. Decision documented in retrospective [END] Decisions; PR diff reflects choice.</trap>
+    <trap>EVENT.RS DRIFT LIKELY: the existing top-level event.rs (39 hand-curated variants with extensive doc comments) will likely diverge from typify oneOf-derived output. A1 commits the generated version under generated/event.rs but does NOT delete the hand-curated top-level file in the same PR if drift is non-trivial — consumer migration is Stage A2 work. If drift is trivial, A1 may delete the top-level in the same commit. Surface in retrospective.</trap>
+    <trap>Stage A1's job is to close M03 build-hygiene carry-forward + extend xtask codegen, not to start Stage A2's production wiring — resist scope creep into drone subprocess spawning even if the regenerated types make it tempting. The 3 DroneClient::noop() callsites at src-tauri/src/commands.rs:166, 200, 247 stay noop'd until A2.</trap>
     <trap>typify-generated Rust types may not match the hand-maintained event.rs byte-for-byte — accept the generated output and update consumers in subsequent stages rather than hand-editing the generated file (gotcha #14 snake_case schema discipline applies here)</trap>
     <trap>json-schema-to-typescript may produce a TS shape that differs from the M02 hand-maintained CmdError interface (e.g., interface vs type alias, strict vs loose discriminator) — Stage A2 owns the consumer refactor; A1 only commits the generated output</trap>
-    <trap>tokio::time::pause() requires #[tokio::test(start_paused = true)] OR explicit tokio::time::pause() at test start — the latter pattern from M01.C is acceptable but the former is cleaner; pick one and document the choice</trap>
-    <trap>If event.rs regen produces drift from the hand-maintained version, that's M03.A drift — surface the diff in the retrospective so future schema edits don't recur the issue; do NOT silently accept changes that affect runtime behavior without flagging them</trap>
+    <trap>tokio::time::pause() — prefer #[tokio::test(start_paused = true)] over manual pause() at test start (cleaner pattern; M01.C connection.rs archetype works but the start_paused form is the v1.3 baseline). Document the choice in retro.</trap>
+    <trap>Per gotcha #41 (grep-verify-claims): every codebase-state claim in this stage's deliverable section is verified against end-of-M03.5 reality. If the verifications in &lt;pre_flight_check&gt; fail (codebase has drifted between authoring and execution), surface the drift before proceeding — do NOT improvise around it.</trap>
   </gotchas>
 
   <execution_warnings>
     <warning>DO NOT touch src-tauri/src/commands.rs::CmdError in Stage A1 — that's Stage A2's refactor (replace with re-export of generated type). Stage A1 only commits the generated output file.</warning>
-    <warning>DO NOT regenerate framework/skill/agent/tool/common schemas — only event.v1.json + error.v1.json get extended codegen. Existing schemas were already regenerated in M01–M03.</warning>
+    <warning>DO NOT regenerate framework/skill/agent/tool/common schemas — only event.v1.json + error.v1.json get extended codegen. The existing 5 schemas in xtask main.rs:45 stay untouched in their codegen.</warning>
     <warning>DO NOT push between stages — Stage A1 commits locally only. The push happens at end of Stage G per CLAUDE.md §8 + §20.</warning>
     <warning>The cargo xtask regenerate-types --check command must produce zero diff after the regen step — if there's persistent drift between regen passes, the codegen is non-deterministic and needs fixing (sorted fields, normalized whitespace, deterministic comments) before committing.</warning>
+    <warning>Stage A1's commit MUST include docs/build-prompts/retrospectives/M04.A1-retrospective.md in the staged files (per M03.5.B retro [END] decision — the Stage A1 retrospective being untracked at commit time is the M03.5 drift this stage explicitly closes via &lt;pre_flight_check&gt; for Stage A2).</warning>
   </execution_warnings>
 
   <time_box estimate_hours="2.5"/>
 
   <retrospective_requirements ref="docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md" section="M[NN].&lt;X&gt; — Stage Retrospective">
-    <special_log>Decisions for Stage A2: any drift discovered between hand-maintained event.rs and regen output (if so, was it pre-existing or did regen introduce it?); whether json-schema-to-typescript output requires Stage A2 consumer refactor (likely yes given M02 hand-maintained shape predates the schema); whether the await_event timeout test surfaces any other timeout-related bugs in client.rs that weren't covered by the existing tests; whether the drone integration test current_exe() retrofit was clean or revealed additional path-derivation issues.</special_log>
+    <special_log>Decisions for Stage A2: NAMESPACE STRATEGY chosen for the error.rs clash (a/b/c per Stage A1's gotchas + A1.3); whether the existing top-level event.rs was deleted or kept alongside generated/event.rs (A2 may need to migrate consumers); typify drift discovered in event.rs regen (was it pre-existing M03.A drift or new from this regen? confirm in diff); whether json-schema-to-typescript output requires Stage A2 consumer refactor (likely yes given M02 hand-maintained CmdError interface predates the schema); whether the await_event timeout test surfaces any other timeout-related bugs in client.rs not covered by existing tests; whether the drone integration test current_exe() retrofit was clean or revealed additional path-derivation issues; outcome of cargo xtask regenerate-types --check post-implement (zero diff or non-zero with reason).</special_log>
   </retrospective_requirements>
 
   <commit_protocol ref="CLAUDE.md" section="8. PR + commit workflow (CRITICAL — read carefully)"/>
   <commit_message ref="docs/build-prompts/M04-plan-verify-hitl-budget.md" section="A1.6 Commit Message"/>
 
   <approval_surface>
-    <item>diff stat (git diff --stat HEAD)</item>
+    <item>diff stat (git diff --stat HEAD) including the M04.A1-retrospective.md file in staged set</item>
     <item>gate results (each gate, pass/fail, key numbers including the new client.rs coverage 100%)</item>
     <item>schema drift check output — cargo xtask regenerate-types --check exit code + diff if any</item>
-    <item>generated file shape preview — first 30 lines of crates/runtime-core/src/error.rs + first 30 lines of src/types/error.ts so the human can spot-check shape</item>
-    <item>any drift discovered in event.rs regen (diff with original hand-maintained content, or "byte-identical")</item>
+    <item>NAMESPACE STRATEGY chosen (a/b/c per A1.3) with one-paragraph rationale</item>
+    <item>generated file shape preview — first 30 lines of crates/runtime-core/src/generated/error.rs + first 30 lines of src/types/error.ts so the human can spot-check shape</item>
+    <item>event.rs regen disposition — diff between top-level hand-curated event.rs and generated/event.rs; statement of whether the top-level was kept, deleted, or absorbed</item>
     <item>retrospective (filled-in [END] section with three-axis scoring + verdict + decisions for Stage A2)</item>
     <item>draft commit message from M04-plan-verify-hitl-budget.md A1.6 Commit Message section (filled with session URL)</item>
     <item>explicit statement: "Stage M04.A1 is ready. I will not commit until you approve."</item>
@@ -398,14 +442,26 @@ chore(workspace): M04 Stage A1 — build hygiene + xtask codegen extensions
 
 Closes M03 carry-forward 🟡 build-hygiene items so Stage A2 (production
 wiring) can focus on the real surface. No new feature surface; codegen
-extensions + coverage retrofit + drift verification.
+extensions + namespace resolution + coverage retrofit + drift verification.
 
 Carry-forward closures:
-- crates/xtask/src/main.rs: extended codegen to event.v1.json +
-  error.v1.json (Rust typify + TS json-schema-to-typescript). Replaces
-  hand-maintained crates/runtime-core/src/event.rs with regen output;
-  adds new generated crates/runtime-core/src/error.rs + src/types/
-  error.ts (consumers refactor in Stage A2).
+- crates/xtask/src/main.rs: extended the 5-schema codegen list at line
+  45 to 7 entries (adds "event" + "error"); Rust typify outputs to
+  crates/runtime-core/src/generated/{event,error}.rs (mirrors existing
+  generated/ convention); TS json-schema-to-typescript outputs to
+  src/types/{agent_event,error}.ts.
+- crates/runtime-core/src/generated/error.rs: new generated CmdError
+  (5-variant tagged enum); namespace strategy resolves the clash with
+  the existing hand-curated crates/runtime-core/src/error.rs (which
+  holds RuntimeError, the workspace internal error). Strategy chosen:
+  <NAMESPACE_STRATEGY> (a: rename top-level error.rs to runtime_error.rs
+  / b: keep top-level, qualify generated by full path /
+  c: absorb RuntimeError into lib.rs). PR diff reflects the choice.
+- crates/runtime-core/src/generated/event.rs: new generated AgentEvent.
+  Top-level hand-curated event.rs disposition: <KEEP_OR_REMOVE>
+  (kept alongside if typify drift is non-trivial; consumer migration
+  is Stage A2 work).
+- src/types/error.ts: new generated CmdError discriminated union.
 - crates/runtime-main/src/drone_ipc/client.rs: tokio::time::pause()-
   driven test for await_event timeout path. Closes 100% → 94% regression
   on client.rs coverage from M03.D retro.
@@ -413,13 +469,12 @@ Carry-forward closures:
   target/debug literals (per docs/gotchas.md #22; M03.A retrofit
   confirmed durable).
 
-CHANGELOG.md [Unreleased] reflects the closures. No source-code behavior
-changes; codegen output may differ structurally from hand-maintained
-event.rs in trivial ways (sorted derive order, doc-comment style) —
-verify byte-near-identical via diff and document any meaningful drift.
+CHANGELOG.md [Unreleased] reflects the closures. Namespace strategy
+choice documented in retrospective [END] Decisions section.
 
 Refs: M04-plan-verify-hitl-budget.md §A1, gap-analysis.md M03 entry 🟡
-(xtask event.v1.json codegen + await_event coverage)
+(xtask event.v1.json codegen + await_event coverage), CLAUDE.md §14
+(schemas-as-source-of-truth)
 Retrospective: docs/build-prompts/retrospectives/M04.A1-retrospective.md
 
 https://claude.ai/code
@@ -433,7 +488,7 @@ EOF
 <!-- STAGE A2 — Production wiring                                   -->
 <!-- ============================================================ -->
 
-## Stage A2 — Production wiring (drone subprocess + vdr.rs projector + decision extractor + count_tokens + events() reconnect)
+## Stage A2 — Production wiring (drone subprocess + count_tokens + events() reconnect + CmdError consumption)
 
 **WEBCHECK:** verify each URL against this stage's prompt body **before** the fresh session opens.
 
@@ -445,33 +500,31 @@ EOF
 
 ### A2.1 Problem Statement
 
-Stage A2 wires the production paths M03 deferred via `DroneClient::noop()`, plus closes four M02/M03 carry-forward 🟡 items that block downstream stages:
+Stage A2 wires the production paths M03 deferred via `DroneClient::noop()`, plus closes three M02/M03 carry-forward 🟡 items that block downstream stages. **Two items the previous draft scoped here (vdr WriteSignal IPC wiring + structured-emitter prompt template) are folded into Stage B per the post-M03.5 audit re-staging** — see Background § "Why seven stages, not eight" — because Stage B has scope slack from already-shipped events and the WriteSignal IPC variant naturally belongs alongside Stage B's plan/task schema authoring.
 
-1. **Drone subprocess lifecycle at Tauri startup.** M03.E shipped `DroneClient::noop()` for the Tauri command seams (`query_session_db`, `replay_session`); Stage A2 spawns the real `runtime-drone` subprocess at app startup, registers `Arc<DroneClient>` as Tauri managed state, and wires graceful shutdown on app exit. SQL inspector + replay-from-signals become end-to-end functional. Closes gap-analysis M03 🟡 entry "Production drone subprocess wiring at Tauri startup".
+1. **Drone subprocess lifecycle at Tauri startup.** M03.E shipped 3 `DroneClient::noop()` callsites at `src-tauri/src/commands.rs:166, 200, 247` (`run_smoke_session`, `query_session_db`, `replay_session`); Stage A2 spawns the real `runtime-drone` subprocess at app startup, registers `Arc<DroneClient>` as Tauri managed state, and wires graceful shutdown on app exit. **`src-tauri/src/lib.rs` does NOT exist** (audit-confirmed); current Tauri shell is `src-tauri/src/main.rs` directly. A2 adds new sibling module `src-tauri/src/drone_lifecycle.rs` and invokes its `spawn`/`shutdown` from the existing `main.rs::main()`. SQL inspector + replay-from-signals + smoke session become end-to-end functional. Closes gap-analysis M03 🟡 entry "Production drone subprocess wiring at Tauri startup".
 
-2. **VDR projector wired at signal-write call-site.** M03 added the `vdr` module + projection logic but never called it from `WriteSignal`. Stage A2 calls `vdr::project_signal(conn, signal_id)` after each insert in `crates/runtime-main/src/sdk/event_pipeline.rs`. Decisions are now actually projected. Closes gap-analysis M03 🟡 entry "vdr.rs projector wired at signal-write call-site".
+2. **Real `count_tokens` Anthropic endpoint.** M02 ships a chars/4 approximation at `crates/runtime-main/src/providers/anthropic.rs:135`. Stage A2 implements the real call to `POST /v1/messages/count_tokens` per spec §2c.3 (added M03.5). Wiremock test covers happy path + error mapping. M04 budget enforcement (Stage F) depends on this. Closes gap-analysis M02 🟡 entry "count_tokens → real /v1/messages/count_tokens endpoint".
 
-3. **Decision extractor → structured emitter migration.** M02 ships a heuristic line-by-line text-scan extractor at `crates/runtime-main/src/sdk/decision_extractor.rs`. Stage A2 replaces it with a structured emitter: prompt template injects a delimited block (e.g., `<<DECISION>>...<<END>>`); SDK parses the block directly via regex. Reduces extraction false-positive rate; matches spec §2b ⚠️ note added in M03.5. Closes gap-analysis M02 🟡 entry "Decision extractor → structured emitter migration".
+3. **Long-lived `events()` reconnect resolution.** Per spec §1d ⚠️ note (updated M03.5 from M03 to M04 carry-forward): does the renderer's long-lived `agent_event` subscription survive a mid-session main↔drone reconnect? Stage A2 establishes the answer through a deliberate integration test (kill drone subprocess mid-session, verify the renderer continues to receive events after reconnect). Test-driven decision: if survival works as-implemented, the ⚠️ note becomes a closed item; if not, document the v0.1 behavior (renderer resubscribes on reconnect via M03's replay_session pattern) and update spec text. Reconnect logic lives at `crates/runtime-main/src/drone_ipc/connection.rs` (audit-confirmed; `event_translation.rs` is a phantom path — actual translation pipeline is `crates/runtime-main/src/sdk/event_pipeline.rs`). Closes gap-analysis M02 🟡 entry "Long-lived events() subscription survives reconnect".
 
-4. **Real `count_tokens` Anthropic endpoint.** M02 ships a chars/4 approximation in `crates/runtime-main/src/providers/anthropic.rs::count_tokens`. Stage A2 implements the real call to `POST /v1/messages/count_tokens` per spec §2c.3 (added M03.5). Wiremock test covers happy path + error mapping. M04 budget enforcement (Stage F) depends on this. Closes gap-analysis M02 🟡 entry "count_tokens → real /v1/messages/count_tokens endpoint".
+4. **`unwrapCmdError` consumes generated types + Tauri command surface refactor.** Stage A1 generates `crates/runtime-core/src/generated/error.rs` (per the typify `generated/` convention; the existing top-level `error.rs::RuntimeError` is unrelated workspace internal error) + `src/types/error.ts`. Stage A2 refactors `src/lib/ipc.ts::unwrapCmdError` to import the generated `CmdError` type from `src/types/error.ts` rather than the M02 hand-maintained interface. The hand-maintained `CmdError` enum at `src-tauri/src/commands.rs:46` becomes `pub use runtime_core::generated::error::CmdError` (path depends on A1's namespace strategy outcome — see A1 retro). Preserves unwrap semantics per gotcha #30 (renderer-side typed error unwrap). Closes the consumer-refactor portion of A1's `error.rs` codegen.
 
-5. **Long-lived `events()` reconnect resolution.** Per spec §1d ⚠️ note (updated M03.5 from M03 to M04 carry-forward): does the renderer's long-lived `agent_event` subscription survive a mid-session main↔drone reconnect? Stage A2 establishes the answer through a deliberate integration test (kill drone subprocess mid-session, verify the renderer continues to receive events after reconnect). Test-driven decision: if survival works as-implemented, the ⚠️ note becomes a closed item; if not, document the v0.1 behavior (renderer resubscribes on reconnect via M03's replay_session pattern) and update spec text. Closes gap-analysis M02 🟡 entry "Long-lived events() subscription survives reconnect".
+**Items folded into Stage B per audit re-staging (NOT in A2):**
+- VDR projector wiring at signal-write call-site (was previous A2.1 #2). Architecture: main emits a `WriteSignal` IPC variant → drone runs `vdr::project_signal` internally (`crates/runtime-drone/src/vdr.rs::project_signal:50`). `runtime-main` has no `rusqlite` dep, so direct main-side projection is structurally infeasible. WriteSignal IPC variant authoring + drone handler arm + main-side emission path all land in Stage B alongside the plan-state-machine signal emissions.
+- Decision extractor → structured emitter migration (was previous A2.1 #3). Replacement of `crates/runtime-main/src/sdk/decision_extractor.rs` heuristic with regex on `<<DECISION>>...<<END>>` delimited blocks; prompt-template module authoring; AgentSdk plumbing. Folded into Stage B because the structured emitter is the cross-stack glue that lets the SDK detect plan-creation events from the orchestrator agent's text — same authoring stage as the plan state machine that consumes the decisions.
 
-6. **`unwrapCmdError` consumes generated types.** Stage A1 generated `crates/runtime-core/src/error.rs` + `src/types/error.ts`. Stage A2 refactors `src/lib/ipc.ts::unwrapCmdError` to import the generated `CmdError` type from `src/types/error.ts` rather than the M02 hand-maintained interface. Preserves unwrap semantics per gotcha #30 (renderer-side typed error unwrap). Closes the consumer-refactor portion of A1's `error.rs` codegen.
-
-**Success criterion:** drone subprocess spawns at Tauri startup; `query_session_db` + `replay_session` invoke real drone IPC and return real data; `vdr` table populates after every signal write; structured decision emitter parses delimited blocks correctly under unit test; wiremock-backed `count_tokens` test passes against the real endpoint shape; long-lived events() reconnect behavior is documented + tested; `unwrapCmdError` uses generated types; all gates pass.
+**Success criterion:** drone subprocess spawns at Tauri startup; the 3 `DroneClient::noop()` callsites at `commands.rs:166, 200, 247` invoke real drone IPC and return real data; wiremock-backed `count_tokens` test passes against the real endpoint shape; long-lived events() reconnect behavior is documented + tested (with spec §1d ⚠️ note disposition either closed or updated); `unwrapCmdError` uses generated types; `commands.rs::CmdError` is a re-export of the generated type; all gates pass.
 
 **New artifacts:**
-- `src-tauri/src/drone_lifecycle.rs` (new; subprocess spawn + lifecycle + graceful shutdown)
+- `src-tauri/src/drone_lifecycle.rs` (new sibling of `main.rs`; subprocess spawn + lifecycle + graceful shutdown)
 - `crates/runtime-main/tests/drone_reconnect_events.rs` (new integration test for long-lived events() survival)
 
 **Edited artifacts:**
-- `src-tauri/src/lib.rs` (spawn drone at app startup; register `Arc<DroneClient>` as Tauri managed state)
-- `src-tauri/src/commands.rs` (replace `DroneClient::noop()` in `query_session_db` + `replay_session`; replace hand-maintained `CmdError` enum with re-export of generated type from `runtime-core`)
-- `crates/runtime-main/src/sdk/event_pipeline.rs` (call `vdr::project_signal` at WriteSignal)
-- `crates/runtime-main/src/sdk/decision_extractor.rs` (replace heuristic with structured emitter)
-- `crates/runtime-main/src/providers/anthropic.rs` (implement real `count_tokens` against `/v1/messages/count_tokens`)
-- `crates/runtime-main/src/sdk/event_translation.rs` or equivalent (long-lived events() reconnect handling — verify or implement per A2.1 #5)
+- `src-tauri/src/main.rs` (spawn drone at app startup via new `drone_lifecycle` module; register `Arc<DroneClient>` as Tauri managed state via `app.manage(...)`; wire graceful shutdown on `RunEvent::ExitRequested`)
+- `src-tauri/src/commands.rs` (replace 3 `DroneClient::noop()` callsites at lines 166, 200, 247 with `tauri::State<'_, Arc<DroneClient>>` parameter + real IPC dispatch; replace hand-maintained `CmdError` enum at line 46 with re-export of A1's generated type from `runtime-core`)
+- `crates/runtime-main/src/providers/anthropic.rs` (implement real `count_tokens` at line 135 against `POST /v1/messages/count_tokens`)
+- `crates/runtime-main/src/drone_ipc/connection.rs` or `crates/runtime-main/src/sdk/event_pipeline.rs` (long-lived events() reconnect handling per A2.1 #3 — exact location depends on test outcome)
 - `crates/runtime-main/tests/anthropic_wiremock.rs` (add `count_tokens` happy-path + error tests)
 - `src/lib/ipc.ts` (refactor `unwrapCmdError` to consume generated `CmdError` from `src/types/error.ts`)
 - Possibly `agent-runtime-spec.md` §1d (update or close the ⚠️ long-lived events() note based on Stage A2's test outcome)
@@ -480,13 +533,11 @@ Stage A2 wires the production paths M03 deferred via `DroneClient::noop()`, plus
 
 | File | Change |
 |---|---|
-| `src-tauri/src/lib.rs` | **Edited** — spawn drone subprocess at `setup` hook; register `Arc<DroneClient>` via `app.manage(...)` |
-| `src-tauri/src/drone_lifecycle.rs` | **New** — `DroneLifecycle::spawn`, `DroneLifecycle::shutdown`, RAII drop guard for graceful exit |
-| `src-tauri/src/commands.rs` | **Edited** — replace `DroneClient::noop()` in `query_session_db` + `replay_session` with `tauri::State<Arc<DroneClient>>` parameter; replace hand-maintained `CmdError` enum with `pub use runtime_core::error::CmdError` |
-| `crates/runtime-main/src/sdk/event_pipeline.rs` | **Edited** — call `vdr::project_signal(conn, signal_id)` after WriteSignal insert |
-| `crates/runtime-main/src/sdk/decision_extractor.rs` | **Edited (rewrite)** — structured-emitter parser (regex-based delimited-block extraction) replaces line-by-line heuristic |
-| `crates/runtime-main/src/providers/anthropic.rs` | **Edited** — implement `count_tokens` against `POST /v1/messages/count_tokens` |
-| `crates/runtime-main/src/sdk/event_translation.rs` | **Edited** — long-lived events() reconnect handling per A2.1 #5 |
+| `src-tauri/src/main.rs` | **Edited** — spawn drone subprocess at app startup (calls into new `drone_lifecycle` module); register `Arc<DroneClient>` via `app.manage(...)`; graceful shutdown on `RunEvent::ExitRequested` |
+| `src-tauri/src/drone_lifecycle.rs` | **New** (sibling of `main.rs`) — `DroneLifecycle::spawn`, `DroneLifecycle::shutdown`, RAII drop guard for graceful exit |
+| `src-tauri/src/commands.rs` | **Edited** — replace 3 `DroneClient::noop()` callsites at lines 166, 200, 247 (`run_smoke_session`, `query_session_db`, `replay_session`) with `tauri::State<'_, Arc<DroneClient>>` parameter + real IPC dispatch; replace hand-maintained `CmdError` enum at line 46 with re-export of A1's generated type — exact path depends on A1 namespace strategy (`pub use runtime_core::generated::error::CmdError;` or via re-export at `runtime_core::error::CmdError` if A1 chose strategy (a) renamed-aware) |
+| `crates/runtime-main/src/providers/anthropic.rs` | **Edited** — implement `count_tokens` at line 135 against `POST /v1/messages/count_tokens` |
+| `crates/runtime-main/src/drone_ipc/connection.rs` or `crates/runtime-main/src/sdk/event_pipeline.rs` | **Edited (conditional)** — long-lived events() reconnect handling per A2.1 #3; exact location surfaced by the integration test |
 | `crates/runtime-main/tests/anthropic_wiremock.rs` | **Edited** — add `count_tokens` happy-path + error tests |
 | `crates/runtime-main/tests/drone_reconnect_events.rs` | **New** — integration test for long-lived events() reconnect |
 | `src/lib/ipc.ts` | **Edited** — `unwrapCmdError` consumes generated `CmdError` from `src/types/error.ts` |
@@ -511,77 +562,42 @@ Drop guard pattern: a `DroneLifecycle` struct holding `Child` + `Arc<DroneClient
 
 Tracing: `tracing::info!("drone subprocess spawned"; pid = child.id(), socket = sock)` at spawn; `tracing::warn!` on shutdown timeout fallback. Per spec §13.5 Dev Logging.
 
-#### `src-tauri/src/lib.rs` — Tauri `setup` hook
+#### `src-tauri/src/main.rs` — Tauri `setup` hook (audit-grounded path)
 
-Locate the existing `tauri::Builder::default()` chain. Add a `.setup(|app| { ... })` block that:
+**Path correction from previous draft.** `src-tauri/src/lib.rs` does NOT exist (audit-confirmed); the current Tauri shell is `src-tauri/src/main.rs` only — `main()` directly calls `tauri::Builder::default().invoke_handler(...).run(tauri::generate_context!())`. A2 keeps this orchestration shape and adds the spawn logic to `main.rs` itself, NOT a new `lib.rs`.
+
+Locate the existing `tauri::Builder::default()` chain in `main.rs`. Add a `.setup(|app| { ... })` block (before the existing `.invoke_handler(...)`) that:
 
 1. Resolves the SQLite db path via existing path-resolution helper
 2. Calls `DroneLifecycle::spawn(app.handle(), &db_path)` → `Arc<DroneClient>`
 3. Registers via `app.manage(drone_client.clone())`
 4. Stores the `DroneLifecycle` instance for graceful shutdown (likely via a `OnceLock<Mutex<Option<DroneLifecycle>>>` static or similar — match existing app-state pattern)
 
-Add an `on_window_event` or `on_run_event` handler for `RunEvent::ExitRequested` that calls `DroneLifecycle::shutdown` before propagating exit. Verify the exact Tauri 2.x event hook name + signature against current docs before authoring.
+Add an `.on_window_event(...)` or `.run(|_app, event| match event { ... })` handler for `RunEvent::ExitRequested` that calls `DroneLifecycle::shutdown` before propagating exit. Verify the exact Tauri 2.x event hook name + signature against current docs before authoring (cross-stack discipline per gotcha #32).
 
 Tracing: log app-startup + drone-spawn correlation per §13.5.
 
-#### `src-tauri/src/commands.rs` — replace noop'd commands
+A2 may choose to refactor `main.rs` into a thinner orchestration + a `lib.rs` if the Tauri 2.x examples increasingly recommend it, but **the default is to keep `main.rs` as the orchestration site and add `drone_lifecycle.rs` as a sibling**. Document the choice in the retrospective if A2 deviates.
 
-For both `query_session_db` and `replay_session`:
+#### `src-tauri/src/commands.rs` — replace 3 noop callsites + CmdError re-export
+
+For each of the 3 `DroneClient::noop()` callsites at `commands.rs:166, 200, 247` (`run_smoke_session`, `query_session_db`, `replay_session`):
 
 - Add `client: tauri::State<'_, Arc<DroneClient>>` parameter
-- Replace `DroneClient::noop()` body with real IPC dispatch via `client.<method>().await`
+- Replace the `DroneClient::noop()` construction with `&*client` (deref the Tauri state) for real IPC dispatch via `client.<method>().await`
 - Map drone IPC errors to `CmdError::Drone { message }`
 
-Replace the existing `pub enum CmdError { ... }` block with:
+Replace the existing hand-maintained `pub enum CmdError { ... }` block at `commands.rs:46` with a re-export of A1's generated type. Exact path depends on A1's namespace strategy outcome (recorded in M04.A1 retrospective):
 
-```rust
-pub use runtime_core::error::CmdError;
-```
+- If A1 chose strategy (a) renamed-aware: `pub use runtime_core::generated::error::CmdError;`
+- If A1 chose strategy (b) qualified path: same, `pub use runtime_core::generated::error::CmdError;`
+- If A1 chose strategy (c) absorbed: `pub use runtime_core::CmdError;` (re-exported at crate root)
 
-(Verify `runtime-core` is already in `Cargo.toml` dependencies; M03 added it. If error.rs lives at a different path post-Stage-A1 codegen, adjust accordingly.)
+Verify `runtime-core` is in `src-tauri/Cargo.toml` workspace dependencies (M03 added it; verify with `cargo tree -p agent-runtime --depth 1` before authoring).
 
-The existing `CmdError::Internal(...)` constructor calls in this file may need shape adjustment if the generated enum has `Internal { message: String }` rather than `Internal(String)` — match the generated output.
+The existing `CmdError::Internal(...)` constructor calls in this file (and consumers across `runtime-main`, `runtime-drone`) may need shape adjustment if the generated enum produces `Internal { message: String }` (struct variant) rather than `Internal(String)` (tuple variant). The `<fan_out_grep pattern="CmdError::"/>` in the stage prompt enumerates all callsites — update them in the same commit so the variant shape is consistent across crates.
 
-#### `crates/runtime-main/src/sdk/event_pipeline.rs` — vdr projector wiring
-
-Locate the `WriteSignal` execution path (typically inside the SDK event loop where signals get inserted into SQLite). After the existing `INSERT INTO signals ...` operation succeeds:
-
-```rust
-vdr::project_signal(&conn, signal_id)
-    .map_err(|e| tracing::warn!("vdr projection failed for signal {signal_id}: {e}"))
-    .ok();
-```
-
-Non-blocking: a projection failure is logged but does not fail the signal write (signals are forensic, VDR is a projection). Per spec §2b separation of concerns.
-
-#### `crates/runtime-main/src/sdk/decision_extractor.rs` — structured emitter
-
-Replace the existing heuristic with regex-based delimited-block extraction. Pattern:
-
-```rust
-// Match the structured-decision block injected by the prompt template:
-// <<DECISION>>
-// {
-//   "type": "...",
-//   "subject": "...",
-//   "rationale": "..."
-// }
-// <<END>>
-static DECISION_BLOCK: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"<<DECISION>>\s*(\{.*?\})\s*<<END>>").unwrap()
-});
-
-pub fn extract_decisions(text: &str) -> Vec<Decision> {
-    DECISION_BLOCK
-        .captures_iter(text)
-        .filter_map(|cap| serde_json::from_str::<Decision>(&cap[1]).ok())
-        .collect()
-}
-```
-
-The prompt-template injection (where the model is instructed to emit decisions in the delimited form) lands in `crates/runtime-main/src/sdk/prompt_template.rs` or equivalent — locate the existing system-prompt builder and add the decision-format instructions to the system prompt.
-
-Unit tests: round-trip a known decision through the regex; multi-decision text; malformed-JSON tolerance (skip + log); no-decision text returns empty.
+**Note:** vdr projector wiring at WriteSignal call-site, and the decision-extractor → structured-emitter migration, are folded into Stage B per the audit re-staging — see Stage A2.1 "Items folded into Stage B." A2 does NOT touch `crates/runtime-main/src/sdk/event_pipeline.rs::WriteSignal` (Stage B's territory) or `crates/runtime-main/src/sdk/decision_extractor.rs` (Stage B replaces with structured emitter alongside the prompt-template module + AgentSdk plumbing).
 
 #### `crates/runtime-main/src/providers/anthropic.rs` — real `count_tokens`
 
@@ -618,9 +634,11 @@ Verify the exact request shape + response field name against the cited URL befor
 
 Add tests for the new endpoint per the existing wiremock harness pattern. Happy path, 401 auth error, 429 rate limit, malformed response. Match the structure of existing `anthropic_wiremock.rs` tests.
 
-#### `crates/runtime-main/src/sdk/event_translation.rs` — events() reconnect
+#### Long-lived events() reconnect — `crates/runtime-main/src/drone_ipc/connection.rs` or `event_pipeline.rs`
 
-Per spec §1d ⚠️ note (M04 carry-forward). The existing event translation flow takes ProviderEvents and emits AgentEvents. Stage A2's question: if drone↔main reconnects mid-session, does the renderer's `listen('agent_event', ...)` callback continue to receive events?
+**Path correction from previous draft.** The previous draft named `crates/runtime-main/src/sdk/event_translation.rs` — that file does NOT exist (audit-confirmed phantom path). The actual translation pipeline is `crates/runtime-main/src/sdk/event_pipeline.rs`; the reconnect logic lives at `crates/runtime-main/src/drone_ipc/connection.rs`. A2 either extends the connection-side reconnect or the event_pipeline-side translation flow depending on what the integration test surfaces.
+
+Per spec §1d ⚠️ note (M04 carry-forward). The existing flow takes ProviderEvents and emits AgentEvents through the bounded-stream pattern from M02. Stage A2's question: if drone↔main reconnects mid-session, does the renderer's `listen('agent_event', ...)` callback continue to receive events?
 
 Test-driven approach (preferred): write the integration test first (in `tests/drone_reconnect_events.rs`) that:
 
@@ -635,7 +653,7 @@ If the test passes as-implemented (M01.C reconnect logic + Tauri event emission 
 
 #### `src/lib/ipc.ts` — generated CmdError consumption
 
-Replace the hand-maintained `interface CmdError { ... }` with `import type { CmdError } from '../types/error';`. Update `unwrapCmdError` if the generated shape differs from the hand-maintained one (likely the discriminator key matches but the variant shape may differ slightly). Preserve all behavior of the helper per gotcha #30.
+Replace the hand-maintained `interface CmdError { ... }` with `import type { CmdError } from '../types/error';` (the import path A1 generated). Update `unwrapCmdError` if the generated shape differs from the hand-maintained one — json-schema-to-typescript may produce a discriminated union form (`{ type: 'setup_required' } | { type: 'provider'; message: string } | ...`) rather than a single interface with optional fields; the discriminator key (`type`) matches the M02 hand-maintained shape but the variant-specific fields may be tightened. Preserve all behavior of the helper per gotcha #30.
 
 #### `agent-runtime-spec.md` §1d — close or update the ⚠️ note
 
@@ -663,7 +681,7 @@ Stage A2 adds:
 
 - `crates/runtime-main/tests/drone_reconnect_events.rs` — integration test for long-lived events() survival across drone restart
 - New tests inside `crates/runtime-main/tests/anthropic_wiremock.rs` for `count_tokens` (happy path + auth error + rate limit + malformed response)
-- New unit tests inside `crates/runtime-main/src/sdk/decision_extractor.rs` for structured emitter (round-trip; multi-decision; malformed-JSON tolerance; no-decision)
+- (Structured-emitter unit tests are folded into Stage B; not in A2)
 
 Test sketches (full content authored in stage):
 
@@ -705,8 +723,8 @@ async fn renderer_continues_receiving_events_after_drone_restart() {
 #### Coverage target
 
 - workspace ≥80% maintained
-- `runtime-main` ≥95% — new code in `event_pipeline.rs` (vdr projector call), `decision_extractor.rs` (structured emitter), `providers/anthropic.rs::count_tokens` (real impl) all covered. The `count_tokens` real-network path is covered via wiremock per the M02.C precedent (`providers/anthropic.rs` real-network construction stays in the existing exclusion list).
-- New file `src-tauri/src/drone_lifecycle.rs`: unit tests via testable seam pattern (`DroneLifecycle::spawn_with(spawn_fn, ...)` taking a process-spawn closure for testability). Real OS-spawn wrapper excluded per the M02 `tauri-shell` exception in `codecov.yml`.
+- `runtime-main` ≥95% — new code in `providers/anthropic.rs::count_tokens` (real impl) is covered via wiremock per the M02.C precedent (`providers/anthropic.rs` real-network construction stays in the existing exclusion list per CLAUDE.md §5; wire-format logic moves to `anthropic_sse.rs`-style coverage if the count_tokens path warrants extraction). Reconnect-handling code surfaces depending on the integration test outcome — covered by either unit tests (`drone_ipc/connection.rs::send_with_reconnect` archetype) or by the integration test itself.
+- New file `src-tauri/src/drone_lifecycle.rs`: unit tests via testable seam pattern (`DroneLifecycle::spawn_with(spawn_fn, ...)` taking a process-spawn closure for testability). Real OS-spawn wrapper excluded per the M02 `tauri-shell` exception in `codecov.yml` (the patch-gate covers `src-tauri/**` at 50% target rather than the workspace 80% baseline).
 - New integration test `drone_reconnect_events.rs`: integration test (not subject to coverage gate; correctness is the assertion).
 
 ### A2.5 CLI Prompt
@@ -716,15 +734,18 @@ Paste the XML block below into a fresh Claude Code session as the opening messag
 ```xml
 <work_stage_prompt id="M04.A2">
   <context>
-    Stage A2 of M04 (Plan + Verify + HITL + Budget). Production wiring — drone subprocess lifecycle at Tauri startup with Arc<DroneClient> Tauri-managed-state; replaces DroneClient::noop() callsites in query_session_db + replay_session; wires vdr::project_signal at WriteSignal; replaces heuristic decision extractor with structured emitter; implements real count_tokens against /v1/messages/count_tokens; resolves long-lived events() reconnect carry-forward; refactors unwrapCmdError to consume generated CmdError types from src/types/error.ts (Stage A1 set up the generation; A2 wires it). Stage B does not start until Stage A2's commit is on the milestone branch claude/m04-plan-verify-hitl-budget.
+    Stage A2 of M04 (Plan + Verify + HITL + Budget). Production wiring — drone subprocess lifecycle at Tauri startup with `Arc<DroneClient>` Tauri-managed-state via new `src-tauri/src/drone_lifecycle.rs` sibling module + spawn from existing `main.rs::main()` (note: `src-tauri/src/lib.rs` does NOT exist per audit — A2 does NOT introduce one); replaces 3 `DroneClient::noop()` callsites at `src-tauri/src/commands.rs:166, 200, 247`; implements real `count_tokens` against `/v1/messages/count_tokens` (wiremock-tested); resolves long-lived events() reconnect carry-forward via integration test (path is `crates/runtime-main/src/sdk/event_pipeline.rs` + `drone_ipc/connection.rs`, NOT phantom `event_translation.rs`); refactors `commands.rs::CmdError` to re-export A1's generated type from `runtime-core/src/generated/error.rs`; renderer-side `unwrapCmdError` consumes generated `CmdError` from `src/types/error.ts`. **Two items the previous draft scoped here are folded into Stage B per audit re-staging:** vdr WriteSignal IPC variant + drone-side handler arm calling `vdr::project_signal` (vdr lives in `crates/runtime-drone/src/vdr.rs`; `runtime-main` has no `rusqlite` dep); structured-emitter prompt-template module + AgentSdk plumbing replacing `decision_extractor.rs` heuristic. Stage B does not start until Stage A2's commit is on the milestone branch `claude/m04-plan-verify-hitl-budget`.
   </context>
 
   <pre_flight_check>
     <check name="branch_correct">git rev-parse --abbrev-ref HEAD must equal claude/m04-plan-verify-hitl-budget</check>
     <check name="prior_stage_committed">git log --oneline -1 must show "M04 Stage A1" subject</check>
-    <check name="anthropic_key_set">Test-Path env:ANTHROPIC_API_KEY must succeed (count_tokens wiremock tests need a valid-looking key; live test optional)</check>
-    <check name="generated_files_present">Test-Path crates/runtime-core/src/error.rs must succeed (Stage A1 deliverable)</check>
-    <check name="generated_ts_present">Test-Path src/types/error.ts must succeed (Stage A1 deliverable)</check>
+    <check name="prior_retrospective_staged">git log -1 --name-only must include docs/build-prompts/retrospectives/M04.A1-retrospective.md (per M03.5.B retro [END] decision — closes the M03.5.A drift pattern where retrospective files were untracked at commit time)</check>
+    <check name="anthropic_key_set">Test-Path env:ANTHROPIC_API_KEY must succeed (count_tokens wiremock tests do not require a valid key, but the smoke test path does)</check>
+    <check name="generated_error_present">Test-Path crates/runtime-core/src/generated/error.rs must succeed (A1 deliverable; path is generated/, NOT top-level — top-level error.rs is hand-curated RuntimeError)</check>
+    <check name="generated_ts_present">Test-Path src/types/error.ts must succeed (A1 deliverable)</check>
+    <check name="lib_rs_does_not_exist">! Test-Path src-tauri/src/lib.rs (asserts the audit baseline; if lib.rs materialized between A1 and A2 the A2 plan adapts to the new shape)</check>
+    <check name="vdr_in_drone_only">Test-Path crates/runtime-drone/src/vdr.rs AND ! Test-Path crates/runtime-main/src/vdr.rs (confirms vdr architecture)</check>
   </pre_flight_check>
 
   <read_first>
@@ -732,20 +753,21 @@ Paste the XML block below into a fresh Claude Code session as the opening messag
     <file>STAGE-PROMPT-PROTOCOL.md</file>
     <file>docs/build-prompts/M04-plan-verify-hitl-budget.md (Stage A2 sections A2.1–A2.4)</file>
     <file>agent-runtime-spec.md §1c, §1d, §2b, §2c (especially §2c.3), §13.5</file>
-    <file>docs/gotchas.md (especially #29 keyring; #30 unwrapCmdError; #31 tracing init; #32 cross-stack)</file>
-    <file>docs/build-prompts/retrospectives/M04.A1-retrospective.md (apply [END] Decisions)</file>
+    <file>docs/gotchas.md (especially #29 keyring; #30 unwrapCmdError; #31 tracing init; #32 cross-stack; #41 grep-verify-claims)</file>
+    <file>docs/build-prompts/retrospectives/M04.A1-retrospective.md (apply [END] Decisions, especially the namespace strategy outcome)</file>
   </read_first>
 
   <read_reference>
     <file purpose="M01.C drone subprocess spawn archetype + reconnect semantics">crates/runtime-drone/src/main.rs</file>
-    <file purpose="Tauri command shell pattern + *_with seam archetype">src-tauri/src/commands.rs</file>
-    <file purpose="existing DroneClient + reconnect logic to extend">crates/runtime-main/src/drone_ipc/connection.rs</file>
-    <file purpose="existing Anthropic provider HTTP+SSE archetype to extend with count_tokens">crates/runtime-main/src/providers/anthropic.rs</file>
-    <file purpose="existing wiremock harness pattern">crates/runtime-main/tests/anthropic_wiremock.rs</file>
-    <file purpose="vdr projector module that needs wiring at WriteSignal">crates/runtime-main/src/vdr.rs</file>
+    <file purpose="current Tauri shell — main.rs is the orchestration site (no lib.rs); A2 adds drone_lifecycle.rs sibling and calls into it from main.rs">src-tauri/src/main.rs</file>
+    <file purpose="Tauri command shell pattern + 3 DroneClient::noop() callsites at lines 166, 200, 247 to replace; CmdError at line 46 to re-export">src-tauri/src/commands.rs</file>
+    <file purpose="existing DroneClient + reconnect logic to extend; testable seam send_with_reconnect at this file">crates/runtime-main/src/drone_ipc/connection.rs</file>
+    <file purpose="actual event-translation pipeline (NOT phantom event_translation.rs); reconnect-flow extension may land here">crates/runtime-main/src/sdk/event_pipeline.rs</file>
+    <file purpose="existing Anthropic provider HTTP+SSE archetype to extend with count_tokens at line 135 (currently chars/4 approximation)">crates/runtime-main/src/providers/anthropic.rs</file>
+    <file purpose="existing wiremock harness pattern + 8 existing tests; A2 adds count_tokens tests">crates/runtime-main/tests/anthropic_wiremock.rs</file>
     <file purpose="renderer-side error unwrap that needs to consume generated types">src/lib/ipc.ts</file>
     <file purpose="generated error types Stage A1 produced; Stage A2 imports">src/types/error.ts</file>
-    <file purpose="generated error types Stage A1 produced; Stage A2 re-exports from commands.rs">crates/runtime-core/src/error.rs</file>
+    <file purpose="generated CmdError type Stage A1 produced; A2's commands.rs re-exports — exact path depends on A1 namespace strategy outcome (see A1 retro)">crates/runtime-core/src/generated/error.rs</file>
   </read_reference>
 
   <read_prior_stages>
@@ -790,35 +812,40 @@ Paste the XML block below into a fresh Claude Code session as the opening messag
   <gotchas>
     <trap>typify-generated CmdError variant shapes (e.g., Internal { message: String } vs Internal(String) tuple) must match across the runtime-main + drone + Tauri commands callsites — fan_out_grep above catches these; do NOT silently leave one callsite with the old shape</trap>
     <trap>Drone subprocess kill_on_drop(true) is mandatory — without it, the subprocess outlives the Tauri app on crash and leaves stale .sock/.pipe files; gotcha #29-style silent failure mode in production</trap>
-    <trap>vdr::project_signal failure should NOT fail the WriteSignal — signals are forensic, VDR is a projection; log the failure via tracing::warn! and continue per spec §2b separation of concerns</trap>
-    <trap>The structured-emitter prompt template injection (in prompt_template.rs or equivalent) is the cross-stack glue point — verbatim per the format spec'd in M03.5 ⚠️ note (delimited block <<DECISION>>...<<END>>); do NOT change the delimiter format without updating the M03.5 spec text first via a follow-up doc PR</trap>
     <trap>count_tokens against the real endpoint — verify the exact response field name (input_tokens vs token_count vs other) against https://docs.anthropic.com/en/api/messages-count-tokens BEFORE authoring; do NOT assume the M03.5 spec text §2c.3 is verbatim correct (it's design-doc not API spec)</trap>
-    <trap>Long-lived events() reconnect — the test outcome drives the spec edit. If the test reveals broken-as-implemented, do NOT silently fix without surfacing to the user — this is a v0.1 behavior decision and may warrant scoping to v1.0</trap>
+    <trap>Long-lived events() reconnect — the test outcome drives the spec edit. The actual translation pipeline is `event_pipeline.rs` (NOT phantom `event_translation.rs`); reconnect logic lives at `drone_ipc/connection.rs`. If the test reveals broken-as-implemented, do NOT silently fix without surfacing to the user — this is a v0.1 behavior decision and may warrant scoping to v1.0</trap>
+    <trap>src-tauri/src/lib.rs does NOT exist in current shell — DO NOT introduce one as part of A2's spawn-logic placement. Spawn logic lands in main.rs::main() directly + new drone_lifecycle.rs sibling. If the upstream Tauri 2.x examples now strongly recommend lib.rs, surface as a design call rather than silently restructuring</trap>
+    <trap>vdr WriteSignal IPC + structured-emitter prompt template are FOLDED INTO STAGE B per audit re-staging — DO NOT pre-author them in A2 even if the production wiring naturally cuts that direction; respect the staging boundary so Stage B's authoring discipline holds</trap>
+    <trap>CmdError re-export path depends on A1 namespace strategy outcome (recorded in M04.A1 retrospective): if A1 chose strategy (a) renamed-aware, use pub use runtime_core::generated::error::CmdError; same for (b) qualified path; if (c) absorbed, use pub use runtime_core::CmdError. Read the A1 retro before writing this line.</trap>
+    <trap>Per gotcha #41 (grep-verify-claims): every codebase claim in this stage's deliverable section is verified against end-of-M03.5 reality. If the &lt;pre_flight_check&gt; verifications fail (codebase has drifted between authoring and execution), surface the drift before proceeding — do NOT improvise around it.</trap>
   </gotchas>
 
   <execution_warnings>
     <warning>DO NOT regenerate framework/skill/agent/tool/common/event/error schemas — Stage A1 already did event + error; existing schemas were already done in M01–M03</warning>
     <warning>DO NOT call /v1/messages/count_tokens against the live API in tests — wiremock only. Live calls are reserved for the smoke test in src-tauri (which gates on ANTHROPIC_API_KEY presence)</warning>
     <warning>DO NOT push between stages — Stage A2 commits locally only. Push happens at end of Stage G per CLAUDE.md §8 + §20</warning>
+    <warning>DO NOT touch crates/runtime-main/src/sdk/decision_extractor.rs (Stage B's structured-emitter replacement) or crates/runtime-main/src/sdk/event_pipeline.rs::WriteSignal (Stage B's vdr WriteSignal IPC wiring) — both folded into Stage B per audit re-staging</warning>
     <warning>The drone subprocess spawn at Tauri setup is the highest-risk surface in M04 — if startup hangs or races with renderer mount, surface immediately rather than working around (e.g., hidden setTimeout in renderer); the user explicitly approved high-risk-first staging in the M04 plan</warning>
+    <warning>Stage A2's commit MUST include docs/build-prompts/retrospectives/M04.A2-retrospective.md in the staged files (per M03.5.B retro [END] decision)</warning>
   </execution_warnings>
 
   <time_box estimate_hours="4.5"/>
 
   <retrospective_requirements ref="docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md" section="M[NN].&lt;X&gt; — Stage Retrospective">
-    <special_log>Decisions for Stage B: long-lived events() reconnect outcome (resolved or v0.1 deferred?); whether the structured-emitter delimiter format needed adjustment from the M03.5 spec text; whether count_tokens response field name matched the M03.5 spec §2c.3 wording or required spec follow-up; whether drone subprocess startup latency on cold-start affects renderer mount UX (Stage F may need a loading state); any cross-stack glue points the agent had to verbatim-quote from upstream rather than authoring (cite the upstream source in the retro).</special_log>
+    <special_log>Decisions for Stage B: long-lived events() reconnect outcome (resolved or v0.1 deferred? path location of the fix if any — connection.rs or event_pipeline.rs); whether count_tokens response field name matched the M03.5 spec §2c.3 wording or required spec follow-up; whether drone subprocess startup latency on cold-start affects renderer mount UX (Stage F may need a loading state); CmdError re-export shape — confirmation of A1 namespace strategy applied consistently across runtime-main + drone + Tauri commands; any cross-stack glue points the agent had to verbatim-quote from upstream rather than authoring (cite the upstream source in the retro per gotcha #32); confirmation that Stage A2 did NOT pre-author Stage B's vdr WriteSignal IPC or structured-emitter work.</special_log>
   </retrospective_requirements>
 
   <commit_protocol ref="CLAUDE.md" section="8. PR + commit workflow (CRITICAL — read carefully)"/>
   <commit_message ref="docs/build-prompts/M04-plan-verify-hitl-budget.md" section="A2.6 Commit Message"/>
 
   <approval_surface>
-    <item>diff stat (git diff --stat HEAD)</item>
+    <item>diff stat (git diff --stat HEAD) including M04.A2-retrospective.md in staged set</item>
     <item>gate results (each gate, pass/fail, key numbers including wiremock test count + drone_reconnect_events.rs outcome)</item>
     <item>schema drift check output — cargo xtask regenerate-types --check exit code (must be 0)</item>
-    <item>fan_out_grep results — DroneClient::noop / CmdError:: / count_tokens callsite counts before vs after refactor (target: 0 noop callsites remaining; CmdError:: variant shapes consistent across crates)</item>
-    <item>long-lived events() reconnect test outcome — pass (closed) or fail (v0.1 behavior documented + spec updated)</item>
+    <item>fan_out_grep results — DroneClient::noop / CmdError:: / count_tokens callsite counts before vs after refactor (target: 0 noop callsites remaining at commands.rs:166, 200, 247; CmdError:: variant shapes consistent across crates)</item>
+    <item>long-lived events() reconnect test outcome — pass (closed) or fail (v0.1 behavior documented + spec updated); cite the file:line where the fix landed if any (connection.rs vs event_pipeline.rs)</item>
     <item>spec §1d ⚠️ note disposition — closed or updated (cite line)</item>
+    <item>CmdError re-export verification — `pub use` line in commands.rs matches A1 namespace strategy outcome</item>
     <item>retrospective (filled-in [END] section with three-axis scoring + verdict + decisions for Stage B)</item>
     <item>draft commit message from M04-plan-verify-hitl-budget.md A2.6 Commit Message section (filled with session URL)</item>
     <item>explicit statement: "Stage M04.A2 is ready. I will not commit until you approve."</item>
@@ -833,46 +860,58 @@ git commit -s -m "$(cat <<'EOF'
 feat(runtime+renderer): M04 Stage A2 — production wiring
 
 Replaces M03's DroneClient::noop() seams with real drone subprocess
-lifecycle + closes four M02/M03 carry-forward 🟡 production-wiring
-items. SQL inspector + replay-from-signals + decision projection are
-now end-to-end functional.
+lifecycle + closes three M02/M03 carry-forward 🟡 production-wiring
+items. SQL inspector + replay-from-signals + smoke session are now
+end-to-end functional.
+
+Two items the previous draft scoped here (vdr WriteSignal IPC + 
+structured-emitter prompt template) are folded into Stage B per the
+post-M03.5 audit re-staging — Stage B has scope slack from already-
+shipped events to absorb both.
 
 Production wiring:
-- src-tauri/src/lib.rs + drone_lifecycle.rs (new): drone subprocess
-  spawned at Tauri setup hook via tokio::process::Command; Arc<DroneClient>
-  registered as Tauri managed state; graceful shutdown on app exit.
-  kill_on_drop(true) per docs/gotchas.md drone-subprocess discipline.
-- src-tauri/src/commands.rs: query_session_db + replay_session take
-  tauri::State<Arc<DroneClient>> and dispatch real drone IPC; CmdError
-  enum becomes pub use runtime_core::error::CmdError (Stage A1 codegen).
-- crates/runtime-main/src/sdk/event_pipeline.rs: vdr::project_signal
-  called at WriteSignal site; projection failure logged but does not
-  fail the signal write per spec §2b.
-- crates/runtime-main/src/sdk/decision_extractor.rs: structured-emitter
-  parser (regex on <<DECISION>>...<<END>> delimited blocks) replaces
-  M02 line-by-line heuristic; prompt template updated.
-- crates/runtime-main/src/providers/anthropic.rs: count_tokens calls
-  POST /v1/messages/count_tokens (per spec §2c.3 added M03.5); chars/4
-  approximation removed. wiremock-tested.
-- crates/runtime-main/src/sdk/event_translation.rs +
-  tests/drone_reconnect_events.rs (new): long-lived events() reconnect
-  resolved [or documented as v0.1 behavior — see retro]. Spec §1d
-  ⚠️ note [closed at this commit / updated to reflect v0.1 behavior].
+- src-tauri/src/main.rs + drone_lifecycle.rs (new sibling module):
+  drone subprocess spawned at Tauri setup hook via tokio::process::
+  Command; Arc<DroneClient> registered as Tauri managed state; graceful
+  shutdown on RunEvent::ExitRequested. kill_on_drop(true) per docs/
+  gotchas.md drone-subprocess discipline. Note: src-tauri/src/lib.rs
+  does NOT exist; spawn logic lands in main.rs directly.
+- src-tauri/src/commands.rs: 3 DroneClient::noop() callsites at lines
+  166, 200, 247 (run_smoke_session, query_session_db, replay_session)
+  take tauri::State<'_, Arc<DroneClient>> and dispatch real drone IPC;
+  CmdError enum at line 46 becomes pub use runtime_core::generated::
+  error::CmdError (path per A1 namespace strategy).
+- crates/runtime-main/src/providers/anthropic.rs: count_tokens at line
+  135 calls POST /v1/messages/count_tokens (per spec §2c.3 added
+  M03.5); chars/4 approximation removed. wiremock-tested.
+- crates/runtime-main/src/drone_ipc/connection.rs OR sdk/event_pipeline.rs
+  + tests/drone_reconnect_events.rs (new integration test): long-lived
+  events() reconnect resolved [or documented as v0.1 behavior — see
+  retro]. Spec §1d ⚠️ note [closed at this commit / updated to reflect
+  v0.1 behavior].
 - src/lib/ipc.ts: unwrapCmdError consumes generated CmdError type from
   src/types/error.ts; preserves gotcha #30 unwrap semantics.
 
 Carry-forward closures:
 - M03 🟡 Production drone subprocess wiring at Tauri startup
-- M03 🟡 vdr.rs projector wired at signal-write call-site
-- M02 🟡 Decision extractor → structured emitter migration
 - M02 🟡 count_tokens → real /v1/messages/count_tokens endpoint
 - M02 🟡 Long-lived events() subscription survives reconnect
+
+Folded into Stage B (NOT closed in A2):
+- M03 🟡 vdr.rs projector wired at signal-write call-site (Stage B
+  authors WriteSignal IPC variant + drone-side handler arm calling
+  vdr::project_signal; runtime-main has no rusqlite dep so direct
+  main-side projection is structurally infeasible)
+- M02 🟡 Decision extractor → structured emitter migration (Stage B
+  authors prompt-template module + AgentSdk plumbing alongside the
+  plan state machine that consumes the structured decisions)
 
 Spec edits (conditional on test outcome):
 - §1d ⚠️ note disposition
 
 Refs: M04-plan-verify-hitl-budget.md §A2, gap-analysis.md M03 + M02
-entries 🟡 (5 carry-forward items closed)
+entries 🟡 (3 carry-forward items closed in A2; 2 deferred to Stage B
+per audit re-staging)
 Retrospective: docs/build-prompts/retrospectives/M04.A2-retrospective.md
 
 https://claude.ai/code
