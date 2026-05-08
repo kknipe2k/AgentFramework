@@ -22,6 +22,7 @@ import {
   invokeRunSmokeSession,
   invokeSetApiKey,
   subscribeAgentEvents,
+  unwrapCmdError,
 } from '../../src/lib/ipc';
 import type { AgentEvent } from '../../src/types/agent_event';
 
@@ -104,5 +105,69 @@ describe('ipc', () => {
     invokeMock.mockResolvedValueOnce(undefined);
     await invokeReplaySession('s-xyz');
     expect(invokeMock).toHaveBeenCalledWith('replay_session', { sessionId: 's-xyz' });
+  });
+
+  // ── unwrapCmdError — M04 Stage A2 consumes generated CmdError shape. ──
+
+  it('unwrapCmdError_setup_required_returns_user_facing_message', () => {
+    // The unit variant has no `message` field; the helper substitutes a
+    // user-actionable instruction so the renderer doesn't surface a bare
+    // discriminator string. Wire shape from src/types/error.ts.
+    const e = { type: 'setup_required' };
+    const out = unwrapCmdError(e);
+    expect(out).toContain('API key not set');
+    expect(out).toContain('Save key');
+  });
+
+  it('unwrapCmdError_provider_renders_type_and_message', () => {
+    // Generated CmdError tuple variants serialize as
+    // {"type":"provider","message":"..."} per #[serde(content="message")].
+    const e = { type: 'provider', message: 'auth failed' };
+    expect(unwrapCmdError(e)).toBe('provider: auth failed');
+  });
+
+  it('unwrapCmdError_drone_renders_type_and_message', () => {
+    const e = { type: 'drone', message: 'subprocess died' };
+    expect(unwrapCmdError(e)).toBe('drone: subprocess died');
+  });
+
+  it('unwrapCmdError_key_store_renders_type_and_message', () => {
+    const e = { type: 'key_store', message: 'keychain locked' };
+    expect(unwrapCmdError(e)).toBe('key_store: keychain locked');
+  });
+
+  it('unwrapCmdError_internal_renders_type_and_message', () => {
+    const e = { type: 'internal', message: 'channel closed' };
+    expect(unwrapCmdError(e)).toBe('internal: channel closed');
+  });
+
+  it('unwrapCmdError_error_instance_returns_error_message', () => {
+    // A raw JS Error (e.g., a network failure inside the @tauri-apps
+    // bridge that didn't reach the CmdError path) should still surface
+    // its `message` rather than collapsing to "[object Object]".
+    const e = new Error('network unavailable');
+    expect(unwrapCmdError(e)).toBe('network unavailable');
+  });
+
+  it('unwrapCmdError_unknown_object_with_message_returns_message', () => {
+    // Compatibility path: arbitrary error-shape objects from elsewhere in
+    // the renderer (not generated CmdError but with a `message` field).
+    const e = { message: 'something else' };
+    expect(unwrapCmdError(e)).toBe('something else');
+  });
+
+  it('unwrapCmdError_falls_back_to_string_for_unknown_types', () => {
+    // Last-resort fallback preserves M02 Stage E behavior — anything
+    // not matching the typed paths goes through String() so the user
+    // sees *something* rather than nothing.
+    expect(unwrapCmdError(42)).toBe('42');
+    expect(unwrapCmdError(null)).toBe('null');
+  });
+
+  it('unwrapCmdError_object_without_recognized_type_or_message_falls_through', () => {
+    // An object with neither a recognized `type` discriminator nor a
+    // `message` field falls through to the last-resort String() branch.
+    const e = { foo: 'bar' };
+    expect(unwrapCmdError(e)).toBe('[object Object]');
   });
 });

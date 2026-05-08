@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { AgentEvent } from '../types/agent_event';
+import type { CmdError } from '../types/error';
 
 export async function invokeRunSmokeSession(): Promise<void> {
   await invoke('run_smoke_session');
@@ -39,31 +40,36 @@ export async function subscribeAgentEvents(
 }
 
 /**
- * Wire shape of `CmdError` from `src-tauri/src/commands.rs` —
- * `serde(tag = "type", rename_all = "snake_case")` puts the variant name in
- * `type` and (for struct variants) the human message in `message`.
+ * Type guard: `value` matches the generated `CmdError` discriminator.
  *
- * Variants (per M02 Stage E):
- * - `setup_required` — unit; no `message` (action: prompt user to set API key)
- * - `provider`       — has `message`
- * - `drone`          — has `message`
- * - `key_store`      — has `message`
- * - `internal`       — has `message`
+ * The generated `CmdError` (typify-emitted from `schemas/error.v1.json`,
+ * paralleled by `src/types/error.ts`) is a discriminated union over a
+ * `type` literal: `'setup_required' | 'provider' | 'drone' | 'key_store'
+ * | 'internal'`. Only `setup_required` is a unit variant; the rest carry
+ * a `message: string` body.
  */
-export interface CmdError {
-  type: 'setup_required' | 'provider' | 'drone' | 'key_store' | 'internal';
-  message?: string;
+function isCmdError(value: unknown): value is CmdError {
+  if (value === null || typeof value !== 'object') return false;
+  const t = (value as { type?: unknown }).type;
+  return (
+    t === 'setup_required' ||
+    t === 'provider' ||
+    t === 'drone' ||
+    t === 'key_store' ||
+    t === 'internal'
+  );
 }
 
 /**
  * Unwrap an unknown error thrown across the Tauri bridge into a
  * user-facing string. Replaces `String(e)` which yields "[object Object]"
- * for serde-tagged enums (M02 Stage E friction r-?, fixed in this PR).
+ * for serde-tagged enums (M02 Stage E friction; gotcha #30).
  *
  * Order of preference:
  * 1. `Error` instances → `e.message`
- * 2. `CmdError` shape (object with `type`, optional `message`) →
- *    user-friendly message per variant
+ * 2. Generated `CmdError` discriminated-union shape → user-friendly
+ *    message per variant (M04 Stage A2: consumes `src/types/error.ts`
+ *    rather than the M02 hand-maintained interface)
  * 3. Plain object with `message` field → `String(obj.message)`
  * 4. Fallback → `String(e)` (last-resort; preserves prior behavior)
  *
@@ -74,18 +80,20 @@ export function unwrapCmdError(e: unknown): string {
   if (e instanceof Error) {
     return e.message;
   }
-  if (e !== null && typeof e === 'object') {
-    const obj = e as Record<string, unknown>;
-    const t = typeof obj.type === 'string' ? obj.type : undefined;
-    const m = typeof obj.message === 'string' ? obj.message : undefined;
-    if (t === 'setup_required') {
+  if (isCmdError(e)) {
+    if (e.type === 'setup_required') {
       return 'API key not set. Click "Save key" to set it (it stores in the OS keychain).';
     }
+    // Every non-unit variant carries a `message: ErrorMessage` (the
+    // typify-generated `ErrorMessage` newtype validates `minLength: 1`,
+    // so the string is always present and non-empty).
+    return `${e.type}: ${e.message}`;
+  }
+  if (e !== null && typeof e === 'object') {
+    const obj = e as Record<string, unknown>;
+    const m = typeof obj.message === 'string' ? obj.message : undefined;
     if (m !== undefined && m.length > 0) {
-      return t !== undefined ? `${t}: ${m}` : m;
-    }
-    if (t !== undefined) {
-      return t;
+      return m;
     }
   }
   return String(e);

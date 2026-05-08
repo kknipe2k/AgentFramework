@@ -5,6 +5,11 @@
 //! and `error.rs` are hand-curated; they are the contract every later milestone
 //! evolves.
 
+/// Inherent + trait impls for the typify-generated [`CmdError`].
+/// Adds helper constructors, `Display`, and `std::error::Error` so the
+/// generated tuple-variant enum has parity with the M02 hand-rolled
+/// struct-variant enum it replaces. M04 Stage A2.
+mod cmd_error_ext;
 /// Drone IPC types — events and commands for main↔drone communication.
 pub mod drone;
 /// Error types for the runtime.
@@ -26,6 +31,8 @@ pub use event::{AgentEvent, ToolSource};
 // hand-curated top-level modules above. `generated::event` and
 // `generated::error` (M04 Stage A1 codegen extensions) are reachable via
 // `runtime_core::generated::{event, error}`; lifting them here would
-// shadow `runtime_core::event` / `runtime_core::error`. Stage A2 owns the
-// reconciliation that may collapse the two.
+// shadow `runtime_core::event` / `runtime_core::error`. The wire-format
+// `CmdError` + `ErrorMessage` are lifted by name (no collision with the
+// hand-curated `RuntimeError` in `error::`).
+pub use generated::error::{CmdError, ErrorMessage};
 pub use generated::{agent, common, framework, skill, tool};

@@ -16,8 +16,8 @@ use std::sync::OnceLock;
 
 use super::anthropic_sse;
 use super::{
-    AgentConfig, ContentBlock, CostBreakdown, LLMProvider, Message, ModelCapabilities, ModelInfo,
-    Pricing, ProviderError, ProviderEvent, ProviderSupport, ToolDef, ToolResultContent,
+    AgentConfig, CostBreakdown, LLMProvider, Message, ModelCapabilities, ModelInfo, Pricing,
+    ProviderError, ProviderEvent, ProviderSupport, ToolDef,
 };
 
 const ANTHROPIC_API_VERSION: &str = "2023-06-01";
@@ -132,24 +132,65 @@ impl LLMProvider for AnthropicProvider {
         Ok(anthropic_sse::stream_events(response.bytes_stream()).boxed())
     }
 
+    /// Real `POST /v1/messages/count_tokens` call per spec §2c.3 (added
+    /// M03.5; M04 Stage A2 implements). Replaces the M02 chars/4
+    /// approximation now that M04 budget enforcement (Stage F) requires
+    /// the actual provider-side count.
+    ///
+    /// Per <https://platform.claude.com/docs/en/api/messages-count-tokens>:
+    /// the response body is `{"input_tokens": <number>}`. The endpoint
+    /// uses the same auth headers + `anthropic-version` as `/v1/messages`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError::Auth`] on 401/403; [`ProviderError::RateLimit`]
+    /// on 429 (with `retry_after_secs` parsed from the `retry-after` header,
+    /// defaulting to 60); [`ProviderError::Api`] on other non-2xx; and
+    /// [`ProviderError::Api`] with a synthetic 0-status if the response
+    /// body is missing the `input_tokens` field (provider regression).
     async fn count_tokens(&self, messages: &[Message]) -> Result<u64, ProviderError> {
-        // Stage B: rough char/4 approximation across all text content blocks.
-        // Stage C uses the real /v1/messages/count_tokens endpoint.
-        let total_chars: usize = messages
-            .iter()
-            .flat_map(|m| m.content.iter())
-            .map(|block| match block {
-                ContentBlock::Text { text } => text.len(),
-                ContentBlock::Thinking { thinking, .. } => thinking.len(),
-                ContentBlock::ToolUse { input, .. } => input.to_string().len(),
-                ContentBlock::ToolResult { content, .. } => match content {
-                    ToolResultContent::Text(s) => s.len(),
-                    ToolResultContent::Blocks(_) => 0,
-                },
-                ContentBlock::Image { .. } => 0,
-            })
-            .sum();
-        Ok((total_chars as u64).div_ceil(4))
+        let body = CountTokensRequest {
+            // Use a default model when callers haven't set one — count_tokens
+            // is independent of the message content's destination. The
+            // pricing pages document Haiku-tokenizer drift is below 1%.
+            model: "claude-haiku-4-5",
+            messages,
+        };
+        let url = format!("{}/v1/messages/count_tokens", self.base_url);
+
+        let response = self
+            .http_client()
+            .post(&url)
+            .header("x-api-key", self.api_key.expose_secret())
+            .header("anthropic-version", ANTHROPIC_API_VERSION)
+            .header("content-type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            if status == 429 {
+                let retry_after_secs = response
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(60);
+                return Err(ProviderError::RateLimit { retry_after_secs });
+            }
+            if status == 401 || status == 403 {
+                return Err(ProviderError::Auth);
+            }
+            let body_text = response.text().await.unwrap_or_default();
+            return Err(ProviderError::Api {
+                status,
+                body: body_text,
+            });
+        }
+
+        let parsed: CountTokensResponse = response.json().await.map_err(ProviderError::from)?;
+        Ok(parsed.input_tokens)
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
@@ -247,6 +288,24 @@ impl LLMProvider for AnthropicProvider {
     }
 }
 
+/// `/v1/messages/count_tokens` request body. The endpoint accepts the
+/// same `model` + `messages` pair as `/v1/messages` plus optional
+/// `system` + `tools`, all of which the M04 budget path can extend
+/// later. Only `model` + `messages` are required for the v0.1 pre-flight
+/// budget check.
+#[derive(Debug, Serialize)]
+struct CountTokensRequest<'a> {
+    model: &'a str,
+    messages: &'a [Message],
+}
+
+/// `/v1/messages/count_tokens` response body. The single `input_tokens`
+/// field carries the count.
+#[derive(Debug, serde::Deserialize)]
+struct CountTokensResponse {
+    input_tokens: u64,
+}
+
 /// Anthropic `/v1/messages` request body. Subset of the full API: the parts
 /// the §M2 acceptance criteria require, plus tool support.
 #[derive(Debug, Serialize)]
@@ -297,7 +356,7 @@ impl<'a> AnthropicTool<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::{Message, MessageRole, Pricing};
+    use crate::providers::Pricing;
     use secrecy::SecretString;
 
     fn stub_provider() -> AnthropicProvider {
@@ -315,18 +374,14 @@ mod tests {
         assert!(s.tool_use && s.streaming && s.thinking);
     }
 
-    #[tokio::test]
-    async fn count_tokens_approximates_char_div_4() {
-        let provider = stub_provider();
-        let messages = vec![Message {
-            role: MessageRole::User,
-            content: vec![ContentBlock::Text {
-                text: "hello world".into(),
-            }],
-        }];
-        let count = provider.count_tokens(&messages).await.unwrap();
-        assert_eq!(count, 3);
-    }
+    // The M02 `count_tokens_approximates_char_div_4` unit test was deleted
+    // at M04 Stage A2 — `count_tokens` now hits the live
+    // `/v1/messages/count_tokens` endpoint per spec §2c.3 and would fail
+    // when run against `api.anthropic.com` from a unit test. Behavioral
+    // coverage moved to `crates/runtime-main/tests/anthropic_wiremock.rs`
+    // (4 cases: happy path, 401 auth, 429 rate-limit with retry-after,
+    // missing-field response) which exercises the same wire-format path
+    // through the real reqwest+json stack.
 
     #[tokio::test]
     async fn list_models_returns_three_claude_4x_entries() {
