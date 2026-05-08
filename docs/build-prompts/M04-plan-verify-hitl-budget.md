@@ -1812,11 +1812,894 @@ EOF
 ---
 
 <!-- ============================================================ -->
-<!-- Stages E–G to follow in Chunk 3                                -->
+<!-- STAGE E — §6a HITL primitive                                   -->
 <!-- ============================================================ -->
 
-*Stages E (§6a HITL), F (§2a Budget + §1b Recovery), and G (Phase Closeout) authored in Chunk 3 per the chunked-authoring decision (checkpoint after Stage D draft surfaced).*
+## Stage E — §6a HITL primitive (9 triggers + 3 UI variants + 3 notifiers + plugin interface)
+
+**WEBCHECK:** verify each URL against this stage's prompt body **before** the fresh session opens.
+
+- <https://v2.tauri.app/plugin/notification/> — Tauri 2.x notification plugin for the `desktop` notifier; verify install + capability + permission-prompt invocation pattern unchanged
+- <https://v2.tauri.app/develop/calling-rust/> — Tauri command pattern for HITL response round-trip (renderer → main → drone → SDK HITL seam)
+- <https://json-schema.org/draft/2020-12/schema> — hitl.v1.json against this draft
+
+### E.1 Problem Statement
+
+§6a HITL is the third-largest M04 deliverable. Spec §6a locks the primitive (structured object with 9 trigger types + 3 UI variants + notifier plugin interface); Stage E builds it.
+
+1. **Schema** — `schemas/hitl.v1.json` declares: `HitlPolicy` (per-trigger config), `HitlTrigger` enum (9 values), `HitlUiVariant` enum (`panel | modal | toast`), `HitlNotifier` plugin shape (`type` discriminator + `notify(event)` method signature documented). Per spec §6a.
+
+2. **Nine trigger types** per spec §6a (lines 1962–1997): `on_gap` (blocks for missing tool/skill resolution), `on_risky_tool` (per-tool list in framework), `on_dont_touch_edit` (chained from §4a don't-touch rail), `on_failure_threshold` (chained from §3a task_escalated), `on_capability_violation` (M5 hook; Stage E exposes the seam, M5 wires it), `on_budget_threshold` (chained from §2a), `on_plan_approval` (already wired in Stage C), `per_task` (HITL gate before each task), `per_epic` (HITL gate at plan boundaries).
+
+3. **Three UI variants** — `Panel` (full takeover, dim graph), `Modal` (floating dialog, blocks adjacent), `Toast` (non-blocking auto-dismiss). Per-trigger default UI in framework JSON; mode-keyed overrides per spec §6a (M04 v0.1 STANDARD-only — overrides honored at load but only STANDARD evaluates).
+
+4. **Notifier plugin interface** — `HitlNotifier { type, notify(event: HitlNotifyEvent) -> async Result<(), NotifierError> }`. `HitlNotifyEvent { trigger, session_id, question, options, context, timeout_at }`. Built-in v1 notifiers: `terminal_bell`, `desktop` (Tauri notification plugin per WEBCHECK URL), `sound`. Plugin notifiers from `notifiers/` dir under §8.security model (M9 generators wire this; M04 ships only built-ins).
+
+5. **Five HITL events** — existing 2 (`hitl_requested`, `hitl_response`) + 3 new (`hitl_timeout`, `notifier_dispatched`, `notifier_failed`). Added to `event.v1.json`; regen propagates.
+
+6. **Failure-escalation flow** — `task_escalated` (Stage B) → `on_failure_threshold` HITL trigger evaluates → `hitl_requested` event → notifiers fire in parallel → 1h default timeout → on response: route to `task_started` (retry) / `task_skipped` / `plan_aborted` per user choice. Wire the SDK's HITL seam (Stage B exposed) to the HITL flow.
+
+7. **Three renderer surfaces** — `HITLPanel`, `HITLModal`, `HITLToast`. Each consumes `hitl_requested` events and dispatches `respond_hitl(prompt_id, choice)` Tauri command. Reuse M03.D + M04.C non-modal patterns where applicable.
+
+**Success criterion:** Loading a fixture with `on_failure_threshold` trigger → simulating 3 task failures → HITL Panel surfaces; user clicks Skip → `task_skipped` emits; plan continues. `desktop` notifier fires OS notification on Windows + Linux. Coverage gate met (capability-enforcer-adjacent ≥95%).
+
+**New artifacts:**
+- `schemas/hitl.v1.json` (new)
+- `crates/runtime-core/src/hitl.rs`, `src/types/hitl.ts` (new; generated)
+- `crates/runtime-main/src/hitl/{mod,policy,seam,notifiers}.rs` (new)
+- `crates/runtime-main/src/hitl/notifiers/{terminal_bell,desktop,sound}.rs` (new)
+- `src/components/HITLPanel.tsx`, `src/components/HITLModal.tsx`, `src/components/HITLToast.tsx` (new)
+- `tests/e2e/hitl_failure_escalation.spec.ts` (new)
+
+**Edited artifacts:**
+- `crates/xtask/src/main.rs` (codegen list: hitl)
+- `schemas/event.v1.json` (3 new event variants)
+- `crates/runtime-core/src/event.rs` + `src/types/agent_event.ts` (regen)
+- `src/lib/graphStore.ts` (exhaustive switch +3 variants)
+- `src-tauri/src/commands.rs` (`respond_hitl` Tauri command)
+- `src-tauri/tauri.conf.json` (Tauri notification plugin permission per WEBCHECK URL)
+- `package.json` (add `@tauri-apps/plugin-notification` per Tauri 2.x docs)
+- `Cargo.toml` workspace + `src-tauri/Cargo.toml` (`tauri-plugin-notification`)
+- `src/App.tsx` (mount HITL surfaces conditionally)
+- `CHANGELOG.md`
+
+### E.2 Files to Change
+
+| File | Change |
+|---|---|
+| `schemas/hitl.v1.json` | **New** — HitlPolicy + HitlTrigger (9) + HitlUiVariant (3) + HitlNotifier shape |
+| `crates/runtime-core/src/hitl.rs`, `src/types/hitl.ts` | **New (generated)** |
+| `crates/xtask/src/main.rs` | **Edited** — codegen list: hitl |
+| `schemas/event.v1.json` | **Edited** — 3 new variants (hitl_timeout, notifier_dispatched, notifier_failed) |
+| `crates/runtime-main/src/hitl/{mod,policy,seam,notifiers}.rs` | **New** — HITL primitive + seam + notifier dispatch |
+| `crates/runtime-main/src/hitl/notifiers/{terminal_bell,desktop,sound}.rs` | **New** — 3 built-in notifiers |
+| `src/components/HITLPanel.tsx`, `HITLModal.tsx`, `HITLToast.tsx` | **New** — 3 UI variants |
+| `src-tauri/src/commands.rs` | **Edited** — `respond_hitl` command |
+| `src-tauri/tauri.conf.json` | **Edited** — notification plugin permission |
+| `package.json`, `src-tauri/Cargo.toml`, `Cargo.toml` (workspace) | **Edited** — Tauri notification plugin deps |
+| `src/lib/graphStore.ts` | **Edited** — exhaustive switch +3 variants |
+| `src/App.tsx` | **Edited** — conditional mount of HITL surfaces |
+| `tests/e2e/hitl_failure_escalation.spec.ts` | **New** — Playwright happy path |
+| `CHANGELOG.md` | **Edited** |
+
+### E.3 Detailed Changes
+
+#### `schemas/hitl.v1.json` — HITL primitive schema
+
+Author per spec §6a. Discriminator: `HitlTrigger.type` over the 9 trigger values; `HitlUiVariant` is a freestanding enum referenced from each trigger's policy. Notifier plugin shape uses a discriminated `type` for the 3 built-ins (`terminal_bell`, `desktop`, `sound`) plus an open extension point for plugin notifiers (M9 territory; v0.1 doesn't load external plugins).
+
+`$id` per the established `https://schemas.aria-runtime.dev/hitl.v1.json` pattern.
+
+#### `crates/runtime-main/src/hitl/seam.rs` — HITL seam
+
+The SDK's HITL approval seam (analogous to Stage B's plan-approval seam): exposes a channel/oneshot the SDK awaits on while a HITL prompt is outstanding. Stage E wires this to the HITL flow:
+
+1. Trigger fires (e.g., `on_failure_threshold` chained from `task_escalated`)
+2. Seam emits `hitl_requested` event with prompt_id + question + options + timeout_at
+3. Seam fires all configured notifiers in parallel (terminal_bell / desktop / sound)
+4. Seam awaits user response via `respond_hitl(prompt_id, choice)` Tauri command OR timeout (default 1h)
+5. On response: emit `hitl_response` + route per `choice` to `task_started`/`task_skipped`/`plan_aborted`
+6. On timeout: emit `hitl_timeout` + treat as configured fallback (default: `plan_aborted`)
+
+#### `crates/runtime-main/src/hitl/notifiers/desktop.rs` — Tauri notification plugin
+
+**Cross-stack glue point — gotcha #32 verbatim-quote-or-verify discipline applies.** Per Tauri 2.x notification plugin docs (URL in WEBCHECK), the Rust-side dispatch uses the plugin's API:
+
+```rust
+// Verify against https://v2.tauri.app/plugin/notification/ before authoring;
+// API surface and permission-prompt semantics may have evolved.
+pub async fn dispatch(event: HitlNotifyEvent) -> Result<(), NotifierError> {
+    use tauri_plugin_notification::NotificationExt;
+    // The exact builder pattern is documented at the WEBCHECK URL — copy
+    // verbatim from the upstream example, do not invent.
+    // Fallback: if the plugin returns a permission-not-granted error,
+    // emit notifier_failed and continue (notifier failures are non-fatal).
+}
+```
+
+`<execution_warnings>` flags this with explicit "verify against Tauri 2.x notification plugin docs current at <DATE> before shipping" per gotcha #32. Permission flow: app requests notification permission at first dispatch; subsequent calls reuse granted permission.
+
+#### `crates/runtime-main/src/hitl/notifiers/{terminal_bell,sound}.rs` — built-in notifiers
+
+`terminal_bell`: writes `\x07` (ASCII BEL) to stderr; works cross-platform without deps.
+
+`sound`: plays a short beep via `rodio` or similar (verify dep choice during implementation; preference is no new deps if a stdlib path exists). Cross-platform sound is non-trivial — if the implementation requires a new dep, dependency_audit_check covers it.
+
+#### Three renderer UI variants
+
+`HITLPanel.tsx`: full right-side overlay (similar to ApprovalPanel from Stage C); dims the graph; ARIA non-modal (graph remains queryable but interaction routes to panel).
+
+`HITLModal.tsx`: floating centered dialog; blocks interaction with the graph behind it (`aria-modal="true"`); closeable via Escape.
+
+`HITLToast.tsx`: non-blocking auto-dismiss notification; appears in corner; clicking expands to full prompt; auto-dismiss after 30s if not interacted with (treated as `notifier_failed` if user doesn't respond).
+
+Each consumes `hitl_requested` events and dispatches `respond_hitl(prompt_id, choice)` on action.
+
+#### `src-tauri/src/commands.rs` — `respond_hitl`
+
+```rust
+#[tauri::command]
+pub async fn respond_hitl(
+    prompt_id: String,
+    choice: String,
+    client: tauri::State<'_, Arc<DroneClient>>,
+) -> Result<(), CmdError> {
+    tracing::info!("respond_hitl prompt_id={} choice={}", prompt_id, choice);
+    client.respond_hitl(prompt_id, choice).await.map_err(CmdError::from)
+}
+```
+
+Drone-side: extend IPC enum with `RespondHitl { prompt_id, choice }` variant; handler resolves the SDK's HITL seam.
+
+#### Failure-escalation flow wiring
+
+In `crates/runtime-main/src/sdk/mod.rs` (or wherever Stage B's plan state machine integrates): on `task_escalated` event, invoke HITL trigger evaluation. If `on_failure_threshold` is configured → fire HITL flow per E.1 #6.
+
+### E.4 Tests
+
+#### Pedantic-pass preflight
+
+Apply to all new modules (`hitl/{mod,policy,seam,notifiers/*}.rs`).
+
+#### Test files
+
+- `crates/runtime-main/src/hitl/seam.rs` — unit tests for seam state machine (request → response | timeout); routing logic
+- `crates/runtime-main/src/hitl/notifiers/desktop.rs` — `*_with` testable seam (mock notification dispatcher); real Tauri plugin call in integration test only (excluded from unit coverage per the OS-call holdout pattern)
+- `crates/runtime-main/tests/hitl_failure_escalation.rs` (new integration test) — full flow: 3 task failures → HITL request → user-choice shim returns Skip → task_skipped → plan continues
+- `tests/unit/HITLPanel.test.tsx`, `HITLModal.test.tsx`, `HITLToast.test.tsx` — render + action-dispatch + ARIA + keyboard nav
+- `tests/e2e/hitl_failure_escalation.spec.ts` — Playwright happy path
+
+#### Coverage target
+
+- `crates/runtime-main/src/hitl/` ≥95% (capability-enforcer-adjacent safety primitive per CLAUDE.md §5)
+- `notifiers/desktop.rs` real OS-call path excluded with documented rationale
+- workspace ≥80%, runtime-main ≥95% maintained
+
+### E.5 CLI Prompt
+
+```xml
+<work_stage_prompt id="M04.E">
+  <context>
+    Stage E of M04. §6a HITL primitive. 9 trigger types + 3 UI variants (Panel/Modal/Toast) + notifier plugin interface + 3 built-in notifiers (terminal_bell/desktop/sound). Wires Stage B's HITL seam to the failure-escalation flow. Cross-stack risk: Tauri notification plugin (gotcha #32 applies). Stage D's commit must be on the milestone branch.
+  </context>
+
+  <pre_flight_check>
+    <check name="branch_correct">git rev-parse --abbrev-ref HEAD must equal claude/m04-plan-verify-hitl-budget</check>
+    <check name="prior_stage_committed">git log --oneline -1 must show "M04 Stage D" subject</check>
+    <check name="hooks_present">Test-Path crates/runtime-main/src/hooks/mod.rs must succeed</check>
+  </pre_flight_check>
+
+  <read_first>
+    <file>CLAUDE.md</file>
+    <file>STAGE-PROMPT-PROTOCOL.md</file>
+    <file>docs/build-prompts/M04-plan-verify-hitl-budget.md (Stage E sections E.1–E.4)</file>
+    <file>agent-runtime-spec.md §6a (full section), §3a Failure escalation primitive (cross-ref into HITL)</file>
+    <file>docs/MVP-v0.1.md §M4 (HITL escalation acceptance criterion)</file>
+    <file>docs/gotchas.md (especially #32 cross-stack discipline; Tauri notification plugin is the textbook case)</file>
+    <file>docs/build-prompts/retrospectives/M04.D-retrospective.md</file>
+  </read_first>
+
+  <read_reference>
+    <file purpose="Stage B approval-gate seam archetype — HITL seam mirrors the pattern">crates/runtime-main/src/plan/state_machine.rs</file>
+    <file purpose="Stage C ApprovalPanel non-modal pattern for HITLPanel">src/components/ApprovalPanel.tsx</file>
+    <file purpose="existing Tauri command archetype with Arc<DroneClient> state">src-tauri/src/commands.rs</file>
+    <file purpose="VerifyNode/HookNode wiring archetype from Stage D for HITLNode (already-shipped synthetic) live wiring">src/components/nodes/HITLNode.tsx</file>
+  </read_reference>
+
+  <read_prior_stages>
+    <retrospective stage="A1" milestone="M04"/>
+    <retrospective stage="A2" milestone="M04"/>
+    <retrospective stage="B" milestone="M04"/>
+    <retrospective stage="C" milestone="M04"/>
+    <retrospective stage="D" milestone="M04"/>
+  </read_prior_stages>
+
+  <deliverable ref="docs/build-prompts/M04-plan-verify-hitl-budget.md" section="E.3 Detailed Changes"/>
+
+  <test_plan_required>true</test_plan_required>
+
+  <execution_steps>
+    <step name="write_failing_tests" budget="1"/>
+    <step name="implement" budget="1"/>
+    <step name="verify_gates" budget_iterations="3"/>
+    <step name="fill_retrospective"/>
+    <step name="surface"/>
+  </execution_steps>
+
+  <acceptance_criteria ref="docs/build-prompts/M04-plan-verify-hitl-budget.md" section="E.4 Tests"/>
+
+  <scope_locks ref="docs/build-prompts/M04-plan-verify-hitl-budget.md" section="Key constraints"/>
+
+  <gates milestone="M04"/>
+
+  <self_correction_budget>3</self_correction_budget>
+
+  <schema_drift_check gate="cargo xtask regenerate-types --check"/>
+
+  <fan_out_grep>
+    <grep pattern="task_escalated" purpose="all callsites of the failure-escalation event — Stage B emits, Stage E consumes via HITL trigger evaluation"/>
+    <grep pattern="HitlTrigger::" purpose="all enum-variant constructions; 9 triggers must be exhaustively handled"/>
+  </fan_out_grep>
+
+  <dependency_audit_check>
+    <dep name="tauri-plugin-notification" min_version="2.0"/>
+  </dependency_audit_check>
+
+  <runtime_environment os="windows" note="desktop notifier uses Windows Toast Notifications via Tauri plugin; verify pwsh-side permission state if first-run flow differs from Linux"/>
+
+  <gotchas>
+    <trap>Tauri notification plugin is the textbook gotcha #32 case — verify the install + capability + permission-prompt flow against https://v2.tauri.app/plugin/notification/ verbatim BEFORE authoring desktop.rs. The previous M04 cross-stack failures (M03 tauri-driver) cost three iteration cycles; do not repeat.</trap>
+    <trap>Notifier failures are NON-FATAL — emit notifier_failed event and continue. Don't propagate notifier errors up; the HITL seam still resolves on user response or timeout regardless of which notifiers fired.</trap>
+    <trap>HITL Panel/Modal/Toast — pick the right ARIA pattern per variant. Panel: aria-modal="false" (graph stays queryable). Modal: aria-modal="true" (blocks adjacent). Toast: role="status" or "alert" depending on urgency.</trap>
+    <trap>v0.1 STANDARD mode hardcoded — mode-keyed HITL overrides in framework JSON are loaded but not evaluated. Implementation: load + validate + ignore non-STANDARD overrides; do NOT silently apply LITE/CONFIG defaults.</trap>
+    <trap>9 trigger types — exhaustive matching required throughout SDK. Compiler enforces via Rust enum exhaustiveness; add WireMock-style tests if the dispatch logic uses string-keyed lookup that can drift.</trap>
+  </gotchas>
+
+  <execution_warnings>
+    <warning>DO NOT implement the M5 capability-violation HITL trigger — Stage E exposes the seam (on_capability_violation in the enum) but the trigger source is M5's deliverable. Mark Stage E's coverage of that trigger as "seam-only" in retro.</warning>
+    <warning>DO NOT load external notifier plugins from notifiers/ dir — that's M9 generators territory. Stage E ships only the 3 built-ins; plugin loader returns NotImplemented for external types.</warning>
+    <warning>DO NOT push between stages.</warning>
+  </execution_warnings>
+
+  <time_box estimate_hours="6.5"/>
+
+  <retrospective_requirements ref="docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md" section="M[NN].&lt;X&gt; — Stage Retrospective">
+    <special_log>Decisions for Stage F: any cross-stack surprises with Tauri notification plugin (gotcha #32 territory); whether the desktop notifier permission flow needs first-run UX integration with M10; the 1h default HITL timeout — should it be per-trigger configurable in v0.1 or v1.0?; coverage gate disposition for notifiers/desktop.rs OS-call holdout.</special_log>
+  </retrospective_requirements>
+
+  <commit_protocol ref="CLAUDE.md" section="8. PR + commit workflow (CRITICAL — read carefully)"/>
+  <commit_message ref="docs/build-prompts/M04-plan-verify-hitl-budget.md" section="E.6 Commit Message"/>
+
+  <approval_surface>
+    <item>diff stat (git diff --stat HEAD)</item>
+    <item>gate results (each gate; hitl/ coverage ≥95%)</item>
+    <item>schema drift check exit 0</item>
+    <item>fan_out_grep results — task_escalated + HitlTrigger:: callsite counts</item>
+    <item>integration test outcome — hitl_failure_escalation.rs full flow (3 failures → HITL prompt → Skip → plan continues)</item>
+    <item>desktop notifier OS-permission flow outcome (test environment may not have permission; document fallback)</item>
+    <item>retrospective with [END] decisions for Stage F</item>
+    <item>draft commit message from E.6</item>
+    <item>"Stage M04.E is ready. I will not commit until you approve."</item>
+  </approval_surface>
+</work_stage_prompt>
+```
+
+### E.6 Commit Message
+
+```bash
+git commit -s -m "$(cat <<'EOF'
+feat(runtime+renderer): M04 Stage E — §6a HITL primitive
+
+Builds the §6a HITL primitive end-to-end. 9 trigger types + 3 UI variants
+(Panel/Modal/Toast) + notifier plugin interface + 3 built-in notifiers
+(terminal_bell, desktop via Tauri notification plugin, sound). Wires
+Stage B's HITL seam to the failure-escalation flow.
+
+New artifacts:
+- schemas/hitl.v1.json (HitlPolicy + 9 HitlTrigger + 3 HitlUiVariant +
+  HitlNotifier plugin shape)
+- crates/runtime-core/src/hitl.rs + src/types/hitl.ts (generated)
+- crates/runtime-main/src/hitl/{mod,policy,seam,notifiers}.rs
+- crates/runtime-main/src/hitl/notifiers/{terminal_bell,desktop,sound}.rs
+- src/components/HITLPanel.tsx + HITLModal.tsx + HITLToast.tsx
+- crates/runtime-main/tests/hitl_failure_escalation.rs (integration)
+- tests/e2e/hitl_failure_escalation.spec.ts (Playwright)
+
+Edits:
+- schemas/event.v1.json: 3 new variants (hitl_timeout, notifier_dispatched,
+  notifier_failed). hitl_requested + hitl_response existing.
+- crates/runtime-core/src/event.rs + src/types/agent_event.ts: regen
+- src-tauri/src/commands.rs: respond_hitl Tauri command
+- src-tauri/tauri.conf.json: notification plugin capability
+- Cargo.toml workspace + src-tauri/Cargo.toml + package.json:
+  tauri-plugin-notification + @tauri-apps/plugin-notification deps
+- src/lib/graphStore.ts: exhaustive switch +3 variants
+- src/App.tsx: conditional HITL surface mount
+
+Failure-escalation flow: task_escalated (Stage B) → on_failure_threshold
+trigger evaluates → hitl_requested + notifiers fire in parallel → user
+response or 1h timeout → routes to task_started (retry) / task_skipped /
+plan_aborted.
+
+Cross-stack glue: notifiers/desktop.rs uses Tauri notification plugin per
+gotcha #32 verbatim-quote discipline; verified against
+https://v2.tauri.app/plugin/notification/ at authoring time.
+
+v0.1 scope: STANDARD mode hardcoded; mode-keyed HITL overrides loaded but
+not evaluated. on_capability_violation trigger seam exposed; M5 wires the
+trigger source.
+
+Coverage: hitl/ ≥95% (capability-enforcer-adjacent safety primitive);
+notifiers/desktop.rs real-Tauri-call path excluded with documented
+rationale (testable seam covered via *_with pattern; OS-call wrapper
+structurally untestable per A2 + M02 + Stage D precedent).
+
+Refs: M04-plan-verify-hitl-budget.md §E, spec §6a, MVP §M4
+Retrospective: docs/build-prompts/retrospectives/M04.E-retrospective.md
+
+https://claude.ai/code
+EOF
+)"
+```
 
 ---
 
-*End of M04 prompt — Chunk 2 (Stages B + C + D appended). Stages E–G + Summary Table + Verification Checklist authored in Chunk 3.*
+<!-- ============================================================ -->
+<!-- STAGE F — §2a Budget + §1b Recovery                            -->
+<!-- ============================================================ -->
+
+## Stage F — §2a Budget + §1b Recovery (cost controls + resume from snapshot)
+
+**WEBCHECK:** verify each URL against this stage's prompt body **before** the fresh session opens.
+
+- <https://docs.anthropic.com/en/api/messages-count-tokens> — confirm `count_tokens` endpoint (Stage A2 wired) handles budget-enforcement query patterns; no rate-limit issues for per-message pre-flight checks
+- <https://json-schema.org/draft/2020-12/schema> — budget.v1.json against this draft
+
+### F.1 Problem Statement
+
+Two primitives bundled in Stage F: §2a Budget (medium-sized; mostly Rust + UI header bar) + §1b Recovery (medium-sized; mostly Rust state-restoration logic). Both depend on Stage A2 production wiring + Stage E HITL flow.
+
+1. **Budget primitive** — `schemas/budget.v1.json` declares `BudgetActions { warn_at_percent? (def 50), downshift_at_percent? (def 75), hitl_at_percent? (def 90), hard_stop_at_percent? (def 100) }`. Three scopes per spec §2a: per-session ($5 default), per-framework, per-day-global (user setting). Tightest cap wins; budget tracking via real `count_tokens` (Stage A2 wired).
+
+2. **Four budget actions** — `warn` emits toast notification; `downshift` invokes the model-selector hook (default `opus → sonnet → haiku` ladder); `hitl` triggers `on_budget_threshold` HITL flow (Stage E wired); `hard_stop` triggers immediate agent kill via drone `stop_process` + emits `budget_exceeded`.
+
+3. **Four budget events** — `budget_warning`, `budget_downshift`, `budget_suspended`, `budget_exceeded` added to `event.v1.json`. Regen propagates.
+
+4. **Session header bar** — `src/components/BudgetHeaderBar.tsx` (new); shows current spend / cap with color gradient (green < 50%, amber 50–75%, red 75–90%, dark red > 90%). Per spec §2a Graph integration.
+
+5. **Recovery — resume rebuilds history.** Per spec §1b: on session restore, the snapshot's `messages` + `tool_calls` + `tool_results` load into SDK history "as if they had already happened"; model generates next turn fresh; tools NOT re-invoked. Per spec §1b WI-14 lock.
+
+6. **Recovery — tool-call uncertainty UI.** Detect `tool_invoked` without paired `tool_result` (signal pair invariant violation); mark VDR row `tool_call_uncertain: true`; UI prompt with `[r]etry/[s]kip/[m]ark complete/[a]bort` options; record as `tool_call_uncertainty_resolved` decision signal.
+
+7. **Recovery — MCP reconnection.** On resume, attempt MCP server reconnect; on failure → emit `tool_missing` via gap flow (M5 wires gap flow; Stage F exposes the seam).
+
+8. **Recovery — plan + capability state restoration.** Plan + task statuses from snapshot; running task reset to `pending` unless `task_completed` was in snapshot; loop policy resumes; capability `scope: 'session'` carries over, `scope: 'once'` cleared.
+
+**Success criterion:** Loading a fixture with `budget.session_usd_cap = $1.00` + simulated text streaming → budget header bar transitions through color gradient as spend accumulates → at 50%/75%/90% the corresponding events fire → at 100% session hard-stops. Recovery: closing app mid-session + reopening → recovery dialog offers resume → resumed session continues from last snapshot with task pointer reset; tool-call-uncertain prompt surfaces if a signal pair was orphaned at crash time; user picks Skip → session continues without re-running the tool. Coverage gate met.
+
+**New artifacts:**
+- `schemas/budget.v1.json` (new)
+- `crates/runtime-core/src/budget.rs`, `src/types/budget.ts` (new; generated)
+- `crates/runtime-main/src/budget/{mod,enforcer}.rs` (new)
+- `crates/runtime-main/src/recovery/{mod,resume,uncertainty}.rs` (new)
+- `src/components/BudgetHeaderBar.tsx`, `src/components/RecoveryDialog.tsx`, `src/components/UncertaintyPrompt.tsx` (new)
+- `tests/e2e/budget_threshold.spec.ts`, `tests/e2e/recovery_uncertainty.spec.ts` (new)
+
+**Edited artifacts:**
+- `crates/xtask/src/main.rs` (codegen list: budget)
+- `schemas/event.v1.json` (4 new budget event variants)
+- `crates/runtime-core/src/event.rs` + `src/types/agent_event.ts` (regen)
+- `src/lib/graphStore.ts` (exhaustive switch +4 variants)
+- `crates/runtime-drone/src/snapshot.rs` (extend with resume-rebuild path; reuses existing read API)
+- `src-tauri/src/commands.rs` (`request_resume`, `respond_uncertainty`, `set_global_budget` Tauri commands)
+- `src/App.tsx` (mount BudgetHeaderBar always; mount RecoveryDialog on cold-start with prior snapshot; mount UncertaintyPrompt on tool_call_uncertain)
+- Spec §1b ⚠️ note disposition (final status — closed via Stage A2 outcome documented in M03.5)
+- `CHANGELOG.md`
+
+### F.2 Files to Change
+
+| File | Change |
+|---|---|
+| `schemas/budget.v1.json` | **New** |
+| `crates/runtime-core/src/budget.rs`, `src/types/budget.ts` | **New (generated)** |
+| `crates/xtask/src/main.rs` | **Edited** — budget codegen |
+| `schemas/event.v1.json` | **Edited** — 4 new variants |
+| `crates/runtime-main/src/budget/{mod,enforcer}.rs` | **New** — budget enforcement loop |
+| `crates/runtime-main/src/recovery/{mod,resume,uncertainty}.rs` | **New** — resume + uncertainty handler |
+| `crates/runtime-drone/src/snapshot.rs` | **Edited** — resume-rebuild path (reuses read API) |
+| `src/components/BudgetHeaderBar.tsx`, `RecoveryDialog.tsx`, `UncertaintyPrompt.tsx` | **New** |
+| `src-tauri/src/commands.rs` | **Edited** — 3 new commands |
+| `src/lib/graphStore.ts` | **Edited** — exhaustive switch |
+| `src/App.tsx` | **Edited** — UI mounting |
+| `tests/e2e/budget_threshold.spec.ts`, `recovery_uncertainty.spec.ts` | **New** |
+| `CHANGELOG.md` | **Edited** |
+
+### F.3 Detailed Changes
+
+#### `schemas/budget.v1.json` — Budget primitive schema
+
+Author per spec §2a. `BudgetActions` with 4 percent thresholds (defaults per spec); 3 scopes (per-session / per-framework / per-day-global); `downshift_hook` field referencing a tool ID by name.
+
+#### `crates/runtime-main/src/budget/enforcer.rs` — Budget enforcement loop
+
+Hooks into the SDK's signal-write path (Stage A2 wired vdr). After every signal that carries `tokens_in` + `tokens_out`:
+
+1. Compute current spend (sum across session, lookup framework, lookup global per-day)
+2. For each scope, check tightest cap; if any threshold crossed:
+   - 50% → emit `budget_warning`
+   - 75% → emit `budget_downshift` + invoke downshift_hook (model swap via tool dispatch)
+   - 90% → emit `budget_suspended` + trigger `on_budget_threshold` HITL flow (Stage E wired)
+   - 100% → emit `budget_exceeded` + drone `stop_process` (immediate kill)
+
+Cost computation uses real `count_tokens` (Stage A2 endpoint) cached per-message with LRU per session.
+
+#### `crates/runtime-main/src/recovery/resume.rs` — Resume from snapshot
+
+Per spec §1b: load snapshot → reconstruct SDK message history → seed agent with prior state → model generates next turn fresh. Tool calls NOT re-invoked (per WI-14 lock).
+
+Plan state restoration: load plan + tasks from SQLite; running task reset to `pending` unless `task_completed` in snapshot; loop policy resumes.
+
+Capability state restoration: scope-session capabilities carry over; scope-once capabilities cleared.
+
+#### `crates/runtime-main/src/recovery/uncertainty.rs` — Tool-call uncertainty handler
+
+Detect: `tool_invoked` signal without paired `tool_result` at crash time. Mark VDR row `tool_call_uncertain: true`. Surface UI prompt:
+
+```
+Tool call "X" was in flight when the session was interrupted.
+[r] retry the call
+[s] skip — assume failed
+[m] mark complete — assume succeeded with no result
+[a] abort the session
+```
+
+User response → emit `tool_call_uncertainty_resolved` decision signal with the chosen action; route accordingly.
+
+#### `src/components/BudgetHeaderBar.tsx` — UI
+
+Top-of-screen horizontal bar. Shows: current spend (e.g., "$2.34"), cap (e.g., "$5.00"), percent, color gradient. Tooltip on hover shows scope breakdown (session / framework / day). Click opens a settings panel for global per-day cap (M10 first-run UX wires this; Stage F exposes the seam via `set_global_budget` command).
+
+#### `src/components/RecoveryDialog.tsx` — Cold-start recovery
+
+On app launch, check for prior snapshot. If present, surface `<RecoveryDialog>`: "Previous session detected. Resume?" with Resume / Discard / Cancel options. Resume invokes `request_resume(session_id)` Tauri command.
+
+#### `src/components/UncertaintyPrompt.tsx` — Tool-call uncertainty UI
+
+Modal dialog with the 4 options above. Dispatches `respond_uncertainty(prompt_id, choice)` on action.
+
+### F.4 Tests
+
+#### Test files
+
+- `crates/runtime-main/src/budget/enforcer.rs` — unit tests for threshold crossings + scope precedence + cap-tightest-wins logic
+- `crates/runtime-main/tests/budget_threshold.rs` — integration: simulated spend hits 50/75/90/100 thresholds in order; events fire in order; downshift_hook dispatches model swap
+- `crates/runtime-main/src/recovery/{resume,uncertainty}.rs` — unit tests for state restoration (full coverage of snapshot fields → SDK state); uncertainty detection (paired-signal invariant)
+- `crates/runtime-main/tests/recovery_lifecycle.rs` — integration: write snapshot mid-session → reload → verify SDK state matches; verify tool calls not re-invoked
+- `tests/unit/BudgetHeaderBar.test.tsx`, `RecoveryDialog.test.tsx`, `UncertaintyPrompt.test.tsx` — render + dispatch
+- `tests/e2e/budget_threshold.spec.ts` + `recovery_uncertainty.spec.ts` — Playwright happy paths
+
+#### Coverage target
+
+- `crates/runtime-main/src/budget/` ≥95% (capability-enforcer-adjacent)
+- `crates/runtime-main/src/recovery/` ≥95% (snapshot/recovery code path per CLAUDE.md §5)
+- workspace ≥80% maintained
+
+### F.5 CLI Prompt
+
+```xml
+<work_stage_prompt id="M04.F">
+  <context>
+    Stage F of M04. §2a Budget + §1b Recovery. Budget primitive (3 scopes + 4 threshold actions + downshift_hook + 4 events + UI header bar) + Recovery primitive (resume rebuilds history not re-execute, tool-call-uncertain UI, MCP reconnect seam, plan + capability state restoration). Stage E's commit must be on the milestone branch.
+  </context>
+
+  <pre_flight_check>
+    <check name="branch_correct">git rev-parse --abbrev-ref HEAD must equal claude/m04-plan-verify-hitl-budget</check>
+    <check name="prior_stage_committed">git log --oneline -1 must show "M04 Stage E" subject</check>
+    <check name="hitl_seam_present">Test-Path crates/runtime-main/src/hitl/seam.rs must succeed (Stage E exposes the on_budget_threshold trigger)</check>
+    <check name="count_tokens_real">grep -q "messages/count_tokens" crates/runtime-main/src/providers/anthropic.rs (Stage A2 wired the real endpoint; budget enforcement depends on it)</check>
+  </pre_flight_check>
+
+  <read_first>
+    <file>CLAUDE.md</file>
+    <file>STAGE-PROMPT-PROTOCOL.md</file>
+    <file>docs/build-prompts/M04-plan-verify-hitl-budget.md (Stage F sections F.1–F.4)</file>
+    <file>agent-runtime-spec.md §2a (full section), §1b (Recovery Semantics — Resume rebuilds history; Tool calls in flight at crash time; MCP reconnection; Plan state restoration; Capability state)</file>
+    <file>docs/MVP-v0.1.md §M4 (budget + recovery acceptance criteria)</file>
+    <file>docs/gotchas.md (especially #15 Resume rebuilds history, doesn't re-execute)</file>
+    <file>docs/build-prompts/retrospectives/M04.E-retrospective.md</file>
+  </read_first>
+
+  <read_reference>
+    <file purpose="Stage A2 count_tokens implementation that budget enforcement queries">crates/runtime-main/src/providers/anthropic.rs</file>
+    <file purpose="Stage E HITL seam that on_budget_threshold trigger drives">crates/runtime-main/src/hitl/seam.rs</file>
+    <file purpose="snapshot read API to extend for resume path">crates/runtime-drone/src/snapshot.rs</file>
+    <file purpose="VDR projection that uncertainty.rs uses to find orphaned signals">crates/runtime-main/src/vdr.rs</file>
+    <file purpose="Stage C/E renderer surface mounting pattern for BudgetHeaderBar/RecoveryDialog/UncertaintyPrompt">src/App.tsx</file>
+  </read_reference>
+
+  <read_prior_stages>
+    <retrospective stage="A1" milestone="M04"/>
+    <retrospective stage="A2" milestone="M04"/>
+    <retrospective stage="B" milestone="M04"/>
+    <retrospective stage="C" milestone="M04"/>
+    <retrospective stage="D" milestone="M04"/>
+    <retrospective stage="E" milestone="M04"/>
+  </read_prior_stages>
+
+  <deliverable ref="docs/build-prompts/M04-plan-verify-hitl-budget.md" section="F.3 Detailed Changes"/>
+
+  <test_plan_required>true</test_plan_required>
+
+  <execution_steps>
+    <step name="write_failing_tests" budget="1"/>
+    <step name="implement" budget="1"/>
+    <step name="verify_gates" budget_iterations="3"/>
+    <step name="fill_retrospective"/>
+    <step name="surface"/>
+  </execution_steps>
+
+  <acceptance_criteria ref="docs/build-prompts/M04-plan-verify-hitl-budget.md" section="F.4 Tests"/>
+
+  <scope_locks ref="docs/build-prompts/M04-plan-verify-hitl-budget.md" section="Key constraints"/>
+
+  <gates milestone="M04"/>
+
+  <self_correction_budget>3</self_correction_budget>
+
+  <schema_drift_check gate="cargo xtask regenerate-types --check"/>
+
+  <runtime_environment os="windows"/>
+
+  <gotchas>
+    <trap>Recovery rebuilds HISTORY, not EXECUTION — gotcha #15. Tool calls in the snapshot are loaded into SDK message history as if they already happened; the model generates the NEXT turn fresh. Do NOT re-invoke tools on resume.</trap>
+    <trap>Tool-call uncertainty detection is paired-signal invariant — `tool_invoked` without `tool_result`. The 4 user actions (retry/skip/mark/abort) must each emit a distinct `tool_call_uncertainty_resolved` decision signal so the VDR projection has the audit trail.</trap>
+    <trap>Budget tightest-cap-wins — if session cap=$5, framework cap=$3, day-global cap=$10, the framework cap wins. Implementation: compute (cap, scope) for all active scopes; min(cap) wins.</trap>
+    <trap>Budget downshift_hook — invokes a runtime tool (the model-selector). The default ladder (opus → sonnet → haiku) is HARDCODED in the hook implementation OR configurable per framework JSON; pick the simpler v0.1 path and document choice in retro.</trap>
+    <trap>budget_exceeded → drone stop_process is the EMERGENCY KILL path. After hard_stop, the session is unrecoverable — UI must surface a clear "session terminated due to budget" message, not just a silent stop.</trap>
+    <trap>MCP reconnect on resume — if no MCP servers are configured (v0.1 STANDARD), this is a no-op. v0.1 doesn't ship MCP; the seam exists so M5/M6 can fill it without resume-flow refactor.</trap>
+  </gotchas>
+
+  <execution_warnings>
+    <warning>DO NOT call live Anthropic /v1/messages/count_tokens in tests — budget enforcement uses cached counts; tests use a fixture cache. Live calls reserved for the smoke test.</warning>
+    <warning>DO NOT implement the model-selector tool itself — that's framework-JSON territory. Stage F provides the downshift_hook seam (invokes a tool by name); the tool implementation is in framework JSON or future M9 generators.</warning>
+    <warning>DO NOT push between stages.</warning>
+  </execution_warnings>
+
+  <time_box estimate_hours="6"/>
+
+  <retrospective_requirements ref="docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md" section="M[NN].&lt;X&gt; — Stage Retrospective">
+    <special_log>Decisions for Stage G (Phase Closeout): which M04 carry-forward items are fully closed vs need v1.0 escalation; whether the budget downshift_hook ladder configurability landed in framework JSON or stayed hardcoded; whether tool-call uncertainty UI surfaced any spec gaps in the 4-action semantics; final disposition of the §1d long-lived events() reconnect note (Stage A2 may have closed it; F validates).</special_log>
+  </retrospective_requirements>
+
+  <commit_protocol ref="CLAUDE.md" section="8. PR + commit workflow (CRITICAL — read carefully)"/>
+  <commit_message ref="docs/build-prompts/M04-plan-verify-hitl-budget.md" section="F.6 Commit Message"/>
+
+  <approval_surface>
+    <item>diff stat (git diff --stat HEAD)</item>
+    <item>gate results (each gate; budget/ + recovery/ coverage ≥95%)</item>
+    <item>schema drift check exit 0</item>
+    <item>integration test outcomes — budget_threshold.rs (50/75/90/100 events fire in order); recovery_lifecycle.rs (snapshot → resume; tool calls not re-invoked)</item>
+    <item>e2e test outcomes — budget_threshold.spec.ts + recovery_uncertainty.spec.ts</item>
+    <item>retrospective with [END] decisions for Stage G</item>
+    <item>draft commit message from F.6</item>
+    <item>"Stage M04.F is ready. I will not commit until you approve."</item>
+  </approval_surface>
+</work_stage_prompt>
+```
+
+### F.6 Commit Message
+
+```bash
+git commit -s -m "$(cat <<'EOF'
+feat(runtime+renderer): M04 Stage F — §2a Budget + §1b Recovery
+
+Bundles two primitives in one stage. Budget primitive (3 scopes + 4
+threshold actions + downshift_hook + 4 events + UI header bar) closes
+spec §2a. Recovery primitive (resume rebuilds history not re-execute
+per WI-14, tool-call-uncertain UI with 4 actions, MCP reconnect seam,
+plan + capability state restoration) closes spec §1b.
+
+New artifacts:
+- schemas/budget.v1.json
+- crates/runtime-core/src/budget.rs + src/types/budget.ts (generated)
+- crates/runtime-main/src/budget/{mod,enforcer}.rs
+- crates/runtime-main/src/recovery/{mod,resume,uncertainty}.rs
+- src/components/BudgetHeaderBar.tsx + RecoveryDialog.tsx +
+  UncertaintyPrompt.tsx
+- crates/runtime-main/tests/budget_threshold.rs +
+  recovery_lifecycle.rs (integration)
+- tests/e2e/budget_threshold.spec.ts +
+  recovery_uncertainty.spec.ts (Playwright)
+
+Edits:
+- schemas/event.v1.json: 4 new variants (budget_warning,
+  budget_downshift, budget_suspended, budget_exceeded)
+- src-tauri/src/commands.rs: request_resume, respond_uncertainty,
+  set_global_budget
+- src/lib/graphStore.ts: exhaustive switch +4 variants
+- src/App.tsx: mount BudgetHeaderBar always; conditional
+  RecoveryDialog (cold-start with prior snapshot) +
+  UncertaintyPrompt (tool_call_uncertain)
+
+Budget enforcement uses Stage A2's real count_tokens endpoint;
+threshold crossings emit events + invoke downshift_hook (default
+opus→sonnet→haiku ladder) at 75% / route to Stage E HITL flow at 90% /
+hard-stop at 100%.
+
+Recovery rebuilds SDK message history from snapshot; tools NOT
+re-invoked per gotcha #15. Tool-call uncertainty detection via
+paired-signal invariant (tool_invoked without tool_result) surfaces
+4-action prompt; user choice emits tool_call_uncertainty_resolved
+decision signal.
+
+Coverage: budget/ + recovery/ ≥95% (safety primitive per CLAUDE.md §5).
+
+Refs: M04-plan-verify-hitl-budget.md §F, spec §2a + §1b, MVP §M4
+Retrospective: docs/build-prompts/retrospectives/M04.F-retrospective.md
+
+https://claude.ai/code
+EOF
+)"
+```
+
+---
+
+<!-- ============================================================ -->
+<!-- STAGE G — Phase Closeout: Gap Analysis                         -->
+<!-- ============================================================ -->
+
+## Stage G — Phase Closeout: Gap Analysis
+
+> **Per CLAUDE.md §20.** This stage runs after Stages A1–F commit and the M04-summary.md aggregation lands. It produces one new entry in `docs/gap-analysis.md`. The gap analysis commit is the final commit on the parent-milestone branch — it gates the PR push.
+
+### G.1 Problem Statement
+
+Generate the M04 entry in `docs/gap-analysis.md`. Cumulative review of code-vs-spec across all milestones to date (M01 + M02 + M03 + M03.5 + M04) — not just M04. Append-only — never edit prior entries.
+
+Per STAGE-PROMPT-PROTOCOL.md v1.2 closeout schema, this stage's `<gap_analysis_requirements>` includes the mandatory `<gotchas_graduation>` subsection auditing every per-stage `<gotchas>` from M04.A1 through M04.F with a disposition (kept | graduated | resolved | expired).
+
+Three carry-forward dispositions are mandatory:
+- **M02 carry-forward** — items still open at M03.5 close; M04 closes most via Stage A2 (production wiring) + Stage B (Plan model). Final disposition recorded.
+- **M03 carry-forward** — items absorbed by M04 Stage A1 (build hygiene) + Stage A2 (production wiring). Final disposition recorded.
+- **M03.5 carry-forward** — validator script v1.4 + verification-regex dry-run + estimation-calibration + per-stage gotchas. Disposition: forward to M05+.
+
+### G.2 Files to Change
+
+| File | Change |
+|---|---|
+| `docs/gap-analysis.md` | **Edited (append-only)** — new M04 section appended at the bottom per the entry template at the top of the file |
+| `docs/build-prompts/retrospectives/M04-summary.md` | **New** — parent-milestone roll-up across Stages A1–F; verdict per CLAUDE.md §19 |
+| `CHANGELOG.md` | **Edited** — `[Unreleased]` notes M04 gap-analysis entry was added |
+
+### G.3 Detailed Changes
+
+The M04 entry follows the six-section template defined at the top of `docs/gap-analysis.md`. Do NOT diverge from the template; do NOT skip sections (write "None observed." if a section truly has nothing to report).
+
+**Process:**
+
+1. Re-read `agent-runtime-spec.md` end-to-end (especially §1b, §2a, §3a, §4a, §6a — sections this milestone touched) plus prior milestone sections that M04 may have affected (§2c.3 token tracking from M03.5; §1d events() reconnect; §10 plans/tasks DDL).
+2. Read every file produced or edited across Stages A1–F (and prior milestones if cumulative review surfaces issues there).
+3. Read prior `docs/gap-analysis.md` entries (M01, M02, M03, M03.5 absent — M03.5 is doc-only) in full to know what's outstanding.
+4. Draft the new entry per the template + add the `<gotchas_graduation>` audit subsection.
+5. Author `M04-summary.md` aggregating Stage A1–F retrospectives with verdict.
+6. Run the append-only check locally before surfacing: `git show origin/main:docs/gap-analysis.md > /tmp/gap-base.md && diff /tmp/gap-base.md <(head -n "$(wc -l < /tmp/gap-base.md)" docs/gap-analysis.md)` — must be empty.
+
+### G.4 Tests
+
+No new code tests. Verification is the append-only check (CI-enforced) plus user review of the entry's substance.
+
+#### Coverage target
+
+N/A — documentation stage.
+
+### G.5 CLI Prompt
+
+```xml
+<closeout_stage_prompt id="M04.G">
+  <context>
+    Stage G of M04 — Phase Closeout: Gap Analysis. Produces the immutable M04 entry in docs/gap-analysis.md per CLAUDE.md §20. This is the FINAL commit on the milestone branch and gates the PR push. Per STAGE-PROMPT-PROTOCOL.md v1.2 closeout schema, includes mandatory <gotchas_graduation> audit of all M04.A1–F per-stage gotchas.
+  </context>
+
+  <pre_flight_check>
+    <check name="branch_correct">git rev-parse --abbrev-ref HEAD must equal claude/m04-plan-verify-hitl-budget</check>
+    <check name="all_work_stages_committed">git log --oneline main..HEAD must show 7 commits (Stages A1, A2, B, C, D, E, F)</check>
+    <check name="all_retros_committed">Test-Path docs/build-prompts/retrospectives/M04.A1-retrospective.md through M04.F-retrospective.md (7 files)</check>
+  </pre_flight_check>
+
+  <read_first>
+    <file>CLAUDE.md (especially §20 Gap Analysis Protocol)</file>
+    <file>STAGE-PROMPT-PROTOCOL.md (especially closeout-stage schema + <gotchas_graduation> rule)</file>
+    <file>docs/gap-analysis.md (header + entry template + ALL prior M01-M03 entries in full)</file>
+    <file>docs/build-prompts/M04-plan-verify-hitl-budget.md (Stage G sections G.1–G.4)</file>
+    <file>agent-runtime-spec.md (skim end-to-end; deep on §1b, §2a, §3a, §4a, §6a)</file>
+    <file>docs/MVP-v0.1.md §M4 (verify all acceptance criteria check off)</file>
+  </read_first>
+
+  <read_reference>
+    <file purpose="prior closeout archetype">docs/build-prompts/M03-live-graph.md (§F Phase Closeout)</file>
+    <file purpose="prior summary archetype">docs/build-prompts/retrospectives/M03-summary.md</file>
+    <file purpose="prior gap-analysis entry archetype">docs/gap-analysis.md (M03 entry)</file>
+  </read_reference>
+
+  <cumulative_reads>
+    <commit_log>git log --oneline main..HEAD (all 7 work-stage commits)</commit_log>
+    <retrospectives_path>docs/build-prompts/retrospectives/M04.A1-retrospective.md through M04.F-retrospective.md</retrospectives_path>
+    <prior_milestone_entries>M01, M02, M03 entries in docs/gap-analysis.md (M03.5 has no entry per its design)</prior_milestone_entries>
+  </cumulative_reads>
+
+  <deliverables>
+    <item>docs/gap-analysis.md M04 entry (append-only, 6 sections including <gotchas_graduation>)</item>
+    <item>docs/build-prompts/retrospectives/M04-summary.md (parent-milestone roll-up; verdict per CLAUDE.md §19)</item>
+    <item>CHANGELOG.md [Unreleased] note that M04 gap-analysis entry was added</item>
+  </deliverables>
+
+  <gap_analysis_requirements ref="docs/build-prompts/M04-plan-verify-hitl-budget.md" section="G.3 Detailed Changes">
+    <gotchas_graduation>
+      <stage_review id="A1">
+        <gotcha>Each per-stage <gotchas> trap from M04.A1's prompt audited here</gotcha>
+        <disposition>kept | graduated | resolved | expired</disposition>
+        <target>Where it lands forward (graduated → docs/gotchas.md #N; resolved → fixed at <commit>; expired → rationale beyond bare n/a)</target>
+      </stage_review>
+      <stage_review id="A2">
+        <gotcha>...</gotcha>
+        <disposition>...</disposition>
+        <target>...</target>
+      </stage_review>
+      <stage_review id="B"><gotcha>...</gotcha><disposition>...</disposition><target>...</target></stage_review>
+      <stage_review id="C"><gotcha>...</gotcha><disposition>...</disposition><target>...</target></stage_review>
+      <stage_review id="D"><gotcha>...</gotcha><disposition>...</disposition><target>...</target></stage_review>
+      <stage_review id="E"><gotcha>...</gotcha><disposition>...</disposition><target>...</target></stage_review>
+      <stage_review id="F"><gotcha>...</gotcha><disposition>...</disposition><target>...</target></stage_review>
+    </gotchas_graduation>
+  </gap_analysis_requirements>
+
+  <append_only_verification>
+    <command>git show origin/main:docs/gap-analysis.md > /tmp/gap-base.md</command>
+    <command>diff /tmp/gap-base.md <(head -n "$(wc -l < /tmp/gap-base.md)" docs/gap-analysis.md)</command>
+    <expected>empty diff (prior entries unchanged)</expected>
+  </append_only_verification>
+
+  <three_artifact_review>
+    <artifact>code diff across Stages A1-F (cumulative)</artifact>
+    <artifact>per-stage retrospectives + M04-summary.md</artifact>
+    <artifact>M04 gap-analysis entry (this stage's deliverable)</artifact>
+    <note>Per CLAUDE.md §20: all three artifacts reviewed together; pushback on any blocks the PR until revised.</note>
+  </three_artifact_review>
+
+  <scope_locks ref="docs/build-prompts/M04-plan-verify-hitl-budget.md" section="Key constraints"/>
+
+  <gates milestone="M04"/>
+
+  <self_correction_budget>2</self_correction_budget>
+
+  <runtime_environment os="windows"/>
+
+  <gotchas>
+    <trap>docs/gap-analysis.md is APPEND-ONLY per CLAUDE.md §20. Prior M01, M02, M03 entries are IMMUTABLE. M04's carry-forward entries reference prior items by milestone tag (e.g., "M02 yellow X — resolved at <commit>"); never edit prior entries directly.</trap>
+    <trap><gotchas_graduation> requires every prior stage in the milestone to have a <stage_review id="..."> entry — even if a stage had no gotchas (use <gotcha>None observed.</gotcha><disposition>n/a</disposition> in that case). Validator catches missing stages by counting stage headings in this Phase doc.</trap>
+    <trap>Severity in Fix backlog is non-elastic. If everything is "Important," re-prioritize. Critical = "must fix before next milestone starts." A pile of Criticals is a signal the milestone shouldn't have shipped; surface that honestly.</trap>
+    <trap>M03.5 has no gap-analysis entry by design (doc/protocol-only). Don't try to audit M03.5 in M04's entry — its outputs are inputs to M04 (validator script v1.4 deliverable, etc.) but M03.5 itself is not a §20-bound parent milestone.</trap>
+  </gotchas>
+
+  <execution_warnings>
+    <warning>This is the FINAL commit on the M04 branch. After commit + approval, push the branch (first push for the milestone). PR draft surfaces; PR creation waits for explicit go-ahead per CLAUDE.md §20 + the established convention from M03.5.</warning>
+    <warning>DO NOT close the M03.5 carry-forward items if M04 didn't fully close them — they forward to M05+ via the new M04 entry's Carry-forward section.</warning>
+  </execution_warnings>
+
+  <time_box estimate_hours="2.5"/>
+
+  <retrospective_requirements ref="docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md" section="M[NN].&lt;X&gt; — Stage Retrospective">
+    <special_log>Decisions for M05 prompt authoring: which M04 carry-forward items inform M05 stage decomposition; which v1.3 protocol tags surfaced friction (candidate v1.4 changes); whether the M04 +20% time-box buffer was honored or ratio drifted; final disposition of the validator-script v1.4 deliverable (still M05 carry-forward).</special_log>
+    <m_summary_required>true</m_summary_required>
+  </retrospective_requirements>
+
+  <commit_protocol ref="CLAUDE.md" section="8. PR + commit workflow (CRITICAL — read carefully)"/>
+  <commit_message ref="docs/build-prompts/M04-plan-verify-hitl-budget.md" section="G.6 Commit Message"/>
+
+  <approval_surface>
+    <item>The full M04 gap-analysis entry text</item>
+    <item>append-only check output (must be empty)</item>
+    <item>M04-summary.md contents (parent-milestone verdict)</item>
+    <item>3-artifact review per CLAUDE.md §20: code diff stats; retrospective summaries; gap-analysis entry</item>
+    <item>draft commit message from G.6</item>
+    <item>draft PR description (do NOT open the PR)</item>
+    <item>"Stage M04.G is ready. I will not commit until you approve. Once committed, prior gap-analysis entries are immutable forever per CLAUDE.md §20. After approval I will push the milestone branch and surface the PR draft; PR creation waits for explicit go-ahead."</item>
+  </approval_surface>
+</closeout_stage_prompt>
+```
+
+### G.6 Commit Message
+
+```bash
+git commit -s -m "$(cat <<'EOF'
+docs(gap-analysis): M04 — append cumulative product+spec audit
+
+Per CLAUDE.md §20. Reviews codebase to date (M01 + M02 + M03 + M03.5 +
+M04) against agent-runtime-spec.md. Records adherence findings, spec
+gaps, and prioritized fix backlog. This entry is immutable — future
+milestones report status via Carry-forward.
+
+Includes <gotchas_graduation> audit of M04.A1-F per-stage gotchas with
+disposition (kept | graduated | resolved | expired) per
+STAGE-PROMPT-PROTOCOL.md v1.2 closeout schema.
+
+Final disposition for M02 + M03 carry-forward 🟡 items closed in M04
+Stages A1 + A2 + B; M03.5 carry-forward (validator script v1.4 +
+verification-regex dry-run + estimation calibration) forwards to M05.
+
+Refs: M04-plan-verify-hitl-budget.md §G, all M04.A1-F retros, M04-summary.md
+
+https://claude.ai/code
+EOF
+)"
+```
+
+---
+
+## Summary Table
+
+| Stage | New Files | Edited Files | Tests Added | Effort |
+|---|---|---|---|---|
+| **A1** Build hygiene | 2 (`error.rs`, `error.ts` generated) | 6 (xtask, regen, client.rs test, CHANGELOG) | 1 unit (`await_event` timeout) | ~2–3h |
+| **A2** Production wiring | 2 (`drone_lifecycle.rs`, `drone_reconnect_events.rs`) | ~10 (Tauri shell, sdk modules, anthropic, ipc.ts, spec) | 4 wiremock + 1 integration + unit | ~4–5h |
+| **B** §3a Plan/Task primitive | 7 (schemas + generated + state machine + migration) | ~6 (xtask, event regen, sdk wiring, graphStore) | exhaustive FSM + integration plan_lifecycle.rs | ~4–6h |
+| **C** Plan UI + ApprovalPanel | 4 (ApprovalPanel + 3 test files) | ~6 (PlanNode/TaskNode, ipc.ts, commands, App.tsx) | Vitest + Playwright | ~3–5h |
+| **D** §4a Verify & Rails | 9 (hook schema + generated + 5 hook modules + drone command + integration test) | ~8 (xtask, event regen, snapshot.rs, VerifyNode/HookNode, graphStore, spec §4a) | exhaustive rails + hook integration | ~6–8h |
+| **E** §6a HITL | 12 (hitl schema + generated + 4 hitl modules + 3 notifiers + 3 panels + 2 e2e) | ~9 (xtask, event regen, deps, commands, App.tsx, graphStore) | unit + integration + Playwright | ~6–8h |
+| **F** §2a Budget + §1b Recovery | 12 (budget schema + generated + 5 modules + 3 panels + 2 integration + 2 e2e) | ~7 (xtask, event regen, snapshot.rs, commands, App.tsx, graphStore) | unit + integration + Playwright | ~5–7h |
+| **G** Phase Closeout | 1 (M04-summary.md) | 2 (gap-analysis.md, CHANGELOG.md) | None (doc-only) | ~2–3h |
+| **Total** | ~49 new files | ~54 edited (with overlap) | 30+ tests across unit/integration/Playwright | ~32–45h estimated; ~12–17h actual at M03 0.32× ratio + 20% buffer |
+
+---
+
+## Verification Checklist
+
+Before approving the M04 PR (Stage G's surface), verify:
+
+### Automated (gates)
+
+- [ ] `cargo fmt --all -- --check` — zero diff
+- [ ] `cargo clippy --workspace --all-targets -- -D warnings` — zero warnings
+- [ ] `cargo build --workspace` — succeeds on Linux/macOS/Windows × stable + MSRV
+- [ ] `cargo test --workspace` — all tests pass
+- [ ] `cargo llvm-cov` — workspace ≥80%, runtime-drone ≥95%, runtime-main ≥95% with documented exclusions
+- [ ] M04 safety primitives ≥95%: `crates/runtime-main/src/plan/state_machine.rs` (Stage B), `crates/runtime-main/src/hooks/` (Stage D), `crates/runtime-main/src/hitl/` (Stage E), `crates/runtime-main/src/budget/` + `recovery/` (Stage F)
+- [ ] `cargo audit` clean, `cargo deny check` clean
+- [ ] `npx prettier --check '**/*.{ts,tsx,js,jsx,json}'` — clean
+- [ ] `npx eslint .` — clean
+- [ ] `npx tsc --noEmit` — clean
+- [ ] `npm run test` (Vitest) — all tests pass; `src/` ≥80% coverage
+- [ ] `npm audit --audit-level=high` — zero high/critical
+- [ ] `npm run test:e2e` (Playwright) — all renderer-level E2E tests pass (plan_approval, hitl_failure_escalation, budget_threshold, recovery_uncertainty)
+- [ ] `cargo xtask regenerate-types --check` — zero diff (schema-as-source-of-truth invariant)
+- [ ] CI green on all OS × toolchain cells; `e2e-tauri-driver` job stays disabled per Key constraints
+- [ ] Codecov delta gates pass (no regression > 0.5pp on any gated crate)
+
+### Manual
+
+- [ ] All MVP §M4 acceptance criteria checked off:
+  - [ ] Loads `examples/aria/framework.json` (v0.1-stripped); orchestrator spawns; planner generates 3-task plan; HITL approval surfaces; user approves; tasks execute
+  - [ ] Each `task_completed` triggers `post_task` hook (PowerShell `bash .aria/verify.sh` shim returning 0); pass → next task; fail with `on_failure: rollback` → drone reverts → retry
+  - [ ] `failure_count >= max_failures` → HITL escalation panel; user picks retry/skip/abort
+  - [ ] Budget threshold breach → `budget_warning` toast at 50%, `budget_downshift` at 75%, `budget_suspended` HITL approval at 90%
+  - [ ] User closes app mid-session; reopens; recovery dialog offers resume; resumed session continues from last snapshot with task pointer reset
+- [ ] All M04 stage retrospectives present (A1, A2, B, C, D, E, F) and filled in
+- [ ] `M04-summary.md` aggregates across stages with verdict ("Pattern held" / "Pattern held with friction" / "Pattern strained")
+- [ ] `docs/gap-analysis.md` M04 entry committed; prior entries (M01, M02, M03) unchanged (CI append-only check passes)
+- [ ] `<gotchas_graduation>` audit complete — every M04.A1-F stage has a `<stage_review>` entry with disposition
+- [ ] M04 PR description references all 8 stage commits + retrospectives + summary + gap-analysis entry
+- [ ] CHANGELOG `[Unreleased]` reflects what M04 actually delivered
+- [ ] M02 + M03 carry-forward final disposition recorded in M04 gap-analysis entry's Carry-forward section
+- [ ] M03.5 carry-forward (validator script v1.4 + verification-regex dry-run + estimation calibration) forwarded to M05
+
+### Approval gate (per CLAUDE.md §19)
+
+- [ ] **Hard Gate G1: do-not-commit-until-approved held** — every stage commit happened only after explicit user approval (8 approval gates across Stages A1, A2, B, C, D, E, F, G)
+- [ ] User has reviewed each stage retrospective; scoring matches observable evidence
+- [ ] M04-summary verdict is "Pattern held" (sound) or "Pattern held with friction"; not "Pattern strained"
+- [ ] Three-artifact review per CLAUDE.md §20 complete: code diff + retrospectives/summary + gap-analysis entry all reviewed together
+- [ ] PR creation deferred to explicit user instruction (do NOT auto-open per established convention)
+
+---
+
+*End of M04 specification + stage prompts. Eight stages on one parent-milestone branch (`claude/m04-plan-verify-hitl-budget`); Stage G is Phase Closeout per CLAUDE.md §20. PR drafts at end of Stage G and pushes after explicit approval. M05 (gap detection + capability enforcement) follows on a separate branch once this milestone merges.*
