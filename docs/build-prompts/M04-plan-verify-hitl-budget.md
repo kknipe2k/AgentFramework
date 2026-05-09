@@ -79,7 +79,7 @@ No legacy from earlier milestones beyond the M03/M03.5 + M02 trees inventoried a
 | **F** | ⏳ | §2a Budget + §1b Recovery — `budget.v1.json` schema (3 scopes + 4 actions + downshift_hook); **wire enforcer to emit 4 already-shipped budget events** (audit confirmed all 4 in `event.rs` + `graphStore.ts`); session header bar UI; Recovery (resume rebuilds history per spec §1b; tool-call-uncertain UI prompt with retry/skip/mark-complete/abort options; MCP reconnect on resume; plan state restoration; capability state restoration). **Audit-corrected:** vdr access via drone IPC (vdr lives in `runtime-drone/src/vdr.rs`, NOT `runtime-main/src/vdr.rs` — phantom path). Adds `<pre_flight_check>` for `Arc<DroneClient>` | ~4–6h |
 | **G** | ⏳ | Phase Closeout — gap-analysis entry per CLAUDE.md §20 (cumulative product↔spec audit including M04 + cumulative review); `<gotchas_graduation>` v1.2 closeout subsection auditing all per-stage `<gotchas>` from A1–F (kept | graduated | resolved | expired); M03 + M03.5 carry-forward final disposition; M04-summary.md aggregating across stages; three-artifact review (CLAUDE.md §20) | ~2–3h |
 
-Total revised estimate: ~25–35 hours estimated for B–G (A1+A2 actuals: ~4h). ~10–12 hours human direction (seven approval gates + one PR review).
+Total revised estimate: ~25–35 hours estimated for B–G (A1+A2 actuals: ~4h). ~10–12 hours human direction (eight approval gates across A1–G + one PR review).
 
 **Estimation calibration (revised post-A2 audit).** Original M04: 32–45h calibrated, 12–17h actual at M03 0.32× ratio + 20% buffer. Post-audit: scope reduction in B/D/F removes ~10h of "already-done" work that the original Phase doc claimed as new. Revised total: ~25–35h calibrated, ~8–12h actual. M01 ran 0.3× of estimate; M02 0.7×; M03 0.32×; M03.5 0.14× (doc-only); M04.A1 0.4× actual on 2.5h estimate; M04.A2 0.67× actual on 4.5h estimate. Stages B–F likely track 0.30×–0.50× (code-shipping with cross-stack glue); Stage G ~0.20× (doc-only closeout per M03.F).
 
@@ -888,15 +888,6 @@ EOF
 
 ## Stage B — §3a Plan & Task primitive (schemas + types + events + state machine + persistence)
 
-> **🔧 Audit corrections (post-M04.A2 audit, 2026-05-08).** Apply these to the X.2/X.3/X.4 sections below — the original prose in those sections predates the audit and contains drift.
-> 1. **8 of 11 plan/task events ALREADY exist in `crates/runtime-core/src/event.rs` and `schemas/event.v1.json`** (audit-confirmed). Identify the 3 missing variants by diffing spec §3a's 11-event list against the existing `event.rs` enum + `event.v1.json` `oneOf`. Author only the missing 3; the existing 8 get state-machine wiring not re-authoring.
-> 2. **Path correction:** `event_translation.rs` is a phantom — actual translation lives in `crates/runtime-main/src/sdk/event_pipeline.rs`. Read references and any X.3 instructions that name `event_translation.rs` should be read as `event_pipeline.rs`.
-> 3. **Folds A2 deferrals** (per user-approved post-A2 sequencing): WriteSignal IPC command variant + drone-side handler + main-side emission path; structured-emitter prompt-template module + AgentSdk plumbing. Stage B has scope slack from already-shipped events to absorb these. New schema items: WriteSignal added to drone IPC enum; structured-emitter regex + prompt-template module new in `crates/runtime-main/src/sdk/`.
-> 4. **`crates/runtime-drone/migrations/` directory does not exist yet** (audit-confirmed). The first migration file Stage B authors creates the directory; no existing-numbered-sequence to fit into.
-> 5. **Plan state machine ≥95% safety primitive coverage** is unchanged. Stage B's authoring doesn't reduce the safety gate.
->
-> All other X.1–X.6 content stays. Audit-driven scope reduction is real (8/11 events done) but offset by the A2 deferrals folding in. Net Stage B scope: similar size to original Phase doc, different content mix.
-
 **WEBCHECK:** verify each URL against this stage's prompt body **before** the fresh session opens.
 
 - <https://docs.rs/typify/latest/typify/> — typify codegen for plan.v1.json + task.v1.json (extends Stage A1 pattern)
@@ -1056,7 +1047,9 @@ Apply per `docs/gotchas.md` #21 to the new modules: `plan/state_machine.rs`, `pl
   <pre_flight_check>
     <check name="branch_correct">git rev-parse --abbrev-ref HEAD must equal claude/m04-plan-verify-hitl-budget</check>
     <check name="prior_stage_committed">git log --oneline -1 must show "M04 Stage A2" subject</check>
-    <check name="a1_a2_artifacts_present">Test-Path crates/runtime-core/src/error.rs (A1) AND grep -q "DroneLifecycle" src-tauri/src/drone_lifecycle.rs (A2) must succeed</check>
+    <check name="a1_a2_artifacts_present">Test-Path crates/runtime-core/src/generated/error.rs (A1 codegen target) AND grep -q "DroneLifecycle" src-tauri/src/drone_lifecycle.rs (A2) must succeed</check>
+    <check name="a1_namespace_decision_applied">grep -q "pub use generated::{agent, common, framework, skill, tool}" crates/runtime-core/src/lib.rs (A1 chose option (b) qualify-by-path; generated CmdError + AgentEvent reachable via runtime_core::generated::{event,error}; top-level error.rs::RuntimeError + event.rs::AgentEvent stay hand-curated)</check>
+    <check name="a1_xtask_extended">grep -q "common.*framework.*skill.*tool.*agent.*event.*error" crates/xtask/src/main.rs (A1 extended codegen list from 5 to 7 schemas; if grep finds the pre-A1 5-entry form, the codebase has drifted)</check>
     <check name="schemas_drift_clean">cargo xtask regenerate-types --check exit 0 (A1+A2 codegen state durable)</check>
   </pre_flight_check>
 
@@ -1077,7 +1070,7 @@ Apply per `docs/gotchas.md` #21 to the new modules: `plan/state_machine.rs`, `pl
     <file purpose="existing FSM/state-machine archetype if any in runtime-main; otherwise spec §3a is the contract">crates/runtime-main/src</file>
     <file purpose="db.rs migration runner archetype">crates/runtime-drone/src/db.rs</file>
     <file purpose="graphStore applyEvent archetype Stage M03.B established">src/lib/graphStore.ts</file>
-    <file purpose="renderer event-translation pipeline that propagates new event variants">crates/runtime-main/src/sdk/event_translation.rs</file>
+    <file purpose="renderer event-translation pipeline that propagates new event variants (NOT phantom event_translation.rs — actual file is event_pipeline.rs)">crates/runtime-main/src/sdk/event_pipeline.rs</file>
   </read_reference>
 
   <read_prior_stages>
@@ -1110,9 +1103,15 @@ Apply per `docs/gotchas.md` #21 to the new modules: `plan/state_machine.rs`, `pl
   <runtime_environment os="windows" note="Build agent on Windows 11; Test-Path replaces test -f; named pipe paths differ from Unix sockets in any drone-IPC test"/>
 
   <gotchas>
+    <trap>AUDIT: 8 of 11 plan/task events ALREADY exist in `crates/runtime-core/src/event.rs` and `schemas/event.v1.json`. Identify the 3 missing variants by diffing spec §3a's 11-event list against the existing `event.rs` enum + `event.v1.json` `oneOf`. Author only the missing 3; the existing 8 get state-machine wiring not re-authoring.</trap>
+    <trap>AUDIT path correction: `event_translation.rs` is a phantom — actual translation pipeline lives in `crates/runtime-main/src/sdk/event_pipeline.rs`. Any X.3 instruction or read reference that names `event_translation.rs` should be read as `event_pipeline.rs`.</trap>
+    <trap>AUDIT folds A2 deferrals (per user-approved post-A2 sequencing): WriteSignal IPC command variant on `DroneCommand` + drone-side handler arm at `crates/runtime-drone/src/command_handler.rs` calling `vdr::project_signal` (vdr lives in drone, not main; runtime-main has no rusqlite dep) + main-side emission path. Plus structured-emitter prompt-template module + AgentSdk plumbing replacing the M02 heuristic in `crates/runtime-main/src/sdk/decision_extractor.rs`. Stage B has scope slack from the already-shipped 8/11 events to absorb both folded items. Closes M03 🟡 vdr-projector-wired-at-write-signal + M02 🟡 structured-emitter migration.</trap>
+    <trap>AUDIT: `crates/runtime-drone/migrations/` directory does NOT exist yet (verified). Stage B's first migration file creates the directory; version `001` (no existing-numbered-sequence to fit into).</trap>
+    <trap>AUDIT post-A1 namespace: A1 chose option (b) qualify-by-path. Generated `CmdError` + `AgentEvent` live under `runtime_core::generated::{error,event}`; top-level `error.rs::RuntimeError` + `event.rs::AgentEvent` stay hand-curated. Stage B's regen targets land at `crates/runtime-core/src/generated/{plan,task}.rs` per the same convention.</trap>
+    <trap>AUDIT: A1's schema metadata pattern is the archetype for `plan.v1.json` + `task.v1.json` — variant titles PascalCased; validated string fields with `minLength` extracted to `$defs/<Name>` so typify 0.6.2 can name the validation newtype. See `schemas/error.v1.json` post-A1 for the worked example.</trap>
     <trap>v0.1 hardcodes STANDARD mode + fresh_context_per_task — schemas declare 3 loop policies but only fresh_context_per_task is lit; the `one_shot` and `continuous` variants in the schema are spec-prep, not v0.1 implementation. Stage B's loop-policy seam returns NotImplemented for the other two.</trap>
     <trap>plan.v1.json $id MUST follow https://schemas.aria-runtime.dev/<name>.v1.json pattern (M03.5.A retro decision). Verify against existing schemas BEFORE authoring.</trap>
-    <trap>11 new event variants in event.v1.json — the renderer's graphStore.applyEvent exhaustive switch will fail to compile if any case is missing. This is the forcing function (gotcha #36 _exhaustive: never); rely on the compiler to catch missing cases rather than running tests.</trap>
+    <trap>11 new event variants total in event.v1.json after Stage B (8 already present + 3 added) — the renderer's graphStore.applyEvent exhaustive switch will fail to compile if any case is missing. This is the forcing function (gotcha #36 _exhaustive: never); rely on the compiler to catch missing cases rather than running tests. Plan state machine ≥95% safety primitive coverage is unchanged.</trap>
     <trap>Plan state machine is a SAFETY PRIMITIVE — coverage gate ≥95%. Document any exclusions inline (likely none — pure-logic module). Per CLAUDE.md §5 + M01.C precedent.</trap>
     <trap>Approval-gate seam (Stage B's deliverable) must be the channel/oneshot the SDK awaits on, NOT the HITL UI itself (Stage E). Stage B's SDK code calls `approval_seam.await_approval(plan_id).await?` and Stage E wires the seam to the HITL flow. Do NOT implement the HITL UI in Stage B.</trap>
     <trap>fresh_context_per_task implementation — clearing the agent's `messages` vec mid-session must NOT clear the SDK's plan-state. Plan state lives in the SDK + SQLite, NOT in the agent's message history.</trap>
@@ -1208,11 +1207,6 @@ EOF
 <!-- ============================================================ -->
 
 ## Stage C — §3a Plan UI + ApprovalPanel + graph wiring (renderer surface for plan/task events)
-
-> **🔧 Audit corrections (post-M04.A2 audit, 2026-05-08).**
-> 1. **Add `<pre_flight_check>` for `Arc<DroneClient>` Tauri-managed-state** (Stage A2 wired it; Stages C/E/F all consume it). Verification: `Test-Path src-tauri/src/drone_lifecycle.rs` succeeds; `grep -q "manage(.*DroneClient" src-tauri/src/main.rs` returns a match.
-> 2. **Verify PlanNode/TaskNode synthetic-state assumption still holds** before authoring — the audit scope didn't deeply read the components, only confirmed they exist. If Stage B's revised wiring emitted state shapes that differ from M03.C synthetic fixtures, Stage C's tests need to follow the new state shape.
-> 3. Otherwise scope appears intact per audit.
 
 **WEBCHECK:** verify each URL against this stage's prompt body **before** the fresh session opens.
 
@@ -1365,6 +1359,9 @@ Per gotcha #23, this is renderer-level Playwright (Vite dev server + module-mock
     <check name="branch_correct">git rev-parse --abbrev-ref HEAD must equal claude/m04-plan-verify-hitl-budget</check>
     <check name="prior_stage_committed">git log --oneline -1 must show "M04 Stage B" subject</check>
     <check name="plan_state_machine_present">Test-Path crates/runtime-main/src/plan/state_machine.rs must succeed</check>
+    <check name="arc_droneclient_managed">grep -q "manage(.*DroneClient\|manage(.*Arc" src-tauri/src/main.rs (A2 deliverable; Stages C/E/F all consume Arc&lt;DroneClient&gt; managed-state)</check>
+    <check name="drone_lifecycle_present">Test-Path src-tauri/src/drone_lifecycle.rs (A2 deliverable)</check>
+    <check name="plan_task_node_synthetic">Test-Path src/components/nodes/PlanNode.tsx AND Test-Path src/components/nodes/TaskNode.tsx (M03.C synthetic-state archetypes; Stage C drives live; verify state shapes match Stage B's graphStore.applyEvent additions before authoring)</check>
   </pre_flight_check>
 
   <read_first>
@@ -1503,15 +1500,6 @@ EOF
 <!-- ============================================================ -->
 
 ## Stage D — §4a Verify & Rails primitive (hooks + rails + don't-touch; consume existing RevertToSnapshot)
-
-> **🔧 Audit corrections (post-M04.A2 audit, 2026-05-08).** Apply these to the X.2/X.3 sections below.
-> 1. **Event names already exist as `verify_started/passed/failed` + `rail_triggered`** in `crates/runtime-core/src/event.rs` and `schemas/event.v1.json` (audit-confirmed). The original Phase doc planned new `hook_started/passed/failed` events — adopt the existing `verify_*` names instead. The Hook *primitive* (HookRef + HookCategory + Hook in `hook.v1.json`) keeps the "hook" terminology where appropriate (the framework-config primitive that fires the events); the *event variants* stay as `verify_*` per codebase convention.
-> 2. **`RevertToSnapshot` already exists in `crates/runtime-core/src/drone.rs::DroneCommand`** with the correct `RevertReason` enum (`HookRollback`, `UserRollback`, `GapRecovery`) (audit-confirmed). Stage D consumes the existing variant — does NOT re-add it. Verify the `RevertReason` enum shape matches spec §4a + Stage D's needs; if any variant is missing, that's an additive edit, not a rebuild.
-> 3. **`pre_file_edit` is the genuinely-new firing point** — verify spec §4a firing-point table currently lists 6 firing points; Stage D's `hook.v1.json` adds the 7th. Spec text edit either lands in-stage (if <5 lines) or as a follow-up doc PR per retro decision.
-> 4. **Add `<pre_flight_check>` for `Arc<DroneClient>` Tauri-managed-state** (consumed via `RevertToSnapshot` IPC dispatch).
-> 5. Hook executor (shell|tool|agent variants), Rails (hard/soft + JSONLogic), don't-touch glob matcher are all genuinely new per the audit.
->
-> Net: Stage D scope is moderately smaller than original — events done, drone command done. Hook primitive + Rails + don't-touch + pre_file_edit firing point + cross-platform shell wrapper are still substantial new work.
 
 **WEBCHECK:** verify each URL against this stage's prompt body **before** the fresh session opens.
 
@@ -1686,6 +1674,9 @@ Apply to: `hooks/executor.rs`, `hooks/rails.rs`, `hooks/dont_touch.rs`, `hooks/s
     <check name="branch_correct">git rev-parse --abbrev-ref HEAD must equal claude/m04-plan-verify-hitl-budget</check>
     <check name="prior_stage_committed">git log --oneline -1 must show "M04 Stage C" subject</check>
     <check name="pwsh_available">where.exe pwsh.exe must succeed (or fall back to powershell.exe with explicit retro decision)</check>
+    <check name="arc_droneclient_managed">grep -q "manage(.*DroneClient\|manage(.*Arc" src-tauri/src/main.rs (A2 deliverable; Stage D consumes via RevertToSnapshot IPC dispatch)</check>
+    <check name="audit_baseline_verify_events">grep -q "VerifyStarted\|VerifyPassed\|VerifyFailed\|RailTriggered" crates/runtime-core/src/event.rs (audit baseline; 4 events ALREADY exist — Stage D wires NOT re-authors as hook_*)</check>
+    <check name="audit_baseline_revert_to_snapshot">grep -q "RevertToSnapshot" crates/runtime-core/src/drone.rs (audit baseline; variant ALREADY exists with RevertReason enum: HookRollback, UserRollback, GapRecovery — Stage D consumes, does NOT re-add)</check>
   </pre_flight_check>
 
   <read_first>
@@ -1748,10 +1739,13 @@ Apply to: `hooks/executor.rs`, `hooks/rails.rs`, `hooks/dont_touch.rs`, `hooks/s
   <runtime_environment os="windows" note="PowerShell wrapper required per MVP §M4 acceptance criterion; pwsh.exe preferred over powershell.exe; verify availability at pre_flight_check"/>
 
   <gotchas>
+    <trap>AUDIT: event names ALREADY exist as `verify_started`/`verify_passed`/`verify_failed` + `rail_triggered` in `crates/runtime-core/src/event.rs` and `schemas/event.v1.json`. The original Phase doc planned new `hook_started`/`hook_passed`/`hook_failed` events — do NOT re-author. Adopt the existing `verify_*` names for the events. The Hook *primitive* (HookRef + HookCategory + Hook in `hook.v1.json`) keeps the "hook" terminology where it's the framework-config primitive that fires the events; the *event variants* stay as `verify_*` per codebase convention.</trap>
+    <trap>AUDIT: `RevertToSnapshot` ALREADY exists in `crates/runtime-core/src/drone.rs::DroneCommand` with the correct `RevertReason` enum (`HookRollback`, `UserRollback`, `GapRecovery`). Stage D CONSUMES the existing variant — does NOT re-add it. Verify the `RevertReason` enum shape matches spec §4a + Stage D's needs; if any variant is missing, that's an additive edit, not a rebuild. Drone-side handler arm at `crates/runtime-drone/src/command_handler.rs` already exists; only extend if `RevertReason::HookRollback` shape changes.</trap>
+    <trap>AUDIT: `pre_file_edit` is the genuinely-new firing point — verify spec §4a firing-point table currently lists 6 firing points; Stage D's `hook.v1.json` adds the 7th. Spec text edit either lands in-stage (if &lt;5 lines) or as a follow-up doc PR per retro decision.</trap>
+    <trap>AUDIT scope summary: events done, drone command done. Hook primitive + Rails + don't-touch + pre_file_edit firing point + cross-platform shell wrapper are the substantial new work. Stage D is moderately smaller than the original Phase doc draft.</trap>
     <trap>shell.rs cross-platform — gotcha #32 cross-stack discipline applies. Verify pwsh.exe -NoProfile -Command semantics against current Microsoft PowerShell docs URL (WEBCHECK) BEFORE authoring; do NOT assume bash -c semantics carry over.</trap>
     <trap>JSONLogic operator allowlist (gotcha #18) — Rails check field. Operators beyond the allowlist return UnsupportedOperator; do NOT silently extend the operator set.</trap>
     <trap>Don't-touch glob matcher fires on pre_file_edit — every Write tool call routes through it BEFORE the OS write. If the rail evaluator is async, ensure the Write call awaits the rail decision; otherwise edits land before the rail blocks.</trap>
-    <trap>revert_to_snapshot is a NEW DroneCommand variant — fan_out_grep above catches exhaustive-match callsites. Verify all matches add the new arm.</trap>
     <trap>Spec §4a's firing-point table doesn't list pre_file_edit — Stage D adds it via hook.v1.json; spec text edit is either in-stage or a follow-up doc PR (decide per retro). Do NOT silently add pre_file_edit to the spec without a deliberate edit + commit message note.</trap>
   </gotchas>
 
@@ -1841,12 +1835,6 @@ EOF
 <!-- ============================================================ -->
 
 ## Stage E — §6a HITL primitive (9 triggers + 3 UI variants + 3 notifiers + plugin interface)
-
-> **🔧 Audit corrections (post-M04.A2 audit, 2026-05-08).**
-> 1. **Event name correction:** the codebase has `hitl_resolved` (not `hitl_response` as the original Phase doc claimed). Adopt `hitl_resolved` throughout Stage E. The 3 NEW HITL events stay as planned: `hitl_timeout` + `notifier_dispatched` + `notifier_failed`. The existing pair is `hitl_requested` + `hitl_resolved`.
-> 2. **Add `<pre_flight_check>` for `Arc<DroneClient>` Tauri-managed-state** (consumed via `respond_hitl` IPC dispatch).
-> 3. Tauri notification plugin cross-stack discipline (gotcha #32) unchanged — verify against https://v2.tauri.app/plugin/notification/ at authoring time per existing prompt body.
-> 4. Otherwise scope intact per audit.
 
 **WEBCHECK:** verify each URL against this stage's prompt body **before** the fresh session opens.
 
@@ -2018,6 +2006,8 @@ Apply to all new modules (`hitl/{mod,policy,seam,notifiers/*}.rs`).
     <check name="branch_correct">git rev-parse --abbrev-ref HEAD must equal claude/m04-plan-verify-hitl-budget</check>
     <check name="prior_stage_committed">git log --oneline -1 must show "M04 Stage D" subject</check>
     <check name="hooks_present">Test-Path crates/runtime-main/src/hooks/mod.rs must succeed</check>
+    <check name="arc_droneclient_managed">grep -q "manage(.*DroneClient\|manage(.*Arc" src-tauri/src/main.rs (A2 deliverable; Stage E consumes via respond_hitl IPC dispatch)</check>
+    <check name="audit_baseline_hitl_event_naming">grep -q "HitlRequested\|HitlResolved" crates/runtime-core/src/event.rs AND ! grep -q "HitlResponse" crates/runtime-core/src/event.rs (audit baseline; codebase NAMES `hitl_resolved` NOT `hitl_response` — Stage E wires existing 2 events; if HitlResponse appears the codebase has drifted)</check>
   </pre_flight_check>
 
   <read_first>
@@ -2079,6 +2069,7 @@ Apply to all new modules (`hitl/{mod,policy,seam,notifiers/*}.rs`).
   <runtime_environment os="windows" note="desktop notifier uses Windows Toast Notifications via Tauri plugin; verify pwsh-side permission state if first-run flow differs from Linux"/>
 
   <gotchas>
+    <trap>AUDIT event-name correction: the codebase has `hitl_resolved` (NOT `hitl_response` as the original Phase doc claimed). Adopt `hitl_resolved` throughout. The 3 NEW HITL events stay as planned: `hitl_timeout` + `notifier_dispatched` + `notifier_failed`. The existing pair is `hitl_requested` + `hitl_resolved` at `event.rs:281, :290`.</trap>
     <trap>Tauri notification plugin is the textbook gotcha #32 case — verify the install + capability + permission-prompt flow against https://v2.tauri.app/plugin/notification/ verbatim BEFORE authoring desktop.rs. The previous M04 cross-stack failures (M03 tauri-driver) cost three iteration cycles; do not repeat.</trap>
     <trap>Notifier failures are NON-FATAL — emit notifier_failed event and continue. Don't propagate notifier errors up; the HITL seam still resolves on user response or timeout regardless of which notifiers fired.</trap>
     <trap>HITL Panel/Modal/Toast — pick the right ARIA pattern per variant. Panel: aria-modal="false" (graph stays queryable). Modal: aria-modal="true" (blocks adjacent). Toast: role="status" or "alert" depending on urgency.</trap>
@@ -2180,15 +2171,6 @@ EOF
 <!-- ============================================================ -->
 
 ## Stage F — §2a Budget + §1b Recovery (cost controls + resume from snapshot)
-
-> **🔧 Audit corrections (post-M04.A2 audit, 2026-05-08).**
-> 1. **All 4 budget event variants ALREADY exist** in `crates/runtime-core/src/event.rs` + `schemas/event.v1.json` + `src/lib/graphStore.ts` (audit-confirmed: `budget_warning`, `budget_downshift`, `budget_suspended`, `budget_exceeded`). Stage F's original X.3 said "add 4 new variants" — that's wrong. Stage F wires the budget enforcer to EMIT the existing events, does NOT re-add them. The `<schema_drift_check>` should still pass (no new variants); regen verifies.
-> 2. **Path correction:** `crates/runtime-main/src/vdr.rs` is a phantom (audit-confirmed). VDR lives in `crates/runtime-drone/src/vdr.rs`. `runtime-main` has NO rusqlite dependency — VDR access from main goes through drone IPC (likely via a new `QueryVdr { ... }` DroneCommand variant or by extending the existing `QuerySessionDb` if VDR queries are simple enough). Adjust X.2/X.3 paths and the IPC integration accordingly.
-> 3. **Add `<pre_flight_check>` for `Arc<DroneClient>` Tauri-managed-state** (Budget queries + Recovery resume both go through drone IPC).
-> 4. Recovery primitive (resume rebuilds history not re-execute, tool-call-uncertain UI prompt with 4-action options, MCP reconnect on resume, plan/capability state restoration) is genuinely new — original X.3 stays accurate for that half.
-> 5. Budget enforcer logic (3 scopes + 4 threshold actions + downshift_hook + session header bar UI) is genuinely new — original X.3 stays accurate for that half. Token-cost computation uses Stage A2's real `count_tokens` endpoint with LRU per-message caching.
->
-> Net: Stage F scope is moderately smaller — events done; everything else (enforcer + recovery + UI) genuinely new. Path correction critical (vdr in drone, not main).
 
 **WEBCHECK:** verify each URL against this stage's prompt body **before** the fresh session opens.
 
@@ -2337,6 +2319,9 @@ Modal dialog with the 4 options above. Dispatches `respond_uncertainty(prompt_id
     <check name="prior_stage_committed">git log --oneline -1 must show "M04 Stage E" subject</check>
     <check name="hitl_seam_present">Test-Path crates/runtime-main/src/hitl/seam.rs must succeed (Stage E exposes the on_budget_threshold trigger)</check>
     <check name="count_tokens_real">grep -q "messages/count_tokens" crates/runtime-main/src/providers/anthropic.rs (Stage A2 wired the real endpoint; budget enforcement depends on it)</check>
+    <check name="arc_droneclient_managed">grep -q "manage(.*DroneClient\|manage(.*Arc" src-tauri/src/main.rs (A2 deliverable; Budget queries + Recovery resume both go through drone IPC)</check>
+    <check name="audit_baseline_budget_events">grep -q "BudgetWarn\|BudgetDownshift\|BudgetSuspended\|BudgetExceeded" crates/runtime-core/src/event.rs (audit baseline; 4 events ALREADY exist — Stage F WIRES the new enforcer to fire these, does NOT re-add. If they're missing the codebase has drifted)</check>
+    <check name="vdr_in_drone_only">Test-Path crates/runtime-drone/src/vdr.rs AND ! Test-Path crates/runtime-main/src/vdr.rs (audit baseline; vdr lives in drone NOT main; runtime-main has NO rusqlite dep — VDR access from main goes through drone IPC)</check>
   </pre_flight_check>
 
   <read_first>
@@ -2353,7 +2338,7 @@ Modal dialog with the 4 options above. Dispatches `respond_uncertainty(prompt_id
     <file purpose="Stage A2 count_tokens implementation that budget enforcement queries">crates/runtime-main/src/providers/anthropic.rs</file>
     <file purpose="Stage E HITL seam that on_budget_threshold trigger drives">crates/runtime-main/src/hitl/seam.rs</file>
     <file purpose="snapshot read API to extend for resume path">crates/runtime-drone/src/snapshot.rs</file>
-    <file purpose="VDR projection that uncertainty.rs uses to find orphaned signals">crates/runtime-main/src/vdr.rs</file>
+    <file purpose="VDR projection — drone-side projector; uncertainty.rs queries via drone IPC since runtime-main has no rusqlite dep (NOT phantom runtime-main/src/vdr.rs)">crates/runtime-drone/src/vdr.rs</file>
     <file purpose="Stage C/E renderer surface mounting pattern for BudgetHeaderBar/RecoveryDialog/UncertaintyPrompt">src/App.tsx</file>
   </read_reference>
 
@@ -2391,6 +2376,9 @@ Modal dialog with the 4 options above. Dispatches `respond_uncertainty(prompt_id
   <runtime_environment os="windows"/>
 
   <gotchas>
+    <trap>AUDIT: 4 budget event variants ALREADY EXIST in `crates/runtime-core/src/event.rs` + `schemas/event.v1.json` + `src/lib/graphStore.ts` (`budget_warning`, `budget_downshift`, `budget_suspended`, `budget_exceeded`). The original Phase doc said "add 4 new variants" — that's wrong. Stage F WIRES the budget enforcer to EMIT the existing events; does NOT re-add them. Schema drift check passes with no new variants; regen verifies.</trap>
+    <trap>AUDIT path correction: `crates/runtime-main/src/vdr.rs` is a phantom. VDR lives in `crates/runtime-drone/src/vdr.rs`. `runtime-main` has NO `rusqlite` dependency — VDR access from main goes through drone IPC (likely via a new `QueryVdr { ... }` DroneCommand variant or by extending the existing `QuerySessionDb` if the SQL coverage is sufficient). Adjust X.2/X.3 paths and the IPC integration accordingly.</trap>
+    <trap>AUDIT scope summary: events done; everything else (enforcer + recovery + UI) genuinely new. Recovery primitive (resume rebuilds history not re-execute, tool-call-uncertain UI prompt with 4-action options, MCP reconnect on resume, plan/capability state restoration) and budget enforcer (3 scopes + 4 threshold actions + downshift_hook + session header bar UI) are both genuinely new work. Token-cost computation uses Stage A2's real `count_tokens` endpoint with LRU per-message caching.</trap>
     <trap>Recovery rebuilds HISTORY, not EXECUTION — gotcha #15. Tool calls in the snapshot are loaded into SDK message history as if they already happened; the model generates the NEXT turn fresh. Do NOT re-invoke tools on resume.</trap>
     <trap>Tool-call uncertainty detection is paired-signal invariant — `tool_invoked` without `tool_result`. The 4 user actions (retry/skip/mark/abort) must each emit a distinct `tool_call_uncertainty_resolved` decision signal so the VDR projection has the audit trail.</trap>
     <trap>Budget tightest-cap-wins — if session cap=$5, framework cap=$3, day-global cap=$10, the framework cap wins. Implementation: compute (cap, scope) for all active scopes; min(cap) wins.</trap>
@@ -2408,7 +2396,7 @@ Modal dialog with the 4 options above. Dispatches `respond_uncertainty(prompt_id
   <time_box estimate_hours="6"/>
 
   <retrospective_requirements ref="docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md" section="M[NN].&lt;X&gt; — Stage Retrospective">
-    <special_log>Decisions for Stage G (Phase Closeout): which M04 carry-forward items are fully closed vs need v1.0 escalation; whether the budget downshift_hook ladder configurability landed in framework JSON or stayed hardcoded; whether tool-call uncertainty UI surfaced any spec gaps in the 4-action semantics; final disposition of the §1d long-lived events() reconnect note (Stage A2 may have closed it; F validates).</special_log>
+    <special_log>Decisions for Stage G (Phase Closeout): which M04 carry-forward items are fully closed vs need v1.0 escalation; whether the budget downshift_hook ladder configurability landed in framework JSON or stayed hardcoded; whether tool-call uncertainty UI surfaced any spec gaps in the 4-action semantics. Note: §1d long-lived events() reconnect note already CLOSED at A2 (v0.1 behavior locked: subscriptions do NOT survive reconnect; renderers resubscribe; integration test at crates/runtime-main/tests/drone_reconnect_events.rs); G's gap-analysis records the closure but does not need to re-validate.</special_log>
   </retrospective_requirements>
 
   <commit_protocol ref="CLAUDE.md" section="8. PR + commit workflow (CRITICAL — read carefully)"/>
@@ -2734,7 +2722,7 @@ Before approving the M04 PR (Stage G's surface), verify:
 
 ### Approval gate (per CLAUDE.md §19)
 
-- [ ] **Hard Gate G1: do-not-commit-until-approved held** — every stage commit happened only after explicit user approval (7 approval gates across Stages A1, A2, B, C, D, E, F, G; revised post-A2 — original plan was 8 with a separate A3 stage that was folded into B per audit)
+- [ ] **Hard Gate G1: do-not-commit-until-approved held** — every stage commit happened only after explicit user approval (8 approval gates across Stages A1, A2, B, C, D, E, F, G; original eight-stage plan included a separate A3 for vdr WriteSignal IPC + structured-emitter that was folded into Stage B per the post-A2 audit re-staging — net 7 work stages + Stage G closeout = 8 commits + 8 approval gates)
 - [ ] User has reviewed each stage retrospective; scoring matches observable evidence
 - [ ] M04-summary verdict is "Pattern held" (sound) or "Pattern held with friction"; not "Pattern strained"
 - [ ] Three-artifact review per CLAUDE.md §20 complete: code diff + retrospectives/summary + gap-analysis entry all reviewed together
