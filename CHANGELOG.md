@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — Post-M04-PR-#53-revert protocol gap closure (doc-only)
+
+Closes the cross-session-blindness failure mode that produced PR #53 (M04 phase doc rewrite based on origin's stale view of project state; reverted via PR #54). 4 narrowly-scoped doc edits across CLAUDE.md, STAGE-PROMPT-PROTOCOL.md, docs/gotchas.md.
+
+- **CLAUDE.md §8 — new "Phase-doc-edit pre-flight (cross-machine state check)" subsection.** Mandatory before any edit to `docs/build-prompts/M[NN]-*.md` larger than ~50 lines or affecting any X.5 stage prompt: orchestration session MUST surface a request for the user to paste `git log --oneline main..HEAD` from the build machine; retrospective-file presence on the build machine is the source of truth for "stage X executed," not git visibility on origin. Banned failure mode: inferring stage status from origin's silence.
+- **CLAUDE.md §19 — new rule 7: every stage end surface includes cross-machine state by default.** Specifically `git log --oneline main..HEAD` (commits ahead of main on the active milestone branch) + `ls docs/build-prompts/retrospectives/M[NN].*-retrospective.md` (retrospective files present). Closes the gap structurally: when the user pastes a stage surface to any downstream orchestration session, that session sees actual project state instead of inferring from origin.
+- **STAGE-PROMPT-PROTOCOL.md §10 — new v1.4 hardening rule.** "Build-machine state must be confirmed before phase-doc edits." Companion to v1.3 grep-verify-claims rule: v1.3 covers WHAT codebase claims need verification; v1.4 covers WHICH codebase to verify against when origin and build-machine diverge. Validator does not enforce mechanically; authoring discipline backed by gotcha #42 + §19 rule 7.
+- **docs/gotchas.md #42** (companion to #41). "Origin is a partial view of project state when CLAUDE.md §8 forbids per-stage pushes." Pattern bit M04 PR #53 → revert PR #54.
+
 ### Added — M03.5 (Pre-M04 prep — doc/protocol-only mini-milestone)
 
 Two-stage doc/protocol prep landing the doc-level debt M03 closeout flagged plus the next iteration of the stage-prompt protocol, before M04 prompt authoring begins. Doc-only — no source code touched, no gap-analysis entry (per CLAUDE.md §20 the immutable ledger is reserved for code-shipping milestones).
