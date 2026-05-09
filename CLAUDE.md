@@ -306,6 +306,27 @@ Do not silently try a fourth round. The user prefers a 90-second pause to discus
 
 **The single most important rule:** Claude does not commit without explicit user approval.
 
+### Phase-doc-edit pre-flight (cross-machine state check)
+
+**Mandatory before any edit to `docs/build-prompts/M[NN]-*.md` larger than ~50 lines or affecting any X.5 stage prompt.**
+
+Origin is a partial view of project state when §8 forbids per-stage pushes (rule below: "DO NOT push between stages"). An orchestration session that reads only `origin/main` may infer "stage X unexecuted" when in fact the build machine has the work locally. This is a banned failure mode.
+
+Before authoring or revising substantial Phase doc content, the orchestration session MUST surface a request for cross-machine state and the user MUST paste output of:
+
+```cmd
+git log --oneline main..HEAD
+```
+
+…run from the build machine on the active milestone branch. If the output contains commits, those commits' subjects + the corresponding retrospective files in `docs/build-prompts/retrospectives/M[NN].<X>-retrospective.md` are load-bearing input to the edit. **Retrospective-file presence on the build machine is the source of truth for "stage X executed," not git visibility on `origin`.**
+
+If the orchestration session skips this check and authors a Phase doc edit against an inferred "stage unexecuted" state, the edit is structurally untrusted and the PR must be reverted on discovery. Pattern bit M04: PR #53 rewrote the M04 phase doc against "A1+A2 unexecuted per origin" while the build machine had `c5fe035` + `2b0e8d2` with full retros (4+ hours of work merged on a false premise; reverted via PR #54).
+
+The rule does NOT apply to:
+- Per-stage commit-message edits (small, scoped to the active stage's surface)
+- Surface-driven feedback during a stage cycle (review/comment doesn't change the doc)
+- Pre-milestone scope/staging changes that the user explicitly directs (the user's direction IS the cross-machine state in that case)
+
 ### What "done" looks like
 
 A unit of work is "done" when:
@@ -702,6 +723,7 @@ Full protocol (per-stage workflow steps, scoring rubric, threshold gates, outcom
 4. **Stage end:** score 3 axes per `PROCESS-VALIDATION.md`, evaluate threshold gates, mark outcome (Sound / Sound-but-rough / Friction-heavy / Not-ready), write specific Decisions for the next stage (cite file:line, name the change, name the gate).
 5. **Final stage of a parent milestone:** also write `M[NN]-summary.md` aggregating across stages and draft the PR description.
 6. **Surface and wait.** Per `CLAUDE.md` §8, do not commit until user approves. State explicitly: *"Stage `<X>` is ready. I will not commit until you approve."* User especially validates Hard Gate G1 against the git log.
+7. **Surface includes cross-machine state by default.** Every stage end surface MUST include the build machine's git state output as a top-level item — both for the user's review AND for any downstream orchestration session that needs to know what's on the build machine. Specifically: `git log --oneline main..HEAD` (commits ahead of main on the active milestone branch) + `ls docs/build-prompts/retrospectives/M[NN].*-retrospective.md` (retrospective files present). This closes the cross-session-blindness gap that produced the M04 PR #53 false-premise rewrite — when the user pastes the surface to a different orchestration session, that session sees actual project state, not just origin's partial view. Pairs with the §8 phase-doc-edit pre-flight rule.
 
 ### Outcome routing (after user approval)
 
