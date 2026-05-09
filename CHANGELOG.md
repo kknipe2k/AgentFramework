@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed — M04 phase doc surgical fix: audit-corrections moved into XML (doc-only)
+
+Surgical follow-up to the PR #53 revert (PR #54). Original ask from the user that PR #53 over-shot is now executed correctly: the `🔧 Audit corrections (post-M04.A2 audit)` callout blocks above each X.5 prompt section in stages B/C/D/E/F are dropped; their substantive corrections moved INTO the corresponding `<work_stage_prompt>` XML slots (`<gotchas>`, `<pre_flight_check>`, `<read_reference>`) where the build agent reads them at execution time. Plus three small audit-grounded refinements: Stage B `<pre_flight_check>` adds A1 namespace-decision check (`pub use generated::{agent, common, framework, skill, tool}`) + post-A1 7-schema xtask check; Stage F `<gotchas>` notes §1d ⚠️ note already closed at A2 (subscriptions don't survive reconnect; renderers resubscribe); Verification Checklist Hard Gate G1 corrected to "8 approval gates" (was "7"). 1 file edited, all 5 callout blocks removed, equivalent or stronger content embedded inside the XML the build agent actually parses.
+
 ### Added — Post-M04-PR-#53-revert protocol gap closure (doc-only)
 
 Closes the cross-session-blindness failure mode that produced PR #53 (M04 phase doc rewrite based on origin's stale view of project state; reverted via PR #54). 4 narrowly-scoped doc edits across CLAUDE.md, STAGE-PROMPT-PROTOCOL.md, docs/gotchas.md.
