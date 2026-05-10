@@ -886,191 +886,526 @@ EOF
 <!-- STAGE B — §3a Plan & Task primitive                            -->
 <!-- ============================================================ -->
 
-## Stage B — §3a Plan & Task primitive (schemas + types + events + state machine + persistence)
+## Stage B — §3a Plan & Task primitive (schemas + events + FSM + projection-based persistence + WriteSignal IPC + structured emitter)
 
 **WEBCHECK:** verify each URL against this stage's prompt body **before** the fresh session opens.
 
 - <https://docs.rs/typify/latest/typify/> — typify codegen for plan.v1.json + task.v1.json (extends Stage A1 pattern)
 - <https://json-schema.org/draft/2020-12/schema> — JSON Schema 2020-12 spec; plan.v1.json + task.v1.json author against this draft (matches existing schemas)
-- <https://docs.rs/rusqlite/latest/rusqlite/> — rusqlite for new `plans` + `tasks` table migrations; verify `journal_mode = WAL` + `foreign_keys = ON` pragma pattern unchanged from M01.C `db.rs`
+- <https://docs.rs/rusqlite/latest/rusqlite/> — rusqlite for the migration-runner architecture + new `plans` + `tasks` tables; verify `journal_mode = WAL` + `foreign_keys = ON` pragma pattern unchanged from M01.C `db.rs`
+- <https://docs.rs/tokio/latest/tokio/sync/oneshot/index.html> — oneshot channel for the approval-gate seam (Stage E wires the seam to the HITL UI)
 
 ### B.1 Problem Statement
 
-§3a Plan & Task primitive is the single largest deliverable in M04. Spec §3a (with M03.5's DDL addition) locks the field shapes; Stage B builds the implementation end-to-end:
+§3a Plan & Task primitive is M04's largest deliverable. Stage B builds the implementation end-to-end against spec §3a (data types + 11 events at lines 1417–1427 + approval-gate primitive + loop policy + failure escalation + graph integration + framework JSON) and spec §10 (plans + tasks SQLite DDL). Two M02/M03 carry-forward items fold in: WriteSignal IPC + structured-emitter migration. The phase doc framing in PR #56 ("8 of 11 plan/task events ALREADY exist; author only the 3 missing") was wrong; the real diff is **6 spec-canonical with shape mismatches + 2 codebase extras + 5 missing = 11 changes** (verified at authoring time against spec §3a lines 1417–1427 vs `crates/runtime-core/src/event.rs` + `schemas/event.v1.json`).
 
-1. **Schemas** — author `schemas/plan.v1.json` + `schemas/task.v1.json` per spec §3a TypeScript shapes + M03.5 DDL. Extend `crates/xtask/src/main.rs` codegen list per the Stage A1 pattern. Generated targets: `crates/runtime-core/src/plan.rs` + `crates/runtime-core/src/task.rs` (Rust); `src/types/plan.ts` + `src/types/task.ts` (TS).
+**Twelve work areas, all in scope:**
 
-2. **Eleven new event variants** — `plan_created`, `plan_approval_requested`, `plan_approved`, `plan_revised`, `plan_aborted`, `plan_complete`, `task_started`, `task_completed`, `task_failed`, `task_skipped`, `task_escalated` added to `schemas/event.v1.json`. Regen propagates to `event.rs` + `agent_event.ts`. Renderer `graphStore.applyEvent` exhaustive switch must handle all 11 (gotcha #36 _exhaustive: never forces it).
+1. **Event-shape reconciliation against spec §3a (`schemas/event.v1.json` + downstream).** Schema is source-of-truth per CLAUDE.md §14. Per-variant decisions:
+   - **6 spec-canonical with shape mismatches** → migrate to spec shape: `plan_created` (add `title` + `approval_required`); `plan_approved` (add `approved_by: 'user'|'auto'`); `task_escalated` (replace `reason` with `failure_count` + `max_failures`); `task_started`/`task_completed`/`task_failed` (no shape change beyond keeping the `plan_id` denormalization — see drift carve-out below).
+   - **2 codebase extras** → drop `plan_rejected` (spec §1439 unifies cancel under `plan_aborted`); **keep `task_rolled_back`** as typed event (drift carve-out below).
+   - **5 missing** → author: `plan_approval_requested`, `plan_revised`, `plan_aborted`, `plan_complete`, `task_skipped`.
 
-3. **Plan state machine** — `crates/runtime-main/src/plan/state_machine.rs` (new module) implements the FSM over Plan.status transitions per spec §3a. Safety primitive — ≥95% coverage gate per CLAUDE.md §5 (declare exclusions inline if any).
+2. **Spec drift carve-outs (two — both flagged for closeout `docs(spec):` PR per M01/M02/M03 precedent).** Stage B locks the engineering call:
+   - **`task_rolled_back` typed event with `snapshot_id` field** — kept over spec §4a's stringly-typed `error: 'rolled_back_after_hook_<id>'` pattern. Spec text encodes structured info in error strings, which is the CLAUDE.md §9 "stringly-typed APIs" anti-pattern. Typed event + structured `snapshot_id` is sounder engineering. Stage D verify+rails work consumes the typed event. Spec drift target: §4a "After rollback, runtime emits `task_rolled_back { task_id, snapshot_id }`" (replaces stringly-typed `task_failed`).
+   - **`task_*` events keep extra `plan_id` denormalization** — over spec §3a's lean `task_id` + `agent_id` shape. Denormalization makes events self-contained for downstream consumers (renderer, projector, replay) — no separate plan_id lookup or per-event index needed; same trade-off the codebase made for `tool_result.tool_invocation_id`-style cross-references in M02. Spec drift target: §3a event shapes "all task_* events include `plan_id` for projection self-containment."
+   - Both drifts surface as ⚠️ adherence flags in M04 gap-analysis at closeout; the bundled post-M04 `docs(spec):` PR closes them.
 
-4. **fresh_context_per_task loop policy** — only loop policy lit in v0.1 per spec §0d + CLAUDE.md §3. Implementation: after each `task_completed`, the SDK clears the agent's message history and starts the next task with the full plan + completed-tasks summary in the system prompt.
+3. **Plan + Task schemas (`schemas/plan.v1.json` + `schemas/task.v1.json`, new).** JSON Schema 2020-12 per spec §3a TS shapes + spec §10 DDL field shapes. `$id` follows the established `https://schemas.aria-runtime.dev/<name>.v1.json` pattern (M03.5.A retro decision; verify via `<fan_out_grep>` against existing schemas before writing the value). Validated string fields (`Plan.title` `minLength: 1`; `Task.title` `minLength: 1`) extracted to `$defs/<Name>` per A1 typify-friendliness gotcha (typify 0.6.2 panics on inline-validated strings).
 
-5. **Failure escalation** — `failure_count++` on `task_failed`; if `>= max_failures` → emit `task_escalated` (routed to HITL in Stage E). Default `max_failures = 3` per spec §3a.
+4. **xtask codegen extension.** Add `plan` + `task` to the codegen list in `crates/xtask/src/main.rs` (Stage A1 archetype). Generated targets: `crates/runtime-core/src/generated/{plan,task}.rs` (typify) + `src/types/{plan,task}.ts` (json-schema-to-typescript). Top-level hand-curated `crates/runtime-core/src/event.rs` continues to be the primary `runtime_core::AgentEvent` type for callsites; Stage B hand-updates it to mirror schema shape after schema edits land. (Partial close of M03 "event.rs hand-maintained" carry-forward — A1 extended typify list; Stage B reconciles shape.)
 
-6. **SQLite persistence** — migrations land `plans` + `tasks` tables per the DDL added to spec §10 in M03.5. Drone-side migration runner (existing M01.C pattern) picks up the new migration files.
+5. **Migration runner architecture (new — closes implicit M01 gap).** No `migrations/` directory exists in `crates/runtime-drone/`; `db.rs::init_schema` uses `CREATE TABLE IF NOT EXISTS` with no version tracking. Stage B authors a versioned migration runner: `db.rs::run_migrations(conn)` reads `migrations/NNN_<name>.sql` files in lexical order, tracks applied versions in a `_migrations` table (`version INTEGER PRIMARY KEY`, `name TEXT NOT NULL`, `applied_at INTEGER NOT NULL`), applies each idempotently. `init_schema` becomes a wrapper that calls `run_migrations`; existing `CREATE TABLE IF NOT EXISTS` content moves into `migrations/000_initial.sql` to preserve the M01 baseline. First new migration (`migrations/001_plans_tasks.sql`) adds `plans` + `tasks` tables per spec §10 DDL. The phase doc's prior reference to "the existing M01.C migration runner pattern" was incorrect — the architecture is authored from scratch in Stage B.
 
-7. **Approval-gate primitive** — when `Plan.approval_required = true` and a `plan_created` fires, the runtime emits `plan_approval_requested` and SUSPENDS the plan until `plan_approved` (via HITL flow — Stage E wires this; Stage B exposes the suspend/resume seam).
+6. **Plan + Task FSM (`crates/runtime-main/src/plan/state_machine.rs`, new — safety primitive).** Pure-logic module enforcing legal transitions per spec §3a:
+   - **Plan**: `pending_approval → approved | aborted`; `approved → in_progress`; `in_progress → complete | aborted | awaiting_replan`; `awaiting_replan → in_progress | aborted`.
+   - **Task**: `pending → running`; `running → done | failed | blocked | skipped`; `failed → pending` (retry within `max_failures`) `| escalated` (≥ `max_failures`); `blocked → pending` (after gap resolution); `skipped` / `done` / `escalated` are terminal.
+   - Module exposes `PlanStateMachine::transition(plan, event) → Result<(), TransitionError>` and `TaskStateMachine::transition(task, event) → Result<(), TransitionError>`. Errors: `IllegalTransition { from, to }`, `UnknownEvent`, `MissingPrecondition { reason }`. No I/O, no async. ≥95% coverage gate per CLAUDE.md §5 (safety primitive).
 
-**Success criterion:** unit tests cover plan state machine transitions exhaustively (hot path + every error transition); SDK can spawn a 3-task plan that emits `plan_created` → `plan_approval_requested` → (manual approval shim) → `plan_approved` → `task_started`/`task_completed` × 3 → `plan_complete`; SQLite contains the plan + task rows with correct status transitions; coverage gate met.
+7. **`WriteSignal` IPC variant + drone-side handler (closes M03 🟡 carry-forward).** New `runtime_core::DroneCommand::WriteSignal { signal_id, kind, source_id, context_type, payload }` variant per spec §2b signal shape. `crates/runtime-drone/src/command_handler.rs` handler arm: insert into `signals` table → call `vdr::project_signal(conn, signal_id)` (existing M03 projector) → call `plan_projector::project_signal(conn, signal_id)` (new, item 8) when the signal corresponds to a plan/task event. `crates/runtime-main/src/drone_ipc/client.rs` exposes `DroneClient::write_signal(...)` for SDK callers. Closes M03 gap-analysis 🟡 "vdr.rs projector wired at signal-write call-site."
+
+8. **Plan/Task projector (`crates/runtime-drone/src/plan_projector.rs`, new — safety primitive — parallel to `vdr.rs`).** Drone-internal continuous projector that reads plan/task events from the `signals` table → UPSERTs `plans` + `tasks` rows. Idempotent via UNIQUE INDEX on `(event_type, plan_id|task_id)` + last-write-wins on status fields. Same architectural pattern as `vdr.rs::project_signal` (M03.E archetype). ≥95% coverage gate per CLAUDE.md §5. The projection is the read-model for renderer queries (Stage C SQL inspector) and recovery (item 11).
+
+9. **SDK plan integration (`crates/runtime-main/src/sdk/agent_sdk.rs` + new `crates/runtime-main/src/sdk/plan_loop.rs`).** Drives the plan FSM from the agent loop:
+   - On `plan_created` (parsed from structured-emitter output, item 10): if `approval_required`, emit `plan_approval_requested`, suspend on the approval-gate seam (item 12); on user approval, emit `plan_approved` and advance.
+   - On `task_completed` (or any task-terminal): advance plan state machine; emit next `task_started` per task list, OR emit `plan_complete` when all done.
+   - **`fresh_context_per_task` loop policy (only loop policy lit in v0.1 per spec §0d + CLAUDE.md §3 scope locks):** between tasks, clear the agent's `messages` vec; seed the next task with `system_prompt + plan_summary + completed_tasks_summary + current_task`. Plan state lives in SDK + projection (NOT in agent message history) — clearing messages does not lose plan state. The other two policies (`one_shot`, `continuous`) are enum variants only; the loop-policy seam returns `LoopPolicyError::NotImplemented` for both.
+   - **Failure escalation per spec §3a:** on `task_failed`, increment `failure_count`; if `>= max_failures` (default 3), emit `task_escalated` (Stage E routes to HITL).
+
+10. **Structured-emitter migration (closes M02 🟡 carry-forward).** New `crates/runtime-main/src/sdk/structured_emitter.rs` replaces `crates/runtime-main/src/sdk/decision_extractor.rs`'s line-by-line heuristic. Mechanism: prompt-template injects `<<DECISION>>...<<END>>` and `<<PLAN>>...<<END>>` delimited blocks; parser consumes blocks deterministically → emits `DecisionRecord` and `PlanCreated` events. Eliminates M02's false-positive concern (`Decision:` matched in code blocks / quoted content). The `decision_extractor` module is deleted; `event_pipeline.rs` callsite switches to the structured emitter.
+
+11. **Snapshot integration + recovery semantics (per spec §1b literal — projection-aware).** Snapshot blob extends to include the projected plan/task state alongside the existing event log. `crates/runtime-drone/src/snapshot.rs::write` captures both. Recovery:
+    - Load snapshot → restore plan/task projection in-memory + DB.
+    - Replay any post-snapshot events from `signals` table.
+    - Currently-running task (per spec §1b): set to `pending` unless its `task_completed` event is in the snapshot or replay window.
+    - Tool-call uncertainty (per spec §1b): detect `tool_invoked` without matching `tool_result` → mark `tool_call_uncertain` flag for the renderer's UI prompt.
+
+12. **Approval-gate seam (`crates/runtime-main/src/sdk/approval.rs`, new — Stage B exposes; Stage E wires the HITL UI).** `tokio::sync::oneshot` channel pattern: `ApprovalSeam` exposes `await_approval(plan_id) -> Result<ApprovalDecision, ApprovalError>` to the SDK; Stage E's HITL flow drives the seam from the renderer side. Stage B does NOT implement the HITL UI — only the seam the SDK awaits on. `ApprovalDecision` variants: `Approved`, `Revised(plan_id)` (revised plan ID — emits `plan_revised`), `Aborted` (emits `plan_aborted`).
+
+**Renderer (`src/lib/graphStore.ts`):** the `applyEvent` exhaustive switch over `AgentEvent` variants gets 5 new cases + 6 changed cases + 2 dropped cases. `_exhaustive: never` is the forcing function (gotcha #36); the compiler catches missing cases. Stage B implements all cases as **pass-through state mutations** (no visual rendering — Stage C lights up the visual surface for plan/task events + ApprovalPanel).
+
+**Success criterion:** schema event reconciliation lands cleanly (`cargo xtask regenerate-types --check` exits 0); plan + task schemas regenerate to deterministic Rust + TS; migration runner applies `001_plans_tasks.sql` idempotently (re-run is no-op via `_migrations` version tracking); FSM unit tests cover the exhaustive transition matrix at ≥95% line coverage; integration test (`plan_lifecycle.rs`) drives a 3-task plan end-to-end through `plan_created → plan_approval_requested → plan_approved (manual shim) → task_started/completed × 3 → plan_complete` with WriteSignal roundtrips and projection assertions; recovery integration test (`plan_recovery.rs`) kills the drone subprocess mid-plan, restarts, and verifies the projection rebuilds + currently-running-task semantics hold per spec §1b; structured-emitter unit tests cover the parser surface (delimited blocks; nested; malformed); graphStore exhaustive switch compiles after the 11-variant change.
 
 **New artifacts:**
-- `schemas/plan.v1.json`, `schemas/task.v1.json` (new)
-- `crates/runtime-core/src/plan.rs`, `crates/runtime-core/src/task.rs` (new; generated)
-- `src/types/plan.ts`, `src/types/task.ts` (new; generated)
-- `crates/runtime-main/src/plan/mod.rs`, `crates/runtime-main/src/plan/state_machine.rs` (new)
-- `crates/runtime-drone/migrations/00X_plans_tasks.sql` (new; X = next available)
+- `schemas/plan.v1.json`, `schemas/task.v1.json`
+- `crates/runtime-core/src/generated/{plan,task}.rs` (regenerated)
+- `src/types/{plan,task}.ts` (regenerated)
+- `crates/runtime-main/src/plan/{mod,state_machine}.rs`
+- `crates/runtime-main/src/sdk/{plan_loop,structured_emitter,approval}.rs`
+- `crates/runtime-drone/src/plan_projector.rs`
+- `crates/runtime-drone/migrations/` (new directory) + `migrations/000_initial.sql` + `migrations/001_plans_tasks.sql`
+- `crates/runtime-main/tests/plan_lifecycle.rs`, `crates/runtime-main/tests/plan_recovery.rs`
+- `crates/runtime-drone/tests/plan_projector.rs`, `crates/runtime-drone/tests/migration_runner.rs`
 
 **Edited artifacts:**
-- `crates/xtask/src/main.rs` (extend codegen list with plan + task schemas)
-- `schemas/event.v1.json` (add 11 plan/task event variants)
-- `crates/runtime-core/src/event.rs` (regenerated)
+- `schemas/event.v1.json` (13 oneOf changes: 6 migrate + 2 delete + 5 add)
+- `crates/runtime-core/src/event.rs` (hand-curated wrapper mirrors schema)
+- `crates/runtime-core/src/lib.rs` (re-exports `plan` + `task`)
+- `crates/runtime-core/src/drone.rs` (`DroneCommand::WriteSignal` variant)
+- `crates/runtime-core/src/generated/event.rs` (regenerated)
 - `src/types/agent_event.ts` (regenerated)
-- `src/lib/graphStore.ts` or equivalent (extend `applyEvent` exhaustive switch for 11 new variants — even if rendering wiring lands in Stage C, the store must compile under `_exhaustive: never`)
-- `crates/runtime-main/src/sdk/mod.rs` or equivalent (wire plan state machine into SDK event loop)
-- `CHANGELOG.md` (`[Unreleased]` notes M04 Stage B Plan & Task primitive)
+- `crates/xtask/src/main.rs` (codegen list extension: `plan` + `task`)
+- `crates/runtime-drone/src/db.rs` (migration runner; `init_schema` wraps `run_migrations`)
+- `crates/runtime-drone/src/command_handler.rs` (`WriteSignal` arm; calls `vdr::project_signal` + `plan_projector::project_signal`)
+- `crates/runtime-drone/src/lib.rs` (export `plan_projector`)
+- `crates/runtime-drone/src/snapshot.rs` (projection-aware snapshot blob)
+- `crates/runtime-main/src/sdk/agent_sdk.rs` (plan-loop integration; failure escalation; fresh_context wiring)
+- `crates/runtime-main/src/sdk/event_pipeline.rs` (consume structured emitter; drop `decision_extractor` callsite)
+- `crates/runtime-main/src/sdk/decision_extractor.rs` (deleted; replaced by `structured_emitter.rs`)
+- `crates/runtime-main/src/drone_ipc/client.rs` (`DroneClient::write_signal` method)
+- `src/lib/graphStore.ts` (applyEvent exhaustive switch — 5 new + 6 changed + 2 dropped variants; pass-through state)
+- `CHANGELOG.md` (`[Unreleased]` notes M04 Stage B)
 
 ### B.2 Files to Change
 
 | File | Change |
 |---|---|
-| `schemas/plan.v1.json` | **New** — JSON Schema 2020-12 for Plan per spec §3a + M03.5 DDL field shapes |
-| `schemas/task.v1.json` | **New** — JSON Schema 2020-12 for Task per spec §3a + M03.5 DDL field shapes |
-| `crates/xtask/src/main.rs` | **Edited** — add `plan` + `task` to codegen list (Rust + TS targets) |
-| `schemas/event.v1.json` | **Edited** — add 11 plan/task event variants to the `oneOf` |
-| `crates/runtime-core/src/{plan,task,event}.rs` + `lib.rs` | **Edited (regen)** — typify output for new + updated schemas; module exports |
-| `src/types/{plan,task,agent_event}.ts` | **Edited (regen)** — json-schema-to-typescript output |
+| `schemas/event.v1.json` | **Edited** — 13 `oneOf` changes: migrate 6 spec-canonical variants to spec shape; delete 2 codebase extras (`plan_rejected`); keep 1 codebase extra (`task_rolled_back`, drift carve-out); add 5 missing variants per spec §3a lines 1417–1427 |
+| `schemas/plan.v1.json` | **New** — JSON Schema 2020-12 for Plan per spec §3a TS shape + spec §10 DDL; `$id` = `https://schemas.aria-runtime.dev/plan.v1.json`; validated strings in `$defs/<Name>` |
+| `schemas/task.v1.json` | **New** — JSON Schema 2020-12 for Task per spec §3a TS shape + spec §10 DDL; same `$id` + `$defs` conventions |
+| `crates/xtask/src/main.rs` | **Edited** — codegen list extension: add `plan` + `task` (Rust → `crates/runtime-core/src/generated/{plan,task}.rs`; TS → `src/types/{plan,task}.ts`) |
+| `crates/runtime-core/src/generated/event.rs` | **Edited (regenerated)** — typify output reflects schema event reconciliation |
+| `crates/runtime-core/src/generated/plan.rs` | **New (regenerated)** — typify output for `plan.v1.json` |
+| `crates/runtime-core/src/generated/task.rs` | **New (regenerated)** — typify output for `task.v1.json` |
+| `src/types/agent_event.ts` | **Edited (regenerated)** — json-schema-to-typescript output reflects schema event reconciliation |
+| `src/types/plan.ts` | **New (regenerated)** — json-schema-to-typescript output for `plan.v1.json` |
+| `src/types/task.ts` | **New (regenerated)** — json-schema-to-typescript output for `task.v1.json` |
+| `crates/runtime-core/src/event.rs` | **Edited** — hand-curated `AgentEvent` wrapper mirrors schema (6 migrations + 2 deletions + 5 additions; carve-out for `task_rolled_back` + `task_*.plan_id`) |
+| `crates/runtime-core/src/lib.rs` | **Edited** — top-level re-exports for `plan` + `task` (qualify-by-path per A1 retro decision: `pub use generated::{plan, task}`) |
+| `crates/runtime-core/src/drone.rs` | **Edited** — new `DroneCommand::WriteSignal { signal_id, kind, source_id, context_type, payload }` variant per spec §2b signal shape |
 | `crates/runtime-main/src/plan/mod.rs` | **New** — module root + public API |
-| `crates/runtime-main/src/plan/state_machine.rs` | **New** — Plan/Task FSM per spec §3a |
-| `crates/runtime-main/src/sdk/mod.rs` (or where plan integration lands) | **Edited** — wire state machine into SDK event loop; failure-escalation logic |
-| `crates/runtime-drone/migrations/00X_plans_tasks.sql` | **New** — migration for plans + tasks tables per M03.5 spec §10 DDL |
-| `src/lib/graphStore.ts` | **Edited** — extend `applyEvent` exhaustive switch for 11 new variants |
-| `CHANGELOG.md` | **Edited** — `[Unreleased]` notes |
+| `crates/runtime-main/src/plan/state_machine.rs` | **New** — Plan/Task FSM per spec §3a (≥95% safety primitive) |
+| `crates/runtime-main/src/sdk/plan_loop.rs` | **New** — drives plan FSM from agent loop; `fresh_context_per_task` implementation; failure escalation |
+| `crates/runtime-main/src/sdk/structured_emitter.rs` | **New** — replaces `decision_extractor.rs` heuristic; parses `<<DECISION>>...<<END>>` + `<<PLAN>>...<<END>>` delimited blocks |
+| `crates/runtime-main/src/sdk/approval.rs` | **New** — `ApprovalSeam` (tokio::sync::oneshot pattern) the SDK awaits on; Stage E wires HITL UI to the seam |
+| `crates/runtime-main/src/sdk/agent_sdk.rs` | **Edited** — plan-loop integration; consume `ApprovalSeam`; consume `structured_emitter` |
+| `crates/runtime-main/src/sdk/event_pipeline.rs` | **Edited** — switch from `decision_extractor` callsite to `structured_emitter`; new event variants in translation paths |
+| `crates/runtime-main/src/sdk/decision_extractor.rs` | **Deleted** — replaced by `structured_emitter.rs` (closes M02 🟡) |
+| `crates/runtime-main/src/drone_ipc/client.rs` | **Edited** — new `DroneClient::write_signal(...)` method |
+| `crates/runtime-drone/migrations/` | **New (directory)** — versioned migration files |
+| `crates/runtime-drone/migrations/000_initial.sql` | **New** — preserves M01 baseline schema (existing `init_schema` content moves here verbatim) |
+| `crates/runtime-drone/migrations/001_plans_tasks.sql` | **New** — first new migration; `plans` + `tasks` tables per spec §10 DDL |
+| `crates/runtime-drone/src/db.rs` | **Edited** — migration-runner architecture: `run_migrations(conn)` + `_migrations` tracking table; `init_schema` becomes `run_migrations` wrapper |
+| `crates/runtime-drone/src/plan_projector.rs` | **New** — drone-internal plan/task projector parallel to `vdr.rs` (≥95% safety primitive) |
+| `crates/runtime-drone/src/command_handler.rs` | **Edited** — `WriteSignal` handler arm: insert into `signals` → call `vdr::project_signal` → call `plan_projector::project_signal` (when plan/task event) |
+| `crates/runtime-drone/src/lib.rs` | **Edited** — export `plan_projector` |
+| `crates/runtime-drone/src/snapshot.rs` | **Edited** — snapshot blob includes projected plan/task state alongside event log (per spec §1b recovery semantics) |
+| `src/lib/graphStore.ts` | **Edited** — `applyEvent` exhaustive switch: 5 new + 6 changed + 2 dropped cases as pass-through state mutations; `_exhaustive: never` forcing function held |
+| `crates/runtime-main/tests/plan_lifecycle.rs` | **New** — integration test: 3-task plan happy path; WriteSignal roundtrips; projection assertions |
+| `crates/runtime-main/tests/plan_recovery.rs` | **New** — integration test: kill drone subprocess mid-plan; restart; verify projection rebuilds per spec §1b |
+| `crates/runtime-drone/tests/plan_projector.rs` | **New** — projection idempotence; signal → plans/tasks row mapping |
+| `crates/runtime-drone/tests/migration_runner.rs` | **New** — migration application; idempotent re-runs; version tracking |
+| `tests/unit/graphStore.test.ts` | **Edited** — exhaustive `applyEvent` coverage for 11 new + 6 changed variants |
+| `CHANGELOG.md` | **Edited** — `[Unreleased]` notes M04 Stage B (event reconciliation + FSM + persistence + WriteSignal IPC + structured emitter + spec drift carve-outs) |
 
 ### B.3 Detailed Changes
 
+#### `schemas/event.v1.json` — event-shape reconciliation (13 oneOf changes)
+
+The schema is the source of truth (CLAUDE.md §14). Stage B re-authors the plan/task variants per the spec §3a lines 1417–1427 source, with two engineering carve-outs documented inline.
+
+**6 spec-canonical variants — migrate to spec shape:**
+
+| current schema variant (line ~) | spec §3a target shape | change |
+|---|---|---|
+| `plan_created { plan_id, task_count }` (~129) | `plan_created { plan_id, title, task_count, approval_required }` | add `title` (string, required), `approval_required` (boolean, required); keep `plan_id` + `task_count` |
+| `plan_approved { plan_id }` (~140) | `plan_approved { plan_id, approved_by: 'user'\|'auto' }` | add `approved_by` enum (required) |
+| `task_started { plan_id, task_id, agent_id }` (~161) | spec lean: `{ task_id, agent_id }`; **carve-out: keep `plan_id`** | drop nothing (carve-out); document drift |
+| `task_completed { plan_id, task_id, duration_ms }` (~173) | spec lean: `{ task_id, duration_ms }`; **carve-out: keep `plan_id`** | drop nothing (carve-out); document drift |
+| `task_failed { plan_id, task_id, error, failure_count }` (~185) | spec lean: `{ task_id, error, failure_count }`; **carve-out: keep `plan_id`** | drop nothing (carve-out); document drift |
+| `task_escalated { plan_id, task_id, reason }` (~210) | `task_escalated { task_id, failure_count, max_failures }`; **carve-out: keep `plan_id`** | replace `reason` with `failure_count` (integer, required) + `max_failures` (integer, required); keep `plan_id` (carve-out) |
+
+**2 codebase extras — disposition:**
+
+| current schema variant (line ~) | disposition | rationale |
+|---|---|---|
+| `plan_rejected { plan_id, reason }` (~150) | **DROP** | spec §1439 unifies cancel under `plan_aborted`; renderer logic for "user said no" is the same regardless of phase |
+| `task_rolled_back { plan_id, task_id, snapshot_id }` (~198) | **KEEP (drift carve-out)** | typed event with structured `snapshot_id` is sounder engineering than spec §4a's stringly-typed `error: 'rolled_back_after_hook_<id>'` (CLAUDE.md §9 anti-pattern: "stringly-typed APIs"). Spec drift target: §4a |
+
+**5 missing variants — author per spec §3a:**
+
+```json
+{ "type": "object", "title": "PlanApprovalRequested", "properties": { "type": { "const": "plan_approval_requested" }, "plan_id": { "type": "string" }, "timestamp": { "type": "integer" } }, "required": ["type", "plan_id", "timestamp"], "additionalProperties": false },
+{ "type": "object", "title": "PlanRevised", "properties": { "type": { "const": "plan_revised" }, "plan_id": { "type": "string" }, "revision_reason": { "type": "string" }, "timestamp": { "type": "integer" } }, "required": ["type", "plan_id", "revision_reason", "timestamp"], "additionalProperties": false },
+{ "type": "object", "title": "PlanAborted", "properties": { "type": { "const": "plan_aborted" }, "plan_id": { "type": "string" }, "reason": { "type": "string" }, "timestamp": { "type": "integer" } }, "required": ["type", "plan_id", "reason", "timestamp"], "additionalProperties": false },
+{ "type": "object", "title": "PlanComplete", "properties": { "type": { "const": "plan_complete" }, "plan_id": { "type": "string" }, "duration_ms": { "type": "integer" }, "timestamp": { "type": "integer" } }, "required": ["type", "plan_id", "duration_ms", "timestamp"], "additionalProperties": false },
+{ "type": "object", "title": "TaskSkipped", "properties": { "type": { "const": "task_skipped" }, "plan_id": { "type": "string" }, "task_id": { "type": "string" }, "reason": { "type": "string" }, "timestamp": { "type": "integer" } }, "required": ["type", "plan_id", "task_id", "reason", "timestamp"], "additionalProperties": false }
+```
+
+(All 5 include `plan_id` per the denormalization carve-out for `task_*`; plan_* always carry `plan_id` in spec.)
+
+After schema edits, run `cargo xtask regenerate-types` to propagate to `crates/runtime-core/src/generated/event.rs` + `src/types/agent_event.ts`. Hand-update `crates/runtime-core/src/event.rs` to mirror schema (the top-level wrapper used by callsites as `runtime_core::AgentEvent` is hand-curated; A1 typify-list extension created the generated parallel but did not retire the wrapper). Verify drift with `cargo xtask regenerate-types --check` exits 0.
+
 #### `schemas/plan.v1.json` + `schemas/task.v1.json` — new schema files
 
-Author each JSON Schema following the existing `schemas/*.v1.json` shape (`$schema`, `$id` per the established `https://schemas.aria-runtime.dev/<name>.v1.json` pattern per gotcha caught in M03.5.A retro, `title`, `description`, `properties`, `required`, `additionalProperties: false`). Field shapes match spec §3a TypeScript interfaces + M03.5 SQLite DDL:
+Author each JSON Schema following the existing schema convention. Pre-flight `<fan_out_grep>` for `"$id"` across `schemas/*.v1.json` to confirm the `https://schemas.aria-runtime.dev/<name>.v1.json` base-URL pattern before writing the value (M03.5.A retro discipline).
 
-- **Plan**: `id` (string, uuid), `session_id` (string, uuid), `title` (string), `description?` (string), `status` (enum: 6 values), `approval_required` (boolean), `loop_policy` (enum: 3 values; only `fresh_context_per_task` lit in v0.1 per scope locks), `hitl_checkpoints` (array of strings), `risks` (array of strings), `created_by?` (string), `created_at` (integer, unix ms), `approved_at?` (integer), `completed_at?` (integer).
-- **Task**: `id` (string, uuid), `plan_id` (string, uuid), `title` (string), `status` (enum: 6 values), `hitl` (boolean), `hitl_reason?` (string), `failure_count` (integer, default 0), `max_failures` (integer, default 3), `files_affected?` (array of glob strings), `acceptance_criteria?` (array of strings), `created_at` (integer), `started_at?` (integer), `completed_at?` (integer), `estimated_minutes?` (integer), `actual_minutes?` (integer).
+Field shapes per spec §3a TS interfaces + spec §10 DDL:
 
-Pre-flight: `<schema_drift_check>` on Stage A1 + A2 outputs must be clean before authoring (verifies Stage A1 + A2's xtask state is durable).
+- **Plan** (`plan.v1.json`): `id` (string, uuid), `session_id` (string, uuid), `title` (`$ref: '#/$defs/PlanTitle'` — `string` `minLength: 1` extracted to `$defs/PlanTitle` per A1 typify gotcha), `description?` (string), `status` (enum: `pending_approval | approved | in_progress | awaiting_replan | complete | aborted`), `approval_required` (boolean), `loop_policy` (enum: `one_shot | fresh_context_per_task | continuous` — only `fresh_context_per_task` lit in v0.1 per scope locks), `hitl_checkpoints` (array of strings), `risks` (array of strings), `created_by?` (string — agent_id or `'user'`), `created_at` (integer, unix ms), `approved_at?` (integer), `completed_at?` (integer).
+- **Task** (`task.v1.json`): `id` (string, uuid), `plan_id` (string, uuid), `title` (`$ref: '#/$defs/TaskTitle'`), `status` (enum: `pending | running | done | failed | blocked | skipped | escalated`), `hitl` (boolean), `hitl_reason?` (string), `failure_count` (integer, default 0), `max_failures` (integer, default 3), `files_affected?` (array of glob strings), `acceptance_criteria?` (array of strings), `created_at` (integer), `started_at?` (integer), `completed_at?` (integer), `estimated_minutes?` (integer), `actual_minutes?` (integer).
 
 #### `crates/xtask/src/main.rs` — codegen list extension
 
-Add two entries to the existing codegen list (Stage A1 archetype):
-- `("plan", "schemas/plan.v1.json")` → `crates/runtime-core/src/plan.rs` + `src/types/plan.ts`
-- `("task", "schemas/task.v1.json")` → `crates/runtime-core/src/task.rs` + `src/types/task.ts`
+Add two entries to the existing 7-schema codegen list (`["common", "framework", "skill", "tool", "agent", "event", "error"]` post-A1 → 9-schema list):
+- `("plan", "schemas/plan.v1.json")` → `crates/runtime-core/src/generated/plan.rs` + `src/types/plan.ts`
+- `("task", "schemas/task.v1.json")` → `crates/runtime-core/src/generated/task.rs` + `src/types/task.ts`
 
-Run `cargo xtask regenerate-types` to produce the generated files. Run `--check` to verify deterministic output.
+Run `cargo xtask regenerate-types` to produce generated files. Run `--check` to verify deterministic output. Add `src/types/plan.ts` + `src/types/task.ts` to `.prettierignore` + `eslint.config.js` `ignores` list (matches `agent_event.ts` precedent per A1 retro).
 
-#### `schemas/event.v1.json` — 11 new event variants
+#### `crates/runtime-drone/migrations/` + `db.rs` — migration runner architecture (NEW)
 
-Locate the existing `oneOf` array of event variants. Append 11 new variants:
+The phase doc's prior reference to "the existing M01.C migration runner pattern" was incorrect — `crates/runtime-drone/migrations/` does not exist; `db.rs::init_schema` uses `CREATE TABLE IF NOT EXISTS` with no version tracking. Stage B authors the architecture from scratch.
 
-```json
-{ "type": "object", "title": "plan_created", "properties": { "type": { "const": "plan_created" }, "plan_id": { "type": "string" }, "agent_id": { "type": "string" }, "timestamp": { "type": "integer" } }, "required": ["type", "plan_id", "agent_id", "timestamp"], "additionalProperties": false },
-{ "type": "object", "title": "plan_approval_requested", "properties": { "type": { "const": "plan_approval_requested" }, "plan_id": { "type": "string" }, "timestamp": { "type": "integer" } }, "required": ["type", "plan_id", "timestamp"], "additionalProperties": false },
-... (9 more, mirror per spec §3a event shapes)
+**Migration runner (`db.rs`):**
+
+```rust
+fn run_migrations(conn: &Connection) -> Result<(), DbError> {
+    // 1. Create _migrations table if not exists
+    //    (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)
+    // 2. Read applied versions: SELECT version FROM _migrations
+    // 3. Iterate migrations/*.sql in lexical order
+    // 4. For each: parse leading NNN_<name>; skip if version applied; else exec + INSERT
+    // 5. Wrap in transaction; rollback on error
+}
+
+fn init_schema(conn: &Connection) -> Result<(), DbError> {
+    run_migrations(conn)
+}
 ```
 
-Field shapes per spec §3a Events subsection (lines 1349–1359 per M03.5 reference). Run `cargo xtask regenerate-types` to propagate to `event.rs` + `agent_event.ts`.
+Migration files embedded via `include_str!("../migrations/000_initial.sql")` etc. (Build-time embed; no runtime filesystem dependency, matches the rusqlite + M01 single-binary deployment model.)
+
+**`migrations/000_initial.sql`:** verbatim move of existing M01 `init_schema` content (8 tables: `sessions`, `snapshots`, `signals`, `heartbeats`, `vdr`, `token_usage`, `skills`, `mcp_servers`). Version 0 baseline. Idempotent re-application via the migration runner's `_migrations` check.
+
+**`migrations/001_plans_tasks.sql`:** spec §10 DDL for `plans` + `tasks` tables. Plans table: `id TEXT PRIMARY KEY, session_id TEXT NOT NULL, title TEXT NOT NULL, description TEXT, status TEXT NOT NULL, approval_required INTEGER NOT NULL, loop_policy TEXT NOT NULL, hitl_checkpoints TEXT NOT NULL DEFAULT '[]', risks TEXT NOT NULL DEFAULT '[]', created_by TEXT, created_at INTEGER NOT NULL, approved_at INTEGER, completed_at INTEGER, FOREIGN KEY (session_id) REFERENCES sessions(id)`. Tasks table: per spec §10 + spec §3a Task TS shape. Plus indices for projector lookups: `CREATE UNIQUE INDEX idx_plans_id ON plans(id); CREATE UNIQUE INDEX idx_tasks_id ON tasks(id); CREATE INDEX idx_tasks_plan_id ON tasks(plan_id);`.
+
+**Tests (`tests/migration_runner.rs`):** apply `000` + `001` to fresh DB; verify both rows in `_migrations`; re-apply (no-op verified by no INSERT); apply with `001` missing (only `000` applies); corrupt `_migrations` table behavior (clear `_migrations` row → migration re-applies which must be idempotent — this is the contract migration files honor).
+
+#### `crates/runtime-core/src/drone.rs` — `DroneCommand::WriteSignal` variant
+
+New variant per spec §2b signal shape:
+
+```rust
+WriteSignal {
+    signal_id: String,           // uuid
+    kind: SignalKind,            // existing 8-variant enum (Tool/Skill/Agent/Decision/Verify/Error/Hitl/Session)
+    source_id: String,           // agent_id or session_id
+    context_type: ContextType,   // existing enum (carry-forward reconciliation pending; M04 closeout)
+    payload: serde_json::Value,  // type-erased event payload
+},
+```
+
+Reuses existing `SignalKind` + `ContextType` from `crates/runtime-core/src/signal.rs`. The `ContextType` reconciliation with spec §2b (M02 carry-forward) is deferred to M04 closeout per the gap-analysis decision; Stage B uses the existing enum.
+
+#### `crates/runtime-drone/src/command_handler.rs` + `plan_projector.rs` — IPC handler + projector
+
+**Handler arm (`command_handler.rs`):** new `DroneCommand::WriteSignal` arm. Inside a transaction:
+
+1. INSERT into `signals` table (matches `vdr.rs`-tested-shape).
+2. Call `vdr::project_signal(conn, &signal_id)` for kinds 4 (Decision) + 5 (Verify) — existing M03 behavior.
+3. Call `plan_projector::project_signal(conn, &signal_id)` for kinds whose payload is a plan/task event — new behavior.
+4. Emit `SignalWritten` IPC response (or align with existing snapshot/event response shape).
+
+**Projector (`plan_projector.rs`):** parallel to `vdr.rs::project_signal` (M03.E archetype):
+
+```rust
+pub fn project_signal(conn: &Connection, signal_id: &str) -> Result<(), ProjectorError> {
+    // 1. SELECT signal payload by id
+    // 2. Match payload.type:
+    //    - "plan_created" → INSERT INTO plans (id, session_id, title, ...) ... ON CONFLICT(id) DO UPDATE
+    //    - "plan_approved" → UPDATE plans SET status='approved', approved_at=... WHERE id=?
+    //    - "plan_complete" → UPDATE plans SET status='complete', completed_at=... WHERE id=?
+    //    - "plan_aborted" → UPDATE plans SET status='aborted' WHERE id=?
+    //    - "task_started" → INSERT INTO tasks (...) ON CONFLICT(id) DO UPDATE SET status='running', started_at=?
+    //    - "task_completed" → UPDATE tasks SET status='done', completed_at=?, actual_minutes=? WHERE id=?
+    //    - "task_failed" → UPDATE tasks SET status='failed', failure_count=? WHERE id=?
+    //    - "task_skipped" → UPDATE tasks SET status='skipped' WHERE id=?
+    //    - "task_escalated" → UPDATE tasks SET status='escalated' WHERE id=?
+    //    - "task_rolled_back" → UPDATE tasks SET status='failed' WHERE id=? + log snapshot_id reference
+    //    - other → no-op
+    // 3. Return Ok or ProjectorError::{InvalidPayload, DbError}
+}
+```
+
+Idempotency invariants: every UPSERT path is safe to re-run (last-write-wins on `status` + timestamps; INSERT...ON CONFLICT handles re-projection). Tests (`tests/plan_projector.rs`): each event type → expected row state; double-projection no-op; out-of-order projection (task_completed before task_started) handled gracefully (UPSERT with status='done' wins).
+
+#### `crates/runtime-main/src/sdk/structured_emitter.rs` — replaces `decision_extractor.rs`
+
+Closes M02 🟡 carry-forward "Decision extractor → structured emitter migration." Mechanism:
+
+- Prompt-template (loaded via framework.json or hand-coded in v0.1) injects delimited blocks the model emits:
+  ```
+  <<DECISION>>
+    Decision: <text>
+    Rationale: <text>
+    Tool used: <text>
+  <<END>>
+
+  <<PLAN>>
+    Plan ID: <uuid>
+    Title: <text>
+    Approval required: <boolean>
+    Tasks:
+      - <task1 title>
+      - <task2 title>
+  <<END>>
+  ```
+- Parser (`structured_emitter.rs::parse(text: &str) -> Vec<EmitterOutput>`) consumes blocks deterministically. Returns typed outputs: `EmitterOutput::Decision { decision, rationale, tool_used }` and `EmitterOutput::PlanCreation { plan_id, title, approval_required, task_titles }`.
+- `event_pipeline.rs` switches its `flush_text_buffer` callsite from `decision_extractor::extract_decision` to `structured_emitter::parse`. The decision-record translation logic stays the same; only the input shape changes.
+- `decision_extractor.rs` is **deleted** (closes the M02 false-positive concern: `Decision:` matched in code blocks / quoted content cannot trigger a false emit because parsing is delimiter-scoped, not line-scoped).
+
+Tests (`structured_emitter.rs::tests`): single decision block; multiple decision blocks; nested blocks (rejected with parse error); malformed blocks (missing `<<END>>`, returns parse error); plan-creation block; mixed decision + plan blocks; empty input.
 
 #### `crates/runtime-main/src/plan/state_machine.rs` — Plan/Task FSM
 
-The FSM enforces the legal transitions per spec §3a:
+Pure-logic module. Two state machines:
 
-- Plan: `pending_approval` → `approved` | `aborted`; `approved` → `in_progress`; `in_progress` → `complete` | `aborted` | `awaiting_replan`; `awaiting_replan` → `in_progress` (after revise) | `aborted`.
-- Task: `pending` → `running`; `running` → `done` | `failed` | `blocked` | `skipped`; `failed` → `pending` (retry within max_failures) | `escalated` (≥ max_failures); `blocked` → `pending` (after gap resolution); `skipped` is terminal.
+**PlanStateMachine:**
 
-Module exposes `PlanStateMachine::transition(plan: &mut Plan, event: PlanEvent) -> Result<(), TransitionError>` and `TaskStateMachine::transition(task: &mut Task, event: TaskEvent) -> Result<(), TransitionError>`. Errors: `IllegalTransition { from, to }`, `UnknownEvent`, `MissingPrecondition { reason }`.
+```rust
+pub fn transition(plan: &mut Plan, event: PlanEvent) -> Result<(), TransitionError> {
+    match (&plan.status, event) {
+        (PlanStatus::PendingApproval, PlanEvent::Approved) => { plan.status = PlanStatus::InProgress; Ok(()) }
+        (PlanStatus::PendingApproval, PlanEvent::Aborted) => { plan.status = PlanStatus::Aborted; Ok(()) }
+        (PlanStatus::InProgress, PlanEvent::Complete) => { plan.status = PlanStatus::Complete; Ok(()) }
+        (PlanStatus::InProgress, PlanEvent::Aborted) => { plan.status = PlanStatus::Aborted; Ok(()) }
+        (PlanStatus::InProgress, PlanEvent::AwaitingReplan(reason)) => { plan.status = PlanStatus::AwaitingReplan; Ok(()) }
+        (PlanStatus::AwaitingReplan, PlanEvent::Revised) => { plan.status = PlanStatus::InProgress; Ok(()) }
+        (PlanStatus::AwaitingReplan, PlanEvent::Aborted) => { plan.status = PlanStatus::Aborted; Ok(()) }
+        (s, e) => Err(TransitionError::IllegalTransition { from: s.clone(), event: e })
+    }
+}
+```
 
-Pure module — no I/O, no async. Drives the SDK event loop's plan-state updates.
+**TaskStateMachine:** parallel pattern over `TaskStatus` × `TaskEvent`.
 
-Test plan: exhaustive transition matrix (legal + illegal pairs); failure-escalation boundary (max_failures=3 → 4th failure emits `task_escalated`); plan-status invariants (e.g., `approval_required=false` skips `pending_approval`). ≥95% coverage gate (safety primitive per CLAUDE.md §5).
+Errors: `IllegalTransition { from, event }`, `MissingPrecondition { reason }`. No I/O, no async.
 
-#### `crates/runtime-main/src/sdk/mod.rs` — SDK event loop integration
+Tests: exhaustive transition matrix (every legal pair drives expected status; every illegal pair returns `IllegalTransition`); failure-escalation boundary (`failure_count = max_failures - 1` on `Failed` → still `Pending`; `failure_count = max_failures` → `Escalated`); plan-status invariants (`approval_required = false` skips `pending_approval`, starts at `in_progress` directly). ≥95% coverage gate.
 
-Locate the SDK's existing event-emit logic. Add plan-state hooks:
+#### `crates/runtime-main/src/sdk/plan_loop.rs` — agent-loop integration
 
-- After each `agent_text_complete` of an "orchestrator" agent (the agent whose role is plan creation), parse for plan creation per the M03.5 prompt-template structured-emitter pattern (Stage A2 deliverable; reuse the regex). On detection: emit `plan_created` (with the parsed Plan); if `approval_required`, immediately emit `plan_approval_requested` and SUSPEND the plan (Stage E wires the suspend/resume seam to HITL; Stage B exposes the channel/oneshot the SDK awaits on).
-- After `task_completed` (or any task-terminal event): advance the plan state machine and emit the next event(s) per the FSM; when all tasks done, emit `plan_complete`.
-- `fresh_context_per_task`: between `task_completed[N]` and `task_started[N+1]`, clear the agent's `messages` vec and seed with `system_prompt + plan_summary + completed_tasks_summary + current_task`.
+Drives the plan FSM from the SDK's existing event loop. Hooks:
 
-Do not implement the orchestrator agent's prompt template here — that's framework-JSON territory (loaded via `examples/aria/framework.json`). The SDK provides the FSM + event emission + loop-policy machinery; framework JSON wires it.
+- After `structured_emitter::parse` yields `EmitterOutput::PlanCreation`: emit `plan_created`. If `approval_required`: emit `plan_approval_requested` immediately + suspend on `approval_seam.await_approval(plan_id).await?`. On `Approved`: emit `plan_approved { approved_by: 'user' }`. On `Revised`: emit `plan_revised { revision_reason }` + return to plan-creation flow. On `Aborted`: emit `plan_aborted { reason }`.
+- After plan is `in_progress`: drive task execution loop per `loop_policy`:
+  - **`fresh_context_per_task`** (only loop policy lit in v0.1): for each task in order, emit `task_started`; agent runs (via `agent_sdk::run_agent_with_provider_stream`); on terminal event, advance plan FSM. Between tasks, clear `messages` vec on the agent struct; reseed with `system_prompt + plan_summary + completed_tasks_summary + current_task` for the next task.
+  - **`one_shot`** + **`continuous`**: return `LoopPolicyError::NotImplemented` (v0.1 scope per CLAUDE.md §3 + spec §0d).
+- On `task_failed`: increment `failure_count`; if `>= max_failures` (default 3 per spec; framework JSON can override per task or session-wide): emit `task_escalated`. Stage E routes to HITL.
+- On all tasks terminal-and-not-failed: emit `plan_complete { duration_ms }`.
 
-#### `crates/runtime-drone/migrations/00X_plans_tasks.sql` — DDL migration
+Plan state lives in SDK + projection (NOT in agent message history). Clearing messages between tasks is a no-op for plan state.
 
-Author the SQL migration matching the M03.5 §10 spec DDL verbatim. The migration runner is the existing `crates/runtime-drone/src/db.rs::run_migrations` (M01.C). Verify migration version increment (`X` = next available).
+#### `crates/runtime-main/src/sdk/approval.rs` — approval-gate seam
+
+```rust
+pub struct ApprovalSeam {
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<ApprovalDecision>>>>,
+}
+
+pub enum ApprovalDecision {
+    Approved,
+    Revised(String /* revision_reason */),
+    Aborted(String /* reason */),
+}
+
+impl ApprovalSeam {
+    pub async fn await_approval(&self, plan_id: &str) -> Result<ApprovalDecision, ApprovalError> {
+        let (tx, rx) = oneshot::channel();
+        self.pending.lock().await.insert(plan_id.to_string(), tx);
+        rx.await.map_err(|_| ApprovalError::Cancelled)
+    }
+
+    pub async fn resolve(&self, plan_id: &str, decision: ApprovalDecision) -> Result<(), ApprovalError> {
+        let tx = self.pending.lock().await.remove(plan_id).ok_or(ApprovalError::NotFound)?;
+        tx.send(decision).map_err(|_| ApprovalError::ReceiverDropped)
+    }
+}
+```
+
+Stage B exposes `ApprovalSeam`. Stage E wires the HITL UI: renderer's `approve_plan` / `revise_plan` / `abort_plan` Tauri commands call `approval_seam.resolve(...)`. Stage B does NOT implement the HITL UI.
+
+Tests (`approval.rs::tests`): await + resolve happy path; cancel before resolve (drops sender); double-resolve (second returns `NotFound`); concurrent awaits on different plan_ids.
+
+#### `crates/runtime-drone/src/snapshot.rs` — projection-aware snapshot
+
+Existing `snapshot::write(conn, session_id, reason, state)` already accepts arbitrary `state: serde_json::Value`. Stage B extends the SDK-side state shape to include `{ "events": [...], "plans": [...], "tasks": [...] }` rather than just events.
+
+On snapshot read at recovery: `snapshot::read_latest(conn, session_id)` returns the JSON; SDK loads `plans` + `tasks` arrays into the projection (or relies on the drone's already-projected `plans` + `tasks` tables — the snapshot is the authoritative state).
+
+Tool-call uncertainty (per spec §1b): SDK detects `tool_invoked` events without matching `tool_result` in the replay window → marks `tool_call_uncertain` flag on the in-memory event. Renderer's UI prompt (Stage F) consumes the flag.
+
+Currently-running task (per spec §1b): SDK rebuilds task state from snapshot + replay; if a task's last-emitted event is `task_started` and no `task_completed`/`task_failed`/etc. follows, set status to `pending` (NOT `running` — the agent process that was running it is dead).
 
 #### `src/lib/graphStore.ts` — applyEvent exhaustive switch
 
-The `applyEvent(state, event)` function uses TS `switch (event.type)` over `AgentEvent['type']`. Adding 11 new variants triggers a `_exhaustive: never` compile error if any case is missing. Stage B implements the case bodies as **pass-through to graph state** (no UI rendering yet — Stage C lights up the visual surface):
+The TypeScript `switch (event.type)` over `AgentEvent['type']` will compile-error after schema regeneration if any new variant is missing. Stage B implements all cases as **pass-through state mutations**:
 
-- `plan_created`: insert a `PlanNode` placeholder into the graph state (no edges yet)
-- `plan_approval_requested`: mark the PlanNode as `awaiting_approval`
-- `plan_approved`: mark the PlanNode as `approved`; render becomes active
-- `task_started`: insert a `TaskNode` linked to the parent PlanNode
-- ... etc per spec §3a graph integration
+- `plan_created`: insert `PlanNode { id: plan_id, title, status: 'pending_approval' | 'in_progress' /* per approval_required */, taskCount }` into `state.nodes`.
+- `plan_approval_requested`: update PlanNode status → `'awaiting_approval'`.
+- `plan_approved`: update PlanNode status → `'approved'` (Stage C makes this visually active).
+- `plan_revised`: update PlanNode status → `'pending_approval'` + log revision_reason.
+- `plan_aborted`: update PlanNode status → `'aborted'`.
+- `plan_complete`: update PlanNode status → `'complete'` + record duration_ms.
+- `task_started`: insert `TaskNode { id: task_id, plan_id, agent_id, status: 'running' }` linked to parent PlanNode via plan_id (the denormalization carve-out makes this lookup-free).
+- `task_completed`: update TaskNode status → `'done'` + duration_ms.
+- `task_failed`: update TaskNode status → `'failed'` + failure_count + error.
+- `task_skipped`: update TaskNode status → `'skipped'` + reason.
+- `task_escalated`: update TaskNode status → `'escalated'` + failure_count + max_failures.
+- `task_rolled_back`: update TaskNode status → `'failed'` + snapshot_id reference (Stage D verify+rails consumes).
 
-Stage C builds out the actual visual treatment + ApprovalPanel; Stage B's job is to ensure the store handles all 11 events without crashing or losing state.
+Stage C builds the visual treatment + ApprovalPanel + active-task animated edge from PlanNode → currently-running TaskNode. Stage B's job: make the store handle all 11 events without crashing, losing state, or failing the exhaustive check.
 
 ### B.4 Tests
 
 #### Pedantic-pass preflight
 
-Apply per `docs/gotchas.md` #21 to the new modules: `plan/state_machine.rs`, `plan/mod.rs`, generated files exempt.
+Apply per `docs/gotchas.md` #21 to all new modules: `plan/state_machine.rs`, `plan/mod.rs`, `sdk/plan_loop.rs`, `sdk/structured_emitter.rs`, `sdk/approval.rs`, `plan_projector.rs`. Generated files (`generated/{plan,task,event}.rs`) exempt.
 
-#### Test files
+#### Unit tests (Rust)
 
-- `crates/runtime-main/src/plan/state_machine.rs` — unit tests for legal/illegal transitions; failure-escalation boundary; plan-status invariants
-- `crates/runtime-main/tests/plan_lifecycle.rs` (new integration test) — full plan flow: orchestrator emits `plan_created` → approval requested → approved (manual shim) → 3 tasks executed → `plan_complete`; SQLite assertions after each phase
-- `tests/unit/graphStore.test.ts` (extended) — applyEvent exhaustive coverage for all 11 new variants; state assertions
+- **`crates/runtime-main/src/plan/state_machine.rs::tests`** — exhaustive transition matrix:
+  - Plan: every legal pair (PendingApproval×Approved → InProgress; PendingApproval×Aborted → Aborted; InProgress×Complete → Complete; etc.) drives expected status
+  - Plan: every illegal pair (Complete×Approved; Aborted×Anything; etc.) returns `IllegalTransition`
+  - Task: every legal pair (Pending×Started → Running; Running×Done; Running×Failed; Failed×Retry → Pending; Failed×Escalated; Blocked×Resolved → Pending)
+  - Task: every illegal pair returns `IllegalTransition`
+  - Failure escalation boundary: `failure_count = max_failures - 1` on `Failed` → still `Pending`; `failure_count = max_failures` → `Escalated` (with default `max_failures = 3`, so the 3rd failure does NOT escalate; the 4th does — verified explicitly)
+  - Approval-required invariant: `approval_required = false` skips `pending_approval`; FSM starts at `in_progress` directly
+- **`crates/runtime-main/src/sdk/structured_emitter.rs::tests`** — parser surface:
+  - Single decision block (well-formed) → `[EmitterOutput::Decision { ... }]`
+  - Multiple decision blocks → vec of decisions in order
+  - Plan-creation block → `[EmitterOutput::PlanCreation { ... }]`
+  - Mixed decision + plan blocks
+  - Nested blocks (e.g., `<<DECISION>>` inside `<<PLAN>>`) → parse error `NestedBlock`
+  - Malformed: missing `<<END>>` → parse error `Unterminated`
+  - Malformed: unexpected text between blocks → preserved (not parsed; trailing text outside blocks is non-fatal)
+  - Empty input → empty vec
+  - **Forcing function** (closes M02 false-positive concern): "Decision: " text inside markdown code blocks (no `<<DECISION>>` wrapper) → empty vec (NOT a false positive)
+- **`crates/runtime-main/src/sdk/approval.rs::tests`** — seam contract:
+  - `await_approval` + `resolve(Approved)` happy path
+  - `resolve` before `await_approval` → `NotFound`
+  - Double-resolve same plan_id → second call returns `NotFound`
+  - Concurrent `await_approval` on different plan_ids; `resolve` each independently
+  - Sender dropped (channel cancelled) → `await_approval` returns `Cancelled`
+- **`crates/runtime-drone/src/plan_projector.rs::tests`** — projection idempotence:
+  - Each event type → expected row state in `plans` or `tasks`
+  - Double-projection of same signal → no-op (UPSERT semantics; row state unchanged)
+  - Out-of-order: `task_completed` before `task_started` projects, then `task_started` re-projects — last-write-wins on status; final state is `done` (a real session never emits this order; the test pins the contract)
+  - Unknown event type → no-op (returns `Ok(())`)
+  - Missing payload field → `ProjectorError::InvalidPayload`
 
-#### Coverage target
+#### Integration tests (Rust)
+
+- **`crates/runtime-drone/tests/migration_runner.rs`** — migration architecture:
+  - Apply `000_initial.sql` + `001_plans_tasks.sql` to fresh DB → both rows in `_migrations`; expected schema present
+  - Re-apply on already-migrated DB → no-op (no INSERT into `_migrations`; tables unchanged)
+  - Apply with only `000` registered → `001` runs; `_migrations` reflects both
+  - Migration file not in directory but version in `_migrations` → graceful skip with warning (log; not a hard error)
+  - Transaction rollback on migration failure (inject malformed SQL in a test migration; assert no partial state lands)
+- **`crates/runtime-drone/tests/plan_projector.rs`** — drone-side roundtrip:
+  - Spawn drone subprocess; send `WriteSignal { kind: Plan, payload: plan_created event }`; SELECT FROM plans; verify row matches event
+  - Send sequence of plan/task events; SELECT FROM tasks; verify count + status fields per event sequence
+  - Send unknown event kind; verify no projector side effects
+- **`crates/runtime-main/tests/plan_lifecycle.rs`** — end-to-end plan flow:
+  - Spawn drone subprocess + main; manual shim for `ApprovalSeam.resolve(Approved)`
+  - Drive a 3-task plan via mock provider that emits structured `<<PLAN>>` block + per-task agent text
+  - Assert event sequence: `plan_created` → `plan_approval_requested` → (shim resolves Approved) → `plan_approved` → `task_started` × 3 → `task_completed` × 3 → `plan_complete`
+  - Assert SQLite state: `plans` table has 1 row (status='complete'); `tasks` table has 3 rows (all status='done'); `signals` table has all events; `vdr` table populated for any decision/verify signals
+  - Failure path variant: 3rd task fails 4 times → `task_escalated` emitted; subsequent shim emits `task_skipped` → `plan_complete`
+- **`crates/runtime-main/tests/plan_recovery.rs`** — recovery semantics per spec §1b:
+  - Drive plan to mid-execution (after task_started[1], before task_completed[1])
+  - Kill drone subprocess (SIGKILL on Unix; `Stop-Process -Force` on Windows)
+  - Restart drone; SDK recovers
+  - Assert: PlanNode status preserved; in-flight TaskNode set to `pending` (not `running`); projection rebuilt from snapshot; SDK can resume from `task_started` again
+  - Tool-call uncertainty branch: kill between `tool_invoked` and `tool_result` → `tool_call_uncertain` flag set on the recovered event
+
+#### Unit tests (TypeScript)
+
+- **`tests/unit/graphStore.test.ts`** (extended) — exhaustive `applyEvent` coverage:
+  - 1 case per new variant (5): `plan_approval_requested`, `plan_revised`, `plan_aborted`, `plan_complete`, `task_skipped` — assert resulting state has expected node+status changes
+  - 1 case per changed variant (6): assert new fields are stored (e.g., `plan_created.title` lands on `PlanNode.title`; `task_escalated.failure_count` lands on `TaskNode.failureCount`)
+  - 1 case per dropped variant: deleted `plan_rejected` is unreachable (compile-time — removed from `AgentEvent['type']`); `task_rolled_back` retained as drift carve-out (test asserts state lands)
+  - `_exhaustive: never` line is the forcing function — no test needed (compile-time check covers it)
+
+#### Schema drift gate
+
+- **`cargo xtask regenerate-types --check`** must exit 0 after all schema edits land. Re-running `regenerate-types` (no `--check`) must produce byte-stable output.
+
+#### Coverage targets
 
 - `crates/runtime-main/src/plan/state_machine.rs` ≥95% (safety primitive per CLAUDE.md §5)
-- `crates/runtime-main` ≥95% maintained
+- `crates/runtime-main/src/sdk/structured_emitter.rs` ≥95% (replaces M02 safety primitive)
+- `crates/runtime-main/src/sdk/approval.rs` ≥95% (new safety primitive: SDK suspension correctness)
+- `crates/runtime-drone/src/plan_projector.rs` ≥95% (parallel to vdr.rs safety primitive)
+- `crates/runtime-drone/src/db.rs` ≥95% (migration runner correctness; preserved per existing exclusion list)
+- `crates/runtime-main` ≥95% maintained (per A2 baseline 98.09% line)
+- `crates/runtime-drone` ≥95% maintained (per A2 baseline 95.86% line)
 - workspace ≥80% maintained
-- Generated files excluded via existing regex
+- Generated files (`generated/{plan,task,event}.rs`) excluded via existing regex
 
 ### B.5 CLI Prompt
 
 ```xml
 <work_stage_prompt id="M04.B">
   <context>
-    Stage B of M04. §3a Plan & Task primitive — schemas + types + 11 new events + state machine + fresh_context_per_task loop policy + failure escalation + SQLite persistence + approval-gate seam. Largest deliverable in M04 by file count + LOC. Stage A2's commit must be on the milestone branch claude/m04-plan-verify-hitl-budget. Plan state machine is a NEW safety primitive subject to ≥95% coverage gate.
+    Stage B of M04. §3a Plan & Task primitive — schema event-shape reconciliation (6 migrations + 2 deletions + 5 additions), Plan + Task FSM (≥95% safety primitive), projection-based persistence (new migration runner architecture + drone-internal plan/task projector parallel to vdr.rs), WriteSignal IPC variant + drone-side handler (closes M03 🟡), structured-emitter migration (closes M02 🟡), approval-gate seam (channel/oneshot the SDK awaits on; Stage E wires the HITL UI), fresh_context_per_task loop policy, failure escalation, snapshot-includes-projection recovery semantics per spec §1b. Two spec-drift carve-outs locked: typed task_rolled_back over stringly-typed error string; task_*.plan_id denormalization over spec's lean shape. Stage A2's commit must be on the milestone branch claude/m04-plan-verify-hitl-budget.
   </context>
 
   <pre_flight_check>
     <check name="branch_correct">git rev-parse --abbrev-ref HEAD must equal claude/m04-plan-verify-hitl-budget</check>
-    <check name="prior_stage_committed">git log --oneline -1 must show "M04 Stage A2" subject</check>
+    <check name="prior_stage_committed">git log --oneline -1 must show "M04 Stage A2" subject (commit 2bf4d67 or successor)</check>
     <check name="a1_a2_artifacts_present">Test-Path crates/runtime-core/src/generated/error.rs (A1 codegen target) AND grep -q "DroneLifecycle" src-tauri/src/drone_lifecycle.rs (A2) must succeed</check>
-    <check name="a1_namespace_decision_applied">grep -q "pub use generated::{agent, common, framework, skill, tool}" crates/runtime-core/src/lib.rs (A1 chose option (b) qualify-by-path; generated CmdError + AgentEvent reachable via runtime_core::generated::{event,error}; top-level error.rs::RuntimeError + event.rs::AgentEvent stay hand-curated)</check>
-    <check name="a1_xtask_extended">grep -q "common.*framework.*skill.*tool.*agent.*event.*error" crates/xtask/src/main.rs (A1 extended codegen list from 5 to 7 schemas; if grep finds the pre-A1 5-entry form, the codebase has drifted)</check>
-    <check name="schemas_drift_clean">cargo xtask regenerate-types --check exit 0 (A1+A2 codegen state durable)</check>
+    <check name="a1_namespace_decision_applied">grep -q "pub use generated::{agent, common, framework, skill, tool}" crates/runtime-core/src/lib.rs (A1 chose option (b) qualify-by-path)</check>
+    <check name="a1_xtask_extended">grep -q "\"event\"" crates/xtask/src/main.rs AND grep -q "\"error\"" crates/xtask/src/main.rs (A1 extended codegen list to 7 schemas; B extends to 9 with plan + task)</check>
+    <check name="schemas_drift_clean">cargo xtask regenerate-types --check exit 0 (A1+A2 codegen state durable before B's schema edits begin)</check>
+    <check name="migrations_directory_absent">Test-Path crates/runtime-drone/migrations must FAIL — Stage B creates the directory + the migration runner architecture from scratch (the phase doc's prior reference to "existing M01.C migration runner" was incorrect)</check>
+    <check name="event_diff_verified">grep -c "title.*plan_\\|title.*task_" schemas/event.v1.json must equal 8 (current state: 8 codebase variants — 6 spec-canonical with shape mismatches + 2 extras [plan_rejected, task_rolled_back]; Stage B reconciles to 11 spec-required with 1 retained extra)</check>
   </pre_flight_check>
 
   <read_first>
     <file>CLAUDE.md</file>
     <file>STAGE-PROMPT-PROTOCOL.md</file>
     <file>docs/build-prompts/M04-plan-verify-hitl-budget.md (Stage B sections B.1–B.4)</file>
-    <file>agent-runtime-spec.md §3a (full section, especially Data types + Events + Approval-gate primitive + Loop policy primitive + Failure escalation + Graph integration + Framework JSON), §10 (plans/tasks DDL added M03.5)</file>
+    <file>agent-runtime-spec.md §3a (full section, especially Data types + Events lines 1417–1427 + Approval-gate primitive + Loop policy primitive + Failure escalation + Graph integration + Framework JSON), §1b (Recovery Semantics — projection rebuild + currently-running task + tool-call uncertainty), §2b (Signals + VDR — projector archetype), §10 (plans/tasks DDL)</file>
     <file>docs/MVP-v0.1.md §M4</file>
-    <file>docs/gotchas.md (especially #14 snake_case discipline; #34 fmt-first; #36 synthetic-state inversion — Stage B starts the live-event path so the inversion no longer applies)</file>
+    <file>docs/gotchas.md (especially #14 snake_case discipline; #34 fmt-first; #41 grep-verify codebase claims; #42 origin partial view)</file>
     <file>docs/build-prompts/retrospectives/M04.A1-retrospective.md</file>
     <file>docs/build-prompts/retrospectives/M04.A2-retrospective.md (apply [END] Decisions)</file>
   </read_first>
 
   <read_reference>
     <file purpose="xtask codegen archetype Stage A1 established">crates/xtask/src/main.rs</file>
-    <file purpose="existing schemas archetype to mirror for plan + task schema authoring">schemas/event.v1.json</file>
-    <file purpose="existing FSM/state-machine archetype if any in runtime-main; otherwise spec §3a is the contract">crates/runtime-main/src</file>
-    <file purpose="db.rs migration runner archetype">crates/runtime-drone/src/db.rs</file>
-    <file purpose="graphStore applyEvent archetype Stage M03.B established">src/lib/graphStore.ts</file>
-    <file purpose="renderer event-translation pipeline that propagates new event variants (NOT phantom event_translation.rs — actual file is event_pipeline.rs)">crates/runtime-main/src/sdk/event_pipeline.rs</file>
+    <file purpose="existing schemas archetype + $id pattern; mirror for plan.v1.json + task.v1.json authoring">schemas/event.v1.json</file>
+    <file purpose="error.v1.json post-A1 worked example for $defs validated-string extraction">schemas/error.v1.json</file>
+    <file purpose="vdr.rs projector archetype — plan_projector.rs follows the same pattern">crates/runtime-drone/src/vdr.rs</file>
+    <file purpose="db.rs current state — Stage B refactors init_schema into the new run_migrations runner">crates/runtime-drone/src/db.rs</file>
+    <file purpose="command_handler.rs — Stage B adds the WriteSignal arm">crates/runtime-drone/src/command_handler.rs</file>
+    <file purpose="snapshot.rs — Stage B extends the blob shape to include projected state">crates/runtime-drone/src/snapshot.rs</file>
+    <file purpose="agent_sdk.rs — Stage B integrates plan_loop">crates/runtime-main/src/sdk/agent_sdk.rs</file>
+    <file purpose="event_pipeline.rs — Stage B switches decision_extractor callsite to structured_emitter (NOT a phantom event_translation.rs)">crates/runtime-main/src/sdk/event_pipeline.rs</file>
+    <file purpose="decision_extractor.rs — DELETED in Stage B; reference for understanding the M02 heuristic before replacing">crates/runtime-main/src/sdk/decision_extractor.rs</file>
+    <file purpose="graphStore applyEvent archetype M03.B established">src/lib/graphStore.ts</file>
   </read_reference>
 
   <read_prior_stages>
@@ -1100,33 +1435,48 @@ Apply per `docs/gotchas.md` #21 to the new modules: `plan/state_machine.rs`, `pl
 
   <schema_drift_check gate="cargo xtask regenerate-types --check"/>
 
-  <runtime_environment os="windows" note="Build agent on Windows 11; Test-Path replaces test -f; named pipe paths differ from Unix sockets in any drone-IPC test"/>
+  <fan_out_grep>
+    <grep pattern='"$id"' purpose="confirm $id base-URL pattern in schemas/*.v1.json before authoring plan.v1.json + task.v1.json (M03.5.A retro discipline)"/>
+    <grep pattern="decision_extractor" purpose="enumerate every callsite that must switch to structured_emitter; expect event_pipeline.rs + agent_sdk.rs + tests"/>
+    <grep pattern="DroneCommand::" purpose="enumerate every callsite that constructs DroneCommand variants; verify WriteSignal addition doesn't break exhaustiveness in match arms"/>
+    <grep pattern="init_schema" purpose="enumerate callers; ensure refactor to run_migrations doesn't break the public API"/>
+    <grep pattern="plan_rejected" purpose="enumerate references to the dropped variant; expect schema + event.rs + graphStore.ts; all must be removed"/>
+  </fan_out_grep>
+
+  <runtime_environment os="windows" note="Build agent on Windows 11; Test-Path replaces test -f; Get-ChildItem replaces ls; named pipe paths differ from Unix sockets in any drone-IPC test; subprocess SIGKILL is Stop-Process -Force on Windows for plan_recovery.rs test"/>
 
   <gotchas>
-    <trap>AUDIT: 8 of 11 plan/task events ALREADY exist in `crates/runtime-core/src/event.rs` and `schemas/event.v1.json`. Identify the 3 missing variants by diffing spec §3a's 11-event list against the existing `event.rs` enum + `event.v1.json` `oneOf`. Author only the missing 3; the existing 8 get state-machine wiring not re-authoring.</trap>
-    <trap>AUDIT path correction: `event_translation.rs` is a phantom — actual translation pipeline lives in `crates/runtime-main/src/sdk/event_pipeline.rs`. Any X.3 instruction or read reference that names `event_translation.rs` should be read as `event_pipeline.rs`.</trap>
-    <trap>AUDIT folds A2 deferrals (per user-approved post-A2 sequencing): WriteSignal IPC command variant on `DroneCommand` + drone-side handler arm at `crates/runtime-drone/src/command_handler.rs` calling `vdr::project_signal` (vdr lives in drone, not main; runtime-main has no rusqlite dep) + main-side emission path. Plus structured-emitter prompt-template module + AgentSdk plumbing replacing the M02 heuristic in `crates/runtime-main/src/sdk/decision_extractor.rs`. Stage B has scope slack from the already-shipped 8/11 events to absorb both folded items. Closes M03 🟡 vdr-projector-wired-at-write-signal + M02 🟡 structured-emitter migration.</trap>
-    <trap>AUDIT: `crates/runtime-drone/migrations/` directory does NOT exist yet (verified). Stage B's first migration file creates the directory; version `001` (no existing-numbered-sequence to fit into).</trap>
+    <trap>AUDIT-CORRECTED: prior phase doc claim "8 of 11 already exist; author only 3 missing" was WRONG. Real diff (verified at authoring): 6 spec-canonical with shape mismatches (migrate); 2 codebase extras (drop plan_rejected; KEEP task_rolled_back per drift carve-out below); 5 missing (author plan_approval_requested, plan_revised, plan_aborted, plan_complete, task_skipped). Total 13 oneOf changes in schemas/event.v1.json.</trap>
+    <trap>SPEC DRIFT CARVE-OUT (locked): keep `task_rolled_back` typed event with `snapshot_id` field over spec §4a's stringly-typed `error: 'rolled_back_after_hook_<id>'` pattern. Spec text encodes structured info in error strings — CLAUDE.md §9 anti-pattern. Typed event is sounder engineering. Stage D consumes the typed event. Drift target: spec §4a (closeout post-M04 docs(spec): PR).</trap>
+    <trap>SPEC DRIFT CARVE-OUT (locked): keep `task_*.plan_id` denormalization over spec §3a's lean `task_id + agent_id` shape. Self-contained events for renderer/projector/replay; no separate plan_id lookup needed. Drift target: spec §3a (closeout post-M04 docs(spec): PR).</trap>
+    <trap>AUDIT-CORRECTED: `crates/runtime-drone/migrations/` directory does NOT exist (verified via Test-Path). Phase doc's prior reference to "existing M01.C migration runner pattern" was wrong — there IS no migration runner. Stage B authors the architecture from scratch: `db.rs::run_migrations(conn)` + `_migrations` tracking table; `migrations/000_initial.sql` preserves M01 baseline (verbatim move of existing init_schema content); `migrations/001_plans_tasks.sql` adds plans + tasks per spec §10. Migration files embedded via `include_str!` (build-time embed; matches single-binary deployment).</trap>
+    <trap>AUDIT folds A2 deferrals (closes M02 + M03 carry-forward in this milestone): (a) `WriteSignal` IPC variant + drone-side handler arm calling `vdr::project_signal` AND `plan_projector::project_signal`. (b) structured-emitter prompt-template module + AgentSdk plumbing replacing the M02 heuristic in decision_extractor.rs (DELETED). vdr lives in drone (not main; runtime-main has no rusqlite). Pattern: drone-internal projection at write-time, parallel to existing vdr architecture.</trap>
+    <trap>Plan/Task projector (`plan_projector.rs`) is a SAFETY PRIMITIVE — coverage gate ≥95%. Pattern parallel to vdr.rs (M03.E archetype). Idempotent UPSERT semantics; out-of-order projection handled gracefully.</trap>
     <trap>AUDIT post-A1 namespace: A1 chose option (b) qualify-by-path. Generated `CmdError` + `AgentEvent` live under `runtime_core::generated::{error,event}`; top-level `error.rs::RuntimeError` + `event.rs::AgentEvent` stay hand-curated. Stage B's regen targets land at `crates/runtime-core/src/generated/{plan,task}.rs` per the same convention.</trap>
-    <trap>AUDIT: A1's schema metadata pattern is the archetype for `plan.v1.json` + `task.v1.json` — variant titles PascalCased; validated string fields with `minLength` extracted to `$defs/<Name>` so typify 0.6.2 can name the validation newtype. See `schemas/error.v1.json` post-A1 for the worked example.</trap>
-    <trap>v0.1 hardcodes STANDARD mode + fresh_context_per_task — schemas declare 3 loop policies but only fresh_context_per_task is lit; the `one_shot` and `continuous` variants in the schema are spec-prep, not v0.1 implementation. Stage B's loop-policy seam returns NotImplemented for the other two.</trap>
-    <trap>plan.v1.json $id MUST follow https://schemas.aria-runtime.dev/<name>.v1.json pattern (M03.5.A retro decision). Verify against existing schemas BEFORE authoring.</trap>
-    <trap>11 new event variants total in event.v1.json after Stage B (8 already present + 3 added) — the renderer's graphStore.applyEvent exhaustive switch will fail to compile if any case is missing. This is the forcing function (gotcha #36 _exhaustive: never); rely on the compiler to catch missing cases rather than running tests. Plan state machine ≥95% safety primitive coverage is unchanged.</trap>
+    <trap>EVENT.RS HAND-CURATED: top-level `crates/runtime-core/src/event.rs` is the wrapper used by callsites as `runtime_core::AgentEvent`. After schema edits + xtask regen produces `generated/event.rs`, hand-update the top-level event.rs to mirror schema. The two files coexist (qualify-by-path). M03 carry-forward "event.rs hand-maintained" — partial close in A1 (typify list extended); full close pending wrapper removal in a future milestone.</trap>
+    <trap>A1's schema metadata pattern is the archetype for `plan.v1.json` + `task.v1.json` — variant titles PascalCased; validated string fields with `minLength` extracted to `$defs/<Name>` so typify 0.6.2 can name the validation newtype. See `schemas/error.v1.json` post-A1.</trap>
+    <trap>v0.1 hardcodes STANDARD mode + fresh_context_per_task — schemas declare 3 loop policies but only fresh_context_per_task is lit; the `one_shot` and `continuous` variants in the schema are spec-prep, not v0.1 implementation. Stage B's loop-policy seam returns `LoopPolicyError::NotImplemented` for the other two.</trap>
+    <trap>plan.v1.json + task.v1.json `$id` MUST follow `https://schemas.aria-runtime.dev/<name>.v1.json` (M03.5.A retro). Run `<fan_out_grep pattern='"$id"'/>` against existing schemas BEFORE authoring.</trap>
+    <trap>graphStore.ts applyEvent exhaustive switch will compile-error on the 5 new + 6 changed + 2 dropped variants — `_exhaustive: never` is the forcing function (gotcha #36). Compiler catches missing/incorrect cases; rely on it. State mutations are pass-through (no visual treatment — Stage C lights up the visual surface for plan/task events + ApprovalPanel).</trap>
     <trap>Plan state machine is a SAFETY PRIMITIVE — coverage gate ≥95%. Document any exclusions inline (likely none — pure-logic module). Per CLAUDE.md §5 + M01.C precedent.</trap>
-    <trap>Approval-gate seam (Stage B's deliverable) must be the channel/oneshot the SDK awaits on, NOT the HITL UI itself (Stage E). Stage B's SDK code calls `approval_seam.await_approval(plan_id).await?` and Stage E wires the seam to the HITL flow. Do NOT implement the HITL UI in Stage B.</trap>
-    <trap>fresh_context_per_task implementation — clearing the agent's `messages` vec mid-session must NOT clear the SDK's plan-state. Plan state lives in the SDK + SQLite, NOT in the agent's message history.</trap>
+    <trap>Approval-gate seam is `tokio::sync::oneshot` channel pattern; Stage B exposes `ApprovalSeam::await_approval(plan_id)` for SDK to await on; Stage E wires the HITL UI to call `ApprovalSeam::resolve(plan_id, decision)` from the renderer's approve_plan/revise_plan/abort_plan Tauri commands. Do NOT implement the HITL UI in Stage B.</trap>
+    <trap>fresh_context_per_task implementation — clearing the agent's `messages` vec mid-session must NOT clear the SDK's plan-state. Plan state lives in the SDK + projection (plans + tasks tables), NOT in the agent's message history.</trap>
+    <trap>Recovery test (`plan_recovery.rs`) requires real subprocess kill + restart. On Windows: `Stop-Process -Force` (the M04.A2 retrospective's locked-binary issue applies — orphan drone subprocess on test re-run; per gotcha graduation candidate, Get-Process before re-running). On Unix: SIGKILL via `Child::start_kill`.</trap>
+    <trap>Spec §1b recovery semantics — currently-running task set to `pending` (NOT `running`); tool-call uncertainty flag (`tool_call_uncertain`) on tool_invoked without matching tool_result. Both invariants tested in plan_recovery.rs.</trap>
+    <trap>Snapshot blob shape extends to include projected `plans` + `tasks` arrays alongside event log. Drone projection is the read-model; snapshot is the persistence layer that recovery rebuilds from. Spec §1b: "Plan + task statuses restored from snapshot."</trap>
   </gotchas>
 
   <execution_warnings>
-    <warning>DO NOT implement the orchestrator agent's prompt template — that's framework-JSON territory (loaded from examples/aria/framework.json at session start). Stage B provides the SDK machinery (state machine + event emission + loop policy + failure escalation); framework JSON wires the orchestrator.</warning>
-    <warning>DO NOT wire the renderer's PlanNode/TaskNode to active visual treatment — Stage B's graphStore changes are pass-through state updates only. Stage C builds the visual surface + ApprovalPanel.</warning>
+    <warning>DO NOT implement the orchestrator agent's prompt template — that's framework-JSON territory (loaded from examples/aria/framework.json at session start). Stage B provides the SDK machinery (FSM + event emission + loop policy + failure escalation + structured-emitter parser); framework JSON wires the orchestrator.</warning>
+    <warning>DO NOT wire the renderer's PlanNode/TaskNode to active visual treatment — Stage B's graphStore changes are pass-through state mutations only. Stage C builds the visual surface + ApprovalPanel + animated edge from PlanNode → currently-running TaskNode.</warning>
+    <warning>DO NOT implement the HITL UI — Stage E owns ApprovalPanel + the 9-trigger HITL flow. Stage B exposes only the `ApprovalSeam` channel/oneshot the SDK awaits on.</warning>
     <warning>DO NOT push between stages.</warning>
+    <warning>DO NOT skip the migration runner architecture by inlining `CREATE TABLE IF NOT EXISTS` in init_schema. The runner with `_migrations` version tracking is the deliverable; subsequent migrations (Stage D verify+rails may add hooks tables; Stage E HITL may add hitl_requests; Stage F budget may add token_usage extensions) depend on the architecture being in place.</warning>
+    <warning>DO NOT keep `decision_extractor.rs` alongside `structured_emitter.rs` as a fallback — the migration is full replacement (closes M02 false-positive concern). Delete the file; switch the event_pipeline.rs callsite.</warning>
   </execution_warnings>
 
-  <time_box estimate_hours="5"/>
-
   <retrospective_requirements ref="docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md" section="M[NN].&lt;X&gt; — Stage Retrospective">
-    <special_log>Decisions for Stage C: which plan-state fields the renderer's PlanNode actually needs to render (likely subset of the full Plan struct — token-spend, status badge, task count); whether the approval-gate seam exposed in Stage B requires renderer-side state reflection (likely yes — the ApprovalPanel needs the plan + risks + hitl_checkpoints); whether _exhaustive: never caught all 11 new event variants in graphStore (forcing function discipline); plan state machine coverage % achieved + any holdouts.</special_log>
+    <special_log>Decisions for Stage C: which Plan + Task fields the renderer's PlanNode/TaskNode actually need to render (likely: title, status, task_count for Plan; status, agent_id, failure_count for Task — subset of full struct); whether the ApprovalPanel needs additional fields beyond plan + risks + hitl_checkpoints (likely: estimated_minutes for total time display; created_by for source attribution); whether `_exhaustive: never` caught all 11 variants in graphStore (forcing function discipline); plan state machine coverage % achieved + any holdouts; structured-emitter false-positive elimination evidence (test that "Decision: " in code blocks doesn't trigger emit); WriteSignal IPC roundtrip latency observed; recovery test pass/fail + projection-rebuild time; whether the snapshot-includes-projection blob shape was sufficient or needs Stage F adjustment for budget recovery; spec-drift carve-outs status (both flagged for closeout docs(spec): PR).</special_log>
   </retrospective_requirements>
 
   <commit_protocol ref="CLAUDE.md" section="8. PR + commit workflow (CRITICAL — read carefully)"/>
@@ -1134,10 +1484,16 @@ Apply per `docs/gotchas.md` #21 to the new modules: `plan/state_machine.rs`, `pl
 
   <approval_surface>
     <item>diff stat (git diff --stat HEAD)</item>
-    <item>gate results (each gate, pass/fail; plan state machine coverage % must be ≥95)</item>
-    <item>schema drift check exit 0</item>
-    <item>generated file shape preview — first 30 lines of crates/runtime-core/src/plan.rs + plan.ts</item>
-    <item>plan_lifecycle.rs integration test outcome — full 3-task plan flow end-to-end</item>
+    <item>git log --oneline main..HEAD (per CLAUDE.md §19 rule 7; build-machine state visible to any downstream orchestration)</item>
+    <item>retrospective file listing (`Get-ChildItem docs/build-prompts/retrospectives/M04.*-retrospective.md`)</item>
+    <item>gate results (each gate, pass/fail; FSM coverage % must be ≥95; structured_emitter coverage ≥95; approval coverage ≥95; plan_projector coverage ≥95; runtime-main + runtime-drone overall ≥95; workspace ≥80)</item>
+    <item>schema drift check exit 0 (`cargo xtask regenerate-types --check`)</item>
+    <item>generated file shape preview — first 30 lines each of crates/runtime-core/src/generated/{plan,task}.rs + src/types/{plan,task}.ts</item>
+    <item>migration runner verification — `cargo test --package runtime-drone migration_runner` passes; show test output</item>
+    <item>plan_lifecycle.rs integration test outcome — full 3-task plan flow end-to-end + failure-escalation variant</item>
+    <item>plan_recovery.rs integration test outcome — kill mid-plan + restart; projection rebuilt; currently-running task = pending</item>
+    <item>structured_emitter false-positive evidence — test asserting "Decision: " in code block doesn't emit</item>
+    <item>spec-drift carve-out flag — both items (task_rolled_back typed; task_*.plan_id) noted as ⚠️ carry-forward to closeout gap-analysis</item>
     <item>retrospective with [END] decisions for Stage C</item>
     <item>draft commit message from B.6 (filled with session URL)</item>
     <item>"Stage M04.B is ready. I will not commit until you approve."</item>
@@ -1149,50 +1505,132 @@ Apply per `docs/gotchas.md` #21 to the new modules: `plan/state_machine.rs`, `pl
 
 ```bash
 git commit -s -m "$(cat <<'EOF'
-feat(runtime): M04 Stage B — §3a Plan & Task primitive (schemas + types + state machine + persistence)
+feat(runtime): M04 Stage B — §3a Plan & Task primitive (schemas + FSM + projection-based persistence + WriteSignal IPC + structured emitter)
 
-Builds the §3a Plan & Task primitive end-to-end. Largest single
-deliverable in M04 by file count + LOC. Plan state machine is a new
-safety primitive at ≥95% coverage per CLAUDE.md §5.
+Builds the §3a Plan & Task primitive end-to-end. Schema event-shape
+reconciliation against spec §3a (lines 1417–1427). Two M02/M03
+carry-forward items folded in (close M02 🟡 + M03 🟡). Two engineering
+spec-drift carve-outs locked + flagged for closeout docs(spec): PR.
+
+Schema event reconciliation (13 oneOf changes in schemas/event.v1.json):
+- 6 spec-canonical migrated to spec shape: plan_created (+ title +
+  approval_required); plan_approved (+ approved_by); task_escalated
+  (replace reason with failure_count + max_failures); task_started /
+  task_completed / task_failed (no shape change beyond drift carve-out)
+- 2 codebase extras: drop plan_rejected (spec §1439 unifies cancel
+  under plan_aborted); KEEP task_rolled_back as typed event with
+  snapshot_id (drift carve-out — spec §4a's stringly-typed error
+  pattern is CLAUDE.md §9 anti-pattern; typed event is sounder
+  engineering)
+- 5 missing authored: plan_approval_requested, plan_revised,
+  plan_aborted, plan_complete, task_skipped
+- task_*.plan_id denormalization kept (drift carve-out — self-contained
+  events for renderer/projector/replay)
+- Both drifts flagged for closeout post-M04 docs(spec): PR
 
 New artifacts:
 - schemas/plan.v1.json + schemas/task.v1.json (JSON Schema 2020-12;
-  $id follows https://schemas.aria-runtime.dev/<name>.v1.json
-  convention per M03.5.A retro decision)
-- crates/runtime-core/src/plan.rs + task.rs (typify-generated)
-- src/types/plan.ts + task.ts (json-schema-to-typescript-generated)
-- crates/runtime-main/src/plan/state_machine.rs — Plan + Task FSM per
-  spec §3a (legal transitions, illegal-transition errors, exhaustive
-  transition matrix in unit tests; ≥95% coverage gate met)
-- crates/runtime-main/src/plan/mod.rs
-- crates/runtime-drone/migrations/00X_plans_tasks.sql — matches
-  spec §10 DDL added in M03.5
+  $id pattern matches existing schemas; validated strings in $defs/<Name>
+  per A1 typify-friendliness gotcha)
+- crates/runtime-core/src/generated/{plan,task}.rs (typify-regenerated)
+- src/types/{plan,task}.ts (json-schema-to-typescript-regenerated)
+- crates/runtime-main/src/plan/{mod,state_machine}.rs — Plan + Task FSM
+  per spec §3a (≥95% safety primitive; exhaustive transition matrix)
+- crates/runtime-main/src/sdk/plan_loop.rs — agent-loop integration;
+  fresh_context_per_task; failure escalation (failure_count >=
+  max_failures triggers task_escalated)
+- crates/runtime-main/src/sdk/structured_emitter.rs — replaces M02
+  decision_extractor.rs heuristic (closes M02 🟡); parses delimited
+  <<DECISION>>...<<END>> + <<PLAN>>...<<END>> blocks; eliminates
+  false-positive concern (Decision: in code blocks doesn't trigger emit)
+- crates/runtime-main/src/sdk/approval.rs — ApprovalSeam (tokio oneshot
+  channel) the SDK awaits on; Stage E wires HITL UI to the seam
+- crates/runtime-drone/src/plan_projector.rs — drone-internal continuous
+  projector parallel to vdr.rs (≥95% safety primitive); UPSERTs
+  plans + tasks rows from plan/task signals; idempotent
+- crates/runtime-drone/migrations/ (new directory) +
+  migrations/000_initial.sql (preserves M01 baseline) +
+  migrations/001_plans_tasks.sql (spec §10 DDL)
+
+Migration runner architecture (closes implicit M01 gap; phase doc's
+prior reference to "existing M01.C migration runner" was incorrect):
+- crates/runtime-drone/src/db.rs::run_migrations(conn) reads
+  migrations/NNN_<name>.sql files in lexical order; tracks applied
+  versions in _migrations table; idempotent re-application
+- init_schema becomes wrapper that calls run_migrations
+- Migration files embedded via include_str! (build-time embed; matches
+  single-binary deployment model)
+
+WriteSignal IPC + drone-side handler (closes M03 🟡 vdr-projector-wired-
+at-signal-write):
+- crates/runtime-core/src/drone.rs: new DroneCommand::WriteSignal variant
+- crates/runtime-drone/src/command_handler.rs: handler arm inserts into
+  signals → calls vdr::project_signal → calls plan_projector::project_signal
+  for plan/task events
+- crates/runtime-main/src/drone_ipc/client.rs: new write_signal method
+
+Snapshot integration + recovery (per spec §1b literal):
+- crates/runtime-drone/src/snapshot.rs: blob shape extends to include
+  projected plans + tasks arrays alongside event log
+- Recovery: load snapshot → restore projection → replay post-snapshot
+  events; currently-running task set to pending (not running);
+  tool-call uncertainty (tool_call_uncertain flag on tool_invoked
+  without matching tool_result)
 
 Edits:
-- crates/xtask/src/main.rs: codegen list extended with plan + task
-- schemas/event.v1.json: 11 plan/task event variants added
-  (plan_created, plan_approval_requested, plan_approved, plan_revised,
-  plan_aborted, plan_complete, task_started, task_completed,
-  task_failed, task_skipped, task_escalated)
-- crates/runtime-core/src/event.rs + src/types/agent_event.ts:
-  regenerated with 11 new variants
-- crates/runtime-main/src/sdk/mod.rs: plan state machine wired into
-  SDK event loop; failure-escalation logic (failure_count >=
-  max_failures triggers task_escalated); fresh_context_per_task loop
-  policy (clears agent messages between tasks; preserves SDK plan
-  state in SQLite)
-- src/lib/graphStore.ts: applyEvent exhaustive switch handles all 11
-  new variants as pass-through state updates (Stage C builds visual
-  treatment); _exhaustive: never forcing function held
+- crates/xtask/src/main.rs: codegen list extended from 7 to 9 schemas
+  (added plan + task)
+- crates/runtime-core/src/event.rs: hand-curated wrapper mirrors schema
+  (qualify-by-path namespace per A1 retro decision retained)
+- crates/runtime-core/src/lib.rs: re-exports plan + task
+- crates/runtime-main/src/sdk/agent_sdk.rs: plan_loop integration;
+  consume ApprovalSeam; consume structured_emitter
+- crates/runtime-main/src/sdk/event_pipeline.rs: switch
+  decision_extractor callsite to structured_emitter
+- crates/runtime-main/src/sdk/decision_extractor.rs: DELETED (closes
+  M02 🟡 structured-emitter migration)
+- src/lib/graphStore.ts: applyEvent exhaustive switch handles 5 new +
+  6 changed + 2 dropped variants as pass-through state mutations
+  (Stage C builds visual treatment); _exhaustive: never forcing
+  function held
+- .prettierignore + eslint.config.js: ignore src/types/{plan,task}.ts
+  per agent_event.ts precedent (A1 retro)
 
-Approval-gate seam exposed (channel/oneshot the SDK awaits on); Stage E
-wires the seam to HITL UI.
+Tests:
+- crates/runtime-main/src/plan/state_machine.rs::tests: exhaustive
+  transition matrix; failure-escalation boundary; plan-status invariants
+  (≥95% coverage met)
+- crates/runtime-main/src/sdk/structured_emitter.rs::tests: parser
+  surface (delimited blocks; nested; malformed; false-positive
+  elimination)
+- crates/runtime-main/src/sdk/approval.rs::tests: seam contract
+- crates/runtime-drone/src/plan_projector.rs::tests: projection
+  idempotence; out-of-order projection; UPSERT semantics
+- crates/runtime-drone/tests/migration_runner.rs: apply + re-apply
+  idempotence; transaction rollback on failure
+- crates/runtime-drone/tests/plan_projector.rs: drone-side roundtrip
+- crates/runtime-main/tests/plan_lifecycle.rs: end-to-end 3-task plan
+  + failure-escalation variant
+- crates/runtime-main/tests/plan_recovery.rs: kill drone subprocess
+  mid-plan; restart; projection rebuilt; currently-running task =
+  pending; tool-call uncertainty flag set
+- tests/unit/graphStore.test.ts: extended applyEvent exhaustive
+  coverage for 11 new + 6 changed variants
 
 v0.1 scope locks held: STANDARD mode hardcoded, fresh_context_per_task
-only (one_shot + continuous return NotImplemented), Novice + Promoted
-tiers only.
+only (one_shot + continuous return LoopPolicyError::NotImplemented),
+Novice + Promoted tiers only.
 
-Refs: M04-plan-verify-hitl-budget.md §B, spec §3a, MVP §M4
+Spec drift items (carry-forward to M04 closeout docs(spec): PR):
+- §3a event shapes: task_* events keep plan_id (denormalization for
+  self-contained downstream consumers)
+- §4a rollback: task_rolled_back as typed event with snapshot_id
+  field (replaces stringly-typed task_failed with rolled_back error
+  string)
+
+Refs: M04-plan-verify-hitl-budget.md §B, spec §3a + §1b + §10, MVP §M4
+Carry-forward closes: M02 🟡 structured-emitter migration; M03 🟡 vdr
+  projector wired at signal-write; M01 implicit migration-runner gap
 Retrospective: docs/build-prompts/retrospectives/M04.B-retrospective.md
 
 https://claude.ai/code
