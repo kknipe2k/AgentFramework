@@ -11,17 +11,31 @@ import type { AgentEvent } from '../types/agent_event';
 export type NodeStatus = 'active' | 'complete' | 'error';
 
 /**
- * Plan-state status per spec §3a (added by WI-03). The schema's
- * plan_created event lands at M4 — Stage C ships the type so PlanNode
- * can render synthetic placeholder data without future TS churn.
+ * Plan-state status per spec §3a. M04 Stage B added 'awaiting_approval'
+ * (transient between plan_created with approval_required and the
+ * subsequent plan_approved) and 'awaiting_replan' (after plan_revised).
  */
-export type PlanStatus = 'pending_approval' | 'approved' | 'in_progress' | 'complete' | 'aborted';
+export type PlanStatus =
+  | 'pending_approval'
+  | 'awaiting_approval'
+  | 'approved'
+  | 'in_progress'
+  | 'awaiting_replan'
+  | 'complete'
+  | 'aborted';
 
 /**
- * Task-state status per spec §3a. Same M4-event-deferred pattern as
- * PlanStatus.
+ * Task-state status per spec §3a. M04 Stage B added 'escalated' (post
+ * failure_count >= max_failures).
  */
-export type TaskStatus = 'pending' | 'running' | 'done' | 'blocked' | 'failed' | 'skipped';
+export type TaskStatus =
+  | 'pending'
+  | 'running'
+  | 'done'
+  | 'blocked'
+  | 'failed'
+  | 'skipped'
+  | 'escalated';
 
 /**
  * Verify-hook status per spec §4a. The verify_passed/verify_failed
@@ -109,8 +123,10 @@ export interface HITLNodeData extends Record<string, unknown> {
 }
 
 /**
- * PlanNode — spec §3 + §3a. Synthetic placeholder fields (title,
- * taskCount, completedCount) until M4's plan primitive lands.
+ * PlanNode — spec §3 + §3a. M04 Stage B drives live state from
+ * plan_created / plan_approval_requested / plan_approved / plan_revised
+ * / plan_aborted / plan_complete events; Stage C lights up the visual
+ * surface (status badge + animated edge to currently-running task).
  */
 export interface PlanNodeData extends Record<string, unknown> {
   planId: string;
@@ -118,17 +134,33 @@ export interface PlanNodeData extends Record<string, unknown> {
   status: PlanStatus;
   taskCount: number;
   completedCount: number;
+  approvalRequired: boolean;
+  /** Free-text reason recorded for revised / aborted transitions. */
+  lastTransitionReason: string | null;
+  /** End-to-end duration recorded on plan_complete. */
+  durationMs: number | null;
 }
 
 /**
- * TaskNode — spec §3 + §3a. Synthetic placeholder fields until M4.
+ * TaskNode — spec §3 + §3a. M04 Stage B drives live state from
+ * task_started / task_completed / task_failed / task_skipped /
+ * task_escalated / task_rolled_back events.
  */
 export interface TaskNodeData extends Record<string, unknown> {
   taskId: string;
   planId: string;
+  agentId: string | null;
   title: string;
   status: TaskStatus;
   hitl: boolean;
+  failureCount: number;
+  maxFailures: number | null;
+  /** Recorded on task_failed / task_skipped / task_rolled_back. */
+  lastError: string | null;
+  /** Recorded on task_completed. */
+  durationMs: number | null;
+  /** Recorded on task_rolled_back (drift carve-out per Stage B). */
+  rollbackSnapshotId: string | null;
 }
 
 /**
@@ -265,6 +297,34 @@ function withAgentStatus(state: GraphState, agentId: string, status: NodeStatus)
     ...state,
     nodes: state.nodes.map((n) =>
       n.id === target && n.type === 'agent' ? { ...n, data: { ...n.data, status } } : n,
+    ),
+  };
+}
+
+function updatePlanData(
+  state: GraphState,
+  planId: string,
+  updater: (data: PlanNodeData) => PlanNodeData,
+): GraphState {
+  const target = `plan:${planId}`;
+  return {
+    ...state,
+    nodes: state.nodes.map((n) =>
+      n.id === target && n.type === 'plan' ? { ...n, data: updater(n.data) } : n,
+    ),
+  };
+}
+
+function updateTaskData(
+  state: GraphState,
+  taskId: string,
+  updater: (data: TaskNodeData) => TaskNodeData,
+): GraphState {
+  const target = `task:${taskId}`;
+  return {
+    ...state,
+    nodes: state.nodes.map((n) =>
+      n.id === target && n.type === 'task' ? { ...n, data: updater(n.data) } : n,
     ),
   };
 }
@@ -518,23 +578,146 @@ export const useGraphStore = create<GraphState>((set) => ({
           };
         }
 
-        // No-op variants — Stage C added session_start (FrameworkNode)
-        // and MCP routing inside tool_invoked. The remaining no-ops
-        // light up at M4 (plan/task/verify/hook), M5 (gap/HITL), and
-        // post-M5 (capability/budget) when the schema gains those
-        // semantics. The exhaustive default below is the forcing
-        // function: any new variant added to the schema breaks the
-        // compile until handled here.
+        // ── Plan / Task lifecycle (spec §3a; M04 Stage B) ──
+        // Stage B implements pass-through state mutations; Stage C
+        // wires the visual surface (status badges + ApprovalPanel +
+        // animated edge from PlanNode → currently-running TaskNode).
+
+        case 'plan_created': {
+          const id = `plan:${event.plan_id}`;
+          if (state.nodes.some((n) => n.id === id)) {
+            return state;
+          }
+          const newNode: PlanReactFlowNode = {
+            id,
+            type: 'plan',
+            position: { x: 0, y: -300 },
+            data: {
+              planId: event.plan_id,
+              title: event.title,
+              status: event.approval_required ? 'pending_approval' : 'approved',
+              taskCount: event.task_count,
+              completedCount: 0,
+              approvalRequired: event.approval_required,
+              lastTransitionReason: null,
+              durationMs: null,
+            },
+          };
+          return { ...state, nodes: [...state.nodes, newNode] };
+        }
+
+        case 'plan_approval_requested':
+          return updatePlanData(state, event.plan_id, (data) => ({
+            ...data,
+            status: 'awaiting_approval',
+          }));
+
+        case 'plan_approved':
+          return updatePlanData(state, event.plan_id, (data) => ({
+            ...data,
+            status: 'in_progress',
+          }));
+
+        case 'plan_revised':
+          return updatePlanData(state, event.plan_id, (data) => ({
+            ...data,
+            status: 'awaiting_replan',
+            lastTransitionReason: event.revision_reason,
+          }));
+
+        case 'plan_aborted':
+          return updatePlanData(state, event.plan_id, (data) => ({
+            ...data,
+            status: 'aborted',
+            lastTransitionReason: event.reason,
+          }));
+
+        case 'plan_complete':
+          return updatePlanData(state, event.plan_id, (data) => ({
+            ...data,
+            status: 'complete',
+            durationMs: event.duration_ms,
+          }));
+
+        case 'task_started': {
+          const id = `task:${event.task_id}`;
+          const exists = state.nodes.some((n) => n.id === id);
+          if (exists) {
+            return updateTaskData(state, event.task_id, (data) => ({
+              ...data,
+              status: 'running',
+              agentId: event.agent_id,
+            }));
+          }
+          const newNode: TaskReactFlowNode = {
+            id,
+            type: 'task',
+            position: { x: 0, y: -180 },
+            data: {
+              taskId: event.task_id,
+              planId: event.plan_id,
+              agentId: event.agent_id,
+              title: '',
+              status: 'running',
+              hitl: false,
+              failureCount: 0,
+              maxFailures: null,
+              lastError: null,
+              durationMs: null,
+              rollbackSnapshotId: null,
+            },
+          };
+          return { ...state, nodes: [...state.nodes, newNode] };
+        }
+
+        case 'task_completed': {
+          const next = updateTaskData(state, event.task_id, (data) => ({
+            ...data,
+            status: 'done',
+            durationMs: event.duration_ms,
+          }));
+          return updatePlanData(next, event.plan_id, (data) => ({
+            ...data,
+            completedCount: data.completedCount + 1,
+          }));
+        }
+
+        case 'task_failed':
+          return updateTaskData(state, event.task_id, (data) => ({
+            ...data,
+            status: 'failed',
+            failureCount: event.failure_count,
+            lastError: event.error,
+          }));
+
+        case 'task_skipped':
+          return updateTaskData(state, event.task_id, (data) => ({
+            ...data,
+            status: 'skipped',
+            lastError: event.reason,
+          }));
+
+        case 'task_escalated':
+          return updateTaskData(state, event.task_id, (data) => ({
+            ...data,
+            status: 'escalated',
+            failureCount: event.failure_count,
+            maxFailures: event.max_failures,
+          }));
+
+        case 'task_rolled_back':
+          return updateTaskData(state, event.task_id, (data) => ({
+            ...data,
+            status: 'failed',
+            rollbackSnapshotId: event.snapshot_id,
+          }));
+
+        // No-op variants — light up at M5 (verify/hook/gap/HITL),
+        // M5–M6 (capability), M9 (budget). The exhaustive default
+        // below is the forcing function: any new variant added to
+        // the schema breaks the compile until handled here.
         case 'session_end':
         case 'tool_error':
-        case 'plan_created':
-        case 'plan_approved':
-        case 'plan_rejected':
-        case 'task_started':
-        case 'task_completed':
-        case 'task_failed':
-        case 'task_rolled_back':
-        case 'task_escalated':
         case 'mode_changed':
         case 'verify_started':
         case 'verify_passed':

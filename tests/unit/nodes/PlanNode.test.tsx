@@ -31,6 +31,9 @@ const baseData: PlanNodeData = {
   status: 'in_progress',
   taskCount: 3,
   completedCount: 1,
+  approvalRequired: false,
+  lastTransitionReason: null,
+  durationMs: null,
 };
 
 describe('PlanNode', () => {

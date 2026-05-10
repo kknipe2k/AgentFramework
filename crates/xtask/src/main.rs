@@ -50,6 +50,8 @@ fn regenerate_types(check: bool) -> Result<()> {
         "agent",
         "event",
         "error",
+        "plan",
+        "task",
     ];
     let mut all_drift = Vec::new();
 
@@ -81,6 +83,8 @@ fn regenerate_types(check: bool) -> Result<()> {
     let ts_targets: Vec<(&str, std::path::PathBuf)> = vec![
         ("agent_event", schemas_dir.join("event.v1.json")),
         ("error", schemas_dir.join("error.v1.json")),
+        ("plan", schemas_dir.join("plan.v1.json")),
+        ("task", schemas_dir.join("task.v1.json")),
     ];
     let ts_targets_refs: Vec<(&str, &std::path::Path)> = ts_targets
         .iter()

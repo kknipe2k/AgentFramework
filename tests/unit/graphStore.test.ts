@@ -220,21 +220,14 @@ describe('graphStore.applyEvent', () => {
   it('every_other_AgentEvent_variant_is_a_safe_no_op', () => {
     // Coverage discipline: assert that every variant the v0.1 schema can
     // emit but the store does NOT surface as nodes leaves the store
-    // unchanged. Stage C lit up session_start (FrameworkNode root) so
-    // it leaves this list; the remaining variants stay no-ops until M4+.
+    // unchanged. M04 Stage B lit up the 11 plan/task variants; this list
+    // shrinks accordingly. Plan/task event coverage lives in the
+    // dedicated test block below.
     useGraphStore.getState().applyEvent(spawnA);
     const before = useGraphStore.getState();
     const noopVariants: AgentEvent[] = [
       { type: 'session_end', session_id: 's1', duration_ms: 100, end_reason: 'ok' },
       { type: 'tool_error', agent_id: 'a1', tool_name: 't', error: 'e' },
-      { type: 'plan_created', plan_id: 'p1', task_count: 3 },
-      { type: 'plan_approved', plan_id: 'p1' },
-      { type: 'plan_rejected', plan_id: 'p1', reason: 'no' },
-      { type: 'task_started', plan_id: 'p1', task_id: 't1', agent_id: 'a1' },
-      { type: 'task_completed', plan_id: 'p1', task_id: 't1', duration_ms: 5 },
-      { type: 'task_failed', plan_id: 'p1', task_id: 't1', error: 'e', failure_count: 1 },
-      { type: 'task_rolled_back', plan_id: 'p1', task_id: 't1', snapshot_id: 'snap' },
-      { type: 'task_escalated', plan_id: 'p1', task_id: 't1', reason: 'r' },
       { type: 'mode_changed', from: 'STANDARD', to: 'PROMOTED', reason: 'r' },
       { type: 'verify_started', hook_id: 'h', level: 'L1' },
       { type: 'verify_passed', hook_id: 'h', duration_ms: 5 },
@@ -259,6 +252,269 @@ describe('graphStore.applyEvent', () => {
     const after = useGraphStore.getState();
     expect(after.nodes).toEqual(before.nodes);
     expect(after.edges).toEqual(before.edges);
+  });
+
+  // ---- M04 Stage B: plan/task event-driven state mutations ----
+
+  it('plan_created_with_approval_required_inserts_PlanNode_pending_approval', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'plan_created',
+      plan_id: 'p1',
+      title: 'Migrate auth',
+      task_count: 3,
+      approval_required: true,
+    });
+    const plan = useGraphStore.getState().nodes.find((n) => n.id === 'plan:p1');
+    expect(plan).toBeDefined();
+    expect(plan?.type).toBe('plan');
+    if (plan?.type === 'plan') {
+      expect(plan.data.status).toBe('pending_approval');
+      expect(plan.data.title).toBe('Migrate auth');
+      expect(plan.data.taskCount).toBe(3);
+      expect(plan.data.approvalRequired).toBe(true);
+    }
+  });
+
+  it('plan_created_without_approval_required_starts_approved', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'plan_created',
+      plan_id: 'p1',
+      title: 'Auto plan',
+      task_count: 1,
+      approval_required: false,
+    });
+    const plan = useGraphStore.getState().nodes.find((n) => n.id === 'plan:p1');
+    if (plan?.type === 'plan') {
+      expect(plan.data.status).toBe('approved');
+    }
+  });
+
+  it('plan_created_is_idempotent_on_duplicate', () => {
+    const e: AgentEvent = {
+      type: 'plan_created',
+      plan_id: 'p1',
+      title: 'T',
+      task_count: 1,
+      approval_required: false,
+    };
+    useGraphStore.getState().applyEvent(e);
+    useGraphStore.getState().applyEvent(e);
+    const planNodes = useGraphStore.getState().nodes.filter((n) => n.id === 'plan:p1');
+    expect(planNodes.length).toBe(1);
+  });
+
+  it('plan_approval_requested_advances_to_awaiting_approval', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'plan_created',
+      plan_id: 'p1',
+      title: 'T',
+      task_count: 1,
+      approval_required: true,
+    });
+    useGraphStore.getState().applyEvent({ type: 'plan_approval_requested', plan_id: 'p1' });
+    const plan = useGraphStore.getState().nodes.find((n) => n.id === 'plan:p1');
+    if (plan?.type === 'plan') {
+      expect(plan.data.status).toBe('awaiting_approval');
+    }
+  });
+
+  it('plan_approved_advances_to_in_progress', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'plan_created',
+      plan_id: 'p1',
+      title: 'T',
+      task_count: 1,
+      approval_required: true,
+    });
+    useGraphStore
+      .getState()
+      .applyEvent({ type: 'plan_approved', plan_id: 'p1', approved_by: 'user' });
+    const plan = useGraphStore.getState().nodes.find((n) => n.id === 'plan:p1');
+    if (plan?.type === 'plan') {
+      expect(plan.data.status).toBe('in_progress');
+    }
+  });
+
+  it('plan_revised_advances_to_awaiting_replan_with_reason', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'plan_created',
+      plan_id: 'p1',
+      title: 'T',
+      task_count: 1,
+      approval_required: false,
+    });
+    useGraphStore
+      .getState()
+      .applyEvent({ type: 'plan_revised', plan_id: 'p1', revision_reason: 'expand scope' });
+    const plan = useGraphStore.getState().nodes.find((n) => n.id === 'plan:p1');
+    if (plan?.type === 'plan') {
+      expect(plan.data.status).toBe('awaiting_replan');
+      expect(plan.data.lastTransitionReason).toBe('expand scope');
+    }
+  });
+
+  it('plan_aborted_carries_reason', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'plan_created',
+      plan_id: 'p1',
+      title: 'T',
+      task_count: 1,
+      approval_required: false,
+    });
+    useGraphStore.getState().applyEvent({ type: 'plan_aborted', plan_id: 'p1', reason: 'cancel' });
+    const plan = useGraphStore.getState().nodes.find((n) => n.id === 'plan:p1');
+    if (plan?.type === 'plan') {
+      expect(plan.data.status).toBe('aborted');
+      expect(plan.data.lastTransitionReason).toBe('cancel');
+    }
+  });
+
+  it('plan_complete_records_duration', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'plan_created',
+      plan_id: 'p1',
+      title: 'T',
+      task_count: 1,
+      approval_required: false,
+    });
+    useGraphStore
+      .getState()
+      .applyEvent({ type: 'plan_complete', plan_id: 'p1', duration_ms: 1234 });
+    const plan = useGraphStore.getState().nodes.find((n) => n.id === 'plan:p1');
+    if (plan?.type === 'plan') {
+      expect(plan.data.status).toBe('complete');
+      expect(plan.data.durationMs).toBe(1234);
+    }
+  });
+
+  it('task_started_inserts_TaskNode_running', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'task_started',
+      plan_id: 'p1',
+      task_id: 't1',
+      agent_id: 'a1',
+    });
+    const task = useGraphStore.getState().nodes.find((n) => n.id === 'task:t1');
+    expect(task).toBeDefined();
+    if (task?.type === 'task') {
+      expect(task.data.status).toBe('running');
+      expect(task.data.agentId).toBe('a1');
+    }
+  });
+
+  it('task_completed_increments_plan_completed_count', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'plan_created',
+      plan_id: 'p1',
+      title: 'T',
+      task_count: 2,
+      approval_required: false,
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'task_started',
+      plan_id: 'p1',
+      task_id: 't1',
+      agent_id: 'a1',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'task_completed',
+      plan_id: 'p1',
+      task_id: 't1',
+      duration_ms: 50,
+    });
+    const task = useGraphStore.getState().nodes.find((n) => n.id === 'task:t1');
+    const plan = useGraphStore.getState().nodes.find((n) => n.id === 'plan:p1');
+    if (task?.type === 'task') {
+      expect(task.data.status).toBe('done');
+      expect(task.data.durationMs).toBe(50);
+    }
+    if (plan?.type === 'plan') {
+      expect(plan.data.completedCount).toBe(1);
+    }
+  });
+
+  it('task_failed_records_failure_count_and_error', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'task_started',
+      plan_id: 'p1',
+      task_id: 't1',
+      agent_id: 'a1',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'task_failed',
+      plan_id: 'p1',
+      task_id: 't1',
+      error: 'boom',
+      failure_count: 2,
+    });
+    const task = useGraphStore.getState().nodes.find((n) => n.id === 'task:t1');
+    if (task?.type === 'task') {
+      expect(task.data.status).toBe('failed');
+      expect(task.data.failureCount).toBe(2);
+      expect(task.data.lastError).toBe('boom');
+    }
+  });
+
+  it('task_skipped_records_reason', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'task_started',
+      plan_id: 'p1',
+      task_id: 't1',
+      agent_id: 'a1',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'task_skipped',
+      plan_id: 'p1',
+      task_id: 't1',
+      reason: 'HITL skip',
+    });
+    const task = useGraphStore.getState().nodes.find((n) => n.id === 'task:t1');
+    if (task?.type === 'task') {
+      expect(task.data.status).toBe('skipped');
+      expect(task.data.lastError).toBe('HITL skip');
+    }
+  });
+
+  it('task_escalated_records_failure_count_and_max', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'task_started',
+      plan_id: 'p1',
+      task_id: 't1',
+      agent_id: 'a1',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'task_escalated',
+      plan_id: 'p1',
+      task_id: 't1',
+      failure_count: 3,
+      max_failures: 3,
+    });
+    const task = useGraphStore.getState().nodes.find((n) => n.id === 'task:t1');
+    if (task?.type === 'task') {
+      expect(task.data.status).toBe('escalated');
+      expect(task.data.failureCount).toBe(3);
+      expect(task.data.maxFailures).toBe(3);
+    }
+  });
+
+  it('task_rolled_back_records_snapshot_id', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'task_started',
+      plan_id: 'p1',
+      task_id: 't1',
+      agent_id: 'a1',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'task_rolled_back',
+      plan_id: 'p1',
+      task_id: 't1',
+      snapshot_id: 'snap-1',
+    });
+    const task = useGraphStore.getState().nodes.find((n) => n.id === 'task:t1');
+    if (task?.type === 'task') {
+      expect(task.data.status).toBe('failed');
+      expect(task.data.rollbackSnapshotId).toBe('snap-1');
+    }
   });
 
   // ---- Stage C: FrameworkNode root + MCP lazy spawn + animated edges ----

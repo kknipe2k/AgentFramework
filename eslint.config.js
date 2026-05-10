@@ -23,6 +23,8 @@ export default tseslint.config(
       // Per CLAUDE.md §14 schemas-as-source-of-truth.
       'src/types/agent_event.ts',
       'src/types/error.ts',
+      'src/types/plan.ts',
+      'src/types/task.ts',
     ],
   },
   js.configs.recommended,

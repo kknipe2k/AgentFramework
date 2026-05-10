@@ -57,6 +57,11 @@ wiremock            = "0.6"
 # runtime-core path-dep for runtime-main + future provider consumers.
 # Version pin avoids the cargo-deny wildcard rule.
 runtime-core        = { path = "crates/runtime-core", version = "0.1.0" }
+# runtime-drone path-dep for runtime-main integration tests that need
+# the drone-side `snapshot::recover_session_state` helper (M04 Stage B
+# plan_recovery.rs). Production callsites stay decoupled through IPC;
+# this is dev-only.
+runtime-drone       = { path = "crates/runtime-drone", version = "0.1.0" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

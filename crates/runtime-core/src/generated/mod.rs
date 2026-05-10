@@ -21,7 +21,13 @@ pub mod error;
 pub mod event;
 /// Types generated from `schemas/framework.v1.json`.
 pub mod framework;
+/// Types generated from `schemas/plan.v1.json` — Plan primitive (spec §3a +
+/// §10). M04 Stage B authored the schema + Plan FSM + projection.
+pub mod plan;
 /// Types generated from `schemas/skill.v1.json`.
 pub mod skill;
+/// Types generated from `schemas/task.v1.json` — Task primitive (spec §3a +
+/// §10). M04 Stage B authored the schema + Task FSM + projection.
+pub mod task;
 /// Types generated from `schemas/tool.v1.json`.
 pub mod tool;

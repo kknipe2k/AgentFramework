@@ -6,14 +6,17 @@
 //! renderer gets spammed with one event per token; with it, one event per
 //! "burst of text" which matches user expectation for streaming UX.
 //!
-//! Decision extraction: when a text bundle flushes, the heuristic in
-//! [`crate::sdk::extract_decision`] runs and emits an
-//! [`AgentEvent::DecisionRecord`] *in addition to* the
-//! [`AgentEvent::StreamText`] (the raw text is always preserved).
+//! Structured emission: when a text bundle flushes, the M04 Stage B
+//! [`crate::sdk::parse_structured`] parser scans for `<<DECISION>>` /
+//! `<<PLAN>>` delimited blocks and emits `AgentEvent::DecisionRecord` /
+//! plan-creation events *in addition to* the [`AgentEvent::StreamText`]
+//! (the raw text is always preserved). M02's line-level
+//! `decision_extractor` heuristic was replaced (closes M02 🟡
+//! false-positive carry-forward).
 
 use runtime_core::event::{AgentEvent, ToolSource};
 
-use super::decision_extractor::extract_decision;
+use super::structured_emitter::{parse_structured, EmitterOutput};
 use crate::providers::ProviderEvent;
 
 /// Stateful translator. Hold one per agent stream; call
@@ -112,13 +115,34 @@ impl EventPipeline {
             return;
         }
         let text = std::mem::take(&mut self.text_buffer);
-        if let Some(d) = extract_decision(&text) {
-            output.push(AgentEvent::DecisionRecord {
-                agent_id: self.agent_id.clone(),
-                decision: d.decision,
-                rationale: d.rationale,
-                tool_used: d.tool_used,
-            });
+        // Structured emitter: extract any well-formed delimited blocks.
+        // Malformed blocks return Err — log + continue (the raw text
+        // still reaches the renderer; downstream just doesn't get a
+        // typed event for the malformed block).
+        match parse_structured(&text) {
+            Ok(outputs) => {
+                for out in outputs {
+                    if let EmitterOutput::Decision {
+                        decision,
+                        rationale,
+                        tool_used,
+                    } = out
+                    {
+                        output.push(AgentEvent::DecisionRecord {
+                            agent_id: self.agent_id.clone(),
+                            decision,
+                            rationale,
+                            tool_used,
+                        });
+                    }
+                    // PlanCreation outputs are surfaced through the
+                    // SDK's plan_loop (Stage B+); the event_pipeline's
+                    // job stops at decision translation.
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "structured emitter parse failed; raw text still forwarded");
+            }
         }
         output.push(AgentEvent::StreamText {
             agent_id: self.agent_id.clone(),

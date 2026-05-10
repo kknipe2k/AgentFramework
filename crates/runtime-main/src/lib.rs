@@ -9,6 +9,8 @@
 
 pub mod drone_ipc;
 pub mod key_store;
+/// Plan + Task primitive — spec §3a (M04 Stage B).
+pub mod plan;
 pub mod providers;
 pub mod sdk;
 

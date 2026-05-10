@@ -313,17 +313,25 @@ pub mod error {
 #[doc = "      \"title\": \"PlanCreated\","]
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"required\": ["]
+#[doc = "        \"approval_required\","]
 #[doc = "        \"plan_id\","]
 #[doc = "        \"task_count\","]
+#[doc = "        \"title\","]
 #[doc = "        \"type\""]
 #[doc = "      ],"]
 #[doc = "      \"properties\": {"]
+#[doc = "        \"approval_required\": {"]
+#[doc = "          \"type\": \"boolean\""]
+#[doc = "        },"]
 #[doc = "        \"plan_id\": {"]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
 #[doc = "        \"task_count\": {"]
 #[doc = "          \"type\": \"integer\","]
 #[doc = "          \"minimum\": 0.0"]
+#[doc = "        },"]
+#[doc = "        \"title\": {"]
+#[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
 #[doc = "        \"type\": {"]
 #[doc = "          \"const\": \"plan_created\""]
@@ -332,7 +340,7 @@ pub mod error {
 #[doc = "      \"additionalProperties\": false"]
 #[doc = "    },"]
 #[doc = "    {"]
-#[doc = "      \"title\": \"PlanApproved\","]
+#[doc = "      \"title\": \"PlanApprovalRequested\","]
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"required\": ["]
 #[doc = "        \"plan_id\","]
@@ -343,13 +351,55 @@ pub mod error {
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
 #[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"plan_approval_requested\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"title\": \"PlanApproved\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"approved_by\","]
+#[doc = "        \"plan_id\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"approved_by\": {"]
+#[doc = "          \"$ref\": \"#/$defs/ApprovedBy\""]
+#[doc = "        },"]
+#[doc = "        \"plan_id\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
 #[doc = "          \"const\": \"plan_approved\""]
 #[doc = "        }"]
 #[doc = "      },"]
 #[doc = "      \"additionalProperties\": false"]
 #[doc = "    },"]
 #[doc = "    {"]
-#[doc = "      \"title\": \"PlanRejected\","]
+#[doc = "      \"title\": \"PlanRevised\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"plan_id\","]
+#[doc = "        \"revision_reason\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"plan_id\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"revision_reason\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"plan_revised\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"title\": \"PlanAborted\","]
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"required\": ["]
 #[doc = "        \"plan_id\","]
@@ -364,7 +414,29 @@ pub mod error {
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
 #[doc = "        \"type\": {"]
-#[doc = "          \"const\": \"plan_rejected\""]
+#[doc = "          \"const\": \"plan_aborted\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"title\": \"PlanComplete\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"duration_ms\","]
+#[doc = "        \"plan_id\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"duration_ms\": {"]
+#[doc = "          \"type\": \"integer\","]
+#[doc = "          \"minimum\": 0.0"]
+#[doc = "        },"]
+#[doc = "        \"plan_id\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"plan_complete\""]
 #[doc = "        }"]
 #[doc = "      },"]
 #[doc = "      \"additionalProperties\": false"]
@@ -451,6 +523,31 @@ pub mod error {
 #[doc = "      \"additionalProperties\": false"]
 #[doc = "    },"]
 #[doc = "    {"]
+#[doc = "      \"title\": \"TaskSkipped\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"plan_id\","]
+#[doc = "        \"reason\","]
+#[doc = "        \"task_id\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"plan_id\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"reason\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"task_id\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"task_skipped\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
 #[doc = "      \"title\": \"TaskRolledBack\","]
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"required\": ["]
@@ -479,16 +576,22 @@ pub mod error {
 #[doc = "      \"title\": \"TaskEscalated\","]
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"required\": ["]
+#[doc = "        \"failure_count\","]
+#[doc = "        \"max_failures\","]
 #[doc = "        \"plan_id\","]
-#[doc = "        \"reason\","]
 #[doc = "        \"task_id\","]
 #[doc = "        \"type\""]
 #[doc = "      ],"]
 #[doc = "      \"properties\": {"]
-#[doc = "        \"plan_id\": {"]
-#[doc = "          \"type\": \"string\""]
+#[doc = "        \"failure_count\": {"]
+#[doc = "          \"type\": \"integer\","]
+#[doc = "          \"minimum\": 0.0"]
 #[doc = "        },"]
-#[doc = "        \"reason\": {"]
+#[doc = "        \"max_failures\": {"]
+#[doc = "          \"type\": \"integer\","]
+#[doc = "          \"minimum\": 1.0"]
+#[doc = "        },"]
+#[doc = "        \"plan_id\": {"]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
 #[doc = "        \"task_id\": {"]
@@ -1050,17 +1153,37 @@ pub enum AgentEvent {
     #[doc = "PlanCreated"]
     #[serde(rename = "plan_created")]
     PlanCreated {
+        approval_required: bool,
         plan_id: ::std::string::String,
         task_count: u64,
+        title: ::std::string::String,
     },
+    #[doc = "PlanApprovalRequested"]
+    #[serde(rename = "plan_approval_requested")]
+    PlanApprovalRequested { plan_id: ::std::string::String },
     #[doc = "PlanApproved"]
     #[serde(rename = "plan_approved")]
-    PlanApproved { plan_id: ::std::string::String },
-    #[doc = "PlanRejected"]
-    #[serde(rename = "plan_rejected")]
-    PlanRejected {
+    PlanApproved {
+        approved_by: ApprovedBy,
+        plan_id: ::std::string::String,
+    },
+    #[doc = "PlanRevised"]
+    #[serde(rename = "plan_revised")]
+    PlanRevised {
+        plan_id: ::std::string::String,
+        revision_reason: ::std::string::String,
+    },
+    #[doc = "PlanAborted"]
+    #[serde(rename = "plan_aborted")]
+    PlanAborted {
         plan_id: ::std::string::String,
         reason: ::std::string::String,
+    },
+    #[doc = "PlanComplete"]
+    #[serde(rename = "plan_complete")]
+    PlanComplete {
+        duration_ms: u64,
+        plan_id: ::std::string::String,
     },
     #[doc = "TaskStarted"]
     #[serde(rename = "task_started")]
@@ -1084,6 +1207,13 @@ pub enum AgentEvent {
         plan_id: ::std::string::String,
         task_id: ::std::string::String,
     },
+    #[doc = "TaskSkipped"]
+    #[serde(rename = "task_skipped")]
+    TaskSkipped {
+        plan_id: ::std::string::String,
+        reason: ::std::string::String,
+        task_id: ::std::string::String,
+    },
     #[doc = "TaskRolledBack"]
     #[serde(rename = "task_rolled_back")]
     TaskRolledBack {
@@ -1094,8 +1224,9 @@ pub enum AgentEvent {
     #[doc = "TaskEscalated"]
     #[serde(rename = "task_escalated")]
     TaskEscalated {
+        failure_count: u64,
+        max_failures: ::std::num::NonZeroU64,
         plan_id: ::std::string::String,
-        reason: ::std::string::String,
         task_id: ::std::string::String,
     },
     #[doc = "ModeChanged"]
@@ -1222,6 +1353,80 @@ pub enum AgentEvent {
         model: ::std::string::String,
         output: u64,
     },
+}
+#[doc = "Source of the plan approval. `user` = HITL approval seam resolved by the renderer; `auto` = framework JSON declared `approval_required: false`."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"ApprovedBy\","]
+#[doc = "  \"description\": \"Source of the plan approval. `user` = HITL approval seam resolved by the renderer; `auto` = framework JSON declared `approval_required: false`.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"user\","]
+#[doc = "    \"auto\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ApprovedBy {
+    #[serde(rename = "user")]
+    User,
+    #[serde(rename = "auto")]
+    Auto,
+}
+impl ::std::fmt::Display for ApprovedBy {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::User => f.write_str("user"),
+            Self::Auto => f.write_str("auto"),
+        }
+    }
+}
+impl ::std::str::FromStr for ApprovedBy {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "user" => Ok(Self::User),
+            "auto" => Ok(Self::Auto),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ApprovedBy {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ApprovedBy {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ApprovedBy {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 #[doc = "Origin of a tool invocation. Spec §0b + §2."]
 #[doc = r""]

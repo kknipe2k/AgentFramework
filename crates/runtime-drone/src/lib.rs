@@ -8,6 +8,11 @@ pub mod command_handler;
 pub mod db;
 pub mod heartbeat;
 pub mod ipc;
+/// Plan + Task projection — drone-internal continuous projector.
+///
+/// Consumes plan/task signals and UPSERTs `plans` + `tasks` rows.
+/// Parallel to [`vdr`] in architecture (M03.E archetype). M04 Stage B.
+pub mod plan_projector;
 pub mod shutdown;
 pub mod snapshot;
 pub mod vdr;

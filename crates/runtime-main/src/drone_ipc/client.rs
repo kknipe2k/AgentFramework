@@ -114,6 +114,42 @@ impl DroneClient {
         result
     }
 
+    /// Write a signal to the drone's `signals` table. Drone-side handler
+    /// runs the projectors (`vdr` for decision/verify; `plan_projector`
+    /// for plan/task) inside the same transaction. Fire-and-forget — no
+    /// response awaited; failures surface as Drone Alerts on the event
+    /// stream. Spec §2b. M04 Stage B (closes M03 🟡 carry-forward).
+    ///
+    /// # Errors
+    ///
+    /// Surfaces [`DroneIpcError::Disconnected`] if the retry budget is
+    /// exhausted; [`DroneIpcError::Json`] on serialization bugs.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn write_signal(
+        &self,
+        signal_id: String,
+        session_id: String,
+        kind: String,
+        event: String,
+        context_type: String,
+        payload: Value,
+    ) -> Result<(), DroneIpcError> {
+        let mut guard = self.inner.lock().await;
+        if guard.is_noop() {
+            return Ok(());
+        }
+        guard
+            .send_with_reconnect(DroneCommand::WriteSignal {
+                signal_id,
+                session_id,
+                kind,
+                event,
+                context_type,
+                payload,
+            })
+            .await
+    }
+
     /// Send a `ReadSignals` command and await the matching `SignalLog`
     /// response. Same skip-and-filter behavior as
     /// [`Self::query_session_db`].

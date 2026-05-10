@@ -8,6 +8,12 @@
       "type": "string",
       "enum": ["builtin", "mcp", "generated"],
       "description": "Origin of a tool invocation. Spec §0b + §2."
+    },
+    "ApprovedBy": {
+      "type": "string",
+      "enum": ["user", "auto"],
+      "title": "ApprovedBy",
+      "description": "Source of the plan approval. `user` = HITL approval seam resolved by the renderer; `auto` = framework JSON declared `approval_required: false`."
     }
   },
   "oneOf": [
@@ -128,32 +134,67 @@
       "type": "object",
       "title": "PlanCreated",
       "additionalProperties": false,
-      "required": ["type", "plan_id", "task_count"],
+      "required": ["type", "plan_id", "title", "task_count", "approval_required"],
       "properties": {
         "type": { "const": "plan_created" },
         "plan_id": { "type": "string" },
-        "task_count": { "type": "integer", "minimum": 0 }
+        "title": { "type": "string" },
+        "task_count": { "type": "integer", "minimum": 0 },
+        "approval_required": { "type": "boolean" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "PlanApprovalRequested",
+      "additionalProperties": false,
+      "required": ["type", "plan_id"],
+      "properties": {
+        "type": { "const": "plan_approval_requested" },
+        "plan_id": { "type": "string" }
       }
     },
     {
       "type": "object",
       "title": "PlanApproved",
       "additionalProperties": false,
-      "required": ["type", "plan_id"],
+      "required": ["type", "plan_id", "approved_by"],
       "properties": {
         "type": { "const": "plan_approved" },
-        "plan_id": { "type": "string" }
+        "plan_id": { "type": "string" },
+        "approved_by": { "$ref": "#/$defs/ApprovedBy" }
       }
     },
     {
       "type": "object",
-      "title": "PlanRejected",
+      "title": "PlanRevised",
+      "additionalProperties": false,
+      "required": ["type", "plan_id", "revision_reason"],
+      "properties": {
+        "type": { "const": "plan_revised" },
+        "plan_id": { "type": "string" },
+        "revision_reason": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "PlanAborted",
       "additionalProperties": false,
       "required": ["type", "plan_id", "reason"],
       "properties": {
-        "type": { "const": "plan_rejected" },
+        "type": { "const": "plan_aborted" },
         "plan_id": { "type": "string" },
         "reason": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "PlanComplete",
+      "additionalProperties": false,
+      "required": ["type", "plan_id", "duration_ms"],
+      "properties": {
+        "type": { "const": "plan_complete" },
+        "plan_id": { "type": "string" },
+        "duration_ms": { "type": "integer", "minimum": 0 }
       }
     },
     {
@@ -195,6 +236,18 @@
     },
     {
       "type": "object",
+      "title": "TaskSkipped",
+      "additionalProperties": false,
+      "required": ["type", "plan_id", "task_id", "reason"],
+      "properties": {
+        "type": { "const": "task_skipped" },
+        "plan_id": { "type": "string" },
+        "task_id": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
       "title": "TaskRolledBack",
       "additionalProperties": false,
       "required": ["type", "plan_id", "task_id", "snapshot_id"],
@@ -209,12 +262,13 @@
       "type": "object",
       "title": "TaskEscalated",
       "additionalProperties": false,
-      "required": ["type", "plan_id", "task_id", "reason"],
+      "required": ["type", "plan_id", "task_id", "failure_count", "max_failures"],
       "properties": {
         "type": { "const": "task_escalated" },
         "plan_id": { "type": "string" },
         "task_id": { "type": "string" },
-        "reason": { "type": "string" }
+        "failure_count": { "type": "integer", "minimum": 0 },
+        "max_failures": { "type": "integer", "minimum": 1 }
       }
     },
     {

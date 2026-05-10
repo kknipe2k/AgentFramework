@@ -32,6 +32,8 @@ proptest           = { workspace = true }
 wiremock           = { workspace = true }
 tempfile           = { workspace = true }
 rusqlite           = { workspace = true, features = ["bundled"] }
+runtime-drone      = { workspace = true }
+uuid               = { workspace = true, features = ["v4", "serde"] }
 
 [features]
 default     = []

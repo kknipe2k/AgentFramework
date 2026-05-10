@@ -27,11 +27,15 @@ export type AgentEvent =
   | ToolError
   | SkillLoaded
   | PlanCreated
+  | PlanApprovalRequested
   | PlanApproved
-  | PlanRejected
+  | PlanRevised
+  | PlanAborted
+  | PlanComplete
   | TaskStarted
   | TaskCompleted
   | TaskFailed
+  | TaskSkipped
   | TaskRolledBack
   | TaskEscalated
   | ModeChanged
@@ -57,6 +61,10 @@ export type AgentEvent =
  * Origin of a tool invocation. Spec §0b + §2.
  */
 export type ToolSource = "builtin" | "mcp" | "generated";
+/**
+ * Source of the plan approval. `user` = HITL approval seam resolved by the renderer; `auto` = framework JSON declared `approval_required: false`.
+ */
+export type ApprovedBy = "user" | "auto";
 
 export interface SessionStart {
   type: "session_start";
@@ -120,16 +128,33 @@ export interface SkillLoaded {
 export interface PlanCreated {
   type: "plan_created";
   plan_id: string;
+  title: string;
   task_count: number;
+  approval_required: boolean;
+}
+export interface PlanApprovalRequested {
+  type: "plan_approval_requested";
+  plan_id: string;
 }
 export interface PlanApproved {
   type: "plan_approved";
   plan_id: string;
+  approved_by: ApprovedBy;
 }
-export interface PlanRejected {
-  type: "plan_rejected";
+export interface PlanRevised {
+  type: "plan_revised";
+  plan_id: string;
+  revision_reason: string;
+}
+export interface PlanAborted {
+  type: "plan_aborted";
   plan_id: string;
   reason: string;
+}
+export interface PlanComplete {
+  type: "plan_complete";
+  plan_id: string;
+  duration_ms: number;
 }
 export interface TaskStarted {
   type: "task_started";
@@ -150,6 +175,12 @@ export interface TaskFailed {
   error: string;
   failure_count: number;
 }
+export interface TaskSkipped {
+  type: "task_skipped";
+  plan_id: string;
+  task_id: string;
+  reason: string;
+}
 export interface TaskRolledBack {
   type: "task_rolled_back";
   plan_id: string;
@@ -160,7 +191,8 @@ export interface TaskEscalated {
   type: "task_escalated";
   plan_id: string;
   task_id: string;
-  reason: string;
+  failure_count: number;
+  max_failures: number;
 }
 export interface ModeChanged {
   type: "mode_changed";

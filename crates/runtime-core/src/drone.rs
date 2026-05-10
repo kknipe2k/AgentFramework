@@ -202,6 +202,29 @@ pub enum DroneCommand {
         /// Session whose signals to return.
         session_id: String,
     },
+    /// Write a signal to the `signals` table. Drone-side handler also
+    /// runs the projectors: `vdr::project_signal` for decision/verify
+    /// signals; `plan_projector::project_signal` for plan/task signals.
+    /// Spec §2b. M04 Stage B (closes M03 🟡 carry-forward "vdr projector
+    /// wired at signal-write call-site").
+    WriteSignal {
+        /// Caller-generated signal UUID.
+        signal_id: String,
+        /// Session this signal belongs to.
+        session_id: String,
+        /// Signal type tag (matches `Signal` discriminator: `tool` /
+        /// `skill` / `agent` / `decision` / `verify` / `error` / `hitl`
+        /// / `session`). Plan/task events are carried under the `agent`
+        /// kind with the `AgentEvent` type embedded in `payload_json.type`.
+        kind: String,
+        /// Free-text event name (e.g., `plan_created`, `task_started`).
+        /// Mirrors the schema's `AgentEvent` variant tag.
+        event: String,
+        /// Optional context tag (matches `ContextType` discriminator).
+        context_type: String,
+        /// Type-erased event payload — the JSON-encoded `AgentEvent`.
+        payload: serde_json::Value,
+    },
 }
 
 /// Activity states the drone tracks.

@@ -298,11 +298,14 @@ fn tool_invoked_carries_builtin_source_default_at_m02() {
     assert_eq!(source, Some(ToolSource::Builtin));
 }
 
-// ── Decision extraction ─────────────────────────────────────────────────
+// ── Decision extraction (M04 Stage B: structured emitter) ──────────────
 
 #[test]
-fn decision_pattern_in_text_emits_decision_record() {
-    let text = "Decision: pick haiku\nRationale: cost-sensitive task";
+fn structured_decision_block_emits_decision_record() {
+    // M04 Stage B replaced M02's line-heuristic decision_extractor with
+    // a delimited-block structured_emitter. The model is expected to
+    // emit decisions inside <<DECISION>>...<<END>> blocks.
+    let text = "<<DECISION>>\nDecision: pick haiku\nRationale: cost-sensitive task\n<<END>>\n";
     let out = run(vec![
         ProviderEvent::TextDelta { text: text.into() },
         ProviderEvent::MessageStop {
@@ -310,8 +313,6 @@ fn decision_pattern_in_text_emits_decision_record() {
             total_tokens: None,
         },
     ]);
-    // Decision extraction emits BOTH DecisionRecord and StreamText (the raw
-    // text is always preserved; the decision is a parallel structured signal).
     let dr = out
         .iter()
         .find_map(|e| match e {
@@ -325,6 +326,30 @@ fn decision_pattern_in_text_emits_decision_record() {
         .expect("DecisionRecord emitted");
     assert_eq!(dr.0, "pick haiku");
     assert_eq!(dr.1, "cost-sensitive task");
+    assert!(out
+        .iter()
+        .any(|e| matches!(e, AgentEvent::StreamText { .. })));
+}
+
+#[test]
+fn unstructured_decision_text_does_not_emit_decision_record() {
+    // M04 Stage B false-positive elimination: `Decision:` text NOT
+    // wrapped in <<DECISION>>...<<END>> must NOT emit a DecisionRecord.
+    // Closes M02 🟡 carry-forward.
+    let text = "Decision: pick haiku\nRationale: cost-sensitive task";
+    let out = run(vec![
+        ProviderEvent::TextDelta { text: text.into() },
+        ProviderEvent::MessageStop {
+            stop_reason: "end_turn".into(),
+            total_tokens: None,
+        },
+    ]);
+    assert!(
+        !out.iter()
+            .any(|e| matches!(e, AgentEvent::DecisionRecord { .. })),
+        "raw Decision: text outside <<DECISION>> block must NOT emit DecisionRecord"
+    );
+    // Raw text still preserved as StreamText.
     assert!(out
         .iter()
         .any(|e| matches!(e, AgentEvent::StreamText { .. })));

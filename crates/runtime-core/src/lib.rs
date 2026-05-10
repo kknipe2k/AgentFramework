@@ -35,4 +35,4 @@ pub use event::{AgentEvent, ToolSource};
 // `CmdError` + `ErrorMessage` are lifted by name (no collision with the
 // hand-curated `RuntimeError` in `error::`).
 pub use generated::error::{CmdError, ErrorMessage};
-pub use generated::{agent, common, framework, skill, tool};
+pub use generated::{agent, common, framework, plan, skill, task, tool};

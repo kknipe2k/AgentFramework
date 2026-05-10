@@ -4,7 +4,7 @@
 //! against the `SQLite` database. Emits `DroneEvent` results on the
 //! broadcast channel. Six command variants per `agent-runtime-spec.md` §1d.
 
-use crate::{snapshot, vdr};
+use crate::{plan_projector, snapshot, vdr};
 use runtime_core::{AlertLevel, DroneCommand, DroneEvent, ProcessConfig, ProcessType};
 use rusqlite::Connection;
 use std::sync::Arc;
@@ -27,6 +27,10 @@ pub enum CommandError {
     /// VDR projection / read-only query error.
     #[error(transparent)]
     Vdr(#[from] vdr::VdrError),
+
+    /// Plan projector error (M04 Stage B).
+    #[error(transparent)]
+    PlanProjector(#[from] plan_projector::PlanProjectorError),
 }
 
 /// Run the command-dispatch loop until `cmd_rx` closes or
@@ -91,9 +95,100 @@ pub async fn run(
             DroneCommand::ReadSignals { session_id } => {
                 handle_read_signals(&conn, &session_id, &event_tx).await;
             }
+            DroneCommand::WriteSignal {
+                signal_id,
+                session_id,
+                kind,
+                event,
+                context_type,
+                payload,
+            } => {
+                handle_write_signal(
+                    &conn,
+                    &signal_id,
+                    &session_id,
+                    &kind,
+                    &event,
+                    &context_type,
+                    &payload,
+                    &event_tx,
+                )
+                .await;
+            }
         }
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn handle_write_signal(
+    conn: &Arc<Mutex<Connection>>,
+    signal_id: &str,
+    session_id: &str,
+    kind: &str,
+    event_name: &str,
+    context_type: &str,
+    payload: &serde_json::Value,
+    event_tx: &broadcast::Sender<DroneEvent>,
+) {
+    let payload_str = serde_json::to_string(payload).unwrap_or_else(|_| "null".to_string());
+    let guard = conn.lock().await;
+    let result: Result<(usize, usize), CommandError> = (|| {
+        guard.execute(
+            "INSERT OR IGNORE INTO signals (\
+                id, session_id, type, event, timestamp, payload_json, context_type\
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                signal_id,
+                session_id,
+                kind,
+                event_name,
+                now_ms_string(),
+                payload_str,
+                context_type,
+            ],
+        )?;
+        // Two projectors: vdr (decision/verify) + plan_projector (plan/task).
+        // Both are idempotent; either may no-op for non-matching kinds /
+        // event types.
+        let vdr_n = match vdr::project_signal(&guard, signal_id) {
+            Ok(n) => n,
+            Err(vdr::VdrError::SignalNotFound(_)) => 0,
+            Err(e) => return Err(CommandError::from(e)),
+        };
+        let plan_n = match plan_projector::project_signal(&guard, signal_id) {
+            Ok(n) => n,
+            Err(plan_projector::PlanProjectorError::SignalNotFound(_)) => 0,
+            Err(e) => return Err(CommandError::from(e)),
+        };
+        Ok((vdr_n, plan_n))
+    })();
+    drop(guard);
+    match result {
+        Ok(_) => {
+            // ACK by emitting an Alert at Warn level with the signal_id —
+            // existing event channel; M04 Stage B keeps the IPC surface
+            // minimal. Future stages may add a typed `SignalWritten`
+            // event variant to DroneEvent.
+            let _ = event_tx.send(DroneEvent::Alert {
+                level: AlertLevel::Warn,
+                message: format!("write_signal ok: {signal_id}"),
+            });
+        }
+        Err(e) => {
+            let _ = event_tx.send(DroneEvent::Alert {
+                level: AlertLevel::Critical,
+                message: format!("write_signal failed for {signal_id}: {e}"),
+            });
+        }
+    }
+}
+
+fn now_ms_string() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or_else(|_| "0".to_string(), |d| d.as_millis().to_string())
 }
 
 async fn handle_query_session_db(
@@ -583,6 +678,172 @@ mod tests {
             .expect("shutdown channel closed");
         assert_eq!(signal, "ipc_graceful");
 
+        let _ = timeout(Duration::from_secs(1), task).await;
+    }
+
+    // ── M04 Stage B: WriteSignal arm ─────────────────────────────────
+
+    async fn drain_until<F>(rx: &mut broadcast::Receiver<DroneEvent>, predicate: F) -> bool
+    where
+        F: Fn(&DroneEvent) -> bool,
+    {
+        for _ in 0..20 {
+            if let Ok(Ok(e)) = timeout(Duration::from_millis(250), rx.recv()).await {
+                if predicate(&e) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn write_signal_persists_to_signals_table() {
+        let (_dir, conn) = open();
+        let (cmd_tx, cmd_rx) = mpsc::channel::<DroneCommand>(8);
+        let (event_tx, mut event_rx) = broadcast::channel::<DroneEvent>(16);
+        let conn_clone = conn.clone();
+        let task = tokio::spawn(run("s1".to_string(), conn_clone, cmd_rx, event_tx, None));
+
+        cmd_tx
+            .send(DroneCommand::WriteSignal {
+                signal_id: "sig-write-1".to_string(),
+                session_id: "s1".to_string(),
+                kind: "agent".to_string(),
+                event: "plan_created".to_string(),
+                context_type: "plan_create".to_string(),
+                payload: serde_json::json!({
+                    "type": "plan_created",
+                    "plan_id": "p1",
+                    "title": "T",
+                    "task_count": 0,
+                    "approval_required": false,
+                }),
+            })
+            .await
+            .expect("send write_signal");
+
+        let acked = drain_until(&mut event_rx, |e| {
+            matches!(e, DroneEvent::Alert { message, .. } if message.contains("write_signal ok"))
+        })
+        .await;
+        assert!(acked, "write_signal must emit ack alert");
+
+        let row_count: i64 = conn
+            .lock()
+            .await
+            .query_row(
+                "SELECT COUNT(*) FROM signals WHERE id = 'sig-write-1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(row_count, 1);
+
+        // Plan_projector should have UPSERTed the plans row.
+        let plan_status: String = conn
+            .lock()
+            .await
+            .query_row(
+                "SELECT status FROM plans WHERE id = 'p1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(plan_status, "approved");
+
+        cmd_tx
+            .send(DroneCommand::GracefulShutdown { timeout_ms: 50 })
+            .await
+            .expect("shutdown");
+        let _ = timeout(Duration::from_secs(1), task).await;
+    }
+
+    #[tokio::test]
+    async fn write_signal_idempotent_on_duplicate_id() {
+        let (_dir, conn) = open();
+        let (cmd_tx, cmd_rx) = mpsc::channel::<DroneCommand>(8);
+        let (event_tx, _event_rx) = broadcast::channel::<DroneEvent>(16);
+        let conn_clone = conn.clone();
+        let task = tokio::spawn(run("s1".to_string(), conn_clone, cmd_rx, event_tx, None));
+
+        let cmd = DroneCommand::WriteSignal {
+            signal_id: "sig-dup".to_string(),
+            session_id: "s1".to_string(),
+            kind: "tool".to_string(),
+            event: "tool_invoked".to_string(),
+            context_type: "tool_invoke".to_string(),
+            payload: serde_json::json!({
+                "type": "tool_invoked",
+                "agent_id": "a1",
+                "tool_name": "Read"
+            }),
+        };
+        cmd_tx.send(cmd.clone()).await.unwrap();
+        cmd_tx.send(cmd).await.unwrap();
+
+        // Wait briefly for both writes to land.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        let count: i64 = conn
+            .lock()
+            .await
+            .query_row(
+                "SELECT COUNT(*) FROM signals WHERE id = 'sig-dup'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "INSERT OR IGNORE → exactly one row");
+
+        cmd_tx
+            .send(DroneCommand::GracefulShutdown { timeout_ms: 50 })
+            .await
+            .unwrap();
+        let _ = timeout(Duration::from_secs(1), task).await;
+    }
+
+    #[tokio::test]
+    async fn write_signal_with_decision_payload_projects_to_vdr() {
+        let (_dir, conn) = open();
+        let (cmd_tx, cmd_rx) = mpsc::channel::<DroneCommand>(8);
+        let (event_tx, _event_rx) = broadcast::channel::<DroneEvent>(16);
+        let conn_clone = conn.clone();
+        let task = tokio::spawn(run("s1".to_string(), conn_clone, cmd_rx, event_tx, None));
+
+        cmd_tx
+            .send(DroneCommand::WriteSignal {
+                signal_id: "sig-dec".to_string(),
+                session_id: "s1".to_string(),
+                kind: "decision".to_string(),
+                event: "decision".to_string(),
+                context_type: "agent_loop".to_string(),
+                payload: serde_json::json!({
+                    "agent_id": "a1",
+                    "decision": "pick haiku",
+                    "rationale": "cost",
+                }),
+            })
+            .await
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        let vdr_count: i64 = conn
+            .lock()
+            .await
+            .query_row(
+                "SELECT COUNT(*) FROM vdr WHERE contributing_signal_id = 'sig-dec'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(vdr_count, 1, "decision signal must project to vdr");
+
+        cmd_tx
+            .send(DroneCommand::GracefulShutdown { timeout_ms: 50 })
+            .await
+            .unwrap();
         let _ = timeout(Duration::from_secs(1), task).await;
     }
 }

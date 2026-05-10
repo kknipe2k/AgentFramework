@@ -1,9 +1,24 @@
-//! `SQLite` setup — WAL pragmas, schema initialization.
+//! `SQLite` setup — WAL pragmas, versioned migration runner.
 //!
-//! Mirrors `agent-runtime-spec.md` §1c (Multi-Session & `SQLite`
-//! Concurrency) and §11 (Persistence Layer DDL). Pragmas are issued in the
-//! order the spec requires: `journal_mode=WAL`, `synchronous=NORMAL`,
-//! `busy_timeout=5000`, `foreign_keys=ON`.
+//! Mirrors `agent-runtime-spec.md` §1c, §11, and §3a + §10.
+//!
+//! Pragmas are issued in the order the spec requires:
+//! `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000`,
+//! `foreign_keys=ON`.
+//!
+//! ## Migration runner architecture (M04 Stage B)
+//!
+//! Migrations live in `crates/runtime-drone/migrations/NNN_<name>.sql`,
+//! embedded at build time via `include_str!` (single-binary deployment;
+//! no runtime filesystem dependency). [`run_migrations`] tracks applied
+//! versions in the `_migrations` table; each migration runs at most once
+//! per database. Adding a new migration:
+//!
+//! 1. Create `migrations/NNN_<name>.sql` with the `CREATE TABLE IF NOT
+//!    EXISTS` content. Choose the next free `NNN`.
+//! 2. Add an entry to the `MIGRATIONS` slice with the same `NNN` + name
+//!    + the `include_str!`'d content.
+//! 3. Add a unit test asserting the migration applies + re-applies cleanly.
 //!
 //! ## Secrets handling for `mcp_servers`
 //!
@@ -32,38 +47,57 @@ pub enum DbError {
     Sqlite(#[from] rusqlite::Error),
 }
 
+/// One migration: a numeric version (lexical / monotonic), a short name
+/// (recorded for forensics), and the SQL body. Embedded at build time.
+struct Migration {
+    version: u32,
+    name: &'static str,
+    sql: &'static str,
+}
+
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 0,
+        name: "initial",
+        sql: include_str!("../migrations/000_initial.sql"),
+    },
+    Migration {
+        version: 1,
+        name: "plans_tasks",
+        sql: include_str!("../migrations/001_plans_tasks.sql"),
+    },
+];
+
 /// Open or create the drone's `SQLite` database at `path`, configure
-/// pragmas, and create the schema if missing.
+/// pragmas, and apply pending migrations.
 ///
-/// The four pragmas are set in the exact order required by spec §1c. The
-/// schema (`sessions`, `snapshots`, `signals`, `heartbeats`, `vdr`,
-/// `token_usage`, `skills`, `mcp_servers`) is created with `IF NOT EXISTS`
-/// so this function is idempotent.
+/// The four pragmas are set in the exact order required by spec §1c.
+/// Migrations are applied via [`run_migrations`] — idempotent across
+/// process restarts.
 ///
 /// # Errors
 ///
 /// Returns `DbError::Sqlite` if the database cannot be opened, the pragmas
-/// cannot be set, or the schema cannot be created.
+/// cannot be set, or any migration fails.
 pub fn init(path: &Path) -> Result<Connection, DbError> {
     let conn = Connection::open(path)?;
     set_pragmas(&conn)?;
-    init_schema(&conn)?;
+    run_migrations(&conn)?;
     Ok(conn)
 }
 
-/// Run the schema-creation step against an already-open `Connection`.
+/// Run all pending migrations against an already-open `Connection`.
 ///
-/// Intended for callers that want to pre-seed an existing database (e.g.
+/// Intended for callers that pre-seed an existing database (e.g.
 /// integration tests that need to write fixture rows BEFORE the drone
-/// subprocess opens the same path). Idempotent over the schema —
-/// `CREATE TABLE IF NOT EXISTS` lets a subsequent `init` call coexist.
+/// subprocess opens the same path). Idempotent: each migration applies
+/// at most once per database, tracked via the `_migrations` table.
 ///
 /// # Errors
 ///
-/// Returns `DbError::Sqlite` if any `CREATE TABLE` / `ALTER TABLE`
-/// fails.
+/// Returns `DbError::Sqlite` if any migration fails.
 pub fn init_in_existing(conn: &Connection) -> Result<(), DbError> {
-    init_schema(conn)
+    run_migrations(conn)
 }
 
 fn set_pragmas(conn: &Connection) -> Result<(), DbError> {
@@ -77,166 +111,68 @@ fn set_pragmas(conn: &Connection) -> Result<(), DbError> {
     Ok(())
 }
 
-fn init_schema(conn: &Connection) -> Result<(), DbError> {
+/// Apply pending migrations in version order; track applied versions in
+/// the `_migrations` table.
+///
+/// Each migration runs in its own transaction so a malformed migration
+/// rolls back cleanly without leaving partial schema state. The
+/// `_migrations` row is `INSERT`ed inside the same transaction; rollback
+/// also rolls back the version-tracking write.
+///
+/// # Errors
+///
+/// Returns `DbError::Sqlite` for any migration that fails (transaction
+/// rolled back; subsequent migrations not attempted).
+pub fn run_migrations(conn: &Connection) -> Result<(), DbError> {
     conn.execute_batch(
-        r"
-        CREATE TABLE IF NOT EXISTS sessions (
-          id TEXT PRIMARY KEY,
-          framework_name TEXT,
-          framework_version TEXT,
-          model TEXT,
-          started_at INTEGER,
-          last_active INTEGER,
-          status TEXT,
-          mode TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS snapshots (
-          id TEXT PRIMARY KEY,
-          session_id TEXT,
-          timestamp INTEGER,
-          event_type TEXT,
-          state_json TEXT,
-          state_hash TEXT,
-          FOREIGN KEY (session_id) REFERENCES sessions(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS signals (
-          id TEXT PRIMARY KEY,
-          session_id TEXT,
-          type TEXT,
-          event TEXT,
-          timestamp TEXT,
-          duration_ms INTEGER,
-          payload_json TEXT,
-          pre_signal_id TEXT,
-          parent_signal_id TEXT,
-          retry_of TEXT,
-          context_type TEXT,
-          FOREIGN KEY (session_id) REFERENCES sessions(id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_signals_session_time ON signals(session_id, timestamp);
-        CREATE INDEX IF NOT EXISTS idx_signals_type ON signals(type);
-        CREATE INDEX IF NOT EXISTS idx_signals_correlation ON signals(pre_signal_id, parent_signal_id, retry_of);
-
-        CREATE TABLE IF NOT EXISTS heartbeats (
-          id TEXT PRIMARY KEY,
-          session_id TEXT,
-          timestamp INTEGER,
-          status TEXT,
-          FOREIGN KEY (session_id) REFERENCES sessions(id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_heartbeats_session_time ON heartbeats(session_id, timestamp);
-
-        CREATE TABLE IF NOT EXISTS vdr (
-          id TEXT PRIMARY KEY,
-          session_id TEXT,
-          agent_id TEXT,
-          timestamp INTEGER,
-          decision TEXT,
-          rationale TEXT,
-          tool_invoked TEXT,
-          tool_input_json TEXT,
-          tool_output_json TEXT,
-          token_cost_usd REAL,
-          outcome TEXT,
-          snapshot_id TEXT,
-          signal_ids TEXT,
-          context_type TEXT,
-          contributing_signal_id TEXT,
-          FOREIGN KEY (session_id) REFERENCES sessions(id),
-          FOREIGN KEY (snapshot_id) REFERENCES snapshots(id)
-        );
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_vdr_contributing_signal
-          ON vdr(contributing_signal_id);
-
-        CREATE TABLE IF NOT EXISTS token_usage (
-          id TEXT PRIMARY KEY,
-          session_id TEXT,
-          agent_id TEXT,
-          timestamp INTEGER,
-          model TEXT,
-          input_tokens INTEGER,
-          output_tokens INTEGER,
-          cost_usd REAL
-        );
-
-        CREATE TABLE IF NOT EXISTS skills (
-          id TEXT PRIMARY KEY,
-          name TEXT,
-          version TEXT,
-          source_url TEXT,
-          installed_at INTEGER,
-          validated INTEGER,
-          skill_md TEXT
-        );
-        ",
+        "CREATE TABLE IF NOT EXISTS _migrations (\
+            version INTEGER PRIMARY KEY,\
+            name TEXT NOT NULL,\
+            applied_at INTEGER NOT NULL\
+        )",
     )?;
 
-    init_mcp_servers(conn)?;
-    Ok(())
-}
+    let applied: std::collections::HashSet<u32> = {
+        let mut stmt = conn.prepare("SELECT version FROM _migrations")?;
+        let rows = stmt.query_map([], |r| r.get::<_, i64>(0))?;
+        let mut set = std::collections::HashSet::new();
+        for row in rows {
+            set.insert(u32::try_from(row?).unwrap_or(u32::MAX));
+        }
+        set
+    };
 
-// 8th table — `mcp_servers`. Per spec §11:2435-2444 + MCP best practice
-// (Claude Code, Claude Desktop, VS Code MCP client schemas). Fields cover:
-// identity, transport-specific config (stdio: command/args/env; remote:
-// url/headers), authentication (with keychain refs — NEVER literal
-// secrets), connection lifecycle, timeouts, scope tracking, and
-// capability caching. Mutual-exclusion CHECK enforces stdio-vs-remote
-// invariant at the SQL level. Schema is stable; M06 wires the MCP client.
-fn init_mcp_servers(conn: &Connection) -> Result<(), DbError> {
-    conn.execute_batch(
-        r"
-        CREATE TABLE IF NOT EXISTS mcp_servers (
-            id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
 
-            name                        TEXT NOT NULL UNIQUE,
-            transport                   TEXT NOT NULL
-                                        CHECK (transport IN ('stdio', 'http', 'sse', 'streamable_http')),
-
-            command                     TEXT,
-            args_json                   TEXT,
-            env_json                    TEXT,
-
-            url                         TEXT,
-            headers_json                TEXT,
-
-            auth_kind                   TEXT
-                                        CHECK (auth_kind IN ('none', 'bearer', 'oauth', 'custom') OR auth_kind IS NULL),
-            auth_token_ref              TEXT,
-            oauth_state_json            TEXT,
-
-            status                      TEXT NOT NULL DEFAULT 'configured'
-                                        CHECK (status IN ('configured', 'connected', 'errored', 'disabled', 'failed')),
-            last_error                  TEXT,
-            last_connected_at           INTEGER,
-            retry_count                 INTEGER NOT NULL DEFAULT 0,
-
-            startup_timeout_ms          INTEGER NOT NULL DEFAULT 10000,
-            tool_timeout_ms             INTEGER NOT NULL DEFAULT 60000,
-
-            enabled                     BOOLEAN NOT NULL DEFAULT 1,
-            scope                       TEXT NOT NULL DEFAULT 'user'
-                                        CHECK (scope IN ('user', 'project', 'plugin', 'local')),
-            plugin_id                   TEXT,
-
-            discovered_tool_count       INTEGER,
-            last_capabilities_refresh   INTEGER,
-
-            added_at                    INTEGER NOT NULL,
-            updated_at                  INTEGER NOT NULL,
-
-            CHECK (
-                (transport = 'stdio' AND command IS NOT NULL AND url IS NULL)
-                OR
-                (transport IN ('http', 'sse', 'streamable_http') AND url IS NOT NULL AND command IS NULL)
-            )
+    for m in MIGRATIONS {
+        if applied.contains(&m.version) {
+            continue;
+        }
+        // Wrap each migration + its tracking insert in a transaction so a
+        // failure rolls back partial schema state. rusqlite's
+        // `execute_batch` does not auto-transaction; we BEGIN/COMMIT
+        // explicitly.
+        conn.execute_batch("BEGIN")?;
+        let body_result = conn.execute_batch(m.sql);
+        if let Err(e) = body_result {
+            // Best-effort rollback. If rollback itself fails (e.g. the
+            // SQL aborted the transaction implicitly), ignore the
+            // secondary error and surface the original failure.
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(DbError::Sqlite(e));
+        }
+        let track = conn.execute(
+            "INSERT INTO _migrations (version, name, applied_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![i64::from(m.version), m.name, now_ms],
         );
-        CREATE INDEX IF NOT EXISTS idx_mcp_servers_status  ON mcp_servers(status);
-        CREATE INDEX IF NOT EXISTS idx_mcp_servers_enabled ON mcp_servers(enabled);
-        CREATE INDEX IF NOT EXISTS idx_mcp_servers_scope   ON mcp_servers(scope);
-        ",
-    )?;
+        if let Err(e) = track {
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(DbError::Sqlite(e));
+        }
+        conn.execute_batch("COMMIT")?;
+    }
     Ok(())
 }
 

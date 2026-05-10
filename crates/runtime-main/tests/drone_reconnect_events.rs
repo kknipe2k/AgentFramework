@@ -215,7 +215,7 @@ async fn old_events_subscription_does_not_observe_post_reconnect_drone() {
     let mut stream_terminated = false;
     while !stream_terminated {
         match timeout(Duration::from_millis(150), old_events.next()).await {
-            Ok(None) | Ok(Some(Err(_))) => stream_terminated = true,
+            Ok(None | Some(Err(_))) => stream_terminated = true,
             Ok(Some(Ok(_))) => {} // pre-kill buffered event; discard
             Err(_) => break,      // pending — stream not yet drained
         }

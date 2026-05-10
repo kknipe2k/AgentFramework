@@ -24,6 +24,21 @@ pub enum ToolSource {
     Generated,
 }
 
+/// Source of a `PlanApproved` event. Spec §3a (approval gate primitive).
+///
+/// `User` indicates the renderer's HITL approval seam resolved the gate.
+/// `Auto` indicates the framework JSON declared `approval_required: false`
+/// — the SDK auto-approves immediately after `plan_created` without ever
+/// emitting `plan_approval_requested`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovedBy {
+    /// HITL approval via the renderer.
+    User,
+    /// Framework-declared auto-approval (no HITL).
+    Auto,
+}
+
 /// The canonical event union emitted by the runtime across all phases.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -137,28 +152,67 @@ pub enum AgentEvent {
     },
 
     // ── Plan / Task lifecycle (spec §3a) ──
-    /// A plan was created.
+    /// A plan was created. M04 Stage B reconciled to spec §3a shape:
+    /// adds `title` + `approval_required`. The `task_*.plan_id`
+    /// denormalization is kept (drift carve-out) so downstream consumers
+    /// (renderer, projector, replay) stay self-contained.
     PlanCreated {
         /// Unique plan identifier.
         plan_id: String,
+        /// Human-readable plan title.
+        title: String,
         /// Number of tasks in the plan.
         task_count: u32,
+        /// When true, plan suspends on `plan_approval_requested` until the
+        /// approval seam resolves. When false, the SDK auto-emits
+        /// `plan_approved { approved_by: 'auto' }` directly.
+        approval_required: bool,
     },
-    /// A plan was approved.
+    /// A plan is awaiting human approval. SDK emits this immediately after
+    /// `plan_created` when `approval_required = true`; the SDK then
+    /// suspends on `ApprovalSeam::await_approval` until the renderer
+    /// resolves it.
+    PlanApprovalRequested {
+        /// The plan awaiting approval.
+        plan_id: String,
+    },
+    /// A plan was approved. M04 Stage B reconciled to spec §3a shape:
+    /// adds `approved_by` (`user` for HITL approval, `auto` when
+    /// `approval_required: false`).
     PlanApproved {
         /// The approved plan.
         plan_id: String,
+        /// Source of the approval.
+        approved_by: ApprovedBy,
     },
-    /// A plan was rejected.
-    PlanRejected {
-        /// The rejected plan.
+    /// A plan was revised. Emitted when the user requests changes via the
+    /// approval seam; the SDK regenerates the plan and re-emits
+    /// `plan_approval_requested`.
+    PlanRevised {
+        /// The revised plan.
         plan_id: String,
-        /// Rejection reason.
+        /// Why the plan was revised (free-text, surfaced in the panel).
+        revision_reason: String,
+    },
+    /// A plan was aborted. Replaces the M03 `plan_rejected` variant per
+    /// spec §3a unification (the renderer treats "user said no" the same
+    /// regardless of whether it was at approval-time or mid-execution).
+    PlanAborted {
+        /// The aborted plan.
+        plan_id: String,
+        /// Free-text reason.
         reason: String,
+    },
+    /// A plan completed (all tasks reached terminal-non-failed).
+    PlanComplete {
+        /// The completed plan.
+        plan_id: String,
+        /// End-to-end plan duration in milliseconds.
+        duration_ms: u64,
     },
     /// A task within a plan started executing.
     TaskStarted {
-        /// The parent plan.
+        /// The parent plan (denormalization drift carve-out).
         plan_id: String,
         /// The task that started.
         task_id: String,
@@ -167,7 +221,7 @@ pub enum AgentEvent {
     },
     /// A task within a plan completed.
     TaskCompleted {
-        /// The parent plan.
+        /// The parent plan (denormalization drift carve-out).
         plan_id: String,
         /// The completed task.
         task_id: String,
@@ -176,7 +230,7 @@ pub enum AgentEvent {
     },
     /// A task within a plan failed.
     TaskFailed {
-        /// The parent plan.
+        /// The parent plan (denormalization drift carve-out).
         plan_id: String,
         /// The failed task.
         task_id: String,
@@ -185,23 +239,40 @@ pub enum AgentEvent {
         /// How many times this task has failed.
         failure_count: u32,
     },
-    /// A task was rolled back to a prior snapshot.
+    /// A task was skipped (e.g., HITL chose to skip after escalation, or
+    /// preconditions weren't met).
+    TaskSkipped {
+        /// The parent plan (denormalization drift carve-out).
+        plan_id: String,
+        /// The skipped task.
+        task_id: String,
+        /// Free-text reason.
+        reason: String,
+    },
+    /// A task was rolled back to a prior snapshot. M04 Stage B keeps this
+    /// as a typed event with `snapshot_id` (drift carve-out vs spec §4a's
+    /// stringly-typed error pattern; CLAUDE.md §9 anti-pattern).
     TaskRolledBack {
-        /// The parent plan.
+        /// The parent plan (denormalization drift carve-out).
         plan_id: String,
         /// The rolled-back task.
         task_id: String,
         /// Snapshot used for rollback.
         snapshot_id: String,
     },
-    /// A task was escalated (e.g., to a human).
+    /// A task was escalated (e.g., to a human). M04 Stage B reconciled to
+    /// spec §3a shape: replaces `reason` with `failure_count` +
+    /// `max_failures` (the FSM emits this once `failure_count >=
+    /// max_failures`).
     TaskEscalated {
-        /// The parent plan.
+        /// The parent plan (denormalization drift carve-out).
         plan_id: String,
         /// The escalated task.
         task_id: String,
-        /// Escalation reason.
-        reason: String,
+        /// How many failures triggered escalation.
+        failure_count: u32,
+        /// Failure budget the task exceeded.
+        max_failures: u32,
     },
 
     // ── Mode (spec §3b) ──

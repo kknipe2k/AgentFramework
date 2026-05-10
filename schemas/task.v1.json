@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aria-runtime.dev/task.v1.json",
+  "title": "Task",
+  "description": "Task primitive — child of a Plan. Spec §3a (Data types) + spec §10 (tasks table DDL). The renderer's TaskNode + projector's tasks table both consume this shape. Failure escalation: when `failure_count >= max_failures`, the SDK emits `task_escalated` (Stage E routes to HITL).",
+  "$defs": {
+    "TaskTitle": {
+      "type": "string",
+      "minLength": 1,
+      "title": "TaskTitle",
+      "description": "Human-readable task title. Non-empty per validation."
+    },
+    "TaskStatus": {
+      "type": "string",
+      "title": "TaskStatus",
+      "enum": ["pending", "running", "done", "failed", "blocked", "skipped", "escalated"],
+      "description": "Task FSM state per spec §3a. Transitions enforced by `runtime_main::plan::state_machine::TaskStateMachine`. Recovery sets currently-running tasks to `pending` (NOT `running`) per spec §1b."
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "plan_id",
+    "title",
+    "status",
+    "hitl",
+    "failure_count",
+    "max_failures",
+    "created_at"
+  ],
+  "properties": {
+    "id": { "type": "string", "description": "Task UUID." },
+    "plan_id": { "type": "string", "description": "Owning Plan UUID." },
+    "title": { "$ref": "#/$defs/TaskTitle" },
+    "status": { "$ref": "#/$defs/TaskStatus" },
+    "hitl": {
+      "type": "boolean",
+      "description": "Whether this task is a HITL checkpoint."
+    },
+    "hitl_reason": {
+      "type": ["string", "null"],
+      "description": "Reason surfaced in the HITL panel (Stage E)."
+    },
+    "failure_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of failed attempts; resets to 0 on retry success."
+    },
+    "max_failures": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Default 3 per spec §3a. Beyond this, the FSM transitions to `escalated`."
+    },
+    "files_affected": {
+      "type": ["array", "null"],
+      "items": { "type": "string" },
+      "description": "Glob patterns the task expects to modify. Stage D rails check this."
+    },
+    "acceptance_criteria": {
+      "type": ["array", "null"],
+      "items": { "type": "string" },
+      "description": "Free-text acceptance criteria. Optional; pure documentation at v0.1."
+    },
+    "created_at": { "type": "integer", "minimum": 0 },
+    "started_at": { "type": ["integer", "null"], "minimum": 0 },
+    "completed_at": { "type": ["integer", "null"], "minimum": 0 },
+    "estimated_minutes": { "type": ["integer", "null"], "minimum": 0 },
+    "actual_minutes": { "type": ["integer", "null"], "minimum": 0 }
+  }
+}

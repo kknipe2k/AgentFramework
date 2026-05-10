@@ -31,6 +31,12 @@ const baseData: TaskNodeData = {
   title: 'Read source files',
   status: 'running',
   hitl: false,
+  agentId: null,
+  failureCount: 0,
+  maxFailures: null,
+  lastError: null,
+  durationMs: null,
+  rollbackSnapshotId: null,
 };
 
 describe('TaskNode', () => {
