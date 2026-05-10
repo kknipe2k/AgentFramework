@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ApprovalPanel } from './components/ApprovalPanel';
 import { GraphCanvas } from './components/GraphCanvas';
 import { InspectorPanel } from './components/InspectorPanel';
 import { SetupPanel } from './components/SetupPanel';
@@ -15,6 +16,27 @@ import { useGraphStore } from './lib/graphStore';
 import './styles.css';
 
 const LAST_SESSION_KEY = 'lastSessionId';
+
+// Renderer-level Playwright affordance — exposes the Zustand store on
+// `window.__graphStore` so `tests/e2e/plan_approval.spec.ts` can drive
+// graph state without spinning up an SDK + Anthropic. Module mocking
+// across the @tauri-apps/api ESM boundary doesn't work in Playwright
+// (Vitest covers the click→invoke linkage); this affordance lets the
+// E2E spec exercise the surface-on-state-change + dismiss-on-state-change
+// flow that only renders correctly inside a real browser layout.
+//
+// Exported unconditionally rather than gated on `import.meta.env.DEV` —
+// the store carries no secrets, the same data is already inspectable via
+// React DevTools, and CLAUDE.md §9 anti-patterns calls out feature-flag
+// shims that don't earn their cost.
+declare global {
+  interface Window {
+    __graphStore?: typeof useGraphStore;
+  }
+}
+if (typeof window !== 'undefined') {
+  window.__graphStore = useGraphStore;
+}
 
 export function App(): JSX.Element {
   const [hasKey, setHasKey] = useState(false);
@@ -84,6 +106,7 @@ export function App(): JSX.Element {
       <div className="graph-layout">
         <GraphCanvas />
         <InspectorPanel />
+        <ApprovalPanel />
       </div>
       <SqlInspector />
     </main>

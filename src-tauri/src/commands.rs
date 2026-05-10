@@ -42,7 +42,9 @@ use runtime_main::drone_ipc::DroneClient;
 use runtime_main::key_store::{read_api_key, write_api_key, KeyStoreError};
 use runtime_main::providers::anthropic::AnthropicProvider;
 use runtime_main::providers::{AgentConfig, ContentBlock, LLMProvider, Message, MessageRole};
-use runtime_main::sdk::{replay_signals_to_events, AgentSdk, SessionId};
+use runtime_main::sdk::{
+    replay_signals_to_events, AgentSdk, ApprovalDecision, ApprovalError, ApprovalSeam, SessionId,
+};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
@@ -273,6 +275,127 @@ where
     }
     tracing::info!(emitted = count, "replay_session finished");
     Ok(())
+}
+
+/// Resolve the in-process [`ApprovalSeam`] with `Approved` for `plan_id`.
+///
+/// Production wrapper: pulls the [`Arc<ApprovalSeam>`] from Tauri-managed
+/// state (registered by the Tauri `setup` hook) and dispatches the
+/// decision to whichever SDK task is awaiting on the seam.
+///
+/// # Errors
+///
+/// - [`CmdError::Internal`] if the seam reports the receiver was already
+///   dropped before the resolution could be delivered (rare; usually means
+///   the awaiting task was cancelled mid-flight).
+///
+/// **Note on no-pending-await:** if no SDK task is currently awaiting on
+/// `plan_id` (e.g., the M04 v0.1 `plan_loop` driver is deferred per Stage B
+/// retro `[LIVE]` ambiguity-events; the renderer can dispatch this command
+/// before any SDK awaiter exists), the command returns `Ok(())` and
+/// warn-logs. Per `CLAUDE.md` §12 user-flow ergonomics: do not 500 the
+/// renderer's click on a soft-state issue.
+#[tauri::command]
+pub async fn approve_plan(
+    plan_id: String,
+    seam: tauri::State<'_, Arc<ApprovalSeam>>,
+) -> Result<(), CmdError> {
+    approve_plan_with(plan_id, seam.inner().as_ref()).await
+}
+
+/// Test-seam for [`approve_plan`] (CLAUDE.md §5 `*_with` archetype).
+///
+/// # Errors
+///
+/// See [`approve_plan`].
+pub async fn approve_plan_with(plan_id: String, seam: &ApprovalSeam) -> Result<(), CmdError> {
+    tracing::info!(plan_id, "approve_plan invoked");
+    resolve_or_log(seam, &plan_id, ApprovalDecision::Approved).await
+}
+
+/// Resolve the in-process [`ApprovalSeam`] with `Revised(revisions)` for
+/// `plan_id`. The renderer's user-typed string is passed through opaque
+/// per CLAUDE.md §8.security; the SDK / framework JSON downstream
+/// validates + sanitizes content before incorporating into a re-prompt.
+///
+/// # Errors
+///
+/// See [`approve_plan`].
+#[tauri::command]
+pub async fn revise_plan(
+    plan_id: String,
+    revisions: String,
+    seam: tauri::State<'_, Arc<ApprovalSeam>>,
+) -> Result<(), CmdError> {
+    revise_plan_with(plan_id, revisions, seam.inner().as_ref()).await
+}
+
+/// Test-seam for [`revise_plan`].
+///
+/// # Errors
+///
+/// See [`approve_plan`].
+pub async fn revise_plan_with(
+    plan_id: String,
+    revisions: String,
+    seam: &ApprovalSeam,
+) -> Result<(), CmdError> {
+    tracing::info!(plan_id, len = revisions.len(), "revise_plan invoked");
+    resolve_or_log(seam, &plan_id, ApprovalDecision::Revised(revisions)).await
+}
+
+/// Resolve the in-process [`ApprovalSeam`] with `Aborted(reason)` for
+/// `plan_id`. The renderer's user-typed reason is passed through opaque
+/// per CLAUDE.md §8.security.
+///
+/// # Errors
+///
+/// See [`approve_plan`].
+#[tauri::command]
+pub async fn abort_plan(
+    plan_id: String,
+    reason: String,
+    seam: tauri::State<'_, Arc<ApprovalSeam>>,
+) -> Result<(), CmdError> {
+    abort_plan_with(plan_id, reason, seam.inner().as_ref()).await
+}
+
+/// Test-seam for [`abort_plan`].
+///
+/// # Errors
+///
+/// See [`approve_plan`].
+pub async fn abort_plan_with(
+    plan_id: String,
+    reason: String,
+    seam: &ApprovalSeam,
+) -> Result<(), CmdError> {
+    tracing::info!(plan_id, len = reason.len(), "abort_plan invoked");
+    resolve_or_log(seam, &plan_id, ApprovalDecision::Aborted(reason)).await
+}
+
+/// Shared resolve-and-log helper for the three approval-flow commands.
+/// Treats `ApprovalError::NotFound` as soft-Ok with a warn-log per the
+/// no-pending-await rationale on [`approve_plan`].
+async fn resolve_or_log(
+    seam: &ApprovalSeam,
+    plan_id: &str,
+    decision: ApprovalDecision,
+) -> Result<(), CmdError> {
+    match seam.resolve(plan_id, decision).await {
+        Ok(()) => {
+            tracing::info!(plan_id, "approval seam resolved");
+            Ok(())
+        }
+        Err(ApprovalError::NotFound(_)) => {
+            tracing::warn!(plan_id, "approval seam had no pending awaiter; soft-Ok");
+            Ok(())
+        }
+        Err(e) => {
+            tracing::error!(plan_id, error = %e, "approval seam resolve failed");
+            Err(CmdError::internal(e.to_string()))
+        }
+    }
 }
 
 fn smoke_config() -> AgentConfig {
@@ -599,5 +722,94 @@ mod tests {
         assert!(cfg.tools.is_empty());
         assert_eq!(cfg.messages.len(), 1);
         assert_eq!(cfg.messages[0].role, MessageRole::User);
+    }
+
+    // ── M04 Stage C: approval-flow Tauri commands ────────────────
+
+    use runtime_main::sdk::{ApprovalDecision, ApprovalSeam};
+
+    /// Spawn the seam's awaiter, wait for it to register, then return the
+    /// join handle so the test can resolve the seam and assert on the
+    /// awaited decision.
+    async fn await_seam(
+        seam: &ApprovalSeam,
+        plan_id: &str,
+    ) -> tokio::task::JoinHandle<ApprovalDecision> {
+        let s = seam.clone();
+        let id = plan_id.to_string();
+        let handle =
+            tokio::spawn(async move { s.await_approval(&id).await.expect("await_approval") });
+        // Spin until the awaiter has registered.
+        for _ in 0..100 {
+            if seam.pending_len().await >= 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        handle
+    }
+
+    #[tokio::test]
+    async fn approve_plan_with_resolves_seam_with_approved_decision() {
+        let seam = ApprovalSeam::new();
+        let awaiter = await_seam(&seam, "p1").await;
+        approve_plan_with("p1".into(), &seam)
+            .await
+            .expect("approve_plan_with");
+        let decision = awaiter.await.expect("join");
+        assert_eq!(decision, ApprovalDecision::Approved);
+    }
+
+    #[tokio::test]
+    async fn approve_plan_with_no_pending_awaiter_returns_ok_with_warn() {
+        // Per CLAUDE.md §12 ergonomics: the SDK plan_loop driver is deferred
+        // to M07 (Stage B retro [LIVE] ambiguity-events), so the renderer
+        // can dispatch approve_plan with no awaiter present. Treat as
+        // soft-Ok (warn-logged) rather than 500 the user's click.
+        let seam = ApprovalSeam::new();
+        let result = approve_plan_with("ghost".into(), &seam).await;
+        assert!(result.is_ok(), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn revise_plan_with_resolves_seam_with_revised_decision_and_text() {
+        let seam = ApprovalSeam::new();
+        let awaiter = await_seam(&seam, "p1").await;
+        revise_plan_with("p1".into(), "expand risks".into(), &seam)
+            .await
+            .expect("revise_plan_with");
+        let decision = awaiter.await.expect("join");
+        match decision {
+            ApprovalDecision::Revised(text) => assert_eq!(text, "expand risks"),
+            other => panic!("expected Revised, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn revise_plan_with_no_pending_awaiter_returns_ok() {
+        let seam = ApprovalSeam::new();
+        let result = revise_plan_with("ghost".into(), "rev".into(), &seam).await;
+        assert!(result.is_ok(), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn abort_plan_with_resolves_seam_with_aborted_decision_and_reason() {
+        let seam = ApprovalSeam::new();
+        let awaiter = await_seam(&seam, "p1").await;
+        abort_plan_with("p1".into(), "wrong scope".into(), &seam)
+            .await
+            .expect("abort_plan_with");
+        let decision = awaiter.await.expect("join");
+        match decision {
+            ApprovalDecision::Aborted(reason) => assert_eq!(reason, "wrong scope"),
+            other => panic!("expected Aborted, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn abort_plan_with_no_pending_awaiter_returns_ok() {
+        let seam = ApprovalSeam::new();
+        let result = abort_plan_with("ghost".into(), "reason".into(), &seam).await;
+        assert!(result.is_ok(), "got {result:?}");
     }
 }

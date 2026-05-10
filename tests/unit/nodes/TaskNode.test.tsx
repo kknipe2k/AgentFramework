@@ -46,7 +46,17 @@ describe('TaskNode', () => {
   });
 
   it('applies_status_class_for_each_status_value', () => {
-    for (const status of ['pending', 'running', 'done', 'blocked', 'failed', 'skipped'] as const) {
+    // Stage C extends to all 7 TaskStatus values per spec §3a, including
+    // `escalated` (M04 Stage B added — failure_count >= max_failures).
+    for (const status of [
+      'pending',
+      'running',
+      'done',
+      'blocked',
+      'failed',
+      'skipped',
+      'escalated',
+    ] as const) {
       const { unmount } = renderTask({ ...baseData, status });
       const root = screen.getByTestId('task-node-t1');
       expect(root.className).toContain(`task-node--${status}`);
@@ -59,6 +69,36 @@ describe('TaskNode', () => {
     renderTask({ ...baseData, hitl: true });
     const root = screen.getByTestId('task-node-t1');
     expect(root.querySelector('.task-node__hitl-badge')).not.toBeNull();
+  });
+
+  it('renders_failure_count_badge_when_failure_count_gt_zero', () => {
+    renderTask({ ...baseData, failureCount: 2, maxFailures: 3, status: 'failed' });
+    const badge = screen.getByTestId('task-node-t1').querySelector('.task-node__failure-badge');
+    expect(badge).not.toBeNull();
+    // Format per spec §3a Visual Design: `⚠ N/M` (or just `⚠ N` when no
+    // budget recorded yet — failure_count without max_failures is the
+    // pre-escalation case).
+    expect(badge!.textContent).toMatch(/2\s*\/\s*3/);
+  });
+
+  it('renders_failure_count_without_denominator_when_max_failures_is_null', () => {
+    renderTask({ ...baseData, failureCount: 1, maxFailures: null, status: 'failed' });
+    const badge = screen.getByTestId('task-node-t1').querySelector('.task-node__failure-badge');
+    expect(badge).not.toBeNull();
+    expect(badge!.textContent).toMatch(/1/);
+    expect(badge!.textContent).not.toMatch(/\//);
+  });
+
+  it('omits_failure_count_badge_when_failure_count_is_zero', () => {
+    renderTask({ ...baseData, failureCount: 0, status: 'running' });
+    const badge = screen.getByTestId('task-node-t1').querySelector('.task-node__failure-badge');
+    expect(badge).toBeNull();
+  });
+
+  it('renders_duration_when_status_is_done', () => {
+    renderTask({ ...baseData, status: 'done', durationMs: 1234 });
+    const root = screen.getByTestId('task-node-t1');
+    expect(root.textContent).toMatch(/1\.[0-9]\s*s/);
   });
 
   it('exposes_accessible_aria_label_with_title_and_status', () => {

@@ -744,11 +744,7 @@ mod tests {
         let plan_status: String = conn
             .lock()
             .await
-            .query_row(
-                "SELECT status FROM plans WHERE id = 'p1'",
-                [],
-                |r| r.get(0),
-            )
+            .query_row("SELECT status FROM plans WHERE id = 'p1'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(plan_status, "approved");
 

@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use drone_lifecycle::DroneLifecycle;
 use runtime_main::drone_ipc::DroneClient;
+use runtime_main::sdk::ApprovalSeam;
 use tauri::{Manager, RunEvent};
 use tokio::sync::Mutex;
 
@@ -29,9 +30,20 @@ fn main() {
             commands::run_smoke_session,
             commands::query_session_db,
             commands::replay_session,
+            commands::approve_plan,
+            commands::revise_plan,
+            commands::abort_plan,
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();
+            // M04 Stage C: register the in-process ApprovalSeam as
+            // managed-state ahead of drone spawn. The seam has no I/O so
+            // construction is infallible — registering early keeps the
+            // Tauri command layer wired even if drone spawn fails (the
+            // approve/revise/abort commands no-op gracefully when no
+            // SDK awaiter is registered, per commands.rs::resolve_or_log).
+            let seam: Arc<ApprovalSeam> = Arc::new(ApprovalSeam::new());
+            app_handle.manage(seam);
             // The setup hook runs on the Tauri main thread; we need an
             // async block for the drone spawn + connect. block_on uses
             // the Tauri runtime that's already configured.

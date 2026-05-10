@@ -33,6 +33,36 @@ export async function invokeReplaySession(sessionId: string): Promise<void> {
   await invoke('replay_session', { sessionId });
 }
 
+/**
+ * Approve a pending plan (M04 Stage C). Resolves the in-process
+ * `ApprovalSeam` (Tauri-managed-state) with `ApprovalDecision::Approved`.
+ * The SDK's awaiting plan_loop wakes and emits `plan_approved`, which
+ * the renderer re-receives via the existing `agent_event` subscription.
+ *
+ * Spec §3a Approval-gate primitive.
+ */
+export async function invokeApprovePlan(planId: string): Promise<void> {
+  await invoke('approve_plan', { planId });
+}
+
+/**
+ * Submit user-typed revisions to a pending plan. The string is passed
+ * through opaque per CLAUDE.md §8.security; the SDK / framework JSON
+ * downstream sanitizes before re-prompting the planner agent.
+ */
+export async function invokeRevisePlan(planId: string, revisions: string): Promise<void> {
+  await invoke('revise_plan', { planId, revisions });
+}
+
+/**
+ * Cancel a pending plan with a free-text reason. Resolves the seam
+ * with `ApprovalDecision::Aborted` so the SDK's awaiting plan_loop
+ * unblocks and emits `plan_aborted`.
+ */
+export async function invokeAbortPlan(planId: string, reason: string): Promise<void> {
+  await invoke('abort_plan', { planId, reason });
+}
+
 export async function subscribeAgentEvents(
   handler: (event: AgentEvent) => void,
 ): Promise<UnlistenFn> {

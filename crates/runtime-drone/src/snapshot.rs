@@ -445,10 +445,7 @@ mod tests {
             }),
         );
         let r = recover_session_state(&conn, "s1").expect("recover");
-        assert_eq!(
-            r.uncertain_tool_invocations,
-            vec!["sig-invoke".to_string()]
-        );
+        assert_eq!(r.uncertain_tool_invocations, vec!["sig-invoke".to_string()]);
     }
 
     #[test]
