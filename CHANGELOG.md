@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M04 Stage G (Phase Closeout — gap analysis + parent-milestone summary)
+
+Final stage of M04. Documentation-only; no code changes. Per CLAUDE.md §20:
+
+- **`docs/gap-analysis.md`** — appended the immutable M04 entry. Cumulative
+  product↔spec audit across M01 + M02 + M03 + M03.5 + M04. Six sections per
+  the entry template (Codebase deep dive; Adherence to spec; Spec review
+  forward-looking; Fix backlog; Carry-forward from prior milestones; Sign-off)
+  plus the second-of-its-kind `<gotchas_graduation>` subsection covering 42
+  per-stage gotchas + friction events across A1–F with disposition (12
+  resolved, 23 graduated, 7 kept, 0 expired). M02 + M03 carry-forward final
+  disposition recorded; M03.5 carry-forwards (v1.3 protocol tags + 12
+  docs/gotchas.md graduations) all applied; v1.4 protocol candidates surfaced
+  (`<architecture_check>` + `<schema_audit>` + `<schema_root_check>` +
+  `<phase_doc_inventory_audit>` + `<safety_primitive_coverage_path>`).
+- **`docs/build-prompts/retrospectives/M04-summary.md`** — new parent-milestone
+  roll-up aggregating M04.A1–F retrospectives. Aggregate scoring (Process
+  38.43/40, Product 37.43/40, Pattern 29.57/35); time-box accuracy (~0.55×
+  mean ratio, ~20h actual against 36h estimated); cross-stage trends; verdict
+  `Pattern held across M04`. Decisions to apply before M05 enumerated.
+- **CHANGELOG.md** — this entry.
+
+Append-only invariant verified: `git show origin/main:docs/gap-analysis.md`
+diff against the head N lines of the local file returns empty (prior M01 +
+M02 + M03 entries unchanged).
+
 ### Added — M04 Stage F (§2a Budget + §1b Recovery — cost controls + resume from snapshot)
 
 Seventh stage of M04. Bundles two primitives in one stage: §2a Budget (3 scopes
