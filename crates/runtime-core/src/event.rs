@@ -287,12 +287,20 @@ pub enum AgentEvent {
     },
 
     // ── Verify + Rails (spec §4a) ──
-    /// A verification hook started.
+    /// A verification hook started. Spec §4a `hook_started`; the codebase
+    /// retains the `verify_*` variant naming per M04.D audit decision (the
+    /// Hook *primitive* in `common.v1.json` keeps "hook" terminology;
+    /// the *event variants* stay as `verify_*` per existing convention).
     VerifyStarted {
-        /// Hook identifier.
+        /// Hook identifier (matches `Hook.id` in framework JSON).
         hook_id: String,
-        /// Verification level.
-        level: String,
+        /// Hook category — `verify | lint | build | test | custom`.
+        category: String,
+        /// Lifecycle moment that fired this hook (one of the 7 firing
+        /// points in `framework.v1.json` `hooks`).
+        firing_point: String,
+        /// Optional verification grouping — `quick | standard | full`.
+        level: Option<String>,
     },
     /// A verification hook passed.
     VerifyPassed {
@@ -300,22 +308,34 @@ pub enum AgentEvent {
         hook_id: String,
         /// Verification duration in milliseconds.
         duration_ms: u64,
+        /// Optional preview of the hook's stdout (truncated; spec §4a).
+        output_preview: Option<String>,
     },
     /// A verification hook failed.
     VerifyFailed {
         /// Hook identifier.
         hook_id: String,
+        /// Verification duration in milliseconds.
+        duration_ms: u64,
         /// Error description.
         error: String,
+        /// `on_failure` policy from the framework JSON — `block | warn |
+        /// rollback`. Drives the SDK / drone follow-up: rollback dispatches
+        /// `DroneCommand::RevertToSnapshot { reason: HookRollback }`.
+        on_failure: String,
     },
     /// A rail was triggered.
     RailTriggered {
         /// Rail identifier.
         rail_id: String,
-        /// Severity level.
-        severity: String,
+        /// Rail policy — `hard` (block) or `soft` (warn). Spec §4a.
+        policy: String,
+        /// Firing point that produced this trigger.
+        firing_point: String,
         /// Human-readable message.
         message: String,
+        /// Agent that attempted the action (when applicable).
+        agent_id: Option<String>,
     },
 
     // ── Gap detection (spec §4b) ──

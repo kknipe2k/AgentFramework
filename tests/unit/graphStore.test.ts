@@ -229,10 +229,9 @@ describe('graphStore.applyEvent', () => {
       { type: 'session_end', session_id: 's1', duration_ms: 100, end_reason: 'ok' },
       { type: 'tool_error', agent_id: 'a1', tool_name: 't', error: 'e' },
       { type: 'mode_changed', from: 'STANDARD', to: 'PROMOTED', reason: 'r' },
-      { type: 'verify_started', hook_id: 'h', level: 'L1' },
-      { type: 'verify_passed', hook_id: 'h', duration_ms: 5 },
-      { type: 'verify_failed', hook_id: 'h', error: 'e' },
-      { type: 'rail_triggered', rail_id: 'r', severity: 'warn', message: 'm' },
+      // verify_started / verify_passed / verify_failed / rail_triggered
+      // moved to dedicated tests below — M04 Stage D wires them to live
+      // VerifyNode/HookNode + triggeredRails state.
       { type: 'skill_missing', agent_id: 'a1', skill_name: 's', severity: 'warn' },
       { type: 'tool_missing', agent_id: 'a1', tool_name: 't', severity: 'block' },
       { type: 'gap_resolved', agent_id: 'a1', capability: 'c', kind: 'k' },
@@ -727,5 +726,235 @@ describe('graphStore.applyEvent', () => {
     expect(tool.data).toMatchObject({ tokensIn: 0, tokensOut: 0 });
     const agent = useGraphStore.getState().nodes.find((n) => n.id === 'agent:a1')!;
     expect(agent.data).toMatchObject({ tokensIn: 0, tokensOut: 0 });
+  });
+
+  // ── M04 Stage D: verify / hook / rail event-driven mutations (spec §4a) ──
+
+  it('verify_started_with_verify_category_inserts_VerifyNode_active', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'verify_started',
+      hook_id: 'verify',
+      category: 'verify',
+      firing_point: 'post_task',
+      level: 'standard',
+    });
+    const node = useGraphStore.getState().nodes.find((n) => n.id === 'verify:verify');
+    expect(node).toBeDefined();
+    expect(node?.type).toBe('verify');
+    expect(node?.data).toMatchObject({
+      hookId: 'verify',
+      level: 'standard',
+      firingPoint: 'post_task',
+      status: 'active',
+      durationMs: null,
+      outputPreview: null,
+      error: null,
+      onFailure: null,
+    });
+  });
+
+  it('verify_started_with_non_verify_category_inserts_HookNode_active', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'verify_started',
+      hook_id: 'lint',
+      category: 'lint',
+      firing_point: 'post_file_edit',
+      level: null,
+    });
+    const node = useGraphStore.getState().nodes.find((n) => n.id === 'hook:lint');
+    expect(node).toBeDefined();
+    expect(node?.type).toBe('hook');
+    expect(node?.data).toMatchObject({
+      hookId: 'lint',
+      hookName: 'lint',
+      category: 'lint',
+      firingPoint: 'post_file_edit',
+      status: 'active',
+      durationMs: null,
+      error: null,
+    });
+  });
+
+  it('verify_passed_transitions_VerifyNode_to_pass_with_duration_and_preview', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'verify_started',
+      hook_id: 'verify',
+      category: 'verify',
+      firing_point: 'post_task',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'verify_passed',
+      hook_id: 'verify',
+      duration_ms: 1234,
+      output_preview: 'Tests passed',
+    });
+    const node = useGraphStore.getState().nodes.find((n) => n.id === 'verify:verify');
+    expect(node?.data).toMatchObject({
+      status: 'pass',
+      durationMs: 1234,
+      outputPreview: 'Tests passed',
+    });
+  });
+
+  it('verify_failed_transitions_VerifyNode_to_fail_with_error_and_on_failure', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'verify_started',
+      hook_id: 'verify',
+      category: 'verify',
+      firing_point: 'post_task',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'verify_failed',
+      hook_id: 'verify',
+      duration_ms: 800,
+      error: 'verify.sh exited 1',
+      on_failure: 'rollback',
+    });
+    const node = useGraphStore.getState().nodes.find((n) => n.id === 'verify:verify');
+    expect(node?.data).toMatchObject({
+      status: 'fail',
+      durationMs: 800,
+      error: 'verify.sh exited 1',
+      onFailure: 'rollback',
+    });
+  });
+
+  it('verify_passed_for_non_verify_hook_transitions_HookNode_to_complete', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'verify_started',
+      hook_id: 'lint',
+      category: 'lint',
+      firing_point: 'post_file_edit',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'verify_passed',
+      hook_id: 'lint',
+      duration_ms: 50,
+    });
+    const node = useGraphStore.getState().nodes.find((n) => n.id === 'hook:lint');
+    expect(node?.data).toMatchObject({ status: 'complete', durationMs: 50 });
+  });
+
+  it('verify_failed_for_non_verify_hook_transitions_HookNode_to_error', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'verify_started',
+      hook_id: 'lint',
+      category: 'lint',
+      firing_point: 'post_file_edit',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'verify_failed',
+      hook_id: 'lint',
+      duration_ms: 30,
+      error: 'lint warnings: 12',
+      on_failure: 'warn',
+    });
+    const node = useGraphStore.getState().nodes.find((n) => n.id === 'hook:lint');
+    expect(node?.data).toMatchObject({
+      status: 'error',
+      durationMs: 30,
+      error: 'lint warnings: 12',
+    });
+  });
+
+  it('verify_started_re_emit_for_same_hook_id_resets_to_active', () => {
+    // Lock idempotence + re-fire semantics: re-emitting verify_started
+    // for the same hook_id (e.g., retry after rollback) updates status
+    // back to active and clears duration/error fields.
+    useGraphStore.getState().applyEvent({
+      type: 'verify_started',
+      hook_id: 'verify',
+      category: 'verify',
+      firing_point: 'post_task',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'verify_failed',
+      hook_id: 'verify',
+      duration_ms: 100,
+      error: 'first attempt failed',
+      on_failure: 'rollback',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'verify_started',
+      hook_id: 'verify',
+      category: 'verify',
+      firing_point: 'post_task',
+    });
+    const verifyCount = useGraphStore
+      .getState()
+      .nodes.filter((n) => n.id === 'verify:verify').length;
+    expect(verifyCount).toBe(1);
+    const node = useGraphStore.getState().nodes.find((n) => n.id === 'verify:verify');
+    expect(node?.data).toMatchObject({
+      status: 'active',
+      durationMs: null,
+      error: null,
+      onFailure: null,
+    });
+  });
+
+  it('rail_triggered_appends_to_triggeredRails_state', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'rail_triggered',
+      rail_id: 'no_secrets',
+      policy: 'hard',
+      firing_point: 'pre_commit',
+      message: 'Secret detected',
+      agent_id: 'a1',
+    });
+    const rails = useGraphStore.getState().triggeredRails;
+    expect(rails).toHaveLength(1);
+    expect(rails[0]).toMatchObject({
+      railId: 'no_secrets',
+      policy: 'hard',
+      firingPoint: 'pre_commit',
+      message: 'Secret detected',
+      agentId: 'a1',
+    });
+  });
+
+  it('rail_triggered_without_agent_id_records_null', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'rail_triggered',
+      rail_id: 'dont_touch',
+      policy: 'hard',
+      firing_point: 'pre_file_edit',
+      message: '.env matches dont_touch glob: .env*',
+    });
+    expect(useGraphStore.getState().triggeredRails[0]).toMatchObject({ agentId: null });
+  });
+
+  it('rail_triggered_appends_in_order_for_multiple_emits', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'rail_triggered',
+      rail_id: 'r1',
+      policy: 'soft',
+      firing_point: 'post_file_edit',
+      message: '1',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'rail_triggered',
+      rail_id: 'r2',
+      policy: 'hard',
+      firing_point: 'pre_commit',
+      message: '2',
+    });
+    const rails = useGraphStore.getState().triggeredRails;
+    expect(rails).toHaveLength(2);
+    expect(rails.map((r) => r.railId)).toEqual(['r1', 'r2']);
+  });
+
+  it('clear_resets_triggeredRails_along_with_nodes_and_edges', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'rail_triggered',
+      rail_id: 'r1',
+      policy: 'soft',
+      firing_point: 'post_file_edit',
+      message: 'm',
+    });
+    useGraphStore.getState().clear();
+    expect(useGraphStore.getState().triggeredRails).toEqual([]);
+    expect(useGraphStore.getState().nodes).toEqual([]);
+    expect(useGraphStore.getState().edges).toEqual([]);
   });
 });

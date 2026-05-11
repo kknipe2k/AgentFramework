@@ -632,16 +632,26 @@ pub mod error {
 #[doc = "      \"title\": \"VerifyStarted\","]
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"required\": ["]
+#[doc = "        \"category\","]
+#[doc = "        \"firing_point\","]
 #[doc = "        \"hook_id\","]
-#[doc = "        \"level\","]
 #[doc = "        \"type\""]
 #[doc = "      ],"]
 #[doc = "      \"properties\": {"]
+#[doc = "        \"category\": {"]
+#[doc = "          \"$ref\": \"#/$defs/HookCategoryRef\""]
+#[doc = "        },"]
+#[doc = "        \"firing_point\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
 #[doc = "        \"hook_id\": {"]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
 #[doc = "        \"level\": {"]
-#[doc = "          \"type\": \"string\""]
+#[doc = "          \"type\": ["]
+#[doc = "            \"string\","]
+#[doc = "            \"null\""]
+#[doc = "          ]"]
 #[doc = "        },"]
 #[doc = "        \"type\": {"]
 #[doc = "          \"const\": \"verify_started\""]
@@ -665,6 +675,12 @@ pub mod error {
 #[doc = "        \"hook_id\": {"]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
+#[doc = "        \"output_preview\": {"]
+#[doc = "          \"type\": ["]
+#[doc = "            \"string\","]
+#[doc = "            \"null\""]
+#[doc = "          ]"]
+#[doc = "        },"]
 #[doc = "        \"type\": {"]
 #[doc = "          \"const\": \"verify_passed\""]
 #[doc = "        }"]
@@ -675,16 +691,25 @@ pub mod error {
 #[doc = "      \"title\": \"VerifyFailed\","]
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"required\": ["]
+#[doc = "        \"duration_ms\","]
 #[doc = "        \"error\","]
 #[doc = "        \"hook_id\","]
+#[doc = "        \"on_failure\","]
 #[doc = "        \"type\""]
 #[doc = "      ],"]
 #[doc = "      \"properties\": {"]
+#[doc = "        \"duration_ms\": {"]
+#[doc = "          \"type\": \"integer\","]
+#[doc = "          \"minimum\": 0.0"]
+#[doc = "        },"]
 #[doc = "        \"error\": {"]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
 #[doc = "        \"hook_id\": {"]
 #[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"on_failure\": {"]
+#[doc = "          \"$ref\": \"#/$defs/OnFailureRef\""]
 #[doc = "        },"]
 #[doc = "        \"type\": {"]
 #[doc = "          \"const\": \"verify_failed\""]
@@ -696,19 +721,29 @@ pub mod error {
 #[doc = "      \"title\": \"RailTriggered\","]
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"required\": ["]
+#[doc = "        \"firing_point\","]
 #[doc = "        \"message\","]
+#[doc = "        \"policy\","]
 #[doc = "        \"rail_id\","]
-#[doc = "        \"severity\","]
 #[doc = "        \"type\""]
 #[doc = "      ],"]
 #[doc = "      \"properties\": {"]
+#[doc = "        \"agent_id\": {"]
+#[doc = "          \"type\": ["]
+#[doc = "            \"string\","]
+#[doc = "            \"null\""]
+#[doc = "          ]"]
+#[doc = "        },"]
+#[doc = "        \"firing_point\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
 #[doc = "        \"message\": {"]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
-#[doc = "        \"rail_id\": {"]
-#[doc = "          \"type\": \"string\""]
+#[doc = "        \"policy\": {"]
+#[doc = "          \"$ref\": \"#/$defs/RailPolicy\""]
 #[doc = "        },"]
-#[doc = "        \"severity\": {"]
+#[doc = "        \"rail_id\": {"]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
 #[doc = "        \"type\": {"]
@@ -1239,27 +1274,37 @@ pub enum AgentEvent {
     #[doc = "VerifyStarted"]
     #[serde(rename = "verify_started")]
     VerifyStarted {
+        category: HookCategoryRef,
+        firing_point: ::std::string::String,
         hook_id: ::std::string::String,
-        level: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        level: ::std::option::Option<::std::string::String>,
     },
     #[doc = "VerifyPassed"]
     #[serde(rename = "verify_passed")]
     VerifyPassed {
         duration_ms: u64,
         hook_id: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        output_preview: ::std::option::Option<::std::string::String>,
     },
     #[doc = "VerifyFailed"]
     #[serde(rename = "verify_failed")]
     VerifyFailed {
+        duration_ms: u64,
         error: ::std::string::String,
         hook_id: ::std::string::String,
+        on_failure: OnFailureRef,
     },
     #[doc = "RailTriggered"]
     #[serde(rename = "rail_triggered")]
     RailTriggered {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        agent_id: ::std::option::Option<::std::string::String>,
+        firing_point: ::std::string::String,
         message: ::std::string::String,
+        policy: RailPolicy,
         rail_id: ::std::string::String,
-        severity: ::std::string::String,
     },
     #[doc = "SkillMissing"]
     #[serde(rename = "skill_missing")]
@@ -1421,6 +1466,248 @@ impl ::std::convert::TryFrom<&::std::string::String> for ApprovedBy {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for ApprovedBy {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Hook category — spec §4a. Mirrors common.v1.json HookCategory; embedded in verify_started events."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"HookCategoryRef\","]
+#[doc = "  \"description\": \"Hook category — spec §4a. Mirrors common.v1.json HookCategory; embedded in verify_started events.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"verify\","]
+#[doc = "    \"lint\","]
+#[doc = "    \"build\","]
+#[doc = "    \"test\","]
+#[doc = "    \"custom\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum HookCategoryRef {
+    #[serde(rename = "verify")]
+    Verify,
+    #[serde(rename = "lint")]
+    Lint,
+    #[serde(rename = "build")]
+    Build,
+    #[serde(rename = "test")]
+    Test,
+    #[serde(rename = "custom")]
+    Custom,
+}
+impl ::std::fmt::Display for HookCategoryRef {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Verify => f.write_str("verify"),
+            Self::Lint => f.write_str("lint"),
+            Self::Build => f.write_str("build"),
+            Self::Test => f.write_str("test"),
+            Self::Custom => f.write_str("custom"),
+        }
+    }
+}
+impl ::std::str::FromStr for HookCategoryRef {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "verify" => Ok(Self::Verify),
+            "lint" => Ok(Self::Lint),
+            "build" => Ok(Self::Build),
+            "test" => Ok(Self::Test),
+            "custom" => Ok(Self::Custom),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for HookCategoryRef {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for HookCategoryRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for HookCategoryRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Hook on_failure policy — spec §4a. Mirrors common.v1.json HookOnFailure; embedded in verify_failed events."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"OnFailureRef\","]
+#[doc = "  \"description\": \"Hook on_failure policy — spec §4a. Mirrors common.v1.json HookOnFailure; embedded in verify_failed events.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"block\","]
+#[doc = "    \"warn\","]
+#[doc = "    \"rollback\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum OnFailureRef {
+    #[serde(rename = "block")]
+    Block,
+    #[serde(rename = "warn")]
+    Warn,
+    #[serde(rename = "rollback")]
+    Rollback,
+}
+impl ::std::fmt::Display for OnFailureRef {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Block => f.write_str("block"),
+            Self::Warn => f.write_str("warn"),
+            Self::Rollback => f.write_str("rollback"),
+        }
+    }
+}
+impl ::std::str::FromStr for OnFailureRef {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "block" => Ok(Self::Block),
+            "warn" => Ok(Self::Warn),
+            "rollback" => Ok(Self::Rollback),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for OnFailureRef {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for OnFailureRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for OnFailureRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Rail policy — spec §4a. Hard rails block; soft rails warn."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"RailPolicy\","]
+#[doc = "  \"description\": \"Rail policy — spec §4a. Hard rails block; soft rails warn.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"hard\","]
+#[doc = "    \"soft\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum RailPolicy {
+    #[serde(rename = "hard")]
+    Hard,
+    #[serde(rename = "soft")]
+    Soft,
+}
+impl ::std::fmt::Display for RailPolicy {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Hard => f.write_str("hard"),
+            Self::Soft => f.write_str("soft"),
+        }
+    }
+}
+impl ::std::str::FromStr for RailPolicy {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "hard" => Ok(Self::Hard),
+            "soft" => Ok(Self::Soft),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for RailPolicy {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for RailPolicy {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for RailPolicy {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,

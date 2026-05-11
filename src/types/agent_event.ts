@@ -65,6 +65,18 @@ export type ToolSource = "builtin" | "mcp" | "generated";
  * Source of the plan approval. `user` = HITL approval seam resolved by the renderer; `auto` = framework JSON declared `approval_required: false`.
  */
 export type ApprovedBy = "user" | "auto";
+/**
+ * Hook category — spec §4a. Mirrors common.v1.json HookCategory; embedded in verify_started events.
+ */
+export type HookCategoryRef = "verify" | "lint" | "build" | "test" | "custom";
+/**
+ * Hook on_failure policy — spec §4a. Mirrors common.v1.json HookOnFailure; embedded in verify_failed events.
+ */
+export type OnFailureRef = "block" | "warn" | "rollback";
+/**
+ * Rail policy — spec §4a. Hard rails block; soft rails warn.
+ */
+export type RailPolicy = "hard" | "soft";
 
 export interface SessionStart {
   type: "session_start";
@@ -203,23 +215,30 @@ export interface ModeChanged {
 export interface VerifyStarted {
   type: "verify_started";
   hook_id: string;
-  level: string;
+  category: HookCategoryRef;
+  firing_point: string;
+  level?: string | null;
 }
 export interface VerifyPassed {
   type: "verify_passed";
   hook_id: string;
   duration_ms: number;
+  output_preview?: string | null;
 }
 export interface VerifyFailed {
   type: "verify_failed";
   hook_id: string;
+  duration_ms: number;
   error: string;
+  on_failure: OnFailureRef;
 }
 export interface RailTriggered {
   type: "rail_triggered";
   rail_id: string;
-  severity: string;
+  policy: RailPolicy;
+  firing_point: string;
   message: string;
+  agent_id?: string | null;
 }
 export interface SkillMissing {
   type: "skill_missing";

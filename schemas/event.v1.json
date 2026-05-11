@@ -14,6 +14,24 @@
       "enum": ["user", "auto"],
       "title": "ApprovedBy",
       "description": "Source of the plan approval. `user` = HITL approval seam resolved by the renderer; `auto` = framework JSON declared `approval_required: false`."
+    },
+    "HookCategoryRef": {
+      "type": "string",
+      "enum": ["verify", "lint", "build", "test", "custom"],
+      "title": "HookCategoryRef",
+      "description": "Hook category — spec §4a. Mirrors common.v1.json HookCategory; embedded in verify_started events."
+    },
+    "OnFailureRef": {
+      "type": "string",
+      "enum": ["block", "warn", "rollback"],
+      "title": "OnFailureRef",
+      "description": "Hook on_failure policy — spec §4a. Mirrors common.v1.json HookOnFailure; embedded in verify_failed events."
+    },
+    "RailPolicy": {
+      "type": "string",
+      "enum": ["hard", "soft"],
+      "title": "RailPolicy",
+      "description": "Rail policy — spec §4a. Hard rails block; soft rails warn."
     }
   },
   "oneOf": [
@@ -287,11 +305,13 @@
       "type": "object",
       "title": "VerifyStarted",
       "additionalProperties": false,
-      "required": ["type", "hook_id", "level"],
+      "required": ["type", "hook_id", "category", "firing_point"],
       "properties": {
         "type": { "const": "verify_started" },
         "hook_id": { "type": "string" },
-        "level": { "type": "string" }
+        "category": { "$ref": "#/$defs/HookCategoryRef" },
+        "firing_point": { "type": "string" },
+        "level": { "type": ["string", "null"] }
       }
     },
     {
@@ -302,30 +322,35 @@
       "properties": {
         "type": { "const": "verify_passed" },
         "hook_id": { "type": "string" },
-        "duration_ms": { "type": "integer", "minimum": 0 }
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "output_preview": { "type": ["string", "null"] }
       }
     },
     {
       "type": "object",
       "title": "VerifyFailed",
       "additionalProperties": false,
-      "required": ["type", "hook_id", "error"],
+      "required": ["type", "hook_id", "duration_ms", "error", "on_failure"],
       "properties": {
         "type": { "const": "verify_failed" },
         "hook_id": { "type": "string" },
-        "error": { "type": "string" }
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "error": { "type": "string" },
+        "on_failure": { "$ref": "#/$defs/OnFailureRef" }
       }
     },
     {
       "type": "object",
       "title": "RailTriggered",
       "additionalProperties": false,
-      "required": ["type", "rail_id", "severity", "message"],
+      "required": ["type", "rail_id", "policy", "firing_point", "message"],
       "properties": {
         "type": { "const": "rail_triggered" },
         "rail_id": { "type": "string" },
-        "severity": { "type": "string" },
-        "message": { "type": "string" }
+        "policy": { "$ref": "#/$defs/RailPolicy" },
+        "firing_point": { "type": "string" },
+        "message": { "type": "string" },
+        "agent_id": { "type": ["string", "null"] }
       }
     },
     {

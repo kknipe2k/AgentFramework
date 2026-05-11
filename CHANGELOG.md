@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M04 Stage D (§4a Verify & Rails primitive — Hook executor + JSONLogic-evaluated rails + don't-touch + revert_to_snapshot)
+
+Fifth stage of M04. Builds the §4a Verify & Rails primitive end-to-end. Hook executor (shell|tool|agent variants × 7 firing points) + Rails (hard/soft + JSONLogic operator allowlist per gotcha #18) + globset-backed don't-touch glob matcher (new `pre_file_edit` firing point) + drone-side `RevertToSnapshot` handler extended to consume `RevertReason::HookRollback { hook_id }`. VerifyNode + HookNode upgrade from M03.C synthetic-state stubs to live-event-driven; rail_triggered events accumulate into a new `triggeredRails` store field for M05 capability-enforcer surface.
+
+**Audit-grounded scope reductions vs. the original phase doc draft:**
+- The phase doc planned a new `schemas/hook.v1.json`. Audit verified `Hook`, `HookRef`, `HookCategory`, `HookOnFailure`, `JsonLogicExpression` are ALREADY declared in `common.v1.json` and generated to `runtime_core::generated::common`; `Rail` is in `framework.v1.json`. Stage D consumes the existing types — no new schema file.
+- The phase doc's planned new `hook_started`/`hook_passed`/`hook_failed` events would have duplicated the existing `verify_started`/`verify_passed`/`verify_failed` variants. Stage D extends the existing variant fields per spec §4a rather than re-authoring (audit gotcha decision).
+- The Write-tool dispatcher integration site (`runtime-main/src/sdk/`) does not exist in v0.1 — the SDK drives LLM streaming + structured-emitter parsing only. Stage D ships `DontTouchEvaluator` as a callable primitive that the future capability enforcer (M05) and plan loop (M07) will route through; the evaluator itself is fully tested standalone.
+
+**New artifacts:**
+- **`crates/runtime-main/src/hooks/`** (new module) — five files:
+  - `mod.rs` — re-exports + module documentation.
+  - `shell.rs` — cross-platform shell wrapper. Windows uses `powershell.exe -NoProfile -Command "<command>"` (Windows PowerShell 5.1; pwsh.exe was unavailable on the M04.D build machine — documented retro decision); Linux/macOS uses `bash -c "<command>"`. Flag spelling + semantics verified verbatim against Microsoft's `about_PowerShell_exe` reference (M04.D WEBCHECK). Testable seam `execute_shell_with(spawner, ...)` accepts a `ShellSpawner` trait for unit tests; production `execute_shell` is the OS-spawn wrapper excluded from coverage gates per the M02/A2 wrapper-vs-seam pattern. Timeout via `tokio::time::timeout` + `kill_on_drop(true)`.
+  - `executor.rs` — single entry point `execute_hook(hook, ctx, deps)` returning `HookOutcome::Passed { hook_id, duration_ms, output_preview? }` or `HookOutcome::Failed { hook_id, duration_ms, error, on_failure }`. Output-preview truncated at `OUTPUT_PREVIEW_MAX_BYTES = 512` with UTF-8-boundary-safe slicing. Tool / Agent variants surface as `HookError::DeferredVariant("tool:<name>")` / `("agent:<id>")` until M05 / M07 wire those dispatch paths.
+  - `rails.rs` — JSONLogic evaluator. Operator allowlist locked to the gotcha #18 set (`var, ==, !=, <, <=, >, >=, and, or, not, in, +, -, *, /`). Operators outside the allowlist return `RailError::UnsupportedOperator`; missing `var` paths return `RailError::MissingVar`; division by zero → `RailError::Malformed`. `evaluate_rail(check, facts) -> RailOutcome::Triggered | Quiet` is the rail-evaluation surface; truthy table locks `Bool(false) | Null | 0 | "" | [] | {}` as falsy.
+  - `dont_touch.rs` — `DontTouchEvaluator::new(patterns)` + `evaluate(path) -> DontTouchDecision::Allow | Block { matched_pattern }`. Globset-backed; case-insensitive matching for cross-platform consistency (Windows FS doesn't care about case; Linux does — runtime stays consistent regardless of host OS). Pattern recovery via `GlobSet::matches` index. Multi-glob match: first-by-index wins (single emit). Empty pattern list returns Allow for every path.
+- **`crates/runtime-main/tests/hook_integration.rs`** (new) — full lifecycle integration test (pure-Rust, no real subprocess). Covers: post_task hook passes → `HookOutcome::Passed`; post_task hook fails with on_failure=rollback → `HookOutcome::Failed { on_failure: Rollback }` (the SDK uses `hook_id` to dispatch `RevertReason::HookRollback` to the drone); post_file_edit lint hook with on_failure=warn → no rollback flag; `RevertReason::HookRollback { hook_id }` round-trips serde correctly; `RevertReason::UserRollback` + `GapRecovery` stay unit-shape per audit decision.
+
+**Schema edits:**
+- `schemas/event.v1.json`:
+  - `verify_started` extended: `category` (HookCategoryRef enum) + `firing_point` (string) required; `level` made optional + nullable. Spec §4a `hook_started` field set adopted.
+  - `verify_passed` extended: optional nullable `output_preview`.
+  - `verify_failed` extended: `duration_ms` + `on_failure` (OnFailureRef enum) required.
+  - `rail_triggered`: `severity` field renamed to `policy` (RailPolicy enum hard|soft) per spec §4a; `firing_point` (string) required + `agent_id` optional nullable added.
+  - Three new shared $defs: `HookCategoryRef`, `OnFailureRef`, `RailPolicy` (typify panics on inline enum properties — pattern follows `ApprovedBy` from M04 Stage B).
+- `schemas/framework.v1.json` — `pre_file_edit` added to the `hooks` object as the 7th firing point (spec §4a).
+- `crates/runtime-core/src/event.rs` (hand-curated) — mirrored to match schema.
+- `crates/runtime-core/src/drone.rs` (hand-curated) — `RevertReason::HookRollback` migrated from unit variant to `HookRollback { hook_id: String }` per spec §4a; serde tag changed to `kind` (was implicit untagged) for forward compatibility with downstream variants. The audit baseline check (M04.D pre-flight) confirmed the variant existed; the field addition is the additive edit the audit gotcha called out.
+- `crates/runtime-drone/src/command_handler.rs` — `handle_revert` extended to consume `&RevertReason`. Reason string in the emitted `SnapshotWritten` event now carries the variant (e.g., `"revert:hook_rollback:verify"` for HookRollback; `"revert:user_rollback"` / `"revert:gap_recovery"` for the unit variants). The actual `task_failed` emit per spec §4a happens at the SDK side (M07 plan loop) — drone's role is limited to confirming the snapshot exists.
+
+**Renderer:**
+- `src/lib/graphStore.ts` — four formerly-no-op event cases (`verify_started`/`passed`/`failed` + `rail_triggered`) now drive live state. `verify_started` with `category === 'verify'` creates/updates a VerifyNode (id `verify:<hook_id>`); other categories create/update a HookNode (id `hook:<hook_id>`). `verify_passed`/`failed` update whichever node type exists for that hook_id. `rail_triggered` appends to a new `triggeredRails: TriggeredRail[]` store field (cleared by `clear()`); M05 surfaces them in the capability-enforcer UI. Idempotent re-emit: re-emitting `verify_started` for the same hook_id resets to `active` + clears duration/error fields (retry-after-rollback path). VerifyNodeData extended with `firingPoint`, `outputPreview`, `error`, `onFailure`; HookNodeData extended with `firingPoint`, `durationMs`, `error`. Existing exhaustive `_exhaustive: never` switch held — TS compiler errors on any new schema variant per gotcha #36.
+- `src/components/nodes/VerifyNode.tsx` + `HookNode.tsx` — render the new fields. VerifyNode shows `outputPreview` on `pass`, `error` + `onFailure` badge (block/warn/rollback color) on `fail`. HookNode shows `error` on `error` status. Both nodes expose `data-firing-point` for E2E selectors.
+- `src/types/agent_event.ts` (regen) — three new types `HookCategoryRef`, `OnFailureRef`, `RailPolicy` exported alongside extended `VerifyStarted` / `VerifyPassed` / `VerifyFailed` / `RailTriggered` interfaces.
+
+**Spec edit (in-stage, < 5 lines):**
+- `agent-runtime-spec.md` §4a firing-point table — `pre_file_edit` row added between `post_task` and `post_file_edit` with description "Built-in `dont_touch` rail interception" matching the M04.D scope.
+
+**Tests:**
+- 4 new `crates/runtime-main/src/hooks/` modules with inline unit tests (~50 cases total): shell.rs covers SpawnArgs construction across platforms + dispatch + propagation; dont_touch.rs covers empty/matched/unmatched/recursive/multi-glob/case-insensitive/invalid-glob; rails.rs covers all 15 allowlisted operators + nested expressions + literal pass-through + truthy table; executor.rs covers shell pass/fail per on_failure variant + tool/agent deferred + output preview truncation (ASCII + UTF-8 boundary).
+- `crates/runtime-main/tests/hook_integration.rs` (7 cases) — full lifecycle.
+- `tests/unit/graphStore.test.ts` extended with 11 new cases for verify/hook/rail event flows (verify-vs-non-verify routing; pass/fail field carry; idempotent re-emit; rail accumulation; clear() reset).
+- `tests/unit/nodes/VerifyNode.test.tsx` + `HookNode.test.tsx` extended for new fields (output preview, error+on_failure badge, firing-point data attribute, level-null omission).
+
+**Coverage targets (per CLAUDE.md §5 safety-primitive gate):**
+- `crates/runtime-main/src/hooks/` collectively ≥95% via per-module unit tests (the executor's shell-spawn path is covered via the `*_with` seam against a fake spawner; the production `TokioShellSpawner::spawn` real-OS wrapper is the OS-spawn holdout per the M02/A2 precedent).
+- workspace ≥80%, runtime-main ≥95%, runtime-drone ≥95% maintained.
+
 ### Added — M04 Stage C (§3a Plan UI + ApprovalPanel + graph wiring — renderer surface for plan/task events)
 
 Fourth stage of M04. Wires Stage B's plan/task event surface to the renderer. The non-modal `ApprovalPanel` resolves Stage B's `ApprovalSeam` via three new Tauri commands; PlanNode + TaskNode upgrade from synthetic-state stubs to live-driven visual treatments. One technical-best-practice decision documented: the seam is resolved in-process (the seam is `tokio::sync::oneshot`-backed and lives in `runtime-main`; cross-process oneshots don't exist), not via drone IPC as the phase doc text suggested. Per CLAUDE.md §12 own-technical-decisions; the architectural mismatch is documented in the M04.C retrospective.

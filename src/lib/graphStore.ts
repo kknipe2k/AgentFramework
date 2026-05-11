@@ -1,6 +1,6 @@
 import type { Edge, Node } from '@xyflow/react';
 import { create } from 'zustand';
-import type { AgentEvent } from '../types/agent_event';
+import type { AgentEvent, HookCategoryRef, OnFailureRef, RailPolicy } from '../types/agent_event';
 
 /**
  * Status field shared by Agent / Tool / MCP / Hook / Framework / Verify
@@ -38,8 +38,10 @@ export type TaskStatus =
   | 'escalated';
 
 /**
- * Verify-hook status per spec §4a. The verify_passed/verify_failed
- * events land at M4; Stage C renders synthetic placeholder data.
+ * Verify-hook status per spec §4a. M04 Stage D wires the live event
+ * stream — `active` on verify_started, `pass` on verify_passed, `fail`
+ * on verify_failed (the M03.C synthetic-state pattern remains for
+ * tests that drive the renderer in isolation).
  */
 export type VerifyStatus = 'active' | 'pass' | 'fail';
 
@@ -164,25 +166,54 @@ export interface TaskNodeData extends Record<string, unknown> {
 }
 
 /**
- * VerifyNode — spec §3 + §4a. Synthetic placeholder fields until M4
- * adds verify_started / verify_passed / verify_failed wiring.
+ * VerifyNode — spec §3 + §4a. M04 Stage D drives live state from
+ * verify_started / verify_passed / verify_failed events for hooks
+ * with `category === 'verify'`. Other categories route to HookNode.
  */
 export interface VerifyNodeData extends Record<string, unknown> {
   hookId: string;
-  level: string;
+  /** `quick | standard | full` if the framework set a level. */
+  level: string | null;
+  /** Lifecycle moment the hook fired (e.g., `post_task`). */
+  firingPoint: string;
   status: VerifyStatus;
   durationMs: number | null;
+  /** Captured stdout preview from verify_passed (truncated upstream). */
+  outputPreview: string | null;
+  /** Failure message from verify_failed. */
+  error: string | null;
+  /** `block | warn | rollback` from verify_failed. */
+  onFailure: OnFailureRef | null;
 }
 
 /**
- * HookNode — spec §3 + §4a. Synthetic placeholder until M4 adds the
- * hook-fired primitive.
+ * HookNode — spec §3 + §4a. Generic hook surface for non-verify
+ * categories (`lint | build | test | custom`). M04 Stage D drives
+ * live state from verify_started / verify_passed / verify_failed.
  */
 export interface HookNodeData extends Record<string, unknown> {
   hookId: string;
   hookName: string;
-  category: string;
+  category: HookCategoryRef;
+  /** Lifecycle moment the hook fired. */
+  firingPoint: string;
   status: NodeStatus;
+  durationMs: number | null;
+  error: string | null;
+}
+
+/**
+ * Triggered rail entry — spec §4a. Driven by `rail_triggered` events.
+ * Stored on the store rather than as a node since rails are
+ * cross-cutting policy events; M05 wires them into the capability
+ * enforcer's UI surface.
+ */
+export interface TriggeredRail {
+  railId: string;
+  policy: RailPolicy;
+  firingPoint: string;
+  message: string;
+  agentId: string | null;
 }
 
 /**
@@ -233,6 +264,12 @@ interface GraphState {
   nodes: GraphNode[];
   edges: GraphEdge[];
   selectedNodeId: string | null;
+  /**
+   * Spec §4a: the full triggered-rail history for the current session.
+   * M04 Stage D wires `rail_triggered` events into this list; M05
+   * surfaces them in the capability-enforcer UI. Append-only.
+   */
+  triggeredRails: TriggeredRail[];
 
   /**
    * Single entry point for translating AgentEvent into node + edge
@@ -329,10 +366,49 @@ function updateTaskData(
   };
 }
 
+/**
+ * Stack hook nodes vertically below the task layer (y=180 lane). M04.D
+ * keeps positioning naive — actual hook→task linking lands when the
+ * SDK's plan loop wires hooks to specific tasks (M07).
+ */
+function nextHookPosition(existing: GraphNode[]): { x: number; y: number } {
+  const hookCount = existing.filter((n) => n.type === 'hook' || n.type === 'verify').length;
+  return { x: hookCount * 160, y: 320 };
+}
+
+function updateVerifyData(
+  state: GraphState,
+  hookId: string,
+  updater: (data: VerifyNodeData) => VerifyNodeData,
+): GraphState {
+  const target = `verify:${hookId}`;
+  return {
+    ...state,
+    nodes: state.nodes.map((n) =>
+      n.id === target && n.type === 'verify' ? { ...n, data: updater(n.data) } : n,
+    ),
+  };
+}
+
+function updateHookData(
+  state: GraphState,
+  hookId: string,
+  updater: (data: HookNodeData) => HookNodeData,
+): GraphState {
+  const target = `hook:${hookId}`;
+  return {
+    ...state,
+    nodes: state.nodes.map((n) =>
+      n.id === target && n.type === 'hook' ? { ...n, data: updater(n.data) } : n,
+    ),
+  };
+}
+
 export const useGraphStore = create<GraphState>((set) => ({
   nodes: [],
   edges: [],
   selectedNodeId: null,
+  triggeredRails: [],
 
   applyEvent: (event) =>
     set((state) => {
@@ -712,17 +788,135 @@ export const useGraphStore = create<GraphState>((set) => ({
             rollbackSnapshotId: event.snapshot_id,
           }));
 
-        // No-op variants — light up at M5 (verify/hook/gap/HITL),
-        // M5–M6 (capability), M9 (budget). The exhaustive default
-        // below is the forcing function: any new variant added to
-        // the schema breaks the compile until handled here.
+        // ── Verify / Hook / Rail (spec §4a; M04 Stage D) ──
+        // verify_started: spawn a VerifyNode (`category === 'verify'`)
+        // or HookNode (other categories), keyed by hook_id. Idempotent
+        // on re-emit — re-emitting verify_started for the same hook_id
+        // updates the existing node's status back to active.
+
+        case 'verify_started': {
+          if (event.category === 'verify') {
+            const id = `verify:${event.hook_id}`;
+            const exists = state.nodes.some((n) => n.id === id);
+            if (exists) {
+              return updateVerifyData(state, event.hook_id, (data) => ({
+                ...data,
+                status: 'active',
+                firingPoint: event.firing_point,
+                level: event.level ?? null,
+                durationMs: null,
+                outputPreview: null,
+                error: null,
+                onFailure: null,
+              }));
+            }
+            const newNode: VerifyReactFlowNode = {
+              id,
+              type: 'verify',
+              position: nextHookPosition(state.nodes),
+              data: {
+                hookId: event.hook_id,
+                level: event.level ?? null,
+                firingPoint: event.firing_point,
+                status: 'active',
+                durationMs: null,
+                outputPreview: null,
+                error: null,
+                onFailure: null,
+              },
+            };
+            return { ...state, nodes: [...state.nodes, newNode] };
+          }
+          const id = `hook:${event.hook_id}`;
+          const exists = state.nodes.some((n) => n.id === id);
+          if (exists) {
+            return updateHookData(state, event.hook_id, (data) => ({
+              ...data,
+              status: 'active',
+              firingPoint: event.firing_point,
+              category: event.category,
+              durationMs: null,
+              error: null,
+            }));
+          }
+          const newNode: HookReactFlowNode = {
+            id,
+            type: 'hook',
+            position: nextHookPosition(state.nodes),
+            data: {
+              hookId: event.hook_id,
+              hookName: event.hook_id,
+              category: event.category,
+              firingPoint: event.firing_point,
+              status: 'active',
+              durationMs: null,
+              error: null,
+            },
+          };
+          return { ...state, nodes: [...state.nodes, newNode] };
+        }
+
+        case 'verify_passed': {
+          // The event payload doesn't carry category; both VerifyNode
+          // (verify category) and HookNode (other categories) are
+          // candidates. Update whichever exists for this hook_id.
+          const verifyTarget = `verify:${event.hook_id}`;
+          if (state.nodes.some((n) => n.id === verifyTarget)) {
+            return updateVerifyData(state, event.hook_id, (data) => ({
+              ...data,
+              status: 'pass',
+              durationMs: event.duration_ms,
+              outputPreview: event.output_preview ?? null,
+            }));
+          }
+          return updateHookData(state, event.hook_id, (data) => ({
+            ...data,
+            status: 'complete',
+            durationMs: event.duration_ms,
+          }));
+        }
+
+        case 'verify_failed': {
+          const verifyTarget = `verify:${event.hook_id}`;
+          if (state.nodes.some((n) => n.id === verifyTarget)) {
+            return updateVerifyData(state, event.hook_id, (data) => ({
+              ...data,
+              status: 'fail',
+              durationMs: event.duration_ms,
+              error: event.error,
+              onFailure: event.on_failure,
+            }));
+          }
+          return updateHookData(state, event.hook_id, (data) => ({
+            ...data,
+            status: 'error',
+            durationMs: event.duration_ms,
+            error: event.error,
+          }));
+        }
+
+        case 'rail_triggered':
+          return {
+            ...state,
+            triggeredRails: [
+              ...state.triggeredRails,
+              {
+                railId: event.rail_id,
+                policy: event.policy,
+                firingPoint: event.firing_point,
+                message: event.message,
+                agentId: event.agent_id ?? null,
+              },
+            ],
+          };
+
+        // No-op variants — light up at M5 (gap/capability), M9 (budget),
+        // future stages. The exhaustive default below is the forcing
+        // function: any new variant added to the schema breaks the
+        // compile until handled here.
         case 'session_end':
         case 'tool_error':
         case 'mode_changed':
-        case 'verify_started':
-        case 'verify_passed':
-        case 'verify_failed':
-        case 'rail_triggered':
         case 'skill_missing':
         case 'tool_missing':
         case 'gap_resolved':
@@ -746,7 +940,7 @@ export const useGraphStore = create<GraphState>((set) => ({
       }
     }),
 
-  clear: () => set({ nodes: [], edges: [], selectedNodeId: null }),
+  clear: () => set({ nodes: [], edges: [], selectedNodeId: null, triggeredRails: [] }),
 
   selectNode: (id) => set({ selectedNodeId: id }),
 }));

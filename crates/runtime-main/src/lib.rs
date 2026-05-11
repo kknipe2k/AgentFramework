@@ -8,6 +8,11 @@
 //! - [`key_store`] — OS-keychain-backed Anthropic API key storage (M02 Stage E).
 
 pub mod drone_ipc;
+/// Verify & Rails primitive — spec §4a (M04 Stage D).
+///
+/// Hook executor + `JSONLogic`-evaluated rails + globset-backed
+/// don't-touch matcher + cross-platform shell wrapper.
+pub mod hooks;
 pub mod key_store;
 /// Plan + Task primitive — spec §3a (M04 Stage B).
 pub mod plan;

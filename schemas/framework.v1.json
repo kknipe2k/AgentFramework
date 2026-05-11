@@ -139,6 +139,7 @@
       "properties": {
         "pre_task":         { "type": "array", "items": { "$ref": "common.v1.json#/$defs/Hook" } },
         "post_task":        { "type": "array", "items": { "$ref": "common.v1.json#/$defs/Hook" } },
+        "pre_file_edit":    { "type": "array", "items": { "$ref": "common.v1.json#/$defs/Hook" } },
         "post_file_edit":   { "type": "array", "items": { "$ref": "common.v1.json#/$defs/Hook" } },
         "pre_commit":       { "type": "array", "items": { "$ref": "common.v1.json#/$defs/Hook" } },
         "pre_agent_spawn":  { "type": "array", "items": { "$ref": "common.v1.json#/$defs/Hook" } },

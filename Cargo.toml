@@ -54,6 +54,11 @@ keyring             = { version = "3.6", default-features = false, features = ["
 # Latest 0.6.x; takes the http-1.x types compatible with reqwest 0.13.
 wiremock            = "0.6"
 
+# M04 Stage D — globset-backed don't-touch matcher (spec §4a). 0.4.x ships
+# `GlobBuilder::case_insensitive` + `GlobSet::matches` returning matched
+# pattern indices for pattern-recovery on hard-rail emit.
+globset             = "0.4"
+
 # runtime-core path-dep for runtime-main + future provider consumers.
 # Version pin avoids the cargo-deny wildcard rule.
 runtime-core        = { path = "crates/runtime-core", version = "0.1.0" }

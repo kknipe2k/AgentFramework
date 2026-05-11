@@ -284,11 +284,20 @@ pub enum AlertLevel {
 }
 
 /// Reasons for reverting to a snapshot.
+///
+/// `HookRollback` carries the firing hook's id so the SDK / drone can emit
+/// `task_failed { error: "rolled_back_after_hook_<hook_id>" }` per spec §4a.
+/// `UserRollback` and `GapRecovery` stay unit-shape — neither needs a payload
+/// at v0.1 (user-driven revert ships in M07; gap recovery in M05).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RevertReason {
     /// A verification hook triggered a rollback.
-    HookRollback,
+    HookRollback {
+        /// Firing hook's `id` from the framework JSON. Drives the
+        /// downstream `task_failed.error` string.
+        hook_id: String,
+    },
     /// The user requested a rollback.
     UserRollback,
     /// Gap recovery required reverting state.

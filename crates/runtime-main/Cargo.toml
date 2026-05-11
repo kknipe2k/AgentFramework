@@ -25,6 +25,7 @@ tokio-util         = { workspace = true, features = ["codec"] }
 uuid               = { workspace = true, features = ["v4", "serde"] }
 thiserror          = { workspace = true }
 tracing            = { workspace = true }
+globset            = { workspace = true }
 
 [dev-dependencies]
 tokio              = { workspace = true, features = ["test-util", "macros", "rt-multi-thread", "net", "io-util", "process"] }

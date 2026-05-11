@@ -1760,6 +1760,7 @@ Hook firing points (in `framework.hooks`):
 |---|---|---|
 | `pre_task` | Before each task starts | Pre-flight checks, setup |
 | `post_task` | After each task completes (success or fail) | **Verify pipeline (ARIA `verify.sh`)** |
+| `pre_file_edit` | Before any agent writes a file (M04 Stage D) | Built-in `dont_touch` rail interception |
 | `post_file_edit` | After any agent writes a file | Lint, format on save |
 | `pre_commit` | Before any git commit | Secret scan, hook chain |
 | `pre_agent_spawn` | Before a child agent spawns | Capability narrowing check, env prep |

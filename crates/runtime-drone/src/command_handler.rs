@@ -67,9 +67,9 @@ pub async fn run(
             }
             DroneCommand::RevertToSnapshot {
                 snapshot_id,
-                reason: _,
+                reason,
             } => {
-                handle_revert(&conn, &snapshot_id, &event_tx).await;
+                handle_revert(&conn, &snapshot_id, &reason, &event_tx).await;
             }
             DroneCommand::SpawnProcess {
                 process_type,
@@ -281,6 +281,7 @@ async fn handle_snapshot_now(
 async fn handle_revert(
     conn: &Arc<Mutex<Connection>>,
     snapshot_id: &str,
+    reason: &runtime_core::RevertReason,
     event_tx: &broadcast::Sender<DroneEvent>,
 ) {
     let lookup = {
@@ -295,10 +296,22 @@ async fn handle_revert(
     };
 
     if let Some(session_id) = lookup {
+        // Spec §4a: HookRollback variant carries hook_id so the SDK-side
+        // `task_failed` emit (not the drone's job) can render
+        // "rolled_back_after_hook_<hook_id>". The drone confirms revert
+        // by re-emitting SnapshotWritten with a reason string that
+        // includes the hook id when available.
+        let reason_str = match reason {
+            runtime_core::RevertReason::HookRollback { hook_id } => {
+                format!("revert:hook_rollback:{hook_id}")
+            }
+            runtime_core::RevertReason::UserRollback => "revert:user_rollback".to_string(),
+            runtime_core::RevertReason::GapRecovery => "revert:gap_recovery".to_string(),
+        };
         let _ = event_tx.send(DroneEvent::SnapshotWritten {
             snapshot_id: snapshot_id.to_string(),
             session_id,
-            reason: "revert".to_string(),
+            reason: reason_str,
             timestamp: 0,
         });
     } else {
