@@ -239,8 +239,7 @@ impl BudgetEnforcer {
             clippy::cast_sign_loss,
             reason = "spend/cap*100 is bounded [0, ~200] in normal use; truncation/sign-loss are not real concerns"
         )]
-        let percent =
-            (spend / tightest.cap_usd.unwrap_or(0.0) * 100.0).floor() as u32;
+        let percent = (spend / tightest.cap_usd.unwrap_or(0.0) * 100.0).floor() as u32;
         let cap_key = cap_microcents(tightest.cap_usd.unwrap_or(0.0));
         let mut out = Vec::new();
         for (threshold, at, build) in &[

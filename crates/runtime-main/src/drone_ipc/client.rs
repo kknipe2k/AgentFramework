@@ -246,9 +246,7 @@ async fn await_recovery(conn: &mut Connection) -> Result<RecoveredSession, Drone
                         uncertain_tool_invocations,
                     });
                 }
-                Ok(DroneEvent::Alert { message, .. })
-                    if message.starts_with("recover_session") =>
-                {
+                Ok(DroneEvent::Alert { message, .. }) if message.starts_with("recover_session") => {
                     return Err(DroneIpcError::Codec(message));
                 }
                 Ok(_) => {}
