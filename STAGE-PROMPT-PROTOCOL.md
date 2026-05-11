@@ -211,7 +211,7 @@ For work stages, default order: diff stat → gate results → retrospective →
 ## 7. Work-stage-only tags
 These tags are valid only inside `<work_stage_prompt>`.
 
-v1.3 adds five additive optional tags — `<pre_flight_check>`, `<schema_drift_check>`, `<fan_out_grep>`, `<dependency_audit_check>`, `<runtime_environment>` — informed by M01–M03 friction. See sections below.
+v1.3 adds five additive optional tags — `<pre_flight_check>`, `<schema_drift_check>`, `<fan_out_grep>`, `<dependency_audit_check>`, `<runtime_environment>` — informed by M01–M03 friction. v1.4 adds four more — `<architecture_check>`, `<schema_audit>`, `<schema_root_check>`, `<phase_doc_inventory_audit>` — informed by M04 friction. See sections below.
 ### `<deliverable>`
 Required. What this stage produces. Concrete: files, modules, capabilities. Not aspirational. If you can't enumerate it, the stage isn't ready to start.
 Inline form (use only when no Phase doc section enumerates the deliverable — e.g., a stage with a one-or-two-item produce-list that doesn't warrant a Phase doc section):
@@ -408,6 +408,97 @@ Multi-OS with command variants:
 When this tag appears in a stage prompt, the agent runs only the commands matching the current `$RUNNER_OS` (or local equivalent). Authors using inline OS-specific commands (e.g., a `Select-String` command in the prompt body) should pair them with this tag so the validator can flag missing variants in v1.4+.
 
 A common realistic case for the build agent's local environment: PowerShell shell with the Bash tool available as a fallback. Authors pinning `os="windows"` should note in the `note` attribute whether the Phase doc's verification commands assume native PowerShell invocation (avoiding bash variable expansion of `$_`, `$checks`, etc. in heredoc-wrapped scripts) or bash-tool-wrapped invocation (which requires the commands to be safe under bash's variable interpolation).
+
+### `<architecture_check>`
+
+Optional. Verify HOW-claims about cross-process flow, IPC topology, or in-process-vs-out-of-process state ownership BEFORE writing code that depends on them. Companion to `docs/gotchas.md` #41 (grep-verify codebase): that gotcha catches WHAT-claims (file paths, symbol names, struct fields); `<architecture_check>` catches HOW-claims (which process owns which state, which IPC path carries which data, which seam suspension is in-process vs cross-process). Bit M04.C and M04.E (approval/HITL seam architecture — phase doc text implied drone-mediated; reality is in-process per ADR-0007).
+
+Children: `<claim>` elements with `description="..."` and `verify="..."` attributes. Each `<claim>` states the architectural assumption + the command or check that confirms it. The agent runs each `verify` and asserts the result matches the `description` before proceeding to STEP 1 implementation.
+
+Validator behavior (v1.4 lean): structural — error if the tag appears outside a work-stage prompt; warning if `<claim>` children lack `description` or `verify` attributes.
+
+Schema: work-stage only.
+
+Example:
+
+```xml
+<architecture_check>
+  <claim description="ApprovalSeam resolves in-process via Tauri command (not via drone IPC roundtrip)" verify="grep -r 'ApprovalSeam' src-tauri/src/ | grep -v 'DroneClient'"/>
+  <claim description="Plan/task events flow through WriteSignal IPC (not a separate ApproveDecision variant)" verify="grep -nE 'DroneCommand::(ApproveDecision|HitlDecision)' crates/runtime-core/src/drone.rs; expect zero matches"/>
+  <claim description="Drone is audit log, not orchestrator: vdr.rs + plan_projector.rs project at signal-write; drone holds no in-flight HITL state" verify="grep -n 'HashMap<String, oneshot' crates/runtime-drone/src/; expect zero matches"/>
+</architecture_check>
+```
+
+Different from `<fan_out_grep>` (which finds *consumers* of a name): `<architecture_check>` confirms *invariants about the codebase's structural shape*.
+
+### `<schema_audit>`
+
+Optional. Before proposing a new `schemas/*.v1.json` file, audit the relevant spec section's existing `$defs` + neighboring schema files to confirm the proposed type isn't already declared elsewhere. Phase-doc claims of "new schema X" may collide with an existing `$defs/X` in an already-shipped schema (gotcha #41 sibling failure mode). Bit M04.D (`hooks.v1.json` proposal — turned out `Hook` + `HookRef` + `HookCategory` + `JsonLogicExpression` already in `common.v1.json` and `Rail` already in `framework.v1.json`).
+
+Children: `<survey>` elements with `pattern="..."` and `purpose="..."` attributes. Each `<survey>` enumerates existing `$defs` or root types matching the pattern across `schemas/*.v1.json`. The agent runs each survey and surfaces matched-file count before authoring the new schema.
+
+Validator behavior (v1.4 lean): structural — error if the tag appears outside a work-stage prompt; warning if `<survey>` children lack `pattern` or `purpose` attributes.
+
+Schema: work-stage only.
+
+Example:
+
+```xml
+<schema_audit>
+  <survey pattern='"HookCategory"' purpose="confirm HookCategory $def not already in common.v1.json or framework.v1.json before authoring hook.v1.json"/>
+  <survey pattern='"Rail"' purpose="confirm Rail $def not already in framework.v1.json"/>
+  <survey pattern='"JsonLogicExpression"' purpose="confirm JsonLogicExpression $def not already in common.v1.json"/>
+</schema_audit>
+```
+
+If a survey matches existing schemas, the agent surfaces "schema collision: pattern X already declared in `schemas/Y.v1.json` line N" and asks for direction (extend existing schema vs author new namespaced type) before proceeding.
+
+### `<schema_root_check>`
+
+Optional. Verify a new or edited `schemas/*.v1.json` file has a concrete `type` at the root (not a top-level `$ref`) before running `cargo xtask regenerate-types`. `json-schema-to-typescript` errors at `parseNonLiteral` on top-level `$ref` even when typify (Rust side) accepts it (gotcha #57). Bit M04.E `hitl.v1.json` initial draft.
+
+Self-closing form supported. Optional `gate="..."` attribute names a specific check command; defaults to a jq inline that asserts presence of `type` OR `oneOf` OR `anyOf` at the schema root.
+
+Validator behavior (v1.4 lean): structural — error if the tag appears outside a work-stage prompt.
+
+Schema: work-stage only.
+
+Example:
+
+```xml
+<schema_root_check/>
+```
+
+Or with explicit gate per-file:
+
+```xml
+<schema_root_check gate="jq -e '.type or .oneOf or .anyOf' schemas/budget.v1.json"/>
+```
+
+When this tag appears, the agent runs the gate command after each new or edited schema file is authored AND before invoking `cargo xtask regenerate-types`. A failure surfaces "schema root must be concrete (`type` / `oneOf` / `anyOf` required); remove top-level `$ref` and inline the root definition's fields."
+
+### `<phase_doc_inventory_audit>`
+
+Optional. Pre-flight verification that every file path in the phase doc's `X.2 Files to Change` table exists in `git ls-files` (or is explicitly marked `new` / `deleted` / `renamed`). Codifies the discipline that produced gotcha #41 ("Phase doc claims about codebase reality must be grep-verified"). Bit M04.A2 (phase doc claimed `vdr.rs` in `runtime-main`, `event_translation.rs`, `prompt_template.rs`, `RevertToSnapshot` as new — none matched reality); M04 Stage B inherited a 1476-line wrong rewrite from PR #53.
+
+Children: `<inventory_row>` elements with `path="..."` and `status="..."` attributes. Status enum: `exists` | `new` | `deleted` | `renamed`. The agent runs `git ls-files <path>` for each `<inventory_row>` and asserts the file's actual presence/absence matches `status`. Mismatches surface as "phase doc inventory drift" and the agent stops before code work begins.
+
+Validator behavior (v1.4 lean): structural — error if the tag appears outside a work-stage prompt; warning if `<inventory_row>` children lack `path` or `status`; error if `status` value is not in the enum.
+
+Schema: work-stage only.
+
+Example:
+
+```xml
+<phase_doc_inventory_audit>
+  <inventory_row path="crates/runtime-main/src/plan/state_machine.rs" status="new"/>
+  <inventory_row path="crates/runtime-drone/src/db.rs" status="exists"/>
+  <inventory_row path="crates/runtime-main/src/sdk/decision_extractor.rs" status="deleted"/>
+  <inventory_row path="crates/runtime-drone/migrations/" status="new"/>
+</phase_doc_inventory_audit>
+```
+
+Different from `<pre_flight_check>` (which runs environmental checks like branch state, commit presence, env vars): `<phase_doc_inventory_audit>` checks the phase doc's own truth claims against the codebase before the stage starts authoring against them.
 
 ## 8. Closeout-only tags
 These tags are valid only inside `<closeout_stage_prompt>`.
@@ -789,6 +880,17 @@ Inline cross-stack integration example without upstream-verification guard (v1.2
 `<fan_out_grep>` enumerating the change set instead of finding consumers. Fan-out grep is for finding consumers of a name BEFORE the rename — to verify nothing is missed. If your `<grep>` patterns are the same as the files in `<deliverable>`, you've conflated "files I'll edit" with "files that reference the thing I'm renaming." The grep should find files OUTSIDE `<deliverable>` that need coordinated updates (or confirm none exist).
 
 `<runtime_environment>` declared without command variants when the prompt body contains OS-specific commands. If the prompt body has `Select-String` commands, declare `os="windows"` (single-OS pin) or provide `<command os="...">` variants for the supported OSes. Authors who pin to one OS without rationale in the `note` attribute are setting a trap for future authors who fork the prompt to a different platform.
+
+**v1.4 anti-patterns (new):**
+
+`<architecture_check>` enumerating WHAT-claims instead of HOW-claims. Architecture checks verify *invariants about codebase structure* (which process owns state, which IPC path carries data, which seam is in-process). They are NOT a substitute for `<fan_out_grep>` or grep-verify-codebase discipline (gotcha #41). If your `<claim>` reads "the file `X.rs` exists", that's a `<phase_doc_inventory_audit>` row OR a `<pre_flight_check>` check — not an architecture claim. Architecture claims start with "X resolves Y in-process via Z" or "DroneCommand has no W variant" or "main holds the HITL seam state, not drone."
+
+`<schema_audit>` surveying only the proposed-type-name without surveying neighboring schemas. The point of the audit is to catch *collisions* with existing `$defs` declarations in already-shipped schemas. If your `<survey>` patterns only match the new schema's own root type, you've surveyed the work product not the existing surface. Survey patterns must match `"<TypeName>"` literals across `schemas/*.v1.json` to enumerate prior declarations.
+
+`<schema_root_check>` skipped for "obviously concrete" schemas. The check is cheap (one `jq` invocation per new schema) and the failure mode (top-level `$ref` breaks `json-schema-to-typescript`) is opaque when it bites. Include the slot for every new `schemas/*.v1.json` authoring stage — there's no upside to skipping.
+
+`<phase_doc_inventory_audit>` treating `status="exists"` as informational. The whole point of the audit is to fail the stage if a file claimed as "exists" doesn't, or a file claimed as "new" already does. If your stage runs without the validator asserting on `git ls-files` mismatches, the audit slot is decoration. The `status` enum is load-bearing: `exists` MUST verify file presence, `new` MUST verify file absence (the file is created during the stage), `deleted` MUST verify file presence (the file is removed during the stage), `renamed` MUST verify both old-path absence and new-path presence at stage end.
+
 ## 14. Versioning this protocol
 This protocol changes when:
 A new tag is needed across all stages (additive)
@@ -798,6 +900,15 @@ Validation rules change (e.g., a previously-warning becomes an error)
 Substantive changes get clear `docs(stage-prompt-protocol): ...` commit messages and a CHANGELOG entry. The commit history of this file is itself an audit of how stage prompts evolved.
 If this protocol disagrees with `BUILD-PLAYBOOK.md`, the playbook wins. This protocol is the schema; the playbook is the authority on what stages are and how they run.
 ### Changelog
+v1.4 — Four additive optional tags + four anti-patterns informed by M04 friction. Lean-validator pattern continued from v1.3 (structural checks only; cross-checks deferred to v1.5+):
+1. **New optional slot `<architecture_check>`** in work stages. Children: `<claim description="..." verify="..." />` elements. Verifies HOW-claims about cross-process flow, IPC topology, in-process-vs-out-of-process state ownership. Companion to gotcha #41 (WHAT-claims grep verification) for *invariants about codebase structure*. Addresses M04.C + M04.E approval/HITL seam architecture surprise (phase doc text implied drone-mediated; reality is in-process per ADR-0007).
+2. **New optional slot `<schema_audit>`** in work stages. Children: `<survey pattern="..." purpose="..." />` elements. Pre-flight enumeration of existing `$defs` + root types in `schemas/*.v1.json` before authoring a new schema file — phase-doc claims of "new schema X" may collide with an existing `$defs/X` elsewhere. Addresses M04.D (`hooks.v1.json` proposal — `Hook` + `HookRef` + `HookCategory` + `JsonLogicExpression` already in `common.v1.json`; `Rail` already in `framework.v1.json`).
+3. **New optional slot `<schema_root_check>`** in work stages. Self-closing with optional `gate="..."` attribute (defaults to a jq check). Asserts new/edited `schemas/*.v1.json` has a concrete `type` / `oneOf` / `anyOf` at the root, not a top-level `$ref` — `json-schema-to-typescript` errors on top-level `$ref` even when typify accepts it. Addresses M04.E `hitl.v1.json` initial draft (graduated gotcha #57).
+4. **New optional slot `<phase_doc_inventory_audit>`** in work stages. Children: `<inventory_row path="..." status="..." />` elements (status enum: `exists` | `new` | `deleted` | `renamed`). Pre-flight verification that every file path in the phase doc's `X.2 Files to Change` table matches `git ls-files` reality before code work begins. Codifies the discipline that produced gotcha #41. Addresses M04.A2 phase-doc-vs-reality scope-mismatch friction (Sev 4) + M04 PR #53 false-premise rewrite.
+5. **Lean validator continued.** All four new tags are structural-only at the v1.4 validator level. Cross-checks (e.g., "schema_audit is required if stage adds a new file to `schemas/`") deferred to v1.5+ once v1.4 has 2+ milestones of clean signal.
+6. **Four new anti-patterns** in §13 covering the v1.4-introduced failure shapes (architecture_check enumerating WHAT-claims; schema_audit enumerating proposed-types-only without surveying neighbors; schema_root_check skipping for "obviously concrete" schemas; phase_doc_inventory_audit treating status=`exists` as informational not load-bearing).
+7. **M01–M03 + M03.5 grandfathered as v1.0/v1.2/v1.3 per their existing banners.** M04 was authored on v1.3; M05+ are the first milestones authored on v1.4. Prior grandfathering remains in effect.
+
 v1.3 — Five additive optional tags + three anti-patterns informed by M01–M03 friction. Lean-validator pattern continued from v1.2 (structural checks only; cross-checks deferred to v1.4):
 1. **New optional slot `<pre_flight_check>`** in work stages. Children: `<check name="..." />` elements. Pre-stage environmental verifications (branch, prior-commit, env vars, deps) that gate the stage from starting if violated. Addresses M03.F Stage E sequencing slip.
 2. **New optional slot `<schema_drift_check>`** in work stages. Self-closing with optional `gate="..."` attribute (defaults to `cargo xtask regenerate-types --check`). Forces schema-as-source-of-truth invariant (CLAUDE.md §14) at stage level. Addresses M03.D hand-maintained event.rs brittleness.
