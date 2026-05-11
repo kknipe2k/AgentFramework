@@ -6,6 +6,7 @@ mod drone_lifecycle;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use commands::GlobalBudgetState;
 use drone_lifecycle::DroneLifecycle;
 use runtime_main::drone_ipc::DroneClient;
 use runtime_main::hitl::HitlSeam;
@@ -42,6 +43,9 @@ fn main() {
             commands::revise_plan,
             commands::abort_plan,
             commands::respond_hitl,
+            commands::request_resume,
+            commands::respond_uncertainty,
+            commands::set_global_budget,
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();
@@ -59,6 +63,12 @@ fn main() {
             // pending awaits via this seam.
             let hitl_seam: Arc<HitlSeam> = Arc::new(HitlSeam::new());
             app_handle.manage(hitl_seam);
+            // M04 Stage F: in-memory global budget cap. Persistent
+            // settings storage is M10 first-run UX; v0.1 keeps it
+            // process-local so the BudgetHeaderBar's settings panel
+            // round-trips without a new dependency.
+            let global_budget: GlobalBudgetState = Mutex::new(None);
+            app_handle.manage(global_budget);
             // The setup hook runs on the Tauri main thread; we need an
             // async block for the drone spawn + connect. block_on uses
             // the Tauri runtime that's already configured.

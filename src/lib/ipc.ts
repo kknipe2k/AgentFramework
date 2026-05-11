@@ -74,6 +74,72 @@ export async function invokeRespondHitl(promptId: string, choice: string): Promi
   await invoke('respond_hitl', { promptId, choice });
 }
 
+/**
+ * Recovered session state from {@link invokeRequestResume}.
+ * Mirrors `runtime_main::recovery::ResumePlan` wire format.
+ */
+export interface ResumePlan {
+  snapshot_id: string | null;
+  plans: Record<string, unknown>[];
+  tasks: Record<string, unknown>[];
+  uncertain_tool_invocations: string[];
+  has_state: boolean;
+}
+
+/**
+ * Request a session resume (M04 Stage F — spec §1b). Reads the latest
+ * snapshot + projected plan/task state + uncertain tool-invocation ids
+ * from the drone. Tools are NOT re-invoked (gotcha #15); the SDK will
+ * rebuild message history from the snapshot's signal log and generate
+ * the next turn fresh.
+ */
+export async function invokeRequestResume(sessionId: string): Promise<ResumePlan> {
+  return await invoke<ResumePlan>('request_resume', { sessionId });
+}
+
+/**
+ * The four spec §1b actions a user can pick for an uncertain tool invocation.
+ */
+export type UncertaintyAction = 'retry' | 'skip' | 'mark_complete' | 'abort';
+
+/**
+ * Result of recording an uncertainty resolution. Mirrors
+ * `runtime_main::recovery::UncertaintyResolution`.
+ */
+export interface UncertaintyResolution {
+  signal_id: string;
+  action: UncertaintyAction;
+  invocation_id: string;
+}
+
+/**
+ * Record the user's resolution for an uncertain tool invocation
+ * (M04 Stage F — spec §1b). Writes a `tool_call_uncertainty_resolved`
+ * decision signal to the VDR via drone IPC.
+ */
+export async function invokeRespondUncertainty(
+  sessionId: string,
+  invocationId: string,
+  action: UncertaintyAction,
+  agentId?: string,
+): Promise<UncertaintyResolution> {
+  return await invoke<UncertaintyResolution>('respond_uncertainty', {
+    sessionId,
+    invocationId,
+    action,
+    agentId: agentId ?? null,
+  });
+}
+
+/**
+ * Store the user-configured per-day global budget cap (M04 Stage F —
+ * spec §2a). v0.1 holds the value in process memory only; M10
+ * first-run UX persists it. Pass `0` to disable the global cap.
+ */
+export async function invokeSetGlobalBudget(usdCap: number): Promise<void> {
+  await invoke('set_global_budget', { usdCap });
+}
+
 export async function subscribeAgentEvents(
   handler: (event: AgentEvent) => void,
 ): Promise<UnlistenFn> {

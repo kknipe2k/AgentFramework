@@ -296,6 +296,36 @@ interface EdgeData extends Record<string, unknown> {
 
 export type GraphEdge = Edge<EdgeData>;
 
+/**
+ * Budget status driving the BudgetHeaderBar color gradient
+ * (spec §2a — green/amber/orange/red/exceeded).
+ */
+export type BudgetStatus = 'ok' | 'warn' | 'downshift' | 'suspended' | 'exceeded';
+
+/**
+ * Session-level budget snapshot. Driven by the four budget events
+ * (budget_warn / budget_downshift / budget_suspended / budget_exceeded).
+ * v0.1's BudgetHeaderBar reads spent_usd + cap_usd to render the color
+ * gradient + numeric badge.
+ */
+export interface BudgetState {
+  spentUsd: number;
+  capUsd: number;
+  percent: number;
+  status: BudgetStatus;
+}
+
+/**
+ * One uncertain tool invocation surfaced by the recovery flow
+ * (spec §1b). The 4-action prompt is rendered by `UncertaintyPrompt`;
+ * resolved invocations are removed from the list.
+ */
+export interface UncertainInvocation {
+  invocationId: string;
+  toolName?: string;
+  agentId?: string;
+}
+
 interface GraphState {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -320,6 +350,18 @@ interface GraphState {
    * "Notifications fired" list alongside the prompt UI.
    */
   notifierRecords: Record<string, NotifierRecord[]>;
+  /**
+   * Spec §2a (M04 Stage F): session-level budget snapshot. Driven by
+   * the four budget_* events. `null` until the first event lands so the
+   * header bar can render an inactive state distinct from "$0.00 of $0".
+   */
+  budget: BudgetState | null;
+  /**
+   * Spec §1b (M04 Stage F): uncertain tool invocations awaiting user
+   * resolution. Populated by the cold-start resume flow; resolved
+   * invocations are removed in-place by `respond_uncertainty`.
+   */
+  uncertainInvocations: UncertainInvocation[];
 
   /**
    * Single entry point for translating AgentEvent into node + edge
@@ -336,6 +378,19 @@ interface GraphState {
 
   /** Set the currently-selected node (Stage D inspector panel uses this). */
   selectNode: (id: string | null) => void;
+
+  /**
+   * Stage F: record an uncertain tool invocation from the recovery flow.
+   * Idempotent on `invocationId`. The renderer's UncertaintyPrompt
+   * iterates this list.
+   */
+  recordUncertainInvocation: (invocation: UncertainInvocation) => void;
+
+  /**
+   * Stage F: remove an invocation from the uncertain list (called by
+   * UncertaintyPrompt after a successful respond_uncertainty IPC).
+   */
+  resolveUncertainInvocation: (invocationId: string) => void;
 }
 
 const AGENT_X_STRIDE = 220;
@@ -461,6 +516,8 @@ export const useGraphStore = create<GraphState>((set) => ({
   triggeredRails: [],
   pendingHitl: {},
   notifierRecords: {},
+  budget: null,
+  uncertainInvocations: [],
 
   applyEvent: (event) =>
     set((state) => {
@@ -1039,10 +1096,63 @@ export const useGraphStore = create<GraphState>((set) => ({
           return { ...state, notifierRecords: next };
         }
 
-        // No-op variants — light up at M5 (gap/capability), M9 (budget),
-        // future stages. The exhaustive default below is the forcing
-        // function: any new variant added to the schema breaks the
-        // compile until handled here.
+        case 'budget_warn': {
+          // Spec §2a (M04 Stage F): the four budget events drive the
+          // BudgetHeaderBar's color gradient + spend display.
+          return {
+            ...state,
+            budget: {
+              spentUsd: event.spent_usd,
+              capUsd: event.cap_usd,
+              percent: event.percent,
+              status: 'warn',
+            },
+          };
+        }
+
+        case 'budget_downshift': {
+          // BudgetDownshift carries `from_model` / `to_model` (not
+          // spend/cap in the current schema); preserve last-known
+          // spend/cap snapshot and flip status. The header bar shows
+          // "downshift" badge regardless of cap data.
+          const prev = state.budget;
+          return {
+            ...state,
+            budget: {
+              spentUsd: prev?.spentUsd ?? 0,
+              capUsd: prev?.capUsd ?? 0,
+              percent: prev?.percent ?? 75,
+              status: 'downshift',
+            },
+          };
+        }
+
+        case 'budget_suspended':
+          return {
+            ...state,
+            budget: {
+              spentUsd: event.spent_usd,
+              capUsd: event.cap_usd,
+              percent: Math.round((event.spent_usd / Math.max(event.cap_usd, 1e-9)) * 100),
+              status: 'suspended',
+            },
+          };
+
+        case 'budget_exceeded':
+          return {
+            ...state,
+            budget: {
+              spentUsd: event.spent_usd,
+              capUsd: event.cap_usd,
+              percent: 100,
+              status: 'exceeded',
+            },
+          };
+
+        // No-op variants — light up at M5 (gap/capability), future
+        // stages. The exhaustive default below is the forcing function:
+        // any new variant added to the schema breaks the compile until
+        // handled here.
         case 'session_end':
         case 'tool_error':
         case 'mode_changed':
@@ -1051,10 +1161,6 @@ export const useGraphStore = create<GraphState>((set) => ({
         case 'gap_resolved':
         case 'capability_violation':
         case 'capability_grant':
-        case 'budget_warn':
-        case 'budget_downshift':
-        case 'budget_suspended':
-        case 'budget_exceeded':
         case 'stream_text':
         case 'decision_record':
         case 'token_usage':
@@ -1075,7 +1181,28 @@ export const useGraphStore = create<GraphState>((set) => ({
       triggeredRails: [],
       pendingHitl: {},
       notifierRecords: {},
+      budget: null,
+      uncertainInvocations: [],
     }),
 
   selectNode: (id) => set({ selectedNodeId: id }),
+
+  recordUncertainInvocation: (invocation) =>
+    set((state) => {
+      if (state.uncertainInvocations.some((u) => u.invocationId === invocation.invocationId)) {
+        return state;
+      }
+      return {
+        ...state,
+        uncertainInvocations: [...state.uncertainInvocations, invocation],
+      };
+    }),
+
+  resolveUncertainInvocation: (invocationId) =>
+    set((state) => ({
+      ...state,
+      uncertainInvocations: state.uncertainInvocations.filter(
+        (u) => u.invocationId !== invocationId,
+      ),
+    })),
 }));

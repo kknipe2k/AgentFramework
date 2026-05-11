@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aria-runtime.dev/budget.v1.json",
+  "title": "BudgetPolicy",
+  "description": "Spec §2a Budget Primitive — three budget scopes (session / framework / global) that stack with tightest-cap-wins semantics; four threshold actions (warn at 50%, downshift at 75%, hitl at 90%, hard-stop at 100%); optional downshift_hook referencing a tool by name. Locked at WI-07 (2026-04-18). v0.1 ships all four actions per §0d release scope matrix.",
+
+  "type": "object",
+  "additionalProperties": false,
+
+  "properties": {
+    "session_usd_cap": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Per-session USD cap. Default $5.00 applies when omitted; the framework loader fills this in at framework load time. The runtime evaluates the tightest applicable cap across all three scopes — session, framework, global — and uses that cap for threshold percentage math."
+    },
+    "framework_usd_cap": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Per-framework USD cap. Omitted means no framework-level cap; the long-running framework total is unbounded by this scope and only session + global caps apply."
+    },
+    "actions": {
+      "$ref": "#/$defs/BudgetActions"
+    },
+    "downshift_hook": {
+      "$ref": "#/$defs/DownshiftHook"
+    }
+  },
+
+  "$defs": {
+    "BudgetActions": {
+      "type": "object",
+      "title": "BudgetActions",
+      "description": "Four percent thresholds keyed to the tightest applicable cap. Each action is independently configurable per scope; setting any to null disables it for that scope.",
+      "additionalProperties": false,
+      "properties": {
+        "warn_at_percent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Threshold at which the runtime emits budget_warn + surfaces a toast notification + shifts the BudgetHeaderBar color toward amber. Default 50."
+        },
+        "downshift_at_percent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Threshold at which the runtime invokes downshift_hook (model-tier ladder) and emits budget_downshift. Default 75."
+        },
+        "hitl_at_percent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Threshold at which the runtime triggers on_budget_threshold HITL flow and emits budget_suspended; user approval required to continue. Default 90."
+        },
+        "hard_stop_at_percent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Threshold at which the runtime emits budget_exceeded + dispatches drone StopProcess for all session-spawned agents (immediate kill). Default 100."
+        }
+      }
+    },
+    "DownshiftHook": {
+      "type": "object",
+      "title": "DownshiftHook",
+      "description": "Hook invoked at downshift_at_percent. The runtime resolves the named tool from the framework's tool registry and dispatches it with the current model + remaining budget; the tool returns the new model name. v0.1 falls back to the hardcoded opus → sonnet → haiku ladder when the named tool is absent (framework tool dispatch lands in M5/M9 generators).",
+      "additionalProperties": false,
+      "required": ["type", "tool_name"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "tool",
+          "description": "Hook kind discriminator. v0.1 supports only `tool`; v1.0 may add inline script hooks."
+        },
+        "tool_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Tool id from the framework's tool registry."
+        }
+      }
+    },
+    "BudgetScope": {
+      "type": "string",
+      "title": "BudgetScope",
+      "description": "Which budget scope tripped a threshold. Carried on every budget event so the renderer can attribute the alert (header bar tooltip; scope badge).",
+      "enum": ["session", "framework", "global"]
+    }
+  }
+}

@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react';
 import { ApprovalPanel } from './components/ApprovalPanel';
+import { BudgetHeaderBar } from './components/BudgetHeaderBar';
 import { GraphCanvas } from './components/GraphCanvas';
 import { HITLModal } from './components/HITLModal';
 import { HITLPanel } from './components/HITLPanel';
 import { HITLToast } from './components/HITLToast';
 import { InspectorPanel } from './components/InspectorPanel';
+import { RecoveryDialog } from './components/RecoveryDialog';
 import { SetupPanel } from './components/SetupPanel';
 import { SmokeButton } from './components/SmokeButton';
 import { SqlInspector } from './components/SqlInspector';
+import { UncertaintyPrompt } from './components/UncertaintyPrompt';
 import {
   invokeReplaySession,
   invokeRunSmokeSession,
@@ -100,8 +103,12 @@ export function App(): JSX.Element {
     }
   }
 
+  const lastSessionId =
+    typeof localStorage !== 'undefined' ? localStorage.getItem(LAST_SESSION_KEY) : null;
+
   return (
     <main>
+      <BudgetHeaderBar />
       <h1>Agent Runtime — M03 live graph</h1>
       <SetupPanel onSave={handleSetKey} />
       <SmokeButton disabled={!hasKey || running} onClick={handleSmoke} />
@@ -114,6 +121,8 @@ export function App(): JSX.Element {
       </div>
       <HITLModal />
       <HITLToast />
+      <RecoveryDialog />
+      <UncertaintyPrompt sessionId={lastSessionId ?? ''} />
       <SqlInspector />
     </main>
   );

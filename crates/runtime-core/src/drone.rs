@@ -142,6 +142,28 @@ pub enum DroneEvent {
         /// columns. Empty for sessions with no signals.
         signals: Vec<serde_json::Value>,
     },
+    /// Result of a `RecoverSession` command — projected plan + task state
+    /// plus the set of `tool_invoked` signals lacking matching
+    /// `tool_result` (per spec §1b). Drone-side reads via
+    /// `snapshot::recover_session_state`. Main consumes and rebuilds the
+    /// SDK message history; tools are NOT re-invoked (gotcha #15).
+    /// M04 Stage F.
+    SessionRecovered {
+        /// Snapshot id the state was loaded from. `None` if the session
+        /// has no snapshots.
+        snapshot_id: Option<String>,
+        /// Decoded `state_json` from the snapshot. The SDK-side shape is
+        /// `{ events, plans, tasks }` once M04+ callers extend the state.
+        state: serde_json::Value,
+        /// Plan rows projected from signals.
+        plans: Vec<serde_json::Value>,
+        /// Task rows with running tasks downgraded to `pending` per spec §1b.
+        tasks: Vec<serde_json::Value>,
+        /// Signal ids of `tool_invoked` whose matching `tool_result` was
+        /// not observed at crash time. Renderer prompts the user per
+        /// invocation with retry / skip / mark-complete / abort.
+        uncertain_tool_invocations: Vec<String>,
+    },
 }
 
 /// Commands sent from main to the drone.
@@ -200,6 +222,15 @@ pub enum DroneCommand {
     /// + Stage E replay path. Reply is [`DroneEvent::SignalLog`].
     ReadSignals {
         /// Session whose signals to return.
+        session_id: String,
+    },
+    /// Read recoverable session state — latest snapshot plus projected
+    /// plans + tasks (running normalized to pending) plus uncertain
+    /// tool-invocation ids. Spec §1b recovery flow; drone-side reuses
+    /// `snapshot::recover_session_state`. Reply is
+    /// [`DroneEvent::SessionRecovered`]. M04 Stage F.
+    RecoverSession {
+        /// Session to recover.
         session_id: String,
     },
     /// Write a signal to the `signals` table. Drone-side handler also

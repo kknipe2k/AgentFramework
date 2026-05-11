@@ -38,17 +38,22 @@ use std::sync::Arc;
 
 use runtime_core::event::AgentEvent;
 use runtime_core::CmdError;
-use runtime_main::drone_ipc::DroneClient;
+use runtime_main::drone_ipc::{DroneClient, RecoveredSession};
 use runtime_main::hitl::{HitlChoice, HitlError, HitlSeam};
 use runtime_main::key_store::{read_api_key, write_api_key, KeyStoreError};
 use runtime_main::providers::anthropic::AnthropicProvider;
 use runtime_main::providers::{AgentConfig, ContentBlock, LLMProvider, Message, MessageRole};
+use runtime_main::recovery::{
+    request_resume_with, respond_uncertainty_with, ResumeError, ResumePlan, UncertaintyError,
+    UncertaintyResolution,
+};
 use runtime_main::sdk::{
     replay_signals_to_events, AgentSdk, ApprovalDecision, ApprovalError, ApprovalSeam, SessionId,
 };
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 
 /// Persist the Anthropic API key in the OS keychain.
 ///
@@ -373,6 +378,182 @@ pub async fn abort_plan_with(
 ) -> Result<(), CmdError> {
     tracing::info!(plan_id, len = reason.len(), "abort_plan invoked");
     resolve_or_log(seam, &plan_id, ApprovalDecision::Aborted(reason)).await
+}
+
+/// Tauri-managed global budget cap. v0.1 holds the user-configured per-day
+/// global cap in process memory only — first-run UX persistence is M10.
+pub type GlobalBudgetState = Mutex<Option<f64>>;
+
+/// Request a session resume — M04 Stage F (spec §1b). Reads the latest
+/// snapshot + projected plan/task state + uncertain tool-invocation ids
+/// from the drone and returns a [`ResumePlan`] the renderer surfaces.
+///
+/// Tools are NOT re-invoked (gotcha #15); the SDK rebuilds message
+/// history from the snapshot's signal log and the model generates the
+/// next turn fresh.
+///
+/// # Errors
+///
+/// - [`CmdError::Drone`] if the IPC `RecoverSession` round-trip fails.
+#[tauri::command]
+pub async fn request_resume(
+    session_id: String,
+    drone: tauri::State<'_, Arc<DroneClient>>,
+) -> Result<ResumePlan, CmdError> {
+    let drone = Arc::clone(&drone);
+    request_resume_command_with(session_id, |id| {
+        let drone = Arc::clone(&drone);
+        async move { drone.recover_session(id).await }
+    })
+    .await
+}
+
+/// Test-seam for [`request_resume`] — accepts an injectable async
+/// recover function so tests exercise the resume flow without a real
+/// drone subprocess. Maps [`ResumeError::Drone`] → [`CmdError::Drone`].
+///
+/// # Errors
+///
+/// See [`request_resume`].
+pub async fn request_resume_command_with<F, Fut>(
+    session_id: String,
+    recover: F,
+) -> Result<ResumePlan, CmdError>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<
+        Output = Result<RecoveredSession, runtime_main::drone_ipc::DroneIpcError>,
+    >,
+{
+    tracing::info!(session_id, "request_resume invoked");
+    match request_resume_with(session_id.clone(), recover).await {
+        Ok(plan) => {
+            tracing::info!(
+                session_id,
+                plans = plan.plans.len(),
+                tasks = plan.tasks.len(),
+                uncertain = plan.uncertain_tool_invocations.len(),
+                "request_resume succeeded"
+            );
+            Ok(plan)
+        }
+        Err(ResumeError::Drone(e)) => {
+            tracing::error!(error = %e, "request_resume drone IPC failed");
+            Err(CmdError::drone(e.to_string()))
+        }
+    }
+}
+
+/// Record the user's resolution for one uncertain tool invocation —
+/// M04 Stage F (spec §1b). Writes a `tool_call_uncertainty_resolved`
+/// decision signal to the VDR via drone IPC so replay carries the
+/// audit trail.
+///
+/// `action` must be one of `retry`, `skip`, `mark_complete`, `abort`.
+///
+/// # Errors
+///
+/// - [`CmdError::Internal`] if `action` is not a known token.
+/// - [`CmdError::Drone`] if the signal write fails.
+#[tauri::command]
+pub async fn respond_uncertainty(
+    session_id: String,
+    invocation_id: String,
+    action: String,
+    agent_id: Option<String>,
+    drone: tauri::State<'_, Arc<DroneClient>>,
+) -> Result<UncertaintyResolution, CmdError> {
+    let drone = Arc::clone(&drone);
+    respond_uncertainty_command_with(session_id, invocation_id, action, agent_id, |args| {
+        let drone = Arc::clone(&drone);
+        async move {
+            drone
+                .write_signal(
+                    args.signal_id,
+                    args.session_id,
+                    args.kind,
+                    args.event,
+                    args.context_type,
+                    args.payload,
+                )
+                .await
+        }
+    })
+    .await
+}
+
+/// Test-seam for [`respond_uncertainty`] — accepts an injectable async
+/// emit function. Maps unknown-action to [`CmdError::Internal`] and
+/// drone errors to [`CmdError::Drone`].
+///
+/// # Errors
+///
+/// See [`respond_uncertainty`].
+pub async fn respond_uncertainty_command_with<F, Fut>(
+    session_id: String,
+    invocation_id: String,
+    action: String,
+    agent_id: Option<String>,
+    emit: F,
+) -> Result<UncertaintyResolution, CmdError>
+where
+    F: FnOnce(runtime_main::recovery::uncertainty::WriteSignalArgs) -> Fut,
+    Fut: std::future::Future<Output = Result<(), runtime_main::drone_ipc::DroneIpcError>>,
+{
+    tracing::info!(session_id, invocation_id, action = %action, "respond_uncertainty invoked");
+    match respond_uncertainty_with(session_id, invocation_id, action, agent_id, emit).await {
+        Ok(resolution) => {
+            tracing::info!(
+                signal_id = resolution.signal_id,
+                action = resolution.action.as_token(),
+                "respond_uncertainty recorded resolution"
+            );
+            Ok(resolution)
+        }
+        Err(UncertaintyError::UnknownAction(token)) => {
+            tracing::warn!(action = %token, "respond_uncertainty rejected unknown action token");
+            Err(CmdError::internal(format!("unknown action token: {token}")))
+        }
+        Err(UncertaintyError::Drone(e)) => {
+            tracing::error!(error = %e, "respond_uncertainty drone IPC failed");
+            Err(CmdError::drone(e.to_string()))
+        }
+    }
+}
+
+/// Store the user's per-day global budget cap — M04 Stage F (spec §2a).
+/// v0.1 holds the value in process memory only; M10 first-run UX
+/// persists it to settings. Set to `0.0` to disable the global cap.
+///
+/// # Errors
+///
+/// - [`CmdError::Internal`] if `usd_cap` is negative.
+#[tauri::command]
+pub async fn set_global_budget(
+    usd_cap: f64,
+    state: tauri::State<'_, GlobalBudgetState>,
+) -> Result<(), CmdError> {
+    set_global_budget_with(usd_cap, state.inner()).await
+}
+
+/// Test-seam for [`set_global_budget`].
+///
+/// # Errors
+///
+/// See [`set_global_budget`].
+pub async fn set_global_budget_with(
+    usd_cap: f64,
+    state: &GlobalBudgetState,
+) -> Result<(), CmdError> {
+    if usd_cap.is_nan() || usd_cap < 0.0 {
+        return Err(CmdError::internal(
+            "global budget cap must be a non-negative number".to_string(),
+        ));
+    }
+    let mut guard = state.lock().await;
+    *guard = if usd_cap > 0.0 { Some(usd_cap) } else { None };
+    tracing::info!(usd_cap, "set_global_budget stored");
+    Ok(())
 }
 
 /// Resolve the in-process [`HitlSeam`] for a HITL prompt — M04 Stage E
@@ -886,6 +1067,115 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(2)).await;
         }
         handle
+    }
+
+    // ── M04 Stage F: recovery + budget commands ─────────────────
+
+    #[tokio::test]
+    async fn request_resume_with_returns_plan() {
+        // The seam pulls a deterministic RecoveredSession from the
+        // injected closure; production wires Arc<DroneClient> instead.
+        let plan = request_resume_command_with("s1".to_string(), |id| {
+            assert_eq!(id, "s1");
+            async move {
+                Ok(RecoveredSession {
+                    snapshot_id: Some("snap-1".to_string()),
+                    state: serde_json::json!({"foo": 1}),
+                    plans: vec![serde_json::json!({"id": "p1"})],
+                    tasks: vec![serde_json::json!({"id": "t1"})],
+                    uncertain_tool_invocations: vec!["sig-1".to_string()],
+                })
+            }
+        })
+        .await
+        .expect("request_resume");
+        assert!(plan.has_state);
+        assert_eq!(plan.snapshot_id.as_deref(), Some("snap-1"));
+        assert_eq!(plan.uncertain_tool_invocations.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn request_resume_propagates_drone_error_as_cmd_error() {
+        let result = request_resume_command_with("s1".to_string(), |_| async move {
+            Err(runtime_main::drone_ipc::DroneIpcError::Codec(
+                "boom".to_string(),
+            ))
+        })
+        .await;
+        assert!(matches!(result, Err(CmdError::Drone(_))));
+    }
+
+    #[tokio::test]
+    async fn respond_uncertainty_with_records_signal() {
+        let resolution = respond_uncertainty_command_with(
+            "s1".to_string(),
+            "sig-tool-1".to_string(),
+            "skip".to_string(),
+            Some("a1".to_string()),
+            |_args| async move { Ok(()) },
+        )
+        .await
+        .expect("respond");
+        assert_eq!(resolution.invocation_id, "sig-tool-1");
+    }
+
+    #[tokio::test]
+    async fn respond_uncertainty_rejects_unknown_action_with_internal_error() {
+        let result = respond_uncertainty_command_with(
+            "s1".to_string(),
+            "sig-a".to_string(),
+            "bogus".to_string(),
+            None,
+            |_args| async move { Ok(()) },
+        )
+        .await;
+        match result {
+            Err(CmdError::Internal(msg)) => {
+                assert!(format!("{msg:?}").contains("bogus"), "got {msg:?}");
+            }
+            other => panic!("expected Internal, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn respond_uncertainty_propagates_drone_error_as_cmd_error() {
+        let result = respond_uncertainty_command_with(
+            "s1".to_string(),
+            "sig-a".to_string(),
+            "skip".to_string(),
+            None,
+            |_args| async move {
+                Err(runtime_main::drone_ipc::DroneIpcError::Codec(
+                    "drone".to_string(),
+                ))
+            },
+        )
+        .await;
+        assert!(matches!(result, Err(CmdError::Drone(_))));
+    }
+
+    #[tokio::test]
+    async fn set_global_budget_stores_value_in_state() {
+        let state: GlobalBudgetState = Mutex::new(None);
+        set_global_budget_with(3.50, &state).await.expect("set");
+        assert!((state.lock().await.unwrap() - 3.50).abs() < f64::EPSILON);
+        // Subsequent call overwrites.
+        set_global_budget_with(7.25, &state).await.expect("update");
+        assert!((state.lock().await.unwrap() - 7.25).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn set_global_budget_rejects_negative_cap_as_internal_error() {
+        let state: GlobalBudgetState = Mutex::new(None);
+        let result = set_global_budget_with(-1.0, &state).await;
+        match result {
+            Err(CmdError::Internal(msg)) => {
+                assert!(format!("{msg:?}").contains("non-negative"), "got {msg:?}");
+            }
+            other => panic!("expected Internal, got {other:?}"),
+        }
+        // State unchanged.
+        assert!(state.lock().await.is_none());
     }
 
     #[tokio::test]

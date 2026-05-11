@@ -12,5 +12,5 @@
 mod client;
 mod connection;
 
-pub use client::DroneClient;
+pub use client::{DroneClient, RecoveredSession};
 pub use connection::DroneIpcError;

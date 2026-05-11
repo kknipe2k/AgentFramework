@@ -53,6 +53,7 @@ fn regenerate_types(check: bool) -> Result<()> {
         "plan",
         "task",
         "hitl",
+        "budget",
     ];
     let mut all_drift = Vec::new();
 
@@ -87,6 +88,7 @@ fn regenerate_types(check: bool) -> Result<()> {
         ("plan", schemas_dir.join("plan.v1.json")),
         ("task", schemas_dir.join("task.v1.json")),
         ("hitl", schemas_dir.join("hitl.v1.json")),
+        ("budget", schemas_dir.join("budget.v1.json")),
     ];
     let ts_targets_refs: Vec<(&str, &std::path::Path)> = ts_targets
         .iter()

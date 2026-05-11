@@ -176,6 +176,96 @@ impl DroneClient {
         drop(guard);
         result
     }
+
+    /// Send a `RecoverSession` command and await the matching
+    /// `SessionRecovered` response. Per spec §1b — rebuilds history from
+    /// the latest snapshot + projected plan/task rows + uncertain
+    /// tool-invocation ids. Tools are NOT re-invoked on resume
+    /// (gotcha #15); caller is expected to load the returned state into
+    /// SDK message history and prompt the user for each
+    /// `uncertain_tool_invocation`. On noop mode returns a default
+    /// [`RecoveredSession`] immediately. M04 Stage F.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::query_session_db`].
+    pub async fn recover_session(
+        &self,
+        session_id: String,
+    ) -> Result<RecoveredSession, DroneIpcError> {
+        let mut guard = self.inner.lock().await;
+        if guard.is_noop() {
+            return Ok(RecoveredSession::default());
+        }
+        guard
+            .send_with_reconnect(DroneCommand::RecoverSession { session_id })
+            .await?;
+        let result = await_recovery(&mut guard).await;
+        drop(guard);
+        result
+    }
+}
+
+/// Recovered session state surfaced to main by the drone.
+///
+/// See [`DroneEvent::SessionRecovered`] for the wire shape. Mirrors
+/// `runtime_drone::snapshot::RecoveredSession` but lives here so
+/// consumers of `runtime_main` don't transitively pull `runtime_drone`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecoveredSession {
+    /// Snapshot id the state was loaded from.
+    pub snapshot_id: Option<String>,
+    /// Decoded snapshot state.
+    pub state: Value,
+    /// Plan rows in creation order.
+    pub plans: Vec<Value>,
+    /// Task rows with running-tasks normalized to pending per spec §1b.
+    pub tasks: Vec<Value>,
+    /// Signal ids of tool invocations lacking a matching result.
+    pub uncertain_tool_invocations: Vec<String>,
+}
+
+async fn await_recovery(conn: &mut Connection) -> Result<RecoveredSession, DroneIpcError> {
+    let stream = conn.take_event_stream();
+    tokio::pin!(stream);
+    let timed = tokio::time::timeout(RESPONSE_TIMEOUT, async move {
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(DroneEvent::SessionRecovered {
+                    snapshot_id,
+                    state,
+                    plans,
+                    tasks,
+                    uncertain_tool_invocations,
+                }) => {
+                    return Ok(RecoveredSession {
+                        snapshot_id,
+                        state,
+                        plans,
+                        tasks,
+                        uncertain_tool_invocations,
+                    });
+                }
+                Ok(DroneEvent::Alert { message, .. })
+                    if message.starts_with("recover_session") =>
+                {
+                    return Err(DroneIpcError::Codec(message));
+                }
+                Ok(_) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Err(DroneIpcError::Codec(
+            "event stream ended without recover_session response".into(),
+        ))
+    })
+    .await;
+    timed.unwrap_or_else(|_| {
+        Err(DroneIpcError::Io(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "drone response timeout",
+        )))
+    })
 }
 
 /// Pull events from the connection's reader half (via the take-once
@@ -250,6 +340,140 @@ mod tests {
         let c = DroneClient::noop();
         let signals = c.read_signals("s1".to_string()).await.expect("noop read");
         assert!(signals.is_empty());
+    }
+
+    #[tokio::test]
+    async fn noop_recover_session_returns_default_recovered() {
+        let c = DroneClient::noop();
+        let r = c
+            .recover_session("s1".to_string())
+            .await
+            .expect("noop recover");
+        assert!(r.snapshot_id.is_none());
+        assert!(r.plans.is_empty());
+        assert!(r.tasks.is_empty());
+        assert!(r.uncertain_tool_invocations.is_empty());
+    }
+
+    /// Round-trip `recover_session` via a duplex peer — feed a synthetic
+    /// `SessionRecovered` event and assert the client decodes it.
+    #[tokio::test]
+    async fn recover_session_filters_response_from_event_stream() {
+        use std::pin::Pin;
+        use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+
+        type DynRead = Pin<Box<dyn AsyncRead + Send + Unpin>>;
+        type DynWrite = Pin<Box<dyn AsyncWrite + Send + Unpin>>;
+        let (a, b) = tokio::io::duplex(4096);
+        let (a_rd, a_wr) = tokio::io::split(a);
+        let (b_rd, mut b_wr) = tokio::io::split(b);
+        let conn = Connection::from_streams(
+            "/test",
+            Box::pin(a_rd) as DynRead,
+            Box::pin(a_wr) as DynWrite,
+        );
+        // Pre-write a Heartbeat (should be skipped) + the SessionRecovered.
+        let hb = serde_json::to_string(&DroneEvent::Heartbeat {
+            status: runtime_core::HeartbeatStatus::Ok,
+            timestamp: 0,
+        })
+        .unwrap();
+        let sr = serde_json::to_string(&DroneEvent::SessionRecovered {
+            snapshot_id: Some("snap-1".to_string()),
+            state: serde_json::json!({"foo": 1}),
+            plans: vec![serde_json::json!({"id": "p1"})],
+            tasks: vec![serde_json::json!({"id": "t1", "status": "pending"})],
+            uncertain_tool_invocations: vec!["sig-tool-1".to_string()],
+        })
+        .unwrap();
+        b_wr.write_all(format!("{hb}\n{sr}\n").as_bytes())
+            .await
+            .expect("write peer");
+        b_wr.flush().await.expect("flush");
+        drop(b_rd);
+
+        let client = DroneClient {
+            inner: tokio::sync::Mutex::new(conn),
+        };
+        let r = client
+            .recover_session("s1".to_string())
+            .await
+            .expect("recover");
+        assert_eq!(r.snapshot_id.as_deref(), Some("snap-1"));
+        assert_eq!(r.plans.len(), 1);
+        assert_eq!(r.tasks.len(), 1);
+        assert_eq!(r.uncertain_tool_invocations, vec!["sig-tool-1".to_string()]);
+    }
+
+    /// Drone-side rejection alert surfaces as a Codec error to the client.
+    #[tokio::test]
+    async fn recover_session_alert_surfaces_as_codec_error() {
+        use std::pin::Pin;
+        use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+
+        type DynRead = Pin<Box<dyn AsyncRead + Send + Unpin>>;
+        type DynWrite = Pin<Box<dyn AsyncWrite + Send + Unpin>>;
+        let (a, b) = tokio::io::duplex(4096);
+        let (a_rd, a_wr) = tokio::io::split(a);
+        let (b_rd, mut b_wr) = tokio::io::split(b);
+        let conn = Connection::from_streams(
+            "/test",
+            Box::pin(a_rd) as DynRead,
+            Box::pin(a_wr) as DynWrite,
+        );
+        let alert = serde_json::to_string(&DroneEvent::Alert {
+            level: runtime_core::AlertLevel::Critical,
+            message: "recover_session failed: bad session".to_string(),
+        })
+        .unwrap();
+        b_wr.write_all(format!("{alert}\n").as_bytes())
+            .await
+            .expect("write");
+        b_wr.flush().await.expect("flush");
+        drop(b_rd);
+
+        let client = DroneClient {
+            inner: tokio::sync::Mutex::new(conn),
+        };
+        let result = client.recover_session("s1".to_string()).await;
+        assert!(matches!(result, Err(DroneIpcError::Codec(_))));
+    }
+
+    /// Stream that ends without a matching response surfaces as an error.
+    #[tokio::test(start_paused = true)]
+    async fn recover_session_stream_close_surfaces_as_error_not_hang() {
+        use std::pin::Pin;
+        use tokio::io::{AsyncRead, AsyncWrite};
+
+        type DynRead = Pin<Box<dyn AsyncRead + Send + Unpin>>;
+        type DynWrite = Pin<Box<dyn AsyncWrite + Send + Unpin>>;
+        let (a, b) = tokio::io::duplex(64);
+        let (a_rd, a_wr) = tokio::io::split(a);
+        let (b_rd, b_wr) = tokio::io::split(b);
+        let conn = Connection::from_streams(
+            "/test",
+            Box::pin(a_rd) as DynRead,
+            Box::pin(a_wr) as DynWrite,
+        );
+        drop(b_rd);
+        drop(b_wr);
+
+        let client = DroneClient {
+            inner: tokio::sync::Mutex::new(conn),
+        };
+        let task = tokio::spawn(async move { client.recover_session("s1".to_string()).await });
+        for _ in 0..6 {
+            tokio::time::advance(std::time::Duration::from_millis(700)).await;
+            tokio::task::yield_now().await;
+        }
+        let result = task.await.expect("join");
+        assert!(
+            matches!(
+                result,
+                Err(DroneIpcError::Codec(_) | DroneIpcError::Disconnected { .. })
+            ),
+            "got: {result:?}"
+        );
     }
 
     /// Round-trip via duplex pair — feed a synthetic `QueryResult` event

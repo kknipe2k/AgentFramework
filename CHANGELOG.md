@@ -6,6 +6,162 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M04 Stage F (§2a Budget + §1b Recovery — cost controls + resume from snapshot)
+
+Seventh stage of M04. Bundles two primitives in one stage: §2a Budget (3 scopes
++ 4 threshold actions + downshift_hook + UI header bar) + §1b Recovery (resume
+rebuilds history not re-execute per WI-14 + tool-call-uncertain UI prompt with
+4 actions + MCP reconnect seam + plan/capability state restoration).
+
+**Decisions documented in M04.F retrospective:**
+- The existing 4 budget event variants (`budget_warn`, `budget_downshift`,
+  `budget_suspended`, `budget_exceeded`) had a provisional minimal shape that
+  diverges from spec §2a (`scope` field missing on all; `spent_usd`/`cap_usd`
+  missing on `BudgetDownshift`; the `budget_warn` discriminator should be
+  `budget_warning` per spec). Stage F WIRES the existing events as-is rather
+  than reshaping; the divergence becomes a Stage G gap-analysis carry-forward
+  entry. Rationale: Stage F's deliverable is the enforcer + recovery; touching
+  existing public event shapes would balloon scope.
+- The downshift hook ladder is hardcoded in `runtime-main/src/budget/hook.rs`
+  (`DefaultLadder`) per the spec §2a `opus → sonnet → haiku` rule. Framework
+  JSON's `framework.budget.downshift_hook.tool_name` is read at schema-codegen
+  time but the framework-tool-dispatch wiring is deferred to M5/M9 generators —
+  the hook trait exists at the seam so later milestones can plug in a
+  framework-defined tool without changing call sites.
+- Drone IPC adds a new `DroneCommand::RecoverSession` + `DroneEvent::SessionRecovered`
+  pair rather than reusing `QuerySessionDb` or `ReadSignals`. The drone-side
+  `snapshot::recover_session_state` (shipped M04 Stage B) was already complete;
+  Stage F exposes it via the IPC variant and consumes it through a
+  `DroneClient::recover_session(session_id)` method.
+
+**New artifacts:**
+- **`schemas/budget.v1.json`** (new) — `BudgetPolicy` (session/framework caps +
+  actions + downshift_hook), `BudgetActions` (4 percent thresholds with spec §2a
+  defaults), `BudgetScope` enum (session/framework/global), `DownshiftHook`
+  (type=`tool` + tool_name). Concrete `type: object` at root per Stage E
+  gotcha #29 carry-forward.
+- **`crates/runtime-core/src/generated/budget.rs`** (typify),
+  **`src/types/budget.ts`** (json-schema-to-typescript) — generated and
+  re-exported via `runtime_core::budget` + `src/types/budget.ts`.
+- **`crates/runtime-main/src/budget/`** (new module) — four files:
+  - `mod.rs` — re-exports.
+  - `enforcer.rs` — `BudgetEnforcer` with 3-scope tightest-cap-wins evaluation,
+    4 threshold actions (Warn/Downshift/Suspend/HardStop) emitted in firing
+    order. Idempotent: re-recording spend at the same percent does not re-fire.
+    `record_spend_with_scopes(incremental_usd, framework_spend, global_spend)`
+    accepts caller-supplied per-scope running totals. `cost_from(breakdown,
+    input_per_million, output_per_million)` pure helper for cache-aware cost
+    math.
+  - `cost.rs` — `CostCache` LRU keyed by `CostKey` (stable hash of message
+    content list). Capacity-0 cache disables caching cleanly.
+  - `hook.rs` — `DownshiftHook` trait + `DefaultLadder` implementing the
+    spec §2a `opus → sonnet → haiku` rule (tier-classified by model-id prefix).
+    Sonnet → Haiku triggers only when `remaining < 10% AND
+    avg_task_cost > remaining/3`. `RemainingBudget` carries `spent_usd`,
+    `cap_usd`, optional `avg_task_cost_usd`.
+- **`crates/runtime-main/src/recovery/`** (new module) — three files:
+  - `mod.rs` — re-exports.
+  - `resume.rs` — `request_resume_with(session_id, recover)` coordinates a
+    session resume against the supplied async `recover` callback. Returns
+    `ResumePlan { snapshot_id, plans, tasks, uncertain_tool_invocations,
+    has_state }`. `reconnect_mcp_servers(session_id)` is the v0.1 no-op seam
+    (M5/M6 wire the real path).
+  - `uncertainty.rs` — `ToolCallUncertaintyAction` enum (4 spec §1b actions:
+    Retry/Skip/MarkComplete/Abort) + `respond_uncertainty_with(...)` which
+    writes a `tool_call_uncertainty_resolved` decision signal via the supplied
+    emit callback. Returns `UncertaintyResolution { signal_id, action,
+    invocation_id }`.
+- **`src/components/BudgetHeaderBar.tsx`** — sticky top-of-screen bar with
+  color gradient (ok/warn/downshift/suspended/exceeded). Tooltip surfaces
+  scope breakdown; click reveals settings form for global per-day cap (calls
+  `set_global_budget`). Exceeded status surfaces the "Session terminated due
+  to budget" banner. Renders only when a budget event has landed.
+- **`src/components/RecoveryDialog.tsx`** — cold-start surface. Reads
+  `localStorage.lastSessionId` on mount; surfaces Resume/Discard prompt;
+  Resume calls `invokeRequestResume(sessionId)` and seeds the renderer's
+  `uncertainInvocations` list from the returned `ResumePlan`.
+- **`src/components/UncertaintyPrompt.tsx`** — modal dialog iterating
+  `state.uncertainInvocations`. Each invocation presents the 4 spec §1b action
+  buttons; click dispatches `respond_uncertainty` and removes from the list.
+  Counter shows remaining invocations.
+- **`crates/runtime-main/tests/budget_threshold.rs`** (new integration test)
+  — drives the enforcer with deterministic spend deltas; asserts the 4
+  threshold actions fire in 50→75→90→100 order; downshift_hook invokes exactly
+  once at 75%; tightest-cap-wins with framework scope.
+- **`crates/runtime-main/tests/recovery_lifecycle.rs`** (new integration test)
+  — full round-trip via real drone subprocess: write 3 signals (plan + task +
+  stranded tool_invoked) + snapshot → recover via IPC → assert `ResumePlan`
+  populated correctly → resolve uncertainty with `skip` → assert the
+  resolution signal lands without re-invoking the tool (spec §1b + gotcha #15
+  invariant).
+- **`tests/unit/components/{BudgetHeaderBar,RecoveryDialog,UncertaintyPrompt}.test.tsx`**
+  (new vitest specs) — 14 + 8 + 9 = 31 cases covering color gradient + status
+  transitions + settings form + dialog resume/discard + uncertainty action
+  routing + error surfaces.
+- **`tests/e2e/{budget_threshold,recovery_uncertainty}.spec.ts`** (new
+  Playwright specs) — 4 + 4 = 8 cases driving `window.__graphStore` to verify
+  surface-on-state-change + ARIA attributes.
+
+**Schema edits:**
+- `crates/xtask/src/main.rs` — `budget` added to schemas list (Rust + TS
+  codegen).
+
+**Drone IPC additions:**
+- `crates/runtime-core/src/drone.rs` — `DroneCommand::RecoverSession {
+  session_id }` + `DroneEvent::SessionRecovered { snapshot_id, state, plans,
+  tasks, uncertain_tool_invocations }`. DroneEvent variant count bumps to 10
+  (round_trip.rs guard updated).
+- `crates/runtime-drone/src/command_handler.rs` —
+  `handle_recover_session(conn, session_id, event_tx)` calls existing
+  `snapshot::recover_session_state` and emits the new `SessionRecovered`
+  event.
+- `crates/runtime-main/src/drone_ipc/client.rs` —
+  `DroneClient::recover_session(session_id)` async method + `RecoveredSession`
+  mirror struct + `await_recovery` event-filter helper.
+
+**Tauri shell additions:**
+- `src-tauri/src/main.rs` — `GlobalBudgetState` (Tauri-managed `Mutex<Option<f64>>`)
+  registered alongside seams; new `request_resume` + `respond_uncertainty` +
+  `set_global_budget` commands added to `invoke_handler`.
+- `src-tauri/src/commands.rs` — three new Tauri commands + `*_with` testable
+  seams. `set_global_budget` rejects NaN / negative caps with `CmdError::Internal`.
+
+**Renderer state:**
+- `src/lib/graphStore.ts` — 4 budget event cases now drive `state.budget:
+  BudgetState | null` (spentUsd, capUsd, percent, status). New
+  `uncertainInvocations: UncertainInvocation[]` field plus
+  `recordUncertainInvocation` and `resolveUncertainInvocation` actions.
+  Exhaustive `_exhaustive: never` switch holds.
+- `src/lib/ipc.ts` — `invokeRequestResume`, `invokeRespondUncertainty`,
+  `invokeSetGlobalBudget` wrappers + `ResumePlan`, `UncertaintyResolution`,
+  `UncertaintyAction` types.
+- `src/App.tsx` — mounts `<BudgetHeaderBar />` at the top of the page,
+  `<RecoveryDialog />` (self-managing via localStorage), and
+  `<UncertaintyPrompt sessionId={lastSessionId} />`.
+
+**Quality gates (M04 Stage F — measured):**
+- workspace coverage: 93.75% line (≥80% ✓)
+- runtime-main coverage: 96.66% line (≥95% ✓)
+- runtime-drone coverage: 95.79% line (≥95% ✓)
+- per-module new safety primitives: budget/cost.rs 100%, budget/enforcer.rs
+  98.90%, budget/hook.rs 100%, recovery/resume.rs 96.46%, recovery/uncertainty.rs
+  98.48% — all ≥95%
+- vitest: 249 passed (+34 from new component tests)
+- Playwright: 27 passed (+8 new — 4 budget_threshold + 4 recovery_uncertainty)
+- cargo test: ~300 passing including 3 new budget integration tests + 2 new
+  recovery integration tests + 2 new drone command_handler tests
+- cargo fmt / clippy / audit / deny / schema-drift: all green
+
+**Carry-forward to Stage G gap-analysis:**
+- Budget event shapes diverge from spec §2a (missing `scope`, `spent_usd`/`cap_usd`
+  on Downshift, `budget_warn` vs spec's `budget_warning`). Document as 🟡
+  Important.
+- Downshift hook framework-tool-dispatch wiring deferred to M5/M9 — note the
+  `DownshiftHook::tool_name` field reads but doesn't dispatch in v0.1.
+- §1d long-lived `events()` reconnect note: ALREADY CLOSED at A2 — Stage G
+  records the closure but does not need to re-validate (integration test at
+  `crates/runtime-main/tests/drone_reconnect_events.rs`).
+
 ### Added — M04 Stage E (§6a HITL primitive — 9 trigger types + 3 UI variants + notifier plugin interface)
 
 Sixth stage of M04. Builds the §6a HITL primitive end-to-end: 9-trigger policy evaluator + `HitlSeam` (oneshot-channel gate mirroring Stage B's `ApprovalSeam`) + notifier plugin interface + 3 built-in notifiers (`terminal_bell`, `desktop` via Tauri 2.x notification plugin, `sound`) + 3 renderer surfaces (Panel non-modal / Modal aria-modal=true / Toast role=status with 30s auto-dismiss) + `respond_hitl` Tauri command + failure-escalation integration test driving `task_escalated` → `on_failure_threshold` → seam-resolve-with-Skip end-to-end.

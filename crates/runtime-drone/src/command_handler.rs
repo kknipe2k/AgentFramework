@@ -95,6 +95,9 @@ pub async fn run(
             DroneCommand::ReadSignals { session_id } => {
                 handle_read_signals(&conn, &session_id, &event_tx).await;
             }
+            DroneCommand::RecoverSession { session_id } => {
+                handle_recover_session(&conn, &session_id, &event_tx).await;
+            }
             DroneCommand::WriteSignal {
                 signal_id,
                 session_id,
@@ -240,6 +243,34 @@ async fn handle_read_signals(
             let _ = event_tx.send(DroneEvent::Alert {
                 level: AlertLevel::Critical,
                 message: format!("read_signals failed: {e}"),
+            });
+        }
+    }
+}
+
+async fn handle_recover_session(
+    conn: &Arc<Mutex<Connection>>,
+    session_id: &str,
+    event_tx: &broadcast::Sender<DroneEvent>,
+) {
+    let result = {
+        let guard = conn.lock().await;
+        snapshot::recover_session_state(&guard, session_id)
+    };
+    match result {
+        Ok(recovered) => {
+            let _ = event_tx.send(DroneEvent::SessionRecovered {
+                snapshot_id: recovered.snapshot_id,
+                state: recovered.state,
+                plans: recovered.plans,
+                tasks: recovered.tasks,
+                uncertain_tool_invocations: recovered.uncertain_tool_invocations,
+            });
+        }
+        Err(e) => {
+            let _ = event_tx.send(DroneEvent::Alert {
+                level: AlertLevel::Critical,
+                message: format!("recover_session failed: {e}"),
             });
         }
     }
@@ -809,6 +840,134 @@ mod tests {
             .send(DroneCommand::GracefulShutdown { timeout_ms: 50 })
             .await
             .unwrap();
+        let _ = timeout(Duration::from_secs(1), task).await;
+    }
+
+    // ── M04 Stage F: RecoverSession arm ─────────────────────────────
+
+    #[tokio::test]
+    async fn recover_session_returns_session_recovered_event() {
+        // Seed: a plan + task + a stranded tool_invoked signal (no
+        // matching tool_result) + one snapshot. The drone's
+        // recover_session_state will return all four pieces; the command
+        // handler emits them in SessionRecovered.
+        let (_dir, conn) = open();
+        {
+            let guard = conn.lock().await;
+            guard
+                .execute(
+                    "INSERT INTO plans (id, session_id, title, status, approval_required, loop_policy, created_at) \
+                     VALUES ('p1', 's1', 'T', 'in_progress', 0, 'fresh_context_per_task', 0)",
+                    [],
+                )
+                .expect("seed plan");
+            guard
+                .execute(
+                    "INSERT INTO tasks (id, plan_id, title, status, created_at) \
+                     VALUES ('t1', 'p1', 'T1', 'running', 0)",
+                    [],
+                )
+                .expect("seed task");
+            guard
+                .execute(
+                    "INSERT INTO signals (id, session_id, type, event, timestamp, payload_json, context_type) \
+                     VALUES ('sig-tool-1', 's1', 'tool', 'tool_invoked', '5', \
+                             '{\"type\":\"tool_invoked\",\"agent_id\":\"a1\",\"tool_name\":\"Read\"}', \
+                             'tool_invoke')",
+                    [],
+                )
+                .expect("seed stranded tool_invoked");
+            // snapshot row so snapshot_id is Some(...)
+            snapshot::write(&guard, "s1", "manual", &serde_json::json!({"x": 1}))
+                .expect("seed snapshot");
+            drop(guard);
+        }
+
+        let (cmd_tx, cmd_rx) = mpsc::channel::<DroneCommand>(8);
+        let (event_tx, mut event_rx) = broadcast::channel::<DroneEvent>(16);
+        let conn_clone = conn.clone();
+        let task = tokio::spawn(run("s1".to_string(), conn_clone, cmd_rx, event_tx, None));
+        cmd_tx
+            .send(DroneCommand::RecoverSession {
+                session_id: "s1".to_string(),
+            })
+            .await
+            .expect("send recover_session");
+
+        let mut got = None;
+        for _ in 0..20 {
+            if let Ok(Ok(DroneEvent::SessionRecovered {
+                snapshot_id,
+                plans,
+                tasks,
+                uncertain_tool_invocations,
+                ..
+            })) = timeout(Duration::from_millis(500), event_rx.recv()).await
+            {
+                got = Some((snapshot_id, plans, tasks, uncertain_tool_invocations));
+                break;
+            }
+        }
+        let (snapshot_id, plans, tasks, uncertain) = got.expect("expected SessionRecovered event");
+        assert!(snapshot_id.is_some(), "snapshot_id must be populated");
+        assert_eq!(plans.len(), 1, "expected one plan");
+        assert_eq!(tasks.len(), 1, "expected one task");
+        // Task's running status must be normalized to pending per spec §1b.
+        assert_eq!(
+            tasks[0].get("status").and_then(|v| v.as_str()),
+            Some("pending"),
+            "running task should downgrade to pending on recovery"
+        );
+        assert_eq!(
+            uncertain,
+            vec!["sig-tool-1".to_string()],
+            "stranded tool_invoked must be surfaced as uncertain"
+        );
+
+        cmd_tx
+            .send(DroneCommand::GracefulShutdown { timeout_ms: 50 })
+            .await
+            .expect("shutdown");
+        let _ = timeout(Duration::from_secs(1), task).await;
+    }
+
+    #[tokio::test]
+    async fn recover_session_for_unknown_session_returns_empty_state() {
+        let (_dir, conn) = open();
+        let (cmd_tx, cmd_rx) = mpsc::channel::<DroneCommand>(8);
+        let (event_tx, mut event_rx) = broadcast::channel::<DroneEvent>(16);
+        let task = tokio::spawn(run("other".to_string(), conn, cmd_rx, event_tx, None));
+        cmd_tx
+            .send(DroneCommand::RecoverSession {
+                session_id: "no-such-session".to_string(),
+            })
+            .await
+            .expect("send");
+
+        let mut got = None;
+        for _ in 0..20 {
+            if let Ok(Ok(DroneEvent::SessionRecovered {
+                snapshot_id,
+                plans,
+                tasks,
+                uncertain_tool_invocations,
+                ..
+            })) = timeout(Duration::from_millis(500), event_rx.recv()).await
+            {
+                got = Some((snapshot_id, plans, tasks, uncertain_tool_invocations));
+                break;
+            }
+        }
+        let (snapshot_id, plans, tasks, uncertain) = got.expect("SessionRecovered");
+        assert!(snapshot_id.is_none(), "no snapshots for unknown session");
+        assert!(plans.is_empty());
+        assert!(tasks.is_empty());
+        assert!(uncertain.is_empty());
+
+        cmd_tx
+            .send(DroneCommand::GracefulShutdown { timeout_ms: 50 })
+            .await
+            .expect("shutdown");
         let _ = timeout(Duration::from_secs(1), task).await;
     }
 

@@ -7,6 +7,10 @@
 
 /// Types generated from `schemas/agent.v1.json`.
 pub mod agent;
+/// Types generated from `schemas/budget.v1.json` — Budget primitive (spec §2a).
+/// M04 Stage F authored the schema + 3-scope tightest-cap-wins enforcer + 4
+/// threshold actions + downshift_hook seam.
+pub mod budget;
 /// Types generated from `schemas/common.v1.json`.
 pub mod common;
 /// Types generated from `schemas/error.v1.json` — wire-format `CmdError`
