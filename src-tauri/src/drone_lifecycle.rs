@@ -432,7 +432,12 @@ mod tests {
         #[cfg(windows)]
         assert!(addr.starts_with(r"\\.\pipe\"), "got {addr}");
         #[cfg(unix)]
-        assert!(addr.ends_with(".sock"), "got {addr}");
+        assert!(
+            std::path::Path::new(&addr)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("sock")),
+            "got {addr}"
+        );
     }
 
     #[test]
