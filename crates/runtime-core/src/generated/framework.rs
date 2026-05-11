@@ -911,6 +911,12 @@ impl<'de> ::serde::Deserialize<'de> for FileGlobListItem {
 #[doc = "            \"$ref\": \"#/$defs/Hook\""]
 #[doc = "          }"]
 #[doc = "        },"]
+#[doc = "        \"pre_file_edit\": {"]
+#[doc = "          \"type\": \"array\","]
+#[doc = "          \"items\": {"]
+#[doc = "            \"$ref\": \"#/$defs/Hook\""]
+#[doc = "          }"]
+#[doc = "        },"]
 #[doc = "        \"pre_task\": {"]
 #[doc = "          \"type\": \"array\","]
 #[doc = "          \"items\": {"]
@@ -1811,6 +1817,12 @@ impl<'de> ::serde::Deserialize<'de> for FrameworkDescription {
 #[doc = "        \"$ref\": \"#/$defs/Hook\""]
 #[doc = "      }"]
 #[doc = "    },"]
+#[doc = "    \"pre_file_edit\": {"]
+#[doc = "      \"type\": \"array\","]
+#[doc = "      \"items\": {"]
+#[doc = "        \"$ref\": \"#/$defs/Hook\""]
+#[doc = "      }"]
+#[doc = "    },"]
 #[doc = "    \"pre_task\": {"]
 #[doc = "      \"type\": \"array\","]
 #[doc = "      \"items\": {"]
@@ -1840,6 +1852,8 @@ pub struct FrameworkHooks {
     #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
     pub pre_commit: ::std::vec::Vec<Hook>,
     #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub pre_file_edit: ::std::vec::Vec<Hook>,
+    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
     pub pre_task: ::std::vec::Vec<Hook>,
     #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
     pub session_end: ::std::vec::Vec<Hook>,
@@ -1851,6 +1865,7 @@ impl ::std::default::Default for FrameworkHooks {
             post_task: Default::default(),
             pre_agent_spawn: Default::default(),
             pre_commit: Default::default(),
+            pre_file_edit: Default::default(),
             pre_task: Default::default(),
             session_end: Default::default(),
         }
@@ -6851,6 +6866,7 @@ pub mod builder {
         post_task: ::std::result::Result<::std::vec::Vec<super::Hook>, ::std::string::String>,
         pre_agent_spawn: ::std::result::Result<::std::vec::Vec<super::Hook>, ::std::string::String>,
         pre_commit: ::std::result::Result<::std::vec::Vec<super::Hook>, ::std::string::String>,
+        pre_file_edit: ::std::result::Result<::std::vec::Vec<super::Hook>, ::std::string::String>,
         pre_task: ::std::result::Result<::std::vec::Vec<super::Hook>, ::std::string::String>,
         session_end: ::std::result::Result<::std::vec::Vec<super::Hook>, ::std::string::String>,
     }
@@ -6861,6 +6877,7 @@ pub mod builder {
                 post_task: Ok(Default::default()),
                 pre_agent_spawn: Ok(Default::default()),
                 pre_commit: Ok(Default::default()),
+                pre_file_edit: Ok(Default::default()),
                 pre_task: Ok(Default::default()),
                 session_end: Ok(Default::default()),
             }
@@ -6907,6 +6924,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for pre_commit: {e}"));
             self
         }
+        pub fn pre_file_edit<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::vec::Vec<super::Hook>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.pre_file_edit = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for pre_file_edit: {e}"));
+            self
+        }
         pub fn pre_task<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::vec::Vec<super::Hook>>,
@@ -6938,6 +6965,7 @@ pub mod builder {
                 post_task: value.post_task?,
                 pre_agent_spawn: value.pre_agent_spawn?,
                 pre_commit: value.pre_commit?,
+                pre_file_edit: value.pre_file_edit?,
                 pre_task: value.pre_task?,
                 session_end: value.session_end?,
             })
@@ -6950,6 +6978,7 @@ pub mod builder {
                 post_task: Ok(value.post_task),
                 pre_agent_spawn: Ok(value.pre_agent_spawn),
                 pre_commit: Ok(value.pre_commit),
+                pre_file_edit: Ok(value.pre_file_edit),
                 pre_task: Ok(value.pre_task),
                 session_end: Ok(value.session_end),
             }

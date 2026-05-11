@@ -54,9 +54,26 @@ keyring             = { version = "3.6", default-features = false, features = ["
 # Latest 0.6.x; takes the http-1.x types compatible with reqwest 0.13.
 wiremock            = "0.6"
 
+# M04 Stage D — globset-backed don't-touch matcher (spec §4a). 0.4.x ships
+# `GlobBuilder::case_insensitive` + `GlobSet::matches` returning matched
+# pattern indices for pattern-recovery on hard-rail emit.
+globset             = "0.4"
+
+# M04 Stage E — Tauri 2.x notification plugin for the `desktop` HITL
+# notifier (spec §6a). 2.x matches the Tauri 2 baseline pinned in
+# src-tauri/Cargo.toml. Per docs/gotchas.md #32 cross-stack discipline:
+# install + capability + permission API verified against
+# https://v2.tauri.app/plugin/notification/ at 2026-05-10.
+tauri-plugin-notification = "2"
+
 # runtime-core path-dep for runtime-main + future provider consumers.
 # Version pin avoids the cargo-deny wildcard rule.
 runtime-core        = { path = "crates/runtime-core", version = "0.1.0" }
+# runtime-drone path-dep for runtime-main integration tests that need
+# the drone-side `snapshot::recover_session_state` helper (M04 Stage B
+# plan_recovery.rs). Production callsites stay decoupled through IPC;
+# this is dev-only.
+runtime-drone       = { path = "crates/runtime-drone", version = "0.1.0" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

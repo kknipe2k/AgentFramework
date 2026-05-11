@@ -8,6 +8,52 @@
       "type": "string",
       "enum": ["builtin", "mcp", "generated"],
       "description": "Origin of a tool invocation. Spec §0b + §2."
+    },
+    "ApprovedBy": {
+      "type": "string",
+      "enum": ["user", "auto"],
+      "title": "ApprovedBy",
+      "description": "Source of the plan approval. `user` = HITL approval seam resolved by the renderer; `auto` = framework JSON declared `approval_required: false`."
+    },
+    "HookCategoryRef": {
+      "type": "string",
+      "enum": ["verify", "lint", "build", "test", "custom"],
+      "title": "HookCategoryRef",
+      "description": "Hook category — spec §4a. Mirrors common.v1.json HookCategory; embedded in verify_started events."
+    },
+    "OnFailureRef": {
+      "type": "string",
+      "enum": ["block", "warn", "rollback"],
+      "title": "OnFailureRef",
+      "description": "Hook on_failure policy — spec §4a. Mirrors common.v1.json HookOnFailure; embedded in verify_failed events."
+    },
+    "RailPolicy": {
+      "type": "string",
+      "enum": ["hard", "soft"],
+      "title": "RailPolicy",
+      "description": "Rail policy — spec §4a. Hard rails block; soft rails warn."
+    },
+    "HitlTriggerRef": {
+      "type": "string",
+      "title": "HitlTriggerRef",
+      "description": "HITL trigger discriminator embedded in HITL + notifier events. Spec §6a — mirrors hitl.v1.json HitlTrigger (9 values, locked). The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy).",
+      "enum": [
+        "on_gap",
+        "on_risky_tool",
+        "on_dont_touch_edit",
+        "on_failure_threshold",
+        "on_capability_violation",
+        "on_budget_threshold",
+        "on_plan_approval",
+        "per_task",
+        "per_epic"
+      ]
+    },
+    "HitlUiVariantRef": {
+      "type": "string",
+      "title": "HitlUiVariantRef",
+      "description": "HITL UI variant discriminator embedded in `hitl_requested` events. Spec §6a — mirrors hitl.v1.json HitlUiVariant.",
+      "enum": ["panel", "modal", "toast"]
     }
   },
   "oneOf": [
@@ -128,32 +174,67 @@
       "type": "object",
       "title": "PlanCreated",
       "additionalProperties": false,
-      "required": ["type", "plan_id", "task_count"],
+      "required": ["type", "plan_id", "title", "task_count", "approval_required"],
       "properties": {
         "type": { "const": "plan_created" },
         "plan_id": { "type": "string" },
-        "task_count": { "type": "integer", "minimum": 0 }
+        "title": { "type": "string" },
+        "task_count": { "type": "integer", "minimum": 0 },
+        "approval_required": { "type": "boolean" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "PlanApprovalRequested",
+      "additionalProperties": false,
+      "required": ["type", "plan_id"],
+      "properties": {
+        "type": { "const": "plan_approval_requested" },
+        "plan_id": { "type": "string" }
       }
     },
     {
       "type": "object",
       "title": "PlanApproved",
       "additionalProperties": false,
-      "required": ["type", "plan_id"],
+      "required": ["type", "plan_id", "approved_by"],
       "properties": {
         "type": { "const": "plan_approved" },
-        "plan_id": { "type": "string" }
+        "plan_id": { "type": "string" },
+        "approved_by": { "$ref": "#/$defs/ApprovedBy" }
       }
     },
     {
       "type": "object",
-      "title": "PlanRejected",
+      "title": "PlanRevised",
+      "additionalProperties": false,
+      "required": ["type", "plan_id", "revision_reason"],
+      "properties": {
+        "type": { "const": "plan_revised" },
+        "plan_id": { "type": "string" },
+        "revision_reason": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "PlanAborted",
       "additionalProperties": false,
       "required": ["type", "plan_id", "reason"],
       "properties": {
-        "type": { "const": "plan_rejected" },
+        "type": { "const": "plan_aborted" },
         "plan_id": { "type": "string" },
         "reason": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "PlanComplete",
+      "additionalProperties": false,
+      "required": ["type", "plan_id", "duration_ms"],
+      "properties": {
+        "type": { "const": "plan_complete" },
+        "plan_id": { "type": "string" },
+        "duration_ms": { "type": "integer", "minimum": 0 }
       }
     },
     {
@@ -195,6 +276,18 @@
     },
     {
       "type": "object",
+      "title": "TaskSkipped",
+      "additionalProperties": false,
+      "required": ["type", "plan_id", "task_id", "reason"],
+      "properties": {
+        "type": { "const": "task_skipped" },
+        "plan_id": { "type": "string" },
+        "task_id": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
       "title": "TaskRolledBack",
       "additionalProperties": false,
       "required": ["type", "plan_id", "task_id", "snapshot_id"],
@@ -209,12 +302,13 @@
       "type": "object",
       "title": "TaskEscalated",
       "additionalProperties": false,
-      "required": ["type", "plan_id", "task_id", "reason"],
+      "required": ["type", "plan_id", "task_id", "failure_count", "max_failures"],
       "properties": {
         "type": { "const": "task_escalated" },
         "plan_id": { "type": "string" },
         "task_id": { "type": "string" },
-        "reason": { "type": "string" }
+        "failure_count": { "type": "integer", "minimum": 0 },
+        "max_failures": { "type": "integer", "minimum": 1 }
       }
     },
     {
@@ -233,11 +327,13 @@
       "type": "object",
       "title": "VerifyStarted",
       "additionalProperties": false,
-      "required": ["type", "hook_id", "level"],
+      "required": ["type", "hook_id", "category", "firing_point"],
       "properties": {
         "type": { "const": "verify_started" },
         "hook_id": { "type": "string" },
-        "level": { "type": "string" }
+        "category": { "$ref": "#/$defs/HookCategoryRef" },
+        "firing_point": { "type": "string" },
+        "level": { "type": ["string", "null"] }
       }
     },
     {
@@ -248,30 +344,35 @@
       "properties": {
         "type": { "const": "verify_passed" },
         "hook_id": { "type": "string" },
-        "duration_ms": { "type": "integer", "minimum": 0 }
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "output_preview": { "type": ["string", "null"] }
       }
     },
     {
       "type": "object",
       "title": "VerifyFailed",
       "additionalProperties": false,
-      "required": ["type", "hook_id", "error"],
+      "required": ["type", "hook_id", "duration_ms", "error", "on_failure"],
       "properties": {
         "type": { "const": "verify_failed" },
         "hook_id": { "type": "string" },
-        "error": { "type": "string" }
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "error": { "type": "string" },
+        "on_failure": { "$ref": "#/$defs/OnFailureRef" }
       }
     },
     {
       "type": "object",
       "title": "RailTriggered",
       "additionalProperties": false,
-      "required": ["type", "rail_id", "severity", "message"],
+      "required": ["type", "rail_id", "policy", "firing_point", "message"],
       "properties": {
         "type": { "const": "rail_triggered" },
         "rail_id": { "type": "string" },
-        "severity": { "type": "string" },
-        "message": { "type": "string" }
+        "policy": { "$ref": "#/$defs/RailPolicy" },
+        "firing_point": { "type": "string" },
+        "message": { "type": "string" },
+        "agent_id": { "type": ["string", "null"] }
       }
     },
     {
@@ -313,25 +414,99 @@
     {
       "type": "object",
       "title": "HitlRequested",
+      "description": "M04.E §6a — emitted when an enabled HITL trigger evaluates. Carries the correlation id (prompt_id) the renderer round-trips back via respond_hitl, the UI variant the renderer should render, the user-facing question, and the available choices. The original M03 minimal shape (prompt + hitl_kind) is replaced; no live producers existed pre-M04.E (audit-verified).",
       "additionalProperties": false,
-      "required": ["type", "agent_id", "prompt", "hitl_kind"],
+      "required": ["type", "prompt_id", "trigger", "question", "options", "ui_variant", "timeout_at_unix_ms"],
       "properties": {
         "type": { "const": "hitl_requested" },
-        "agent_id": { "type": "string" },
-        "prompt": { "type": "string" },
-        "hitl_kind": { "type": "string" }
+        "prompt_id": {
+          "type": "string",
+          "description": "Correlation id (UUID) tying this request to the eventual hitl_resolved / hitl_timeout. The renderer passes this back via respond_hitl(prompt_id, choice)."
+        },
+        "trigger": { "$ref": "#/$defs/HitlTriggerRef" },
+        "agent_id": {
+          "type": ["string", "null"],
+          "description": "Originating agent, when applicable (per_task / per_epic are plan-level, not agent-level)."
+        },
+        "question": {
+          "type": "string",
+          "description": "User-facing question. Free-text per spec §6a; framework JSON authors compose."
+        },
+        "options": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Expected choice tokens. Empty array means free-text response. Built-in options for on_failure_threshold: [retry, skip, abort]."
+        },
+        "ui_variant": { "$ref": "#/$defs/HitlUiVariantRef" },
+        "timeout_at_unix_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Wall-clock deadline (unix milliseconds). Renderer may display countdown; seam fires hitl_timeout when crossed."
+        }
       }
     },
     {
       "type": "object",
       "title": "HitlResolved",
+      "description": "M04.E §6a — emitted when the user responds to a HITL prompt. Carries the same prompt_id as the originating hitl_requested + the chosen token (from options[]) + how long the user took.",
       "additionalProperties": false,
-      "required": ["type", "agent_id", "response", "duration_ms"],
+      "required": ["type", "prompt_id", "choice", "duration_ms"],
       "properties": {
         "type": { "const": "hitl_resolved" },
-        "agent_id": { "type": "string" },
-        "response": { "type": "string" },
+        "prompt_id": { "type": "string" },
+        "choice": {
+          "type": "string",
+          "description": "Selected token; one of the originating options[], or a free-text response when options[] was empty."
+        },
         "duration_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    {
+      "type": "object",
+      "title": "HitlTimeout",
+      "description": "M04.E §6a — emitted when a HITL prompt's timeout_at_unix_ms elapses without a hitl_resolved. The default_action_on_timeout from the framework JSON (e.g. `abort`) drives downstream FSM transitions.",
+      "additionalProperties": false,
+      "required": ["type", "prompt_id", "trigger", "default_action"],
+      "properties": {
+        "type": { "const": "hitl_timeout" },
+        "prompt_id": { "type": "string" },
+        "trigger": { "$ref": "#/$defs/HitlTriggerRef" },
+        "default_action": {
+          "type": "string",
+          "description": "Free-text action token from framework JSON (e.g. `abort`). SDK consumers route this to plan / task FSM transitions."
+        }
+      }
+    },
+    {
+      "type": "object",
+      "title": "NotifierDispatched",
+      "description": "M04.E §6a — emitted when a notifier (terminal_bell / desktop / sound / plugin) successfully fires for a HITL request. Notifier failures emit notifier_failed instead.",
+      "additionalProperties": false,
+      "required": ["type", "notifier_type", "trigger", "success"],
+      "properties": {
+        "type": { "const": "notifier_dispatched" },
+        "notifier_type": {
+          "type": "string",
+          "description": "Type of notifier that fired (terminal_bell / desktop / sound / plugin)."
+        },
+        "trigger": { "$ref": "#/$defs/HitlTriggerRef" },
+        "success": { "type": "boolean" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "NotifierFailed",
+      "description": "M04.E §6a — emitted when a notifier raises an error (e.g. desktop notification permission denied). Notifier failures are NON-FATAL: the HITL seam still resolves on user response or timeout regardless of which notifiers fired.",
+      "additionalProperties": false,
+      "required": ["type", "notifier_type", "trigger", "error"],
+      "properties": {
+        "type": { "const": "notifier_failed" },
+        "notifier_type": { "type": "string" },
+        "trigger": { "$ref": "#/$defs/HitlTriggerRef" },
+        "error": {
+          "type": "string",
+          "description": "Human-readable error text. Renderer surfaces in inspector or toast."
+        }
       }
     },
     {

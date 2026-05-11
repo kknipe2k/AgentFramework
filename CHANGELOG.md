@@ -6,6 +6,342 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M04 Stage G (Phase Closeout — gap analysis + parent-milestone summary)
+
+Final stage of M04. Documentation-only; no code changes. Per CLAUDE.md §20:
+
+- **`docs/gap-analysis.md`** — appended the immutable M04 entry. Cumulative
+  product↔spec audit across M01 + M02 + M03 + M03.5 + M04. Six sections per
+  the entry template (Codebase deep dive; Adherence to spec; Spec review
+  forward-looking; Fix backlog; Carry-forward from prior milestones; Sign-off)
+  plus the second-of-its-kind `<gotchas_graduation>` subsection covering 42
+  per-stage gotchas + friction events across A1–F with disposition (12
+  resolved, 23 graduated, 7 kept, 0 expired). M02 + M03 carry-forward final
+  disposition recorded; M03.5 carry-forwards (v1.3 protocol tags + 12
+  docs/gotchas.md graduations) all applied; v1.4 protocol candidates surfaced
+  (`<architecture_check>` + `<schema_audit>` + `<schema_root_check>` +
+  `<phase_doc_inventory_audit>` + `<safety_primitive_coverage_path>`).
+- **`docs/build-prompts/retrospectives/M04-summary.md`** — new parent-milestone
+  roll-up aggregating M04.A1–F retrospectives. Aggregate scoring (Process
+  38.43/40, Product 37.43/40, Pattern 29.57/35); time-box accuracy (~0.55×
+  mean ratio, ~20h actual against 36h estimated); cross-stage trends; verdict
+  `Pattern held across M04`. Decisions to apply before M05 enumerated.
+- **CHANGELOG.md** — this entry.
+
+Append-only invariant verified: `git show origin/main:docs/gap-analysis.md`
+diff against the head N lines of the local file returns empty (prior M01 +
+M02 + M03 entries unchanged).
+
+### Added — M04 Stage F (§2a Budget + §1b Recovery — cost controls + resume from snapshot)
+
+Seventh stage of M04. Bundles two primitives in one stage: §2a Budget (3 scopes
++ 4 threshold actions + downshift_hook + UI header bar) + §1b Recovery (resume
+rebuilds history not re-execute per WI-14 + tool-call-uncertain UI prompt with
+4 actions + MCP reconnect seam + plan/capability state restoration).
+
+**Decisions documented in M04.F retrospective:**
+- The existing 4 budget event variants (`budget_warn`, `budget_downshift`,
+  `budget_suspended`, `budget_exceeded`) had a provisional minimal shape that
+  diverges from spec §2a (`scope` field missing on all; `spent_usd`/`cap_usd`
+  missing on `BudgetDownshift`; the `budget_warn` discriminator should be
+  `budget_warning` per spec). Stage F WIRES the existing events as-is rather
+  than reshaping; the divergence becomes a Stage G gap-analysis carry-forward
+  entry. Rationale: Stage F's deliverable is the enforcer + recovery; touching
+  existing public event shapes would balloon scope.
+- The downshift hook ladder is hardcoded in `runtime-main/src/budget/hook.rs`
+  (`DefaultLadder`) per the spec §2a `opus → sonnet → haiku` rule. Framework
+  JSON's `framework.budget.downshift_hook.tool_name` is read at schema-codegen
+  time but the framework-tool-dispatch wiring is deferred to M5/M9 generators —
+  the hook trait exists at the seam so later milestones can plug in a
+  framework-defined tool without changing call sites.
+- Drone IPC adds a new `DroneCommand::RecoverSession` + `DroneEvent::SessionRecovered`
+  pair rather than reusing `QuerySessionDb` or `ReadSignals`. The drone-side
+  `snapshot::recover_session_state` (shipped M04 Stage B) was already complete;
+  Stage F exposes it via the IPC variant and consumes it through a
+  `DroneClient::recover_session(session_id)` method.
+
+**New artifacts:**
+- **`schemas/budget.v1.json`** (new) — `BudgetPolicy` (session/framework caps +
+  actions + downshift_hook), `BudgetActions` (4 percent thresholds with spec §2a
+  defaults), `BudgetScope` enum (session/framework/global), `DownshiftHook`
+  (type=`tool` + tool_name). Concrete `type: object` at root per Stage E
+  gotcha #29 carry-forward.
+- **`crates/runtime-core/src/generated/budget.rs`** (typify),
+  **`src/types/budget.ts`** (json-schema-to-typescript) — generated and
+  re-exported via `runtime_core::budget` + `src/types/budget.ts`.
+- **`crates/runtime-main/src/budget/`** (new module) — four files:
+  - `mod.rs` — re-exports.
+  - `enforcer.rs` — `BudgetEnforcer` with 3-scope tightest-cap-wins evaluation,
+    4 threshold actions (Warn/Downshift/Suspend/HardStop) emitted in firing
+    order. Idempotent: re-recording spend at the same percent does not re-fire.
+    `record_spend_with_scopes(incremental_usd, framework_spend, global_spend)`
+    accepts caller-supplied per-scope running totals. `cost_from(breakdown,
+    input_per_million, output_per_million)` pure helper for cache-aware cost
+    math.
+  - `cost.rs` — `CostCache` LRU keyed by `CostKey` (stable hash of message
+    content list). Capacity-0 cache disables caching cleanly.
+  - `hook.rs` — `DownshiftHook` trait + `DefaultLadder` implementing the
+    spec §2a `opus → sonnet → haiku` rule (tier-classified by model-id prefix).
+    Sonnet → Haiku triggers only when `remaining < 10% AND
+    avg_task_cost > remaining/3`. `RemainingBudget` carries `spent_usd`,
+    `cap_usd`, optional `avg_task_cost_usd`.
+- **`crates/runtime-main/src/recovery/`** (new module) — three files:
+  - `mod.rs` — re-exports.
+  - `resume.rs` — `request_resume_with(session_id, recover)` coordinates a
+    session resume against the supplied async `recover` callback. Returns
+    `ResumePlan { snapshot_id, plans, tasks, uncertain_tool_invocations,
+    has_state }`. `reconnect_mcp_servers(session_id)` is the v0.1 no-op seam
+    (M5/M6 wire the real path).
+  - `uncertainty.rs` — `ToolCallUncertaintyAction` enum (4 spec §1b actions:
+    Retry/Skip/MarkComplete/Abort) + `respond_uncertainty_with(...)` which
+    writes a `tool_call_uncertainty_resolved` decision signal via the supplied
+    emit callback. Returns `UncertaintyResolution { signal_id, action,
+    invocation_id }`.
+- **`src/components/BudgetHeaderBar.tsx`** — sticky top-of-screen bar with
+  color gradient (ok/warn/downshift/suspended/exceeded). Tooltip surfaces
+  scope breakdown; click reveals settings form for global per-day cap (calls
+  `set_global_budget`). Exceeded status surfaces the "Session terminated due
+  to budget" banner. Renders only when a budget event has landed.
+- **`src/components/RecoveryDialog.tsx`** — cold-start surface. Reads
+  `localStorage.lastSessionId` on mount; surfaces Resume/Discard prompt;
+  Resume calls `invokeRequestResume(sessionId)` and seeds the renderer's
+  `uncertainInvocations` list from the returned `ResumePlan`.
+- **`src/components/UncertaintyPrompt.tsx`** — modal dialog iterating
+  `state.uncertainInvocations`. Each invocation presents the 4 spec §1b action
+  buttons; click dispatches `respond_uncertainty` and removes from the list.
+  Counter shows remaining invocations.
+- **`crates/runtime-main/tests/budget_threshold.rs`** (new integration test)
+  — drives the enforcer with deterministic spend deltas; asserts the 4
+  threshold actions fire in 50→75→90→100 order; downshift_hook invokes exactly
+  once at 75%; tightest-cap-wins with framework scope.
+- **`crates/runtime-main/tests/recovery_lifecycle.rs`** (new integration test)
+  — full round-trip via real drone subprocess: write 3 signals (plan + task +
+  stranded tool_invoked) + snapshot → recover via IPC → assert `ResumePlan`
+  populated correctly → resolve uncertainty with `skip` → assert the
+  resolution signal lands without re-invoking the tool (spec §1b + gotcha #15
+  invariant).
+- **`tests/unit/components/{BudgetHeaderBar,RecoveryDialog,UncertaintyPrompt}.test.tsx`**
+  (new vitest specs) — 14 + 8 + 9 = 31 cases covering color gradient + status
+  transitions + settings form + dialog resume/discard + uncertainty action
+  routing + error surfaces.
+- **`tests/e2e/{budget_threshold,recovery_uncertainty}.spec.ts`** (new
+  Playwright specs) — 4 + 4 = 8 cases driving `window.__graphStore` to verify
+  surface-on-state-change + ARIA attributes.
+
+**Schema edits:**
+- `crates/xtask/src/main.rs` — `budget` added to schemas list (Rust + TS
+  codegen).
+
+**Drone IPC additions:**
+- `crates/runtime-core/src/drone.rs` — `DroneCommand::RecoverSession {
+  session_id }` + `DroneEvent::SessionRecovered { snapshot_id, state, plans,
+  tasks, uncertain_tool_invocations }`. DroneEvent variant count bumps to 10
+  (round_trip.rs guard updated).
+- `crates/runtime-drone/src/command_handler.rs` —
+  `handle_recover_session(conn, session_id, event_tx)` calls existing
+  `snapshot::recover_session_state` and emits the new `SessionRecovered`
+  event.
+- `crates/runtime-main/src/drone_ipc/client.rs` —
+  `DroneClient::recover_session(session_id)` async method + `RecoveredSession`
+  mirror struct + `await_recovery` event-filter helper.
+
+**Tauri shell additions:**
+- `src-tauri/src/main.rs` — `GlobalBudgetState` (Tauri-managed `Mutex<Option<f64>>`)
+  registered alongside seams; new `request_resume` + `respond_uncertainty` +
+  `set_global_budget` commands added to `invoke_handler`.
+- `src-tauri/src/commands.rs` — three new Tauri commands + `*_with` testable
+  seams. `set_global_budget` rejects NaN / negative caps with `CmdError::Internal`.
+
+**Renderer state:**
+- `src/lib/graphStore.ts` — 4 budget event cases now drive `state.budget:
+  BudgetState | null` (spentUsd, capUsd, percent, status). New
+  `uncertainInvocations: UncertainInvocation[]` field plus
+  `recordUncertainInvocation` and `resolveUncertainInvocation` actions.
+  Exhaustive `_exhaustive: never` switch holds.
+- `src/lib/ipc.ts` — `invokeRequestResume`, `invokeRespondUncertainty`,
+  `invokeSetGlobalBudget` wrappers + `ResumePlan`, `UncertaintyResolution`,
+  `UncertaintyAction` types.
+- `src/App.tsx` — mounts `<BudgetHeaderBar />` at the top of the page,
+  `<RecoveryDialog />` (self-managing via localStorage), and
+  `<UncertaintyPrompt sessionId={lastSessionId} />`.
+
+**Quality gates (M04 Stage F — measured):**
+- workspace coverage: 93.75% line (≥80% ✓)
+- runtime-main coverage: 96.66% line (≥95% ✓)
+- runtime-drone coverage: 95.79% line (≥95% ✓)
+- per-module new safety primitives: budget/cost.rs 100%, budget/enforcer.rs
+  98.90%, budget/hook.rs 100%, recovery/resume.rs 96.46%, recovery/uncertainty.rs
+  98.48% — all ≥95%
+- vitest: 249 passed (+34 from new component tests)
+- Playwright: 27 passed (+8 new — 4 budget_threshold + 4 recovery_uncertainty)
+- cargo test: ~300 passing including 3 new budget integration tests + 2 new
+  recovery integration tests + 2 new drone command_handler tests
+- cargo fmt / clippy / audit / deny / schema-drift: all green
+
+**Carry-forward to Stage G gap-analysis:**
+- Budget event shapes diverge from spec §2a (missing `scope`, `spent_usd`/`cap_usd`
+  on Downshift, `budget_warn` vs spec's `budget_warning`). Document as 🟡
+  Important.
+- Downshift hook framework-tool-dispatch wiring deferred to M5/M9 — note the
+  `DownshiftHook::tool_name` field reads but doesn't dispatch in v0.1.
+- §1d long-lived `events()` reconnect note: ALREADY CLOSED at A2 — Stage G
+  records the closure but does not need to re-validate (integration test at
+  `crates/runtime-main/tests/drone_reconnect_events.rs`).
+
+### Added — M04 Stage E (§6a HITL primitive — 9 trigger types + 3 UI variants + notifier plugin interface)
+
+Sixth stage of M04. Builds the §6a HITL primitive end-to-end: 9-trigger policy evaluator + `HitlSeam` (oneshot-channel gate mirroring Stage B's `ApprovalSeam`) + notifier plugin interface + 3 built-in notifiers (`terminal_bell`, `desktop` via Tauri 2.x notification plugin, `sound`) + 3 renderer surfaces (Panel non-modal / Modal aria-modal=true / Toast role=status with 30s auto-dismiss) + `respond_hitl` Tauri command + failure-escalation integration test driving `task_escalated` → `on_failure_threshold` → seam-resolve-with-Skip end-to-end.
+
+**Decisions documented in M04.E retrospective:**
+- The phase doc's `respond_hitl` example threaded the call through `Arc<DroneClient>` IPC. Mirrored Stage B's `ApprovalSeam` pattern instead: the seam is `tokio::sync::oneshot`-backed and lives in-process — Tauri-managed `Arc<HitlSeam>` registered in `src-tauri/src/main.rs` setup hook, resolved directly by `respond_hitl` without a drone round-trip. Same architectural rationale as Stage C's approve_plan/revise_plan/abort_plan path.
+- The pre-Stage-E `HitlRequested`/`HitlResolved` events had a provisional minimal shape (`prompt`, `hitl_kind`, `agent_id`, `response`, `duration_ms`). No live producers existed (audit-verified). Replaced with the spec §6a `HitlNotifyEvent`-aligned shape: `prompt_id` (correlation id), `trigger` (HitlTriggerRef), `agent_id` (nullable for plan-scoped triggers), `question`, `options[]`, `ui_variant`, `timeout_at_unix_ms` on `HitlRequested`; `prompt_id` + `choice` + `duration_ms` on `HitlResolved`.
+
+**New artifacts:**
+- **`schemas/hitl.v1.json`** (new) — `HitlPolicy` (9 trigger configs + notifier list + `timeout_seconds` + `default_action_on_timeout`), `HitlTrigger` enum (9 values, locked), `HitlUiVariant` enum (panel/modal/toast), `HitlNotifierType` enum (terminal_bell/desktop/sound/plugin), `HitlNotifier` shape, `HitlTriggerPolicy` (enabled + ui override + trigger-specific fields tools/threshold/percent).
+- **`crates/runtime-core/src/generated/hitl.rs`** (generated via typify), **`src/types/hitl.ts`** (generated via json-schema-to-typescript).
+- **`crates/runtime-main/src/hitl/`** (new module) — five files:
+  - `mod.rs` — re-exports + module documentation.
+  - `seam.rs` — `HitlSeam` (oneshot-channel gate). `await_response(prompt_id, wait)` registers the awaiter + races against a tokio timeout; on timeout the registration is removed before returning so a late `resolve` returns `NotFound` not `ReceiverDropped`. `resolve(prompt_id, choice)`, `cancel(prompt_id)`, `pending_len()` mirror `ApprovalSeam`'s contract.
+  - `policy.rs` — 9-trigger policy evaluator. `HitlPolicyEvaluator::evaluate(policy, context)` returns `Some(ResolvedTrigger { trigger, ui_variant, timeout_seconds, default_action })` when enabled + trigger-specific preconditions met (risky-tool allowlist match; failure-threshold count ≥ threshold; budget percent ≥ percent), else `None`. `default_ui_for(trigger)` encodes the spec §6a default-UI-per-trigger table. Tool-pattern matcher supports exact and trailing-wildcard forms (`Bash:rm`, `WebFetch:*`).
+  - `notifiers/mod.rs` — `HitlNotifier` trait (`fn notifier_type() -> &str`; `async fn notify(event) -> Result<(), NotifierError>`). `NotifierRegistry::build(configs)` skips disabled entries and rejects `plugin` type with `NotifierError::PluginNotSupported` per the v0.1 / M9 deferral. `dispatch_all(event)` fires every notifier in parallel (`futures::join_all`) and returns per-notifier `NotifierOutcome` (notifier_type + Result); errors are NON-FATAL — every notifier runs regardless of which ones fail.
+  - `notifiers/terminal_bell.rs` — writes ASCII BEL (`\x07`) to stderr via the `emit_bell_with` testable seam.
+  - `notifiers/sound.rs` — v0.1 BEL stub (same audible bell, `notifier_type = "sound"`). Cross-platform sound playback deferred to v1.0 / M11.
+  - `notifiers/desktop.rs` — Tauri 2.x notification plugin wrapper. `Desktop::with_dispatcher(closure)` accepts an injectable async dispatcher; production wires the closure to call `tauri_plugin_notification::NotificationExt::notification()` (real Tauri call lives in `src-tauri`); tests inject in-memory stubs. `compose_title_body(event)` produces the title + body strings (body truncated at 240 chars with `…`). Per CLAUDE.md §5 OS-call wrapper-vs-seam pattern: the testable seam is covered; the real Tauri call path is structurally untestable cross-platform.
+- **`crates/runtime-main/tests/hitl_failure_escalation.rs`** (new integration test) — full lifecycle: drive a `TaskState` to `Escalated` via 3 Failed events → evaluate `on_failure_threshold` policy fires → build registry from framework JSON + observer notifier → dispatch → seam await → resolve with `skip` → assert FSM rejects further events on terminal state. Also: timeout-without-response surfaces `HitlError::TimedOut`; plugin notifier type rejected at registry-build time.
+- **`src/components/HITLPanel.tsx`** — non-modal (`aria-modal="false"`) full-takeover panel. Renders one button per option; falls back to a textarea form when `options[]` is empty. Escape dismisses locally without resolving the seam (seam keeps awaiting; same Stage C ApprovalPanel pattern).
+- **`src/components/HITLModal.tsx`** — floating modal dialog with `aria-modal="true"`, `aria-labelledby`/`aria-describedby`, Escape closes.
+- **`src/components/HITLToast.tsx`** — `role="status"` + `aria-live="polite"`. Renders a summary button when collapsed; clicking expands to options. Auto-dismisses after 30s of no interaction (renderer-local; the SDK seam keeps awaiting until its own timeout).
+- **`tests/e2e/hitl_failure_escalation.spec.ts`** (new Playwright spec) — 6 tests driving `window.__graphStore` to verify panel/modal/toast surface on `hitl_requested`, dismiss on `hitl_resolved`, ARIA-modal attributes per variant, notifier-record attach on `notifier_dispatched`, and Escape-dismiss-without-resolving.
+
+**Schema edits:**
+- `schemas/event.v1.json` — provisional `HitlRequested`/`HitlResolved` shape replaced with the spec §6a-aligned shape (prompt_id, trigger, options, ui_variant, timeout_at_unix_ms on Requested; prompt_id, choice on Resolved); 3 new variants added (`hitl_timeout`, `notifier_dispatched`, `notifier_failed`); 2 new shared $defs (`HitlTriggerRef`, `HitlUiVariantRef`) — typify-friendly enum-in-$defs pattern per M04.D precedent.
+- `crates/runtime-core/src/event.rs` (hand-curated) — mirrored to match schema; new public enums `HitlTriggerRef` and `HitlUiVariantRef`.
+- `crates/xtask/src/main.rs` — `hitl` added to the schemas list (Rust + TS codegen).
+
+**Tauri shell (Stage E wiring):**
+- `src-tauri/src/main.rs` — registers `tauri_plugin_notification::init()` plugin; registers `Arc<HitlSeam>` Tauri-managed state alongside `Arc<ApprovalSeam>`; `respond_hitl` added to the `invoke_handler` list.
+- `src-tauri/src/commands.rs` — new `respond_hitl(prompt_id, choice)` Tauri command + `respond_hitl_with(prompt_id, choice, &HitlSeam)` testable seam. Soft-Ok on no-pending-awaiter (same rationale as `approve_plan`).
+- `src-tauri/capabilities/default.json` — `notification:default` permission added so the desktop notifier reaches the OS notification system. Locked-down capability list otherwise unchanged.
+- `Cargo.toml` workspace + `src-tauri/Cargo.toml` — `tauri-plugin-notification = "2"`. Install + capability + permission API verified verbatim against <https://v2.tauri.app/plugin/notification/> at 2026-05-10 per gotcha #32.
+- `package.json` — `@tauri-apps/plugin-notification ^2.0.0` (renderer-side dep for future renderer-driven notifications).
+
+**Renderer:**
+- `src/lib/graphStore.ts` — 5 formerly-no-op event cases now drive live state: `hitl_requested` inserts into `pendingHitl: Record<promptId, PendingHitl>`; `hitl_resolved` / `hitl_timeout` delete; `notifier_dispatched` / `notifier_failed` append to `notifierRecords: Record<promptId, NotifierRecord[]>` per matching trigger. `clear()` resets both. The exhaustive `_exhaustive: never` switch holds.
+- `src/lib/ipc.ts` — `invokeRespondHitl(promptId, choice)` wrapper.
+- `src/App.tsx` — mounts `<HITLPanel />` alongside `<ApprovalPanel />` and `<HITLModal />` / `<HITLToast />` at the App layout root.
+
+**Tests:**
+- HITL Rust unit tests: `hitl/seam.rs` 12 cases (await→resolve, timeout, double-resolve, cancel, receiver-dropped, concurrent, ReceiverDropped path); `hitl/policy.rs` 22 cases (9-trigger exhaustive happy path + 3 trigger-specific precondition tables + UI override + missing/disabled → None + matches_tool variants); `hitl/notifiers/mod.rs` 8 cases (build empty / disabled / each built-in / plugin reject / dispatch parallel / continue-on-failure / outcome shape); `hitl/notifiers/{terminal_bell,sound,desktop}.rs` 6 cases each.
+- `crates/runtime-main/tests/hitl_failure_escalation.rs` 3 cases — full failure-escalation lifecycle + seam-timeout + build-rejects-plugin.
+- `src-tauri/src/commands.rs` 3 new cases — `respond_hitl_with` resolve / no-pending-awaiter / receiver-dropped paths.
+- `tests/unit/components/HITLPanel.test.tsx` 14 cases — render shape, ARIA, options, textarea fallback, Escape, error display, internal `_testing` helpers.
+- `tests/unit/components/HITLModal.test.tsx` 9 cases — ARIA modal attributes, Escape, error display.
+- `tests/unit/components/HITLToast.test.tsx` 9 cases — collapsed summary, expand-on-click, auto-dismiss timer, error display.
+- `tests/unit/graphStore.test.ts` extended with 7 new cases — HITL request/resolve/timeout/notifier-dispatched/notifier-failed/trigger-routing/clear-resets.
+- `tests/unit/ipc.test.ts` extended with 1 case — `invokeRespondHitl` arg-shape.
+- `tests/e2e/hitl_failure_escalation.spec.ts` 6 Playwright cases.
+
+**Coverage (measured locally, Linux CI runs same gates):**
+- workspace ≥80% — actual 93.83% line.
+- runtime-main ≥95% — actual 97.17% line (hitl/seam.rs 99.47%, hitl/policy.rs 99.81%, hitl/notifiers/desktop.rs 100%, hitl/notifiers/mod.rs 92.78%, hitl/notifiers/sound.rs 94.34%, hitl/notifiers/terminal_bell.rs 94.44%).
+- runtime-drone ≥95% — actual 95.89% line.
+- src/ ≥80% — actual 97.8% line.
+
+**Coverage holdout:**
+- `notifiers/desktop.rs` real-Tauri-call path: the `Desktop::with_dispatcher` testable seam is covered to 100% line; production wiring (the closure built around `tauri_plugin_notification::NotificationExt::notification()`) lives in `src-tauri` and is exercised end-to-end only by the production renderer, not by the workspace coverage gate. Same OS-call wrapper-vs-seam holdout pattern as `providers/anthropic.rs` + `key_store.rs` + `drone_ipc/connection.rs` + `hooks/shell.rs::TokioShellSpawner::spawn`.
+
+**v0.1 scope:**
+- STANDARD mode hardcoded — mode-keyed HITL policy overrides in framework JSON are loaded + validated but only STANDARD is evaluated.
+- `on_capability_violation` trigger seam exposed but not wired — M5 wires the trigger source.
+- Plugin notifiers from `notifiers/` dir return `PluginNotSupported` — M9 generators wire the plugin loader.
+- 1h default HITL timeout (`HitlPolicy::timeout_seconds = 3600`) — per-trigger override deferred to v1.0.
+
+### Added — M04 Stage D (§4a Verify & Rails primitive — Hook executor + JSONLogic-evaluated rails + don't-touch + revert_to_snapshot)
+
+Fifth stage of M04. Builds the §4a Verify & Rails primitive end-to-end. Hook executor (shell|tool|agent variants × 7 firing points) + Rails (hard/soft + JSONLogic operator allowlist per gotcha #18) + globset-backed don't-touch glob matcher (new `pre_file_edit` firing point) + drone-side `RevertToSnapshot` handler extended to consume `RevertReason::HookRollback { hook_id }`. VerifyNode + HookNode upgrade from M03.C synthetic-state stubs to live-event-driven; rail_triggered events accumulate into a new `triggeredRails` store field for M05 capability-enforcer surface.
+
+**Audit-grounded scope reductions vs. the original phase doc draft:**
+- The phase doc planned a new `schemas/hook.v1.json`. Audit verified `Hook`, `HookRef`, `HookCategory`, `HookOnFailure`, `JsonLogicExpression` are ALREADY declared in `common.v1.json` and generated to `runtime_core::generated::common`; `Rail` is in `framework.v1.json`. Stage D consumes the existing types — no new schema file.
+- The phase doc's planned new `hook_started`/`hook_passed`/`hook_failed` events would have duplicated the existing `verify_started`/`verify_passed`/`verify_failed` variants. Stage D extends the existing variant fields per spec §4a rather than re-authoring (audit gotcha decision).
+- The Write-tool dispatcher integration site (`runtime-main/src/sdk/`) does not exist in v0.1 — the SDK drives LLM streaming + structured-emitter parsing only. Stage D ships `DontTouchEvaluator` as a callable primitive that the future capability enforcer (M05) and plan loop (M07) will route through; the evaluator itself is fully tested standalone.
+
+**New artifacts:**
+- **`crates/runtime-main/src/hooks/`** (new module) — five files:
+  - `mod.rs` — re-exports + module documentation.
+  - `shell.rs` — cross-platform shell wrapper. Windows uses `powershell.exe -NoProfile -Command "<command>"` (Windows PowerShell 5.1; pwsh.exe was unavailable on the M04.D build machine — documented retro decision); Linux/macOS uses `bash -c "<command>"`. Flag spelling + semantics verified verbatim against Microsoft's `about_PowerShell_exe` reference (M04.D WEBCHECK). Testable seam `execute_shell_with(spawner, ...)` accepts a `ShellSpawner` trait for unit tests; production `execute_shell` is the OS-spawn wrapper excluded from coverage gates per the M02/A2 wrapper-vs-seam pattern. Timeout via `tokio::time::timeout` + `kill_on_drop(true)`.
+  - `executor.rs` — single entry point `execute_hook(hook, ctx, deps)` returning `HookOutcome::Passed { hook_id, duration_ms, output_preview? }` or `HookOutcome::Failed { hook_id, duration_ms, error, on_failure }`. Output-preview truncated at `OUTPUT_PREVIEW_MAX_BYTES = 512` with UTF-8-boundary-safe slicing. Tool / Agent variants surface as `HookError::DeferredVariant("tool:<name>")` / `("agent:<id>")` until M05 / M07 wire those dispatch paths.
+  - `rails.rs` — JSONLogic evaluator. Operator allowlist locked to the gotcha #18 set (`var, ==, !=, <, <=, >, >=, and, or, not, in, +, -, *, /`). Operators outside the allowlist return `RailError::UnsupportedOperator`; missing `var` paths return `RailError::MissingVar`; division by zero → `RailError::Malformed`. `evaluate_rail(check, facts) -> RailOutcome::Triggered | Quiet` is the rail-evaluation surface; truthy table locks `Bool(false) | Null | 0 | "" | [] | {}` as falsy.
+  - `dont_touch.rs` — `DontTouchEvaluator::new(patterns)` + `evaluate(path) -> DontTouchDecision::Allow | Block { matched_pattern }`. Globset-backed; case-insensitive matching for cross-platform consistency (Windows FS doesn't care about case; Linux does — runtime stays consistent regardless of host OS). Pattern recovery via `GlobSet::matches` index. Multi-glob match: first-by-index wins (single emit). Empty pattern list returns Allow for every path.
+- **`crates/runtime-main/tests/hook_integration.rs`** (new) — full lifecycle integration test (pure-Rust, no real subprocess). Covers: post_task hook passes → `HookOutcome::Passed`; post_task hook fails with on_failure=rollback → `HookOutcome::Failed { on_failure: Rollback }` (the SDK uses `hook_id` to dispatch `RevertReason::HookRollback` to the drone); post_file_edit lint hook with on_failure=warn → no rollback flag; `RevertReason::HookRollback { hook_id }` round-trips serde correctly; `RevertReason::UserRollback` + `GapRecovery` stay unit-shape per audit decision.
+
+**Schema edits:**
+- `schemas/event.v1.json`:
+  - `verify_started` extended: `category` (HookCategoryRef enum) + `firing_point` (string) required; `level` made optional + nullable. Spec §4a `hook_started` field set adopted.
+  - `verify_passed` extended: optional nullable `output_preview`.
+  - `verify_failed` extended: `duration_ms` + `on_failure` (OnFailureRef enum) required.
+  - `rail_triggered`: `severity` field renamed to `policy` (RailPolicy enum hard|soft) per spec §4a; `firing_point` (string) required + `agent_id` optional nullable added.
+  - Three new shared $defs: `HookCategoryRef`, `OnFailureRef`, `RailPolicy` (typify panics on inline enum properties — pattern follows `ApprovedBy` from M04 Stage B).
+- `schemas/framework.v1.json` — `pre_file_edit` added to the `hooks` object as the 7th firing point (spec §4a).
+- `crates/runtime-core/src/event.rs` (hand-curated) — mirrored to match schema.
+- `crates/runtime-core/src/drone.rs` (hand-curated) — `RevertReason::HookRollback` migrated from unit variant to `HookRollback { hook_id: String }` per spec §4a; serde tag changed to `kind` (was implicit untagged) for forward compatibility with downstream variants. The audit baseline check (M04.D pre-flight) confirmed the variant existed; the field addition is the additive edit the audit gotcha called out.
+- `crates/runtime-drone/src/command_handler.rs` — `handle_revert` extended to consume `&RevertReason`. Reason string in the emitted `SnapshotWritten` event now carries the variant (e.g., `"revert:hook_rollback:verify"` for HookRollback; `"revert:user_rollback"` / `"revert:gap_recovery"` for the unit variants). The actual `task_failed` emit per spec §4a happens at the SDK side (M07 plan loop) — drone's role is limited to confirming the snapshot exists.
+
+**Renderer:**
+- `src/lib/graphStore.ts` — four formerly-no-op event cases (`verify_started`/`passed`/`failed` + `rail_triggered`) now drive live state. `verify_started` with `category === 'verify'` creates/updates a VerifyNode (id `verify:<hook_id>`); other categories create/update a HookNode (id `hook:<hook_id>`). `verify_passed`/`failed` update whichever node type exists for that hook_id. `rail_triggered` appends to a new `triggeredRails: TriggeredRail[]` store field (cleared by `clear()`); M05 surfaces them in the capability-enforcer UI. Idempotent re-emit: re-emitting `verify_started` for the same hook_id resets to `active` + clears duration/error fields (retry-after-rollback path). VerifyNodeData extended with `firingPoint`, `outputPreview`, `error`, `onFailure`; HookNodeData extended with `firingPoint`, `durationMs`, `error`. Existing exhaustive `_exhaustive: never` switch held — TS compiler errors on any new schema variant per gotcha #36.
+- `src/components/nodes/VerifyNode.tsx` + `HookNode.tsx` — render the new fields. VerifyNode shows `outputPreview` on `pass`, `error` + `onFailure` badge (block/warn/rollback color) on `fail`. HookNode shows `error` on `error` status. Both nodes expose `data-firing-point` for E2E selectors.
+- `src/types/agent_event.ts` (regen) — three new types `HookCategoryRef`, `OnFailureRef`, `RailPolicy` exported alongside extended `VerifyStarted` / `VerifyPassed` / `VerifyFailed` / `RailTriggered` interfaces.
+
+**Spec edit (in-stage, < 5 lines):**
+- `agent-runtime-spec.md` §4a firing-point table — `pre_file_edit` row added between `post_task` and `post_file_edit` with description "Built-in `dont_touch` rail interception" matching the M04.D scope.
+
+**Tests:**
+- 4 new `crates/runtime-main/src/hooks/` modules with inline unit tests (~50 cases total): shell.rs covers SpawnArgs construction across platforms + dispatch + propagation; dont_touch.rs covers empty/matched/unmatched/recursive/multi-glob/case-insensitive/invalid-glob; rails.rs covers all 15 allowlisted operators + nested expressions + literal pass-through + truthy table; executor.rs covers shell pass/fail per on_failure variant + tool/agent deferred + output preview truncation (ASCII + UTF-8 boundary).
+- `crates/runtime-main/tests/hook_integration.rs` (7 cases) — full lifecycle.
+- `tests/unit/graphStore.test.ts` extended with 11 new cases for verify/hook/rail event flows (verify-vs-non-verify routing; pass/fail field carry; idempotent re-emit; rail accumulation; clear() reset).
+- `tests/unit/nodes/VerifyNode.test.tsx` + `HookNode.test.tsx` extended for new fields (output preview, error+on_failure badge, firing-point data attribute, level-null omission).
+
+**Coverage targets (per CLAUDE.md §5 safety-primitive gate):**
+- `crates/runtime-main/src/hooks/` collectively ≥95% via per-module unit tests (the executor's shell-spawn path is covered via the `*_with` seam against a fake spawner; the production `TokioShellSpawner::spawn` real-OS wrapper is the OS-spawn holdout per the M02/A2 precedent).
+- workspace ≥80%, runtime-main ≥95%, runtime-drone ≥95% maintained.
+
+### Added — M04 Stage C (§3a Plan UI + ApprovalPanel + graph wiring — renderer surface for plan/task events)
+
+Fourth stage of M04. Wires Stage B's plan/task event surface to the renderer. The non-modal `ApprovalPanel` resolves Stage B's `ApprovalSeam` via three new Tauri commands; PlanNode + TaskNode upgrade from synthetic-state stubs to live-driven visual treatments. One technical-best-practice decision documented: the seam is resolved in-process (the seam is `tokio::sync::oneshot`-backed and lives in `runtime-main`; cross-process oneshots don't exist), not via drone IPC as the phase doc text suggested. Per CLAUDE.md §12 own-technical-decisions; the architectural mismatch is documented in the M04.C retrospective.
+
+- **`src/components/ApprovalPanel.tsx`** (new) — non-modal right-side overlay per M03.D InspectorPanel discipline. ARIA `role="region"`, `aria-label="Plan approval"`, `aria-modal="false"`. Surfaces when any plan in graphStore reaches `awaiting_approval`. Three actions: Approve dispatches `invokeApprovePlan`; Revise opens an inline textarea for free-text revisions then submits via `invokeRevisePlan`; Cancel plan opens an inline textarea for reason then submits via `invokeAbortPlan`. ESC dismisses panel-locally (does NOT abort — the SDK keeps awaiting). Panel auto-dismisses when the plan's status transitions out of `awaiting_approval` (via existing event subscription). Free-text passes through opaque per CLAUDE.md §8.security; renderer-side validation limited to length cap (2000) + non-empty trim before submit.
+- **`src/components/nodes/PlanNode.tsx`** (edited) — visual upgrade from synthetic-state stub to live-driven rendering. Status badge (text label) displayed alongside title; per-status border color across all 7 PlanStatus values (`pending_approval`, `awaiting_approval`, `awaiting_replan` → amber/gap; `approved`, `in_progress` → blue/active; `complete` → green; `aborted` → red); revision/abort reason rendered on `awaiting_replan` + `aborted`; duration rendered on `complete`; title truncated at 40 chars (full title in InspectorPanel via existing JSON dump). Cumulative per-plan token spend deferred — adding it would require a Stage B `PlanNodeData` amendment, which the prompt's `<gotchas>` trap explicitly forbids; documented in retrospective.
+- **`src/components/nodes/TaskNode.tsx`** (edited) — visual upgrade. All 7 TaskStatus values (`pending`, `running`, `done`, `blocked`, `failed`, `skipped`, `escalated`) drive border color + class; `escalated` adds the gap-pulse animation reusing the existing keyframe. Failure-count badge `⚠ N/M` (or `⚠ N` when `maxFailures = null`) renders when `failureCount > 0`. HITL flag preserved from M03. Duration rendered on `done`. Title truncated at 30 chars. The `skipped` status now surfaces line-through text-decoration per spec §3a strikethrough convention.
+- **`src/lib/ipc.ts`** (edited) — three new typed wrappers: `invokeApprovePlan(planId)`, `invokeRevisePlan(planId, revisions)`, `invokeAbortPlan(planId, reason)`. Argument names align with the Tauri command parameter snake_case-to-camelCase mapping (`{ planId }`, `{ planId, revisions }`, `{ planId, reason }`).
+- **`src-tauri/src/commands.rs`** (edited) — three new Tauri commands `approve_plan`, `revise_plan`, `abort_plan`. Each takes `tauri::State<'_, Arc<ApprovalSeam>>` and dispatches through a `*_with` testable seam (CLAUDE.md §5 archetype) that takes `&ApprovalSeam` directly. Per-command tracing entry/error/success per spec §13.5. Shared `resolve_or_log` helper treats `ApprovalError::NotFound` as soft-Ok with warn-log (rationale: Stage B retro [LIVE] ambiguity-events deferred the SDK plan_loop driver to M07; the renderer can dispatch the command before any awaiter is wired — do not 500 the user's click on a soft-state issue per CLAUDE.md §12 user-flow ergonomics). 6 unit tests cover happy-path (resolve seam → returns Ok with the right `ApprovalDecision` variant) + no-pending-await path (returns Ok).
+- **`src-tauri/src/main.rs`** (edited) — Tauri `setup` hook registers an `Arc<ApprovalSeam>` ahead of drone spawn (the seam has no I/O so construction is infallible; registering early keeps the command layer wired even if drone spawn fails). The 3 new commands added to `invoke_handler`.
+- **`src/App.tsx`** (edited) — mounts `<ApprovalPanel />` inside `.graph-layout` next to InspectorPanel. Exposes `window.__graphStore = useGraphStore` as a testing affordance for `tests/e2e/plan_approval.spec.ts` — module-level mocking across the `@tauri-apps/api` ESM boundary doesn't work in Playwright (Vitest covers the click→invoke linkage); the affordance lets the E2E spec drive graph state via `page.evaluate`. Always-on (no `import.meta.env.DEV` gate per CLAUDE.md §9 anti-pattern: the store carries no secrets, the same data is already inspectable via React DevTools, and feature-flag shims that don't earn their cost are out).
+- **`src/styles.css`** — new `.approval-panel*` styles (right-overlay matching `.inspector-panel`, amber border per spec §3 Visual Design, action button per-action color encoding); PlanNode `__status` / `__reason` / `__duration` lines + `awaiting_*` border-color rules; TaskNode `__failure-badge` / `__duration` lines + `--escalated` gap-pulse animation + `--skipped` line-through.
+- **Tests** — `tests/unit/components/ApprovalPanel.test.tsx` (10 cases: hidden when no awaiting plan, hidden on `pending_approval` pre-request, surfaces on `awaiting_approval`, ARIA region + aria-modal=false, Approve/Revise/Abort dispatch the right `invoke*` with the right args, ESC dismisses without aborting, auto-dismiss on `plan_approved` state transition, single-instance enforcement on multi-pending). `tests/unit/nodes/PlanNode.test.tsx` extended (status class across all 7 values; status badge text matching; revision reason rendering; abort reason rendering; duration formatting on `complete`). `tests/unit/nodes/TaskNode.test.tsx` extended (status class across all 7 values; failure-count badge format `⚠ N/M`; failure-count without denominator; badge omitted when count is 0; duration on `done`). `tests/e2e/plan_approval.spec.ts` (3 cases: panel surfaces, panel dismisses on state transition, PlanNode `data-status` transitions through the approval flow). 6 new Rust unit tests in `src-tauri/src/commands.rs` for the `*_with` seams.
+
+### Added — M04 Stage B (§3a Plan & Task primitive — schemas + FSM + projection-based persistence + WriteSignal IPC + structured emitter)
+
+Third stage of M04. Builds the §3a Plan & Task primitive end-to-end against spec (events at lines 1417–1427 + approval-gate primitive + loop policy + failure escalation + graph integration) and spec §10 (plans + tasks DDL). Two M02/M03 carry-forward items fold in: WriteSignal IPC + structured-emitter migration. Two engineering spec-drift carve-outs locked + flagged for closeout `docs(spec):` PR.
+
+- **Event-shape reconciliation** (`schemas/event.v1.json` — 13 oneOf changes). 6 spec-canonical migrated: `plan_created` (+ `title` + `approval_required`); `plan_approved` (+ `approved_by` enum); `task_escalated` (replace `reason` with `failure_count` + `max_failures`); `task_started` / `task_completed` / `task_failed` keep shape (drift carve-out). 2 codebase extras: drop `plan_rejected` (unified under `plan_aborted`); KEEP `task_rolled_back` as typed event with `snapshot_id` (drift carve-out). 5 missing authored: `plan_approval_requested`, `plan_revised`, `plan_aborted`, `plan_complete`, `task_skipped`. Both drifts flagged for closeout `docs(spec):` PR. New `ApprovedBy` enum + `task_*.plan_id` denormalization preserved for self-contained downstream consumers.
+- **`schemas/plan.v1.json` + `schemas/task.v1.json`** (new) — JSON Schema 2020-12 per spec §3a TS shape + spec §10 DDL. `$id` follows the established `https://schemas.aria-runtime.dev/<name>.v1.json` pattern. Validated string fields (`PlanTitle`, `TaskTitle` `minLength: 1`) extracted to `$defs/<Name>` per A1 typify-friendliness gotcha.
+- **`crates/xtask/src/main.rs`** — codegen list extended from 7 to 9 schemas (added `plan` + `task`). Generated targets: `crates/runtime-core/src/generated/{plan,task}.rs` (typify) + `src/types/{plan,task}.ts` (json-schema-to-typescript). New TS files added to `.prettierignore` + `eslint.config.js` ignores per the agent_event.ts precedent.
+- **`crates/runtime-drone/migrations/`** (new directory) + `db.rs::run_migrations` migration runner architecture. `_migrations` table tracks applied versions (version INTEGER PK, name TEXT, applied_at INTEGER). Migration files embedded via `include_str!` (build-time embed, single-binary deployment). Each migration runs in its own transaction with rollback-on-failure. `migrations/000_initial.sql` preserves M01 baseline (verbatim move of existing `init_schema` content — 8 tables: sessions, snapshots, signals, heartbeats, vdr, token_usage, skills, mcp_servers). `migrations/001_plans_tasks.sql` adds `plans` + `tasks` per spec §10 DDL with CHECK constraints on status enums + plan FK on tasks. The phase doc's prior reference to "existing M01.C migration runner pattern" was incorrect — architecture authored from scratch in Stage B.
+- **`crates/runtime-main/src/plan/`** (new) — Plan + Task FSM. Pure-logic `PlanStateMachine` + `TaskStateMachine` enforce legal transitions per spec §3a. Failure-escalation boundary: `failure_count >= max_failures` (default 3) transitions Failed→Escalated. Safety primitive: 99.28% line coverage (≥95% gate met). 28 unit tests covering exhaustive transition matrix + illegal-transition rejection + failure-escalation boundary + terminal-state invariants. v0.1 hardcodes `fresh_context_per_task` (only loop policy lit) per CLAUDE.md §3 + spec §0d.
+- **`crates/runtime-main/src/sdk/structured_emitter.rs`** (new) — replaces M02's `decision_extractor.rs` heuristic (DELETED — closes M02 🟡 carry-forward). Mechanism: parser consumes `<<DECISION>>...<<END>>` and `<<PLAN>>...<<END>>` delimited blocks deterministically. False-positive elimination: `Decision:` text in markdown code blocks / quoted content cannot trigger emit unless wrapped in delimiters (test pins this contract — `unstructured_decision_text_does_not_emit_decision_record`). Safety primitive: 95.92% line coverage (≥95% gate met). 21 unit tests covering single + multiple + nested + malformed + mixed + empty inputs + the false-positive-elimination forcing function.
+- **`crates/runtime-main/src/sdk/approval.rs`** (new) — `ApprovalSeam` (oneshot channel pattern). SDK calls `await_approval(plan_id)` to suspend on a pending plan-approval HITL gate; renderer (Stage E wires the UI) calls `resolve(plan_id, decision)` to deliver the user's choice. `ApprovalDecision` variants: `Approved`, `Revised(reason)`, `Aborted(reason)`. Errors: `NotFound`, `Cancelled`, `ReceiverDropped`. Cancel + double-resolve + receiver-dropped paths exercised. Safety primitive: 99.02% line coverage (≥95% gate met). 11 unit tests including concurrent awaits on different plan IDs.
+- **`crates/runtime-drone/src/plan_projector.rs`** (new) — drone-internal continuous projector parallel to `vdr.rs` (M03.E archetype). Reads plan/task signals from the `signals` table and UPSERTs `plans` + `tasks` rows. Idempotent semantics: every projection path uses `INSERT ... ON CONFLICT(id) DO UPDATE`. Out-of-order projection: terminal task statuses (`done`, `skipped`, `escalated`) preserved on subsequent `task_started` re-projection (CASE in UPDATE). Safety primitive: 97.88% line coverage (≥95% gate met). 18 unit tests covering each event type + idempotence + out-of-order + missing-field error paths.
+- **`runtime_core::DroneCommand::WriteSignal`** (new IPC variant) — `{ signal_id, session_id, kind, event, context_type, payload }`. Drone-side handler in `crates/runtime-drone/src/command_handler.rs` inserts into `signals` table (INSERT OR IGNORE for idempotence) → calls `vdr::project_signal` → calls `plan_projector::project_signal` inside the same lock guard. Both projectors gracefully handle `SignalNotFound` as no-ops (race tolerance). Closes M03 🟡 carry-forward "vdr projector wired at signal-write call-site." 3 unit tests cover happy-path projection, idempotence on duplicate signal_id, and decision-payload → vdr roundtrip.
+- **`crates/runtime-main/src/drone_ipc/client.rs::write_signal`** (new method) — fire-and-forget `DroneClient::write_signal(...)` exposing the IPC variant to SDK callers. No-op short-circuit for `DroneClient::noop()`.
+- **`crates/runtime-drone/src/snapshot.rs::recover_session_state`** (new helper) + `RecoveredSession` struct — implements spec §1b recovery semantics. Reads latest snapshot + projected `plans` + `tasks` rows; **currently-running tasks (`status = 'running'`) are normalized to `pending`** (the agent process that was running them is gone). Tool-call uncertainty: `tool_invoked` signals lacking matching `tool_result` surfaced as `uncertain_tool_invocations` (renderer Stage F prompts retry/skip/mark-complete/abort). 8 unit tests covering no-snapshot path, latest-by-timestamp ordering, terminal-status preservation, and uncertainty heuristic edge cases.
+- **`crates/runtime-main/src/sdk/event_pipeline.rs`** — `flush_text_buffer` now calls `parse_structured` (deletes `decision_extractor` callsite). Plan-creation outputs are surfaced for downstream `plan_loop` consumption (Stage B leaves the integration point; framework JSON wires the orchestrator). Malformed delimiter blocks log a warning + still forward the raw text as `StreamText` (no event silently dropped).
+- **`src/lib/graphStore.ts::applyEvent`** — exhaustive switch handles 5 new + 6 changed + 2 dropped variants (compile-time `_exhaustive: never` forcing function held). Stage B mutations are pass-through state only (Stage C lights up the visual surface + ApprovalPanel + animated edge from PlanNode → currently-running TaskNode). PlanNodeData + TaskNodeData extended with new fields (`approvalRequired`, `lastTransitionReason`, `durationMs`, `agentId`, `failureCount`, `maxFailures`, `lastError`, `rollbackSnapshotId`). New `awaiting_approval` + `awaiting_replan` PlanStatus + `escalated` TaskStatus. 14 new vitest cases covering each event type's state mutation.
+- **Integration tests** — `crates/runtime-drone/tests/migration_runner.rs` (8 cases: fresh apply, idempotent re-apply, version tracking, table existence, M01 baseline preservation, run-on-existing-conn, plans/tasks status CHECK constraints). `crates/runtime-main/tests/plan_lifecycle.rs` (2 cases: full 3-task happy path through plan_created → plan_approved → 3× task_started/completed → plan_complete via real drone subprocess + WriteSignal IPC; failure-escalation variant). `crates/runtime-main/tests/plan_recovery.rs` (2 cases: kill drone mid-plan, verify currently-running task recovered as `pending` per spec §1b; tool_invoked without matching tool_result marked uncertain).
+- **Coverage** — workspace 93.44% line (≥80% ✓); runtime-main 97.83% line (≥95% ✓); runtime-drone 96.01% line (≥95% ✓). Per-safety-primitive: state_machine.rs 99.28%, approval.rs 99.02%, structured_emitter.rs 95.92%, plan_projector.rs 97.88%, snapshot.rs 98.15%, db.rs 97.20%, command_handler.rs 94.64%.
+
+Spec-drift carry-forward to M04 closeout `docs(spec):` PR:
+- §3a event shapes: `task_*` events keep `plan_id` (denormalization for self-contained downstream consumers).
+- §4a rollback: `task_rolled_back` as typed event with `snapshot_id` field (replaces stringly-typed `task_failed` with `error: 'rolled_back_after_hook_<id>'` — CLAUDE.md §9 anti-pattern).
+
 ### Changed — M04 phase doc surgical fix: audit-corrections moved into XML (doc-only)
 
 Surgical follow-up to the PR #53 revert (PR #54). Original ask from the user that PR #53 over-shot is now executed correctly: the `🔧 Audit corrections (post-M04.A2 audit)` callout blocks above each X.5 prompt section in stages B/C/D/E/F are dropped; their substantive corrections moved INTO the corresponding `<work_stage_prompt>` XML slots (`<gotchas>`, `<pre_flight_check>`, `<read_reference>`) where the build agent reads them at execution time. Plus three small audit-grounded refinements: Stage B `<pre_flight_check>` adds A1 namespace-decision check (`pub use generated::{agent, common, framework, skill, tool}`) + post-A1 7-schema xtask check; Stage F `<gotchas>` notes §1d ⚠️ note already closed at A2 (subscriptions don't survive reconnect; renderers resubscribe); Verification Checklist Hard Gate G1 corrected to "8 approval gates" (was "7"). 1 file edited, all 5 callout blocks removed, equivalent or stronger content embedded inside the XML the build agent actually parses.
@@ -18,6 +354,54 @@ Closes the cross-session-blindness failure mode that produced PR #53 (M04 phase 
 - **CLAUDE.md §19 — new rule 7: every stage end surface includes cross-machine state by default.** Specifically `git log --oneline main..HEAD` (commits ahead of main on the active milestone branch) + `ls docs/build-prompts/retrospectives/M[NN].*-retrospective.md` (retrospective files present). Closes the gap structurally: when the user pastes a stage surface to any downstream orchestration session, that session sees actual project state instead of inferring from origin.
 - **STAGE-PROMPT-PROTOCOL.md §10 — new v1.4 hardening rule.** "Build-machine state must be confirmed before phase-doc edits." Companion to v1.3 grep-verify-claims rule: v1.3 covers WHAT codebase claims need verification; v1.4 covers WHICH codebase to verify against when origin and build-machine diverge. Validator does not enforce mechanically; authoring discipline backed by gotcha #42 + §19 rule 7.
 - **docs/gotchas.md #42** (companion to #41). "Origin is a partial view of project state when CLAUDE.md §8 forbids per-stage pushes." Pattern bit M04 PR #53 → revert PR #54.
+
+### Added — M04 Stage A2 (production wiring — drone subprocess + count_tokens + CmdError migration + reconnect lock)
+
+Second stage of M04. Wires production paths M03 deferred via `DroneClient::noop()` and migrates the Tauri command surface to consume the typify-generated `CmdError` from Stage A1. Two phase-doc-named items deferred to a downstream stage after surface-and-confirm with the user (the integration points didn't exist in the codebase): VDR projector wiring at WriteSignal (no `WriteSignal` IPC command yet) and structured-emitter decision extractor (no prompt-template builder yet) — both fold into Stage B's plan/verify primitives where the missing primitives land naturally.
+
+- **`src-tauri/src/drone_lifecycle.rs`** (new) — `DroneLifecycle` owns the spawned `runtime-drone` subprocess for an app session. `DroneLifecycle::spawn_with` is the testable seam (CLAUDE.md §5 `*_with` archetype) accepting injectable spawn + connect closures; `DroneLifecycle::spawn` is the production wrapper (locates the binary alongside `current_exe()` per gotcha #22, `tokio::process::Command` with `kill_on_drop(true)` failsafe, `connect_with_retry` exponential-backoff). `shutdown` sends `DroneCommand::GracefulShutdown` then awaits `Child::wait` with a 3s timeout fallback to `start_kill`. Cross-platform IPC addressing: Unix socket at `<temp>/runtime-drone-<sid>.sock`; Windows named pipe at `\\.\pipe\runtime-drone-<sid>`. Unit-tested via `spawn_with` seam (8 tests covering args composition, spawn-failure propagation, connect-failure propagation, shutdown idempotence, address-uniqueness invariants, ENOENT-on-cleanup tolerance).
+- **`src-tauri/src/main.rs`** — Tauri `setup` hook spawns the drone subprocess, registers `Arc<DroneClient>` as Tauri-managed state, and stores the `Mutex<Option<DroneLifecycle>>` for graceful shutdown. `RunEvent::ExitRequested` handler `take()`s the lifecycle and runs `shutdown()` synchronously inside the Tauri runtime so the drone gets its handshake before the host exits. SQLite db path resolves under `app.path().app_local_data_dir()` (created on first run).
+- **`src-tauri/src/commands.rs`** — `query_session_db` + `replay_session` now take `tauri::State<'_, Arc<DroneClient>>` and dispatch real drone IPC (M03's `DroneClient::noop()` shim removed from production code; remains a test affordance in `runtime-main`). `run_smoke_session` similarly takes the managed state and threads it through `run_smoke_session_with`. Hand-rolled struct-variant `pub enum CmdError` removed; replaced with `pub use runtime_core::CmdError` (typify-generated tuple variants over the `ErrorMessage` newtype). All ~17 callsites updated for the tuple shape.
+- **`crates/runtime-core/src/cmd_error_ext.rs`** (new) — inherent constructors (`provider`, `drone`, `key_store`, `internal`) + `Display` + `std::error::Error` impls for the typify-generated `CmdError`. The constructors substitute `"(no message)"` for empty strings so the `ErrorMessage` `minLength: 1` schema constraint never panics in callsite ergonomics. Wire format unchanged from M02 (`{"type":"...","message":"..."}` for non-unit variants). `runtime-core/src/lib.rs` re-exports `CmdError` + `ErrorMessage` at the crate root (no name collision with the hand-curated `RuntimeError`). 13 unit tests covering constructors, `Display` parity with the M02 `thiserror` messages, `Error` trait wiring, and wire-shape preservation.
+- **`crates/runtime-main/src/key_store.rs`** — `From<KeyStoreError> for CmdError` impl (orphan-rule placement: `KeyStoreError` is local to `runtime-main`; `CmdError` is foreign in `runtime-core`). `NotFound` maps to `SetupRequired`; `Keyring` wraps with `Display` body via `key_store(...)` helper. 2 new tests assert both translation paths.
+- **`crates/runtime-main/src/providers/anthropic.rs`** — `count_tokens` calls `POST /v1/messages/count_tokens` per spec §2c.3 (added M03.5). Replaces the M02 chars/4 approximation now that M04 budget enforcement (Stage F) requires the actual provider-side count. Verified against <https://platform.claude.com/docs/en/api/messages-count-tokens>: response is `{"input_tokens": <number>}`; same `x-api-key` + `anthropic-version: 2023-06-01` headers as `/v1/messages`. The obsolete `count_tokens_approximates_char_div_4` unit test deleted (chars/4 path no longer exists; live-network unit test would fail in CI). Behavioral coverage moved to `tests/anthropic_wiremock.rs`.
+- **`crates/runtime-main/tests/anthropic_wiremock.rs`** — 4 new wiremock tests for the count_tokens endpoint: happy path returning `input_tokens` field, 401 → `ProviderError::Auth`, 429 with `retry-after: 45` → `ProviderError::RateLimit`, missing `input_tokens` field → error (defends against upstream shape regression that would otherwise silently report 0 tokens and under-report budget pressure). Pattern parallels the existing `/v1/messages` tests.
+- **`crates/runtime-main/tests/drone_reconnect_events.rs`** (new) — 2 integration tests covering the long-lived `events()` subscription survival question (spec §1d ⚠️ note, M04 carry-forward). Test-driven decision: subscriptions do NOT survive reconnect — the single-consumer `take_event_stream` design binds the subscriber to the original reader half; on drone restart that reader EOFs and the stream terminates. v0.1 application pattern: subscribers resubscribe on reconnect. The renderer's `agent_event` channel is fed by `forward_events` / `replay_session` per task — no app-layer reliance on cross-reconnect survival. Cross-platform `#![cfg(any(unix, windows))]` matching `drone_ipc_loopback.rs`.
+- **`agent-runtime-spec.md` §1d** — ⚠️ "long-lived events() subscription pending" note replaced with the v0.1 behavior lock (resubscribe on reconnect; survival deferred to v1.0). Test reference: `drone_reconnect_events.rs`.
+- **`src/lib/ipc.ts`** — `unwrapCmdError` consumes the typify-generated `CmdError` from `src/types/error.ts` (M04 Stage A1 codegen) instead of the M02 hand-maintained interface. New `isCmdError` type-guard checks the discriminator against the literal union (`'setup_required' | 'provider' | 'drone' | 'key_store' | 'internal'`); preserves M02 `setup_required` user-actionable phrasing + `${type}: ${message}` rendering for body-carrying variants. Falls through to a plain `message` field check then to `String(e)` for non-CmdError shapes.
+- **`tests/unit/ipc.test.ts`** — 9 new Vitest tests for `unwrapCmdError` covering all 5 generated `CmdError` variants, the `Error`-instance path, the plain-object-with-message compatibility path, and the last-resort `String()` fallback.
+- **`src-tauri/Cargo.toml`** — adds `process` + `time` + `io-util` + `fs` features to `tokio` (drone subprocess spawn / shutdown timeout / async stdout-stderr handling), and `uuid` workspace dep with `v4` feature for session-id generation in `drone_lifecycle::compute_ipc_addr`.
+
+Closes carry-forward 🟡 entries:
+
+1. M03 🟡 "Production drone subprocess wiring at Tauri startup" — DONE.
+2. M02 🟡 "count_tokens → real /v1/messages/count_tokens endpoint" — DONE.
+3. M02 🟡 "Long-lived events() subscription survives reconnect" — RESOLVED (test-driven v0.1 behavior lock; spec §1d updated).
+
+Deferred (re-listed in M04.A2 retrospective Carry-forward):
+
+- M03 🟡 "vdr.rs projector wired at signal-write call-site" — defers to a future stage (no `WriteSignal` IPC command exists yet; landing this requires schema additions to `runtime_core::DroneCommand` + drone-side handler + main-side persistence path).
+- M02 🟡 "Decision extractor → structured emitter migration" — defers to a future stage (no central prompt-template builder; without injection a regex on `<<DECISION>>...<<END>>` blocks would always return empty).
+
+### Added — M04 Stage A1 (build hygiene + xtask codegen extensions + coverage retrofits)
+
+First implementation stage of M04 (Plan + Verify + HITL + Budget). Closes three M03 carry-forward 🟡 build-hygiene items so Stages A2–G focus on production wiring + new primitive surface. Doc + codegen + test additions; no shipped runtime behavior change.
+
+- **`crates/xtask/src/main.rs`** — extends Rust schemas codegen list with `event` + `error` (was `[common, framework, skill, tool, agent]`); extends TS targets list with `("error", error.v1.json)`. New generated artifacts: `crates/runtime-core/src/generated/event.rs` + `crates/runtime-core/src/generated/error.rs` (typify) + `src/types/error.ts` (json-schema-to-typescript). The hand-curated `crates/runtime-core/src/event.rs` (with proptest module + per-variant docs) and `crates/runtime-core/src/error.rs` (`RuntimeError` thiserror enum) remain unchanged — Stage A1 commits the generated parallel artifacts; consumer reconciliation is downstream-stage scope.
+- **`crates/runtime-core/src/lib.rs`** — replaces `pub use generated::*;` with explicit `pub use generated::{agent, common, framework, skill, tool};`. Necessary because the new `generated::event` and `generated::error` modules collide with the top-level `pub mod event;` / `pub mod error;` if glob-re-exported. Generated `CmdError` + typify-`AgentEvent` reachable via `runtime_core::generated::{event,error}` for Stage A2 consumers.
+- **`crates/runtime-core/src/generated/mod.rs`** — adds `pub mod event;` + `pub mod error;` declarations.
+- **`schemas/error.v1.json`** — metadata clarification (no validation behavior change): variant `title` fields PascalCased (`SetupRequired` / `Provider` / `Drone` / `KeyStore` / `Internal`) so typify derives Rust enum variant names cleanly; `message` string extracted to `$defs/ErrorMessage` so typify can name the `minLength: 1` validation newtype (typify 0.6.2 panics on root-oneOf string subschemas with validation but no name source). Same wire format, same `const` discriminator values, same `additionalProperties: false`.
+- **`crates/runtime-main/src/drone_ipc/client.rs`** — adds `await_event_timeout_when_peer_silent` test using `#[tokio::test(start_paused = true)]` + duplex peer kept alive (not dropped) + paused-time advance past 5s. Asserts `Err(DroneIpcError::Io)` with `ErrorKind::TimedOut`. Distinguishes the 5s timeout branch from the EOF branch covered by the existing `read_signals_stream_close_surfaces_as_error_not_hang`. Closes M03 carry-forward 🟡 "tokio::time::pause() coverage for await_event timeout path"; `client.rs` line coverage 94.00% (M03.E baseline) → 96.75% (M04.A1).
+- **`crates/runtime-drone/tests/integration*.rs`** — verified clean of `target/debug` literals via grep. Only matches are doc comments at `tests/integration.rs:16–17` describing the gotcha #22 rationale; production code uses `current_exe()`-derived paths per the M02.D + M03.A archetype. No retrofit needed.
+- **`.prettierignore` + `eslint.config.js`** — append `src/types/error.ts` to the existing generated-TS ignore lists (matches the `agent_event.ts` precedent at lines 25 + eslint.config.js:24). Prettier sees `error.ts` as ignored so its json-schema-to-typescript double-quote output doesn't trip the `singleQuote: true` rule; eslint sees it as ignored so its `/* eslint-disable */` header doesn't surface as an unused-directive warning.
+
+Closes M03 gap-analysis 🟡 entries:
+
+1. "Extend xtask Rust typify list to include `event.v1.json`" — DONE (event added; error added as bonus).
+2. "tokio::time::pause()-driven coverage for `await_event` timeout path" — DONE (client.rs 94.00% → 96.75% with new deterministic timeout test).
+3. "Retrofit `crates/runtime-drone/tests/integration*.rs` to `current_exe()`-derived paths" — VERIFIED still clean (M03.A retrofit durable; only doc-comment mentions of `target/debug` remain).
+
+Carry-forward to Stage A2: src-tauri/src/commands.rs::CmdError replacement with re-export of generated CmdError; src/lib/ipc.ts::unwrapCmdError refactor to consume generated `CmdError` from `src/types/error.ts`; eventual reconciliation of hand-curated `event.rs` with typify-generated `generated/event.rs`.
 
 ### Added — M03.5 (Pre-M04 prep — doc/protocol-only mini-milestone)
 

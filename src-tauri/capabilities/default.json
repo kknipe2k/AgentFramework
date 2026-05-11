@@ -1,12 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities the renderer is allowed to use. Locked-down for M02 Stage E: only core (window + ipc) and event listen/emit are granted. The renderer never holds the API key, never speaks HTTP, never touches the filesystem. Every privileged action goes through #[tauri::command]. Per spec §10 capability boundary; CLAUDE.md §15 trap #10 (Tauri allowlist is the security boundary).",
+  "description": "Capabilities the renderer is allowed to use. Locked-down for M02 Stage E: only core (window + ipc) and event listen/emit are granted. The renderer never holds the API key, never speaks HTTP, never touches the filesystem. Every privileged action goes through #[tauri::command]. Per spec §10 capability boundary; CLAUDE.md §15 trap #10 (Tauri allowlist is the security boundary). M04 Stage E adds `notification:default` so the desktop notifier (spec §6a) can surface HITL prompts via the OS notification system.",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "core:event:default",
     "core:event:allow-listen",
-    "core:event:allow-emit"
+    "core:event:allow-emit",
+    "notification:default"
   ]
 }

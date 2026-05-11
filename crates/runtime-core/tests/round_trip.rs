@@ -128,7 +128,8 @@ fn drone_event_variant_count_matches_spec() {
     // Update this count if you added a variant in a later milestone (additive
     // changes are fine; keep this assertion in sync with spec §1d).
     // M03 Stage E added QueryResult + SignalLog (read-only IPC commands), bumping the count to 9.
-    let variants_in_drone_event = 9;
+    // M04 Stage F added SessionRecovered (recovery IPC reply for spec §1b), bumping to 10.
+    let variants_in_drone_event = 10;
     let _check = match (DroneEvent::Heartbeat {
         status: runtime_core::HeartbeatStatus::Ok,
         timestamp: 0,
@@ -142,6 +143,7 @@ fn drone_event_variant_count_matches_spec() {
         DroneEvent::Alert { .. } => 7,
         DroneEvent::QueryResult { .. } => 8,
         DroneEvent::SignalLog { .. } => 9,
+        DroneEvent::SessionRecovered { .. } => 10,
     };
     let _ = variants_in_drone_event;
     // Test passes if it compiles — the match exhaustiveness check enforces variant count.

@@ -840,7 +840,7 @@ Main is the **client** in the main↔drone IPC; drone is the server. When the co
 
 This applies only to the **main → drone** direction. Drone → main events flow over the same connection; if main loses the connection, the drone treats this as an authoritative shutdown signal and emits its emergency snapshot before exiting (per §1 + §11). Drone does not reconnect to main on its own — main owns the lifecycle.
 
-> **⚠️ Long-lived events() subscription survival pending (M04 carry-forward).** Whether the renderer's long-lived `agent_event` subscription survives a main↔drone reconnect (i.e., does the renderer see a continuous event stream or a session-restart) is undefined for v0.1. M02 sessions are short enough that reconnect mid-stream hasn't been observed; M03 live-graph + longer-running sessions will force the call. Per `docs/gap-analysis.md` M02 entry "Open questions". M03's `replay_session` is a one-shot-on-mount call (renderer requests current signal history at page load), not a live long-lived subscription; the open question is specifically whether a long-lived `agent_event` subscription survives a mid-session main↔drone reconnect — M03 sessions don't exercise that path.
+> **Long-lived events() subscription — v0.1 behavior locked (M04 Stage A2, 2026-05-08).** A long-lived `DroneClient::events()` subscription does NOT survive a main↔drone reconnect. The single-consumer `Connection::take_event_stream` design binds the subscriber to the original connection's reader half; on drone restart the reader EOFs and the stream terminates. `send_with_reconnect` re-opens the socket and installs a fresh reader, but the original subscriber's stream stays bound to the (now-closed) original reader and does not observe events from the post-reconnect drone. **v0.1 application pattern:** subscribers resubscribe on reconnect — the renderer's `agent_event` channel is fed by `commands.rs::forward_events` / `replay_session`, both of which open a fresh subscription per task (no application-layer reliance on cross-reconnect survival). Test-driven by `crates/runtime-main/tests/drone_reconnect_events.rs`. Survival-across-reconnect is a v1.0+ enhancement if multi-session long-lived telemetry needs it.
 
 Reference implementation: `crates/runtime-main/src/drone_ipc/client.rs::DroneClient::send_with_reconnect` (M02.D) + `crates/runtime-main/src/drone_ipc/connection.rs::Connection::from_streams` (testable seam).
 
@@ -1760,6 +1760,7 @@ Hook firing points (in `framework.hooks`):
 |---|---|---|
 | `pre_task` | Before each task starts | Pre-flight checks, setup |
 | `post_task` | After each task completes (success or fail) | **Verify pipeline (ARIA `verify.sh`)** |
+| `pre_file_edit` | Before any agent writes a file (M04 Stage D) | Built-in `dont_touch` rail interception |
 | `post_file_edit` | After any agent writes a file | Lint, format on save |
 | `pre_commit` | Before any git commit | Secret scan, hook chain |
 | `pre_agent_spawn` | Before a child agent spawns | Capability narrowing check, env prep |

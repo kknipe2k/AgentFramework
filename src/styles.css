@@ -374,7 +374,7 @@ p.error {
   font-style: italic;
 }
 
-/* ---- PlanNode (Stage C) — spec §3a; M4 wires data ---- */
+/* ---- PlanNode (M03.C structure; M04.C live state) ---- */
 
 .plan-node {
   padding: 8px 12px;
@@ -389,12 +389,16 @@ p.error {
   color: var(--node-fg);
   min-width: 180px;
 }
-.plan-node--pending_approval {
-  border-color: var(--node-hitl);
+/* Color encoding per spec §3a: amber for pending/awaiting (gates),
+ * blue for approved/in_progress (active), green for complete, red for
+ * aborted. awaiting_replan reuses awaiting_approval color (both are
+ * amber gates the user must act on). */
+.plan-node--pending_approval,
+.plan-node--awaiting_approval,
+.plan-node--awaiting_replan {
+  border-color: var(--node-gap);
 }
-.plan-node--approved {
-  border-color: var(--node-active);
-}
+.plan-node--approved,
 .plan-node--in_progress {
   border-color: var(--node-active);
 }
@@ -407,8 +411,26 @@ p.error {
 .plan-node__title {
   font-weight: 600;
 }
+.plan-node__status {
+  font-size: 10px;
+  color: var(--node-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-top: 2px;
+}
 .plan-node__progress {
   font-size: 11px;
+  color: var(--node-fg-muted);
+  margin-top: 2px;
+}
+.plan-node__reason {
+  font-size: 11px;
+  color: var(--node-fg);
+  margin-top: 4px;
+  font-style: italic;
+}
+.plan-node__duration {
+  font-size: 10px;
   color: var(--node-fg-muted);
   margin-top: 2px;
 }
@@ -446,6 +468,11 @@ p.error {
 .task-node--skipped {
   border-color: var(--node-fg-muted);
   opacity: 0.6;
+  text-decoration: line-through;
+}
+.task-node--escalated {
+  border-color: var(--node-error);
+  animation: gap-pulse 1.4s ease-in-out infinite;
 }
 .task-node__title {
   font-weight: 600;
@@ -460,6 +487,23 @@ p.error {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.5px;
+}
+.task-node__failure-badge {
+  display: inline-block;
+  margin-top: 2px;
+  margin-left: 4px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--node-error);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+.task-node__duration {
+  font-size: 10px;
+  color: var(--node-fg-muted);
+  margin-top: 2px;
 }
 
 /* ---- VerifyNode (Stage C) — spec §4a; M4 wires data ---- */
@@ -596,4 +640,114 @@ p.error {
  * driven by the node outline. */
 .react-flow__edge--dashed .react-flow__edge-path {
   stroke-dasharray: 3 3;
+}
+
+/* ---- ApprovalPanel (M04.C) — spec §3a Approval-gate primitive ----
+ *
+ * Right-side overlay matching InspectorPanel discipline; non-modal so
+ * the graph stays interactable. Stacks below the InspectorPanel when
+ * both surface (InspectorPanel takes graph-layout's flex 0 0 320px;
+ * ApprovalPanel takes its own 320px slot). */
+
+.approval-panel {
+  flex: 0 0 320px;
+  height: 70vh;
+  overflow: auto;
+  padding: 0.75rem;
+  background: var(--node-bg);
+  color: var(--node-fg);
+  border: 1px solid var(--node-gap);
+  border-radius: 4px;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 13px;
+  outline: none;
+}
+.approval-panel__header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--node-base-border);
+}
+.approval-panel__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--node-fg-muted);
+}
+.approval-panel__plan-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.approval-panel__summary {
+  margin: 0.4rem 0;
+  font-size: 12px;
+  color: var(--node-fg-muted);
+}
+.approval-panel__error {
+  margin: 0.4rem 0;
+  padding: 0.4rem 0.5rem;
+  background: rgba(229, 57, 53, 0.18);
+  border: 1px solid var(--node-error);
+  border-radius: 3px;
+  font-size: 12px;
+}
+.approval-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+.approval-panel__action {
+  padding: 0.4rem 0.7rem;
+  border-radius: 3px;
+  border: 1px solid var(--node-base-border);
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  font-size: 12px;
+  cursor: pointer;
+}
+.approval-panel__action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.approval-panel__action--approve {
+  border-color: var(--node-complete);
+}
+.approval-panel__action--revise {
+  border-color: var(--node-active);
+}
+.approval-panel__action--abort {
+  border-color: var(--node-error);
+}
+.approval-panel__form {
+  margin-top: 0.5rem;
+}
+.approval-panel__label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 11px;
+  color: var(--node-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.approval-panel__textarea {
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 13px;
+  padding: 0.4rem;
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+  resize: vertical;
 }

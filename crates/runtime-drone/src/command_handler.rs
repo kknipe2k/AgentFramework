@@ -4,7 +4,7 @@
 //! against the `SQLite` database. Emits `DroneEvent` results on the
 //! broadcast channel. Six command variants per `agent-runtime-spec.md` §1d.
 
-use crate::{snapshot, vdr};
+use crate::{plan_projector, snapshot, vdr};
 use runtime_core::{AlertLevel, DroneCommand, DroneEvent, ProcessConfig, ProcessType};
 use rusqlite::Connection;
 use std::sync::Arc;
@@ -27,6 +27,10 @@ pub enum CommandError {
     /// VDR projection / read-only query error.
     #[error(transparent)]
     Vdr(#[from] vdr::VdrError),
+
+    /// Plan projector error (M04 Stage B).
+    #[error(transparent)]
+    PlanProjector(#[from] plan_projector::PlanProjectorError),
 }
 
 /// Run the command-dispatch loop until `cmd_rx` closes or
@@ -63,9 +67,9 @@ pub async fn run(
             }
             DroneCommand::RevertToSnapshot {
                 snapshot_id,
-                reason: _,
+                reason,
             } => {
-                handle_revert(&conn, &snapshot_id, &event_tx).await;
+                handle_revert(&conn, &snapshot_id, &reason, &event_tx).await;
             }
             DroneCommand::SpawnProcess {
                 process_type,
@@ -91,9 +95,103 @@ pub async fn run(
             DroneCommand::ReadSignals { session_id } => {
                 handle_read_signals(&conn, &session_id, &event_tx).await;
             }
+            DroneCommand::RecoverSession { session_id } => {
+                handle_recover_session(&conn, &session_id, &event_tx).await;
+            }
+            DroneCommand::WriteSignal {
+                signal_id,
+                session_id,
+                kind,
+                event,
+                context_type,
+                payload,
+            } => {
+                handle_write_signal(
+                    &conn,
+                    &signal_id,
+                    &session_id,
+                    &kind,
+                    &event,
+                    &context_type,
+                    &payload,
+                    &event_tx,
+                )
+                .await;
+            }
         }
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn handle_write_signal(
+    conn: &Arc<Mutex<Connection>>,
+    signal_id: &str,
+    session_id: &str,
+    kind: &str,
+    event_name: &str,
+    context_type: &str,
+    payload: &serde_json::Value,
+    event_tx: &broadcast::Sender<DroneEvent>,
+) {
+    let payload_str = serde_json::to_string(payload).unwrap_or_else(|_| "null".to_string());
+    let guard = conn.lock().await;
+    let result: Result<(usize, usize), CommandError> = (|| {
+        guard.execute(
+            "INSERT OR IGNORE INTO signals (\
+                id, session_id, type, event, timestamp, payload_json, context_type\
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                signal_id,
+                session_id,
+                kind,
+                event_name,
+                now_ms_string(),
+                payload_str,
+                context_type,
+            ],
+        )?;
+        // Two projectors: vdr (decision/verify) + plan_projector (plan/task).
+        // Both are idempotent; either may no-op for non-matching kinds /
+        // event types.
+        let vdr_n = match vdr::project_signal(&guard, signal_id) {
+            Ok(n) => n,
+            Err(vdr::VdrError::SignalNotFound(_)) => 0,
+            Err(e) => return Err(CommandError::from(e)),
+        };
+        let plan_n = match plan_projector::project_signal(&guard, signal_id) {
+            Ok(n) => n,
+            Err(plan_projector::PlanProjectorError::SignalNotFound(_)) => 0,
+            Err(e) => return Err(CommandError::from(e)),
+        };
+        Ok((vdr_n, plan_n))
+    })();
+    drop(guard);
+    match result {
+        Ok(_) => {
+            // ACK by emitting an Alert at Warn level with the signal_id —
+            // existing event channel; M04 Stage B keeps the IPC surface
+            // minimal. Future stages may add a typed `SignalWritten`
+            // event variant to DroneEvent.
+            let _ = event_tx.send(DroneEvent::Alert {
+                level: AlertLevel::Warn,
+                message: format!("write_signal ok: {signal_id}"),
+            });
+        }
+        Err(e) => {
+            let _ = event_tx.send(DroneEvent::Alert {
+                level: AlertLevel::Critical,
+                message: format!("write_signal failed for {signal_id}: {e}"),
+            });
+        }
+    }
+}
+
+fn now_ms_string() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or_else(|_| "0".to_string(), |d| d.as_millis().to_string())
 }
 
 async fn handle_query_session_db(
@@ -150,6 +248,34 @@ async fn handle_read_signals(
     }
 }
 
+async fn handle_recover_session(
+    conn: &Arc<Mutex<Connection>>,
+    session_id: &str,
+    event_tx: &broadcast::Sender<DroneEvent>,
+) {
+    let result = {
+        let guard = conn.lock().await;
+        snapshot::recover_session_state(&guard, session_id)
+    };
+    match result {
+        Ok(recovered) => {
+            let _ = event_tx.send(DroneEvent::SessionRecovered {
+                snapshot_id: recovered.snapshot_id,
+                state: recovered.state,
+                plans: recovered.plans,
+                tasks: recovered.tasks,
+                uncertain_tool_invocations: recovered.uncertain_tool_invocations,
+            });
+        }
+        Err(e) => {
+            let _ = event_tx.send(DroneEvent::Alert {
+                level: AlertLevel::Critical,
+                message: format!("recover_session failed: {e}"),
+            });
+        }
+    }
+}
+
 fn truncate_for_log(s: &str, max: usize) -> &str {
     if s.len() <= max {
         s
@@ -186,6 +312,7 @@ async fn handle_snapshot_now(
 async fn handle_revert(
     conn: &Arc<Mutex<Connection>>,
     snapshot_id: &str,
+    reason: &runtime_core::RevertReason,
     event_tx: &broadcast::Sender<DroneEvent>,
 ) {
     let lookup = {
@@ -200,10 +327,22 @@ async fn handle_revert(
     };
 
     if let Some(session_id) = lookup {
+        // Spec §4a: HookRollback variant carries hook_id so the SDK-side
+        // `task_failed` emit (not the drone's job) can render
+        // "rolled_back_after_hook_<hook_id>". The drone confirms revert
+        // by re-emitting SnapshotWritten with a reason string that
+        // includes the hook id when available.
+        let reason_str = match reason {
+            runtime_core::RevertReason::HookRollback { hook_id } => {
+                format!("revert:hook_rollback:{hook_id}")
+            }
+            runtime_core::RevertReason::UserRollback => "revert:user_rollback".to_string(),
+            runtime_core::RevertReason::GapRecovery => "revert:gap_recovery".to_string(),
+        };
         let _ = event_tx.send(DroneEvent::SnapshotWritten {
             snapshot_id: snapshot_id.to_string(),
             session_id,
-            reason: "revert".to_string(),
+            reason: reason_str,
             timestamp: 0,
         });
     } else {
@@ -583,6 +722,296 @@ mod tests {
             .expect("shutdown channel closed");
         assert_eq!(signal, "ipc_graceful");
 
+        let _ = timeout(Duration::from_secs(1), task).await;
+    }
+
+    // ── M04 Stage B: WriteSignal arm ─────────────────────────────────
+
+    async fn drain_until<F>(rx: &mut broadcast::Receiver<DroneEvent>, predicate: F) -> bool
+    where
+        F: Fn(&DroneEvent) -> bool,
+    {
+        for _ in 0..20 {
+            if let Ok(Ok(e)) = timeout(Duration::from_millis(250), rx.recv()).await {
+                if predicate(&e) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn write_signal_persists_to_signals_table() {
+        let (_dir, conn) = open();
+        let (cmd_tx, cmd_rx) = mpsc::channel::<DroneCommand>(8);
+        let (event_tx, mut event_rx) = broadcast::channel::<DroneEvent>(16);
+        let conn_clone = conn.clone();
+        let task = tokio::spawn(run("s1".to_string(), conn_clone, cmd_rx, event_tx, None));
+
+        cmd_tx
+            .send(DroneCommand::WriteSignal {
+                signal_id: "sig-write-1".to_string(),
+                session_id: "s1".to_string(),
+                kind: "agent".to_string(),
+                event: "plan_created".to_string(),
+                context_type: "plan_create".to_string(),
+                payload: serde_json::json!({
+                    "type": "plan_created",
+                    "plan_id": "p1",
+                    "title": "T",
+                    "task_count": 0,
+                    "approval_required": false,
+                }),
+            })
+            .await
+            .expect("send write_signal");
+
+        let acked = drain_until(&mut event_rx, |e| {
+            matches!(e, DroneEvent::Alert { message, .. } if message.contains("write_signal ok"))
+        })
+        .await;
+        assert!(acked, "write_signal must emit ack alert");
+
+        let row_count: i64 = conn
+            .lock()
+            .await
+            .query_row(
+                "SELECT COUNT(*) FROM signals WHERE id = 'sig-write-1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(row_count, 1);
+
+        // Plan_projector should have UPSERTed the plans row.
+        let plan_status: String = conn
+            .lock()
+            .await
+            .query_row("SELECT status FROM plans WHERE id = 'p1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(plan_status, "approved");
+
+        cmd_tx
+            .send(DroneCommand::GracefulShutdown { timeout_ms: 50 })
+            .await
+            .expect("shutdown");
+        let _ = timeout(Duration::from_secs(1), task).await;
+    }
+
+    #[tokio::test]
+    async fn write_signal_idempotent_on_duplicate_id() {
+        let (_dir, conn) = open();
+        let (cmd_tx, cmd_rx) = mpsc::channel::<DroneCommand>(8);
+        let (event_tx, _event_rx) = broadcast::channel::<DroneEvent>(16);
+        let conn_clone = conn.clone();
+        let task = tokio::spawn(run("s1".to_string(), conn_clone, cmd_rx, event_tx, None));
+
+        let cmd = DroneCommand::WriteSignal {
+            signal_id: "sig-dup".to_string(),
+            session_id: "s1".to_string(),
+            kind: "tool".to_string(),
+            event: "tool_invoked".to_string(),
+            context_type: "tool_invoke".to_string(),
+            payload: serde_json::json!({
+                "type": "tool_invoked",
+                "agent_id": "a1",
+                "tool_name": "Read"
+            }),
+        };
+        cmd_tx.send(cmd.clone()).await.unwrap();
+        cmd_tx.send(cmd).await.unwrap();
+
+        // Wait briefly for both writes to land.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        let count: i64 = conn
+            .lock()
+            .await
+            .query_row(
+                "SELECT COUNT(*) FROM signals WHERE id = 'sig-dup'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "INSERT OR IGNORE → exactly one row");
+
+        cmd_tx
+            .send(DroneCommand::GracefulShutdown { timeout_ms: 50 })
+            .await
+            .unwrap();
+        let _ = timeout(Duration::from_secs(1), task).await;
+    }
+
+    // ── M04 Stage F: RecoverSession arm ─────────────────────────────
+
+    #[tokio::test]
+    async fn recover_session_returns_session_recovered_event() {
+        // Seed: a plan + task + a stranded tool_invoked signal (no
+        // matching tool_result) + one snapshot. The drone's
+        // recover_session_state will return all four pieces; the command
+        // handler emits them in SessionRecovered.
+        let (_dir, conn) = open();
+        {
+            let guard = conn.lock().await;
+            guard
+                .execute(
+                    "INSERT INTO plans (id, session_id, title, status, approval_required, loop_policy, created_at) \
+                     VALUES ('p1', 's1', 'T', 'in_progress', 0, 'fresh_context_per_task', 0)",
+                    [],
+                )
+                .expect("seed plan");
+            guard
+                .execute(
+                    "INSERT INTO tasks (id, plan_id, title, status, created_at) \
+                     VALUES ('t1', 'p1', 'T1', 'running', 0)",
+                    [],
+                )
+                .expect("seed task");
+            guard
+                .execute(
+                    "INSERT INTO signals (id, session_id, type, event, timestamp, payload_json, context_type) \
+                     VALUES ('sig-tool-1', 's1', 'tool', 'tool_invoked', '5', \
+                             '{\"type\":\"tool_invoked\",\"agent_id\":\"a1\",\"tool_name\":\"Read\"}', \
+                             'tool_invoke')",
+                    [],
+                )
+                .expect("seed stranded tool_invoked");
+            // snapshot row so snapshot_id is Some(...)
+            snapshot::write(&guard, "s1", "manual", &serde_json::json!({"x": 1}))
+                .expect("seed snapshot");
+            drop(guard);
+        }
+
+        let (cmd_tx, cmd_rx) = mpsc::channel::<DroneCommand>(8);
+        let (event_tx, mut event_rx) = broadcast::channel::<DroneEvent>(16);
+        let conn_clone = conn.clone();
+        let task = tokio::spawn(run("s1".to_string(), conn_clone, cmd_rx, event_tx, None));
+        cmd_tx
+            .send(DroneCommand::RecoverSession {
+                session_id: "s1".to_string(),
+            })
+            .await
+            .expect("send recover_session");
+
+        let mut got = None;
+        for _ in 0..20 {
+            if let Ok(Ok(DroneEvent::SessionRecovered {
+                snapshot_id,
+                plans,
+                tasks,
+                uncertain_tool_invocations,
+                ..
+            })) = timeout(Duration::from_millis(500), event_rx.recv()).await
+            {
+                got = Some((snapshot_id, plans, tasks, uncertain_tool_invocations));
+                break;
+            }
+        }
+        let (snapshot_id, plans, tasks, uncertain) = got.expect("expected SessionRecovered event");
+        assert!(snapshot_id.is_some(), "snapshot_id must be populated");
+        assert_eq!(plans.len(), 1, "expected one plan");
+        assert_eq!(tasks.len(), 1, "expected one task");
+        // Task's running status must be normalized to pending per spec §1b.
+        assert_eq!(
+            tasks[0].get("status").and_then(|v| v.as_str()),
+            Some("pending"),
+            "running task should downgrade to pending on recovery"
+        );
+        assert_eq!(
+            uncertain,
+            vec!["sig-tool-1".to_string()],
+            "stranded tool_invoked must be surfaced as uncertain"
+        );
+
+        cmd_tx
+            .send(DroneCommand::GracefulShutdown { timeout_ms: 50 })
+            .await
+            .expect("shutdown");
+        let _ = timeout(Duration::from_secs(1), task).await;
+    }
+
+    #[tokio::test]
+    async fn recover_session_for_unknown_session_returns_empty_state() {
+        let (_dir, conn) = open();
+        let (cmd_tx, cmd_rx) = mpsc::channel::<DroneCommand>(8);
+        let (event_tx, mut event_rx) = broadcast::channel::<DroneEvent>(16);
+        let task = tokio::spawn(run("other".to_string(), conn, cmd_rx, event_tx, None));
+        cmd_tx
+            .send(DroneCommand::RecoverSession {
+                session_id: "no-such-session".to_string(),
+            })
+            .await
+            .expect("send");
+
+        let mut got = None;
+        for _ in 0..20 {
+            if let Ok(Ok(DroneEvent::SessionRecovered {
+                snapshot_id,
+                plans,
+                tasks,
+                uncertain_tool_invocations,
+                ..
+            })) = timeout(Duration::from_millis(500), event_rx.recv()).await
+            {
+                got = Some((snapshot_id, plans, tasks, uncertain_tool_invocations));
+                break;
+            }
+        }
+        let (snapshot_id, plans, tasks, uncertain) = got.expect("SessionRecovered");
+        assert!(snapshot_id.is_none(), "no snapshots for unknown session");
+        assert!(plans.is_empty());
+        assert!(tasks.is_empty());
+        assert!(uncertain.is_empty());
+
+        cmd_tx
+            .send(DroneCommand::GracefulShutdown { timeout_ms: 50 })
+            .await
+            .expect("shutdown");
+        let _ = timeout(Duration::from_secs(1), task).await;
+    }
+
+    #[tokio::test]
+    async fn write_signal_with_decision_payload_projects_to_vdr() {
+        let (_dir, conn) = open();
+        let (cmd_tx, cmd_rx) = mpsc::channel::<DroneCommand>(8);
+        let (event_tx, _event_rx) = broadcast::channel::<DroneEvent>(16);
+        let conn_clone = conn.clone();
+        let task = tokio::spawn(run("s1".to_string(), conn_clone, cmd_rx, event_tx, None));
+
+        cmd_tx
+            .send(DroneCommand::WriteSignal {
+                signal_id: "sig-dec".to_string(),
+                session_id: "s1".to_string(),
+                kind: "decision".to_string(),
+                event: "decision".to_string(),
+                context_type: "agent_loop".to_string(),
+                payload: serde_json::json!({
+                    "agent_id": "a1",
+                    "decision": "pick haiku",
+                    "rationale": "cost",
+                }),
+            })
+            .await
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        let vdr_count: i64 = conn
+            .lock()
+            .await
+            .query_row(
+                "SELECT COUNT(*) FROM vdr WHERE contributing_signal_id = 'sig-dec'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(vdr_count, 1, "decision signal must project to vdr");
+
+        cmd_tx
+            .send(DroneCommand::GracefulShutdown { timeout_ms: 50 })
+            .await
+            .unwrap();
         let _ = timeout(Duration::from_secs(1), task).await;
     }
 }

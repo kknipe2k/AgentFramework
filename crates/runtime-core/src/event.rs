@@ -24,6 +24,62 @@ pub enum ToolSource {
     Generated,
 }
 
+/// Source of a `PlanApproved` event. Spec §3a (approval gate primitive).
+///
+/// `User` indicates the renderer's HITL approval seam resolved the gate.
+/// `Auto` indicates the framework JSON declared `approval_required: false`
+/// — the SDK auto-approves immediately after `plan_created` without ever
+/// emitting `plan_approval_requested`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovedBy {
+    /// HITL approval via the renderer.
+    User,
+    /// Framework-declared auto-approval (no HITL).
+    Auto,
+}
+
+/// HITL trigger discriminator. Spec §6a (9 values, locked).
+///
+/// Embedded in HITL + notifier events. Mirrors
+/// `runtime_core::generated::hitl::HitlTrigger`; duplicated here because
+/// typify does not cross-schema-`$ref` enums and the hand-curated
+/// `event.rs` keeps the renderer's union flat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HitlTriggerRef {
+    /// Gap detected (missing tool / skill) — §4b.
+    OnGap,
+    /// Agent attempted a tool in the `tools` allowlist of the trigger.
+    OnRiskyTool,
+    /// Agent attempted to edit a `dont_touch` path — §4a.
+    OnDontTouchEdit,
+    /// Task escalated after `failure_count >= max_failures` — §3a.
+    OnFailureThreshold,
+    /// Capability violation — §8.security L2 (M5 source).
+    OnCapabilityViolation,
+    /// Budget percent threshold crossed — §2a (M04 Stage F source).
+    OnBudgetThreshold,
+    /// Plan approval gate — §3a (Stage C already wired via `ApprovalSeam`).
+    OnPlanApproval,
+    /// HITL gate before each task.
+    PerTask,
+    /// HITL gate at plan / epic boundaries.
+    PerEpic,
+}
+
+/// HITL UI variant discriminator embedded in `HitlRequested` events. Spec §6a.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HitlUiVariantRef {
+    /// Full-takeover panel; graph stays queryable (ARIA non-modal).
+    Panel,
+    /// Floating modal dialog; blocks adjacent interaction (ARIA modal).
+    Modal,
+    /// Non-blocking auto-dismiss notification (`role=status`).
+    Toast,
+}
+
 /// The canonical event union emitted by the runtime across all phases.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -137,28 +193,67 @@ pub enum AgentEvent {
     },
 
     // ── Plan / Task lifecycle (spec §3a) ──
-    /// A plan was created.
+    /// A plan was created. M04 Stage B reconciled to spec §3a shape:
+    /// adds `title` + `approval_required`. The `task_*.plan_id`
+    /// denormalization is kept (drift carve-out) so downstream consumers
+    /// (renderer, projector, replay) stay self-contained.
     PlanCreated {
         /// Unique plan identifier.
         plan_id: String,
+        /// Human-readable plan title.
+        title: String,
         /// Number of tasks in the plan.
         task_count: u32,
+        /// When true, plan suspends on `plan_approval_requested` until the
+        /// approval seam resolves. When false, the SDK auto-emits
+        /// `plan_approved { approved_by: 'auto' }` directly.
+        approval_required: bool,
     },
-    /// A plan was approved.
+    /// A plan is awaiting human approval. SDK emits this immediately after
+    /// `plan_created` when `approval_required = true`; the SDK then
+    /// suspends on `ApprovalSeam::await_approval` until the renderer
+    /// resolves it.
+    PlanApprovalRequested {
+        /// The plan awaiting approval.
+        plan_id: String,
+    },
+    /// A plan was approved. M04 Stage B reconciled to spec §3a shape:
+    /// adds `approved_by` (`user` for HITL approval, `auto` when
+    /// `approval_required: false`).
     PlanApproved {
         /// The approved plan.
         plan_id: String,
+        /// Source of the approval.
+        approved_by: ApprovedBy,
     },
-    /// A plan was rejected.
-    PlanRejected {
-        /// The rejected plan.
+    /// A plan was revised. Emitted when the user requests changes via the
+    /// approval seam; the SDK regenerates the plan and re-emits
+    /// `plan_approval_requested`.
+    PlanRevised {
+        /// The revised plan.
         plan_id: String,
-        /// Rejection reason.
+        /// Why the plan was revised (free-text, surfaced in the panel).
+        revision_reason: String,
+    },
+    /// A plan was aborted. Replaces the M03 `plan_rejected` variant per
+    /// spec §3a unification (the renderer treats "user said no" the same
+    /// regardless of whether it was at approval-time or mid-execution).
+    PlanAborted {
+        /// The aborted plan.
+        plan_id: String,
+        /// Free-text reason.
         reason: String,
+    },
+    /// A plan completed (all tasks reached terminal-non-failed).
+    PlanComplete {
+        /// The completed plan.
+        plan_id: String,
+        /// End-to-end plan duration in milliseconds.
+        duration_ms: u64,
     },
     /// A task within a plan started executing.
     TaskStarted {
-        /// The parent plan.
+        /// The parent plan (denormalization drift carve-out).
         plan_id: String,
         /// The task that started.
         task_id: String,
@@ -167,7 +262,7 @@ pub enum AgentEvent {
     },
     /// A task within a plan completed.
     TaskCompleted {
-        /// The parent plan.
+        /// The parent plan (denormalization drift carve-out).
         plan_id: String,
         /// The completed task.
         task_id: String,
@@ -176,7 +271,7 @@ pub enum AgentEvent {
     },
     /// A task within a plan failed.
     TaskFailed {
-        /// The parent plan.
+        /// The parent plan (denormalization drift carve-out).
         plan_id: String,
         /// The failed task.
         task_id: String,
@@ -185,23 +280,40 @@ pub enum AgentEvent {
         /// How many times this task has failed.
         failure_count: u32,
     },
-    /// A task was rolled back to a prior snapshot.
+    /// A task was skipped (e.g., HITL chose to skip after escalation, or
+    /// preconditions weren't met).
+    TaskSkipped {
+        /// The parent plan (denormalization drift carve-out).
+        plan_id: String,
+        /// The skipped task.
+        task_id: String,
+        /// Free-text reason.
+        reason: String,
+    },
+    /// A task was rolled back to a prior snapshot. M04 Stage B keeps this
+    /// as a typed event with `snapshot_id` (drift carve-out vs spec §4a's
+    /// stringly-typed error pattern; CLAUDE.md §9 anti-pattern).
     TaskRolledBack {
-        /// The parent plan.
+        /// The parent plan (denormalization drift carve-out).
         plan_id: String,
         /// The rolled-back task.
         task_id: String,
         /// Snapshot used for rollback.
         snapshot_id: String,
     },
-    /// A task was escalated (e.g., to a human).
+    /// A task was escalated (e.g., to a human). M04 Stage B reconciled to
+    /// spec §3a shape: replaces `reason` with `failure_count` +
+    /// `max_failures` (the FSM emits this once `failure_count >=
+    /// max_failures`).
     TaskEscalated {
-        /// The parent plan.
+        /// The parent plan (denormalization drift carve-out).
         plan_id: String,
         /// The escalated task.
         task_id: String,
-        /// Escalation reason.
-        reason: String,
+        /// How many failures triggered escalation.
+        failure_count: u32,
+        /// Failure budget the task exceeded.
+        max_failures: u32,
     },
 
     // ── Mode (spec §3b) ──
@@ -216,12 +328,20 @@ pub enum AgentEvent {
     },
 
     // ── Verify + Rails (spec §4a) ──
-    /// A verification hook started.
+    /// A verification hook started. Spec §4a `hook_started`; the codebase
+    /// retains the `verify_*` variant naming per M04.D audit decision (the
+    /// Hook *primitive* in `common.v1.json` keeps "hook" terminology;
+    /// the *event variants* stay as `verify_*` per existing convention).
     VerifyStarted {
-        /// Hook identifier.
+        /// Hook identifier (matches `Hook.id` in framework JSON).
         hook_id: String,
-        /// Verification level.
-        level: String,
+        /// Hook category — `verify | lint | build | test | custom`.
+        category: String,
+        /// Lifecycle moment that fired this hook (one of the 7 firing
+        /// points in `framework.v1.json` `hooks`).
+        firing_point: String,
+        /// Optional verification grouping — `quick | standard | full`.
+        level: Option<String>,
     },
     /// A verification hook passed.
     VerifyPassed {
@@ -229,22 +349,34 @@ pub enum AgentEvent {
         hook_id: String,
         /// Verification duration in milliseconds.
         duration_ms: u64,
+        /// Optional preview of the hook's stdout (truncated; spec §4a).
+        output_preview: Option<String>,
     },
     /// A verification hook failed.
     VerifyFailed {
         /// Hook identifier.
         hook_id: String,
+        /// Verification duration in milliseconds.
+        duration_ms: u64,
         /// Error description.
         error: String,
+        /// `on_failure` policy from the framework JSON — `block | warn |
+        /// rollback`. Drives the SDK / drone follow-up: rollback dispatches
+        /// `DroneCommand::RevertToSnapshot { reason: HookRollback }`.
+        on_failure: String,
     },
     /// A rail was triggered.
     RailTriggered {
         /// Rail identifier.
         rail_id: String,
-        /// Severity level.
-        severity: String,
+        /// Rail policy — `hard` (block) or `soft` (warn). Spec §4a.
+        policy: String,
+        /// Firing point that produced this trigger.
+        firing_point: String,
         /// Human-readable message.
         message: String,
+        /// Agent that attempted the action (when applicable).
+        agent_id: Option<String>,
     },
 
     // ── Gap detection (spec §4b) ──
@@ -277,23 +409,71 @@ pub enum AgentEvent {
     },
 
     // ── HITL (spec §6a) ──
-    /// A human-in-the-loop interaction was requested.
+    /// A HITL trigger fired. M04 Stage E aligned this variant to the spec
+    /// §6a `HitlNotifyEvent` shape: `prompt_id` (correlation id for resolve),
+    /// `trigger` (which of 9), `question`, `options[]`, `ui_variant`, timeout.
+    /// The M03 minimal shape (`prompt` + `hitl_kind`) had no live producers and
+    /// is replaced; the rename is documented as ambiguity-event in M04.E retro.
     HitlRequested {
-        /// The requesting agent.
-        agent_id: String,
-        /// The prompt shown to the human.
-        prompt: String,
-        /// Kind of HITL interaction.
-        hitl_kind: String,
+        /// Correlation id (UUID) tying this request to the eventual
+        /// `hitl_resolved` / `hitl_timeout`. The renderer passes this back
+        /// via `respond_hitl(prompt_id, choice)`.
+        prompt_id: String,
+        /// Which of the 9 HITL triggers fired (spec §6a).
+        trigger: HitlTriggerRef,
+        /// Originating agent, when applicable. `per_task` / `per_epic` are
+        /// plan-level — `agent_id` is `None` in those cases.
+        agent_id: Option<String>,
+        /// User-facing question.
+        question: String,
+        /// Expected choice tokens. Empty array means free-text response.
+        options: Vec<String>,
+        /// UI variant the renderer should mount.
+        ui_variant: HitlUiVariantRef,
+        /// Wall-clock deadline (unix milliseconds).
+        timeout_at_unix_ms: u64,
     },
-    /// A human-in-the-loop interaction was resolved.
+    /// A HITL prompt was resolved by user response.
     HitlResolved {
-        /// The requesting agent.
-        agent_id: String,
-        /// The human's response.
-        response: String,
-        /// Time the human took to respond in milliseconds.
+        /// Correlation id matching the originating [`AgentEvent::HitlRequested`].
+        prompt_id: String,
+        /// Selected token; one of the originating `options[]`, or free-text
+        /// when `options[]` was empty.
+        choice: String,
+        /// How long the user took to respond, in milliseconds.
         duration_ms: u64,
+    },
+    /// A HITL prompt's `timeout_at_unix_ms` elapsed without a response.
+    /// The `default_action_on_timeout` from framework JSON drives downstream
+    /// FSM transitions.
+    HitlTimeout {
+        /// Correlation id of the timed-out prompt.
+        prompt_id: String,
+        /// Which trigger fired the original prompt.
+        trigger: HitlTriggerRef,
+        /// Free-text action token from framework JSON (e.g. `"abort"`).
+        default_action: String,
+    },
+    /// A notifier successfully fired for a HITL request.
+    NotifierDispatched {
+        /// Notifier type (`terminal_bell`, `desktop`, `sound`, `plugin`).
+        notifier_type: String,
+        /// Trigger that produced the originating HITL request.
+        trigger: HitlTriggerRef,
+        /// Always `true` when this variant is emitted; carried for parity
+        /// with the renderer's exhaustive narrow.
+        success: bool,
+    },
+    /// A notifier raised an error (e.g. desktop notification permission
+    /// denied). Notifier failures are NON-FATAL — the seam still resolves
+    /// on user response or timeout regardless of which notifiers fired.
+    NotifierFailed {
+        /// Notifier type that failed.
+        notifier_type: String,
+        /// Trigger that produced the originating HITL request.
+        trigger: HitlTriggerRef,
+        /// Human-readable error text.
+        error: String,
     },
 
     // ── Capability enforcement (spec §8.security) ──

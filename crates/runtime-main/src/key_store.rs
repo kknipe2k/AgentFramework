@@ -20,6 +20,7 @@
 //! coverage is provided by the `KeyStoreError`-construction tests below.
 
 use keyring::Entry;
+use runtime_core::CmdError;
 use secrecy::SecretString;
 use thiserror::Error;
 
@@ -35,6 +36,24 @@ pub enum KeyStoreError {
     /// Underlying keyring failure (platform backend error).
     #[error("keyring error: {0}")]
     Keyring(#[from] keyring::Error),
+}
+
+/// Translate a [`KeyStoreError`] into the wire-format [`CmdError`] the
+/// renderer pattern-matches on. `NotFound` is the user-actionable case
+/// (renderer prompts "set your key first"); other backend failures
+/// surface as `KeyStore` with the underlying `Display` body.
+///
+/// Lives here rather than in `src-tauri/src/commands.rs` because of
+/// orphan rules — `KeyStoreError` is local to this crate, so this is
+/// the only place a `From<KeyStoreError>` for the foreign `CmdError`
+/// type is permissible.
+impl From<KeyStoreError> for CmdError {
+    fn from(e: KeyStoreError) -> Self {
+        match e {
+            KeyStoreError::NotFound => Self::SetupRequired,
+            other @ KeyStoreError::Keyring(_) => Self::key_store(other.to_string()),
+        }
+    }
 }
 
 /// Read the Anthropic API key from the OS keychain.
@@ -99,6 +118,37 @@ mod tests {
         assert!(
             s.contains(USER),
             "NotFound message should cite user name: {s}"
+        );
+    }
+
+    #[test]
+    fn from_keystore_error_not_found_maps_to_setup_required() {
+        // The keychain "not found" condition is the user-actionable path:
+        // renderer surfaces "set your key first" rather than a generic
+        // backend error. M04 Stage A2 moves this conversion from
+        // src-tauri/src/commands.rs into runtime-main/src/key_store.rs to
+        // satisfy the orphan rule when the destination type
+        // (runtime_core::CmdError) is foreign.
+        let cmd_err: CmdError = KeyStoreError::NotFound.into();
+        assert!(
+            matches!(cmd_err, CmdError::SetupRequired),
+            "got {cmd_err:?}"
+        );
+    }
+
+    #[test]
+    fn from_keystore_error_keyring_maps_to_key_store_with_display_body() {
+        // Non-NotFound backend errors carry the underlying Display body
+        // through to the renderer so the user sees the failing platform
+        // detail (locked keychain, D-Bus offline, etc.).
+        let cmd_err: CmdError = KeyStoreError::Keyring(keyring::Error::NoEntry).into();
+        let CmdError::KeyStore(msg) = &cmd_err else {
+            panic!("expected CmdError::KeyStore, got {cmd_err:?}");
+        };
+        assert!(
+            msg.as_str().starts_with("keyring error:"),
+            "expected keyring prefix in {}",
+            msg.as_str()
         );
     }
 

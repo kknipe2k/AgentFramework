@@ -1,6 +1,13 @@
 import type { Edge, Node } from '@xyflow/react';
 import { create } from 'zustand';
-import type { AgentEvent } from '../types/agent_event';
+import type {
+  AgentEvent,
+  HitlTriggerRef,
+  HitlUiVariantRef,
+  HookCategoryRef,
+  OnFailureRef,
+  RailPolicy,
+} from '../types/agent_event';
 
 /**
  * Status field shared by Agent / Tool / MCP / Hook / Framework / Verify
@@ -11,21 +18,37 @@ import type { AgentEvent } from '../types/agent_event';
 export type NodeStatus = 'active' | 'complete' | 'error';
 
 /**
- * Plan-state status per spec §3a (added by WI-03). The schema's
- * plan_created event lands at M4 — Stage C ships the type so PlanNode
- * can render synthetic placeholder data without future TS churn.
+ * Plan-state status per spec §3a. M04 Stage B added 'awaiting_approval'
+ * (transient between plan_created with approval_required and the
+ * subsequent plan_approved) and 'awaiting_replan' (after plan_revised).
  */
-export type PlanStatus = 'pending_approval' | 'approved' | 'in_progress' | 'complete' | 'aborted';
+export type PlanStatus =
+  | 'pending_approval'
+  | 'awaiting_approval'
+  | 'approved'
+  | 'in_progress'
+  | 'awaiting_replan'
+  | 'complete'
+  | 'aborted';
 
 /**
- * Task-state status per spec §3a. Same M4-event-deferred pattern as
- * PlanStatus.
+ * Task-state status per spec §3a. M04 Stage B added 'escalated' (post
+ * failure_count >= max_failures).
  */
-export type TaskStatus = 'pending' | 'running' | 'done' | 'blocked' | 'failed' | 'skipped';
+export type TaskStatus =
+  | 'pending'
+  | 'running'
+  | 'done'
+  | 'blocked'
+  | 'failed'
+  | 'skipped'
+  | 'escalated';
 
 /**
- * Verify-hook status per spec §4a. The verify_passed/verify_failed
- * events land at M4; Stage C renders synthetic placeholder data.
+ * Verify-hook status per spec §4a. M04 Stage D wires the live event
+ * stream — `active` on verify_started, `pass` on verify_passed, `fail`
+ * on verify_failed (the M03.C synthetic-state pattern remains for
+ * tests that drive the renderer in isolation).
  */
 export type VerifyStatus = 'active' | 'pass' | 'fail';
 
@@ -109,8 +132,10 @@ export interface HITLNodeData extends Record<string, unknown> {
 }
 
 /**
- * PlanNode — spec §3 + §3a. Synthetic placeholder fields (title,
- * taskCount, completedCount) until M4's plan primitive lands.
+ * PlanNode — spec §3 + §3a. M04 Stage B drives live state from
+ * plan_created / plan_approval_requested / plan_approved / plan_revised
+ * / plan_aborted / plan_complete events; Stage C lights up the visual
+ * surface (status badge + animated edge to currently-running task).
  */
 export interface PlanNodeData extends Record<string, unknown> {
   planId: string;
@@ -118,39 +143,113 @@ export interface PlanNodeData extends Record<string, unknown> {
   status: PlanStatus;
   taskCount: number;
   completedCount: number;
-}
-
-/**
- * TaskNode — spec §3 + §3a. Synthetic placeholder fields until M4.
- */
-export interface TaskNodeData extends Record<string, unknown> {
-  taskId: string;
-  planId: string;
-  title: string;
-  status: TaskStatus;
-  hitl: boolean;
-}
-
-/**
- * VerifyNode — spec §3 + §4a. Synthetic placeholder fields until M4
- * adds verify_started / verify_passed / verify_failed wiring.
- */
-export interface VerifyNodeData extends Record<string, unknown> {
-  hookId: string;
-  level: string;
-  status: VerifyStatus;
+  approvalRequired: boolean;
+  /** Free-text reason recorded for revised / aborted transitions. */
+  lastTransitionReason: string | null;
+  /** End-to-end duration recorded on plan_complete. */
   durationMs: number | null;
 }
 
 /**
- * HookNode — spec §3 + §4a. Synthetic placeholder until M4 adds the
- * hook-fired primitive.
+ * TaskNode — spec §3 + §3a. M04 Stage B drives live state from
+ * task_started / task_completed / task_failed / task_skipped /
+ * task_escalated / task_rolled_back events.
+ */
+export interface TaskNodeData extends Record<string, unknown> {
+  taskId: string;
+  planId: string;
+  agentId: string | null;
+  title: string;
+  status: TaskStatus;
+  hitl: boolean;
+  failureCount: number;
+  maxFailures: number | null;
+  /** Recorded on task_failed / task_skipped / task_rolled_back. */
+  lastError: string | null;
+  /** Recorded on task_completed. */
+  durationMs: number | null;
+  /** Recorded on task_rolled_back (drift carve-out per Stage B). */
+  rollbackSnapshotId: string | null;
+}
+
+/**
+ * VerifyNode — spec §3 + §4a. M04 Stage D drives live state from
+ * verify_started / verify_passed / verify_failed events for hooks
+ * with `category === 'verify'`. Other categories route to HookNode.
+ */
+export interface VerifyNodeData extends Record<string, unknown> {
+  hookId: string;
+  /** `quick | standard | full` if the framework set a level. */
+  level: string | null;
+  /** Lifecycle moment the hook fired (e.g., `post_task`). */
+  firingPoint: string;
+  status: VerifyStatus;
+  durationMs: number | null;
+  /** Captured stdout preview from verify_passed (truncated upstream). */
+  outputPreview: string | null;
+  /** Failure message from verify_failed. */
+  error: string | null;
+  /** `block | warn | rollback` from verify_failed. */
+  onFailure: OnFailureRef | null;
+}
+
+/**
+ * HookNode — spec §3 + §4a. Generic hook surface for non-verify
+ * categories (`lint | build | test | custom`). M04 Stage D drives
+ * live state from verify_started / verify_passed / verify_failed.
  */
 export interface HookNodeData extends Record<string, unknown> {
   hookId: string;
   hookName: string;
-  category: string;
+  category: HookCategoryRef;
+  /** Lifecycle moment the hook fired. */
+  firingPoint: string;
   status: NodeStatus;
+  durationMs: number | null;
+  error: string | null;
+}
+
+/**
+ * Triggered rail entry — spec §4a. Driven by `rail_triggered` events.
+ * Stored on the store rather than as a node since rails are
+ * cross-cutting policy events; M05 wires them into the capability
+ * enforcer's UI surface.
+ */
+export interface TriggeredRail {
+  railId: string;
+  policy: RailPolicy;
+  firingPoint: string;
+  message: string;
+  agentId: string | null;
+}
+
+/**
+ * Outstanding HITL prompt — spec §6a (M04 Stage E). Driven by
+ * `hitl_requested` events; cleared on the matching `hitl_resolved` /
+ * `hitl_timeout`. The renderer's HITLPanel / HITLModal / HITLToast
+ * subscribes and dispatches `respond_hitl(prompt_id, choice)` on user
+ * action.
+ */
+export interface PendingHitl {
+  promptId: string;
+  trigger: HitlTriggerRef;
+  agentId: string | null;
+  question: string;
+  options: string[];
+  uiVariant: HitlUiVariantRef;
+  timeoutAtUnixMs: number;
+}
+
+/**
+ * Notifier dispatch record — spec §6a. Driven by `notifier_dispatched`
+ * / `notifier_failed` events. Append-only diagnostic log surfaced in
+ * the inspector when a HITL prompt is open; cleared at session reset.
+ */
+export interface NotifierRecord {
+  notifierType: string;
+  trigger: HitlTriggerRef;
+  outcome: 'dispatched' | 'failed';
+  error: string | null;
 }
 
 /**
@@ -197,10 +296,72 @@ interface EdgeData extends Record<string, unknown> {
 
 export type GraphEdge = Edge<EdgeData>;
 
+/**
+ * Budget status driving the BudgetHeaderBar color gradient
+ * (spec §2a — green/amber/orange/red/exceeded).
+ */
+export type BudgetStatus = 'ok' | 'warn' | 'downshift' | 'suspended' | 'exceeded';
+
+/**
+ * Session-level budget snapshot. Driven by the four budget events
+ * (budget_warn / budget_downshift / budget_suspended / budget_exceeded).
+ * v0.1's BudgetHeaderBar reads spent_usd + cap_usd to render the color
+ * gradient + numeric badge.
+ */
+export interface BudgetState {
+  spentUsd: number;
+  capUsd: number;
+  percent: number;
+  status: BudgetStatus;
+}
+
+/**
+ * One uncertain tool invocation surfaced by the recovery flow
+ * (spec §1b). The 4-action prompt is rendered by `UncertaintyPrompt`;
+ * resolved invocations are removed from the list.
+ */
+export interface UncertainInvocation {
+  invocationId: string;
+  toolName?: string;
+  agentId?: string;
+}
+
 interface GraphState {
   nodes: GraphNode[];
   edges: GraphEdge[];
   selectedNodeId: string | null;
+  /**
+   * Spec §4a: the full triggered-rail history for the current session.
+   * M04 Stage D wires `rail_triggered` events into this list; M05
+   * surfaces them in the capability-enforcer UI. Append-only.
+   */
+  triggeredRails: TriggeredRail[];
+  /**
+   * Spec §6a (M04 Stage E): outstanding HITL prompts keyed by prompt_id.
+   * `hitl_requested` inserts; `hitl_resolved` / `hitl_timeout` deletes.
+   * v0.1 single-session per spec §0d expects at most one entry at a
+   * time, but the keyed map keeps the wiring sound for concurrent
+   * prompts (per_task / per_epic in framework JSON).
+   */
+  pendingHitl: Record<string, PendingHitl>;
+  /**
+   * Spec §6a: per-prompt notifier dispatch records. Cleared when the
+   * owning prompt resolves or times out. Renders in the inspector as a
+   * "Notifications fired" list alongside the prompt UI.
+   */
+  notifierRecords: Record<string, NotifierRecord[]>;
+  /**
+   * Spec §2a (M04 Stage F): session-level budget snapshot. Driven by
+   * the four budget_* events. `null` until the first event lands so the
+   * header bar can render an inactive state distinct from "$0.00 of $0".
+   */
+  budget: BudgetState | null;
+  /**
+   * Spec §1b (M04 Stage F): uncertain tool invocations awaiting user
+   * resolution. Populated by the cold-start resume flow; resolved
+   * invocations are removed in-place by `respond_uncertainty`.
+   */
+  uncertainInvocations: UncertainInvocation[];
 
   /**
    * Single entry point for translating AgentEvent into node + edge
@@ -217,6 +378,19 @@ interface GraphState {
 
   /** Set the currently-selected node (Stage D inspector panel uses this). */
   selectNode: (id: string | null) => void;
+
+  /**
+   * Stage F: record an uncertain tool invocation from the recovery flow.
+   * Idempotent on `invocationId`. The renderer's UncertaintyPrompt
+   * iterates this list.
+   */
+  recordUncertainInvocation: (invocation: UncertainInvocation) => void;
+
+  /**
+   * Stage F: remove an invocation from the uncertain list (called by
+   * UncertaintyPrompt after a successful respond_uncertainty IPC).
+   */
+  resolveUncertainInvocation: (invocationId: string) => void;
 }
 
 const AGENT_X_STRIDE = 220;
@@ -269,10 +443,81 @@ function withAgentStatus(state: GraphState, agentId: string, status: NodeStatus)
   };
 }
 
+function updatePlanData(
+  state: GraphState,
+  planId: string,
+  updater: (data: PlanNodeData) => PlanNodeData,
+): GraphState {
+  const target = `plan:${planId}`;
+  return {
+    ...state,
+    nodes: state.nodes.map((n) =>
+      n.id === target && n.type === 'plan' ? { ...n, data: updater(n.data) } : n,
+    ),
+  };
+}
+
+function updateTaskData(
+  state: GraphState,
+  taskId: string,
+  updater: (data: TaskNodeData) => TaskNodeData,
+): GraphState {
+  const target = `task:${taskId}`;
+  return {
+    ...state,
+    nodes: state.nodes.map((n) =>
+      n.id === target && n.type === 'task' ? { ...n, data: updater(n.data) } : n,
+    ),
+  };
+}
+
+/**
+ * Stack hook nodes vertically below the task layer (y=180 lane). M04.D
+ * keeps positioning naive — actual hook→task linking lands when the
+ * SDK's plan loop wires hooks to specific tasks (M07).
+ */
+function nextHookPosition(existing: GraphNode[]): { x: number; y: number } {
+  const hookCount = existing.filter((n) => n.type === 'hook' || n.type === 'verify').length;
+  return { x: hookCount * 160, y: 320 };
+}
+
+function updateVerifyData(
+  state: GraphState,
+  hookId: string,
+  updater: (data: VerifyNodeData) => VerifyNodeData,
+): GraphState {
+  const target = `verify:${hookId}`;
+  return {
+    ...state,
+    nodes: state.nodes.map((n) =>
+      n.id === target && n.type === 'verify' ? { ...n, data: updater(n.data) } : n,
+    ),
+  };
+}
+
+function updateHookData(
+  state: GraphState,
+  hookId: string,
+  updater: (data: HookNodeData) => HookNodeData,
+): GraphState {
+  const target = `hook:${hookId}`;
+  return {
+    ...state,
+    nodes: state.nodes.map((n) =>
+      n.id === target && n.type === 'hook' ? { ...n, data: updater(n.data) } : n,
+    ),
+  };
+}
+
 export const useGraphStore = create<GraphState>((set) => ({
   nodes: [],
   edges: [],
   selectedNodeId: null,
+  triggeredRails: [],
+  pendingHitl: {},
+  notifierRecords: {},
+  budget: null,
+  uncertainInvocations: [],
 
   applyEvent: (event) =>
     set((state) => {
@@ -518,39 +763,404 @@ export const useGraphStore = create<GraphState>((set) => ({
           };
         }
 
-        // No-op variants — Stage C added session_start (FrameworkNode)
-        // and MCP routing inside tool_invoked. The remaining no-ops
-        // light up at M4 (plan/task/verify/hook), M5 (gap/HITL), and
-        // post-M5 (capability/budget) when the schema gains those
-        // semantics. The exhaustive default below is the forcing
-        // function: any new variant added to the schema breaks the
-        // compile until handled here.
+        // ── Plan / Task lifecycle (spec §3a; M04 Stage B) ──
+        // Stage B implements pass-through state mutations; Stage C
+        // wires the visual surface (status badges + ApprovalPanel +
+        // animated edge from PlanNode → currently-running TaskNode).
+
+        case 'plan_created': {
+          const id = `plan:${event.plan_id}`;
+          if (state.nodes.some((n) => n.id === id)) {
+            return state;
+          }
+          const newNode: PlanReactFlowNode = {
+            id,
+            type: 'plan',
+            position: { x: 0, y: -300 },
+            data: {
+              planId: event.plan_id,
+              title: event.title,
+              status: event.approval_required ? 'pending_approval' : 'approved',
+              taskCount: event.task_count,
+              completedCount: 0,
+              approvalRequired: event.approval_required,
+              lastTransitionReason: null,
+              durationMs: null,
+            },
+          };
+          return { ...state, nodes: [...state.nodes, newNode] };
+        }
+
+        case 'plan_approval_requested':
+          return updatePlanData(state, event.plan_id, (data) => ({
+            ...data,
+            status: 'awaiting_approval',
+          }));
+
+        case 'plan_approved':
+          return updatePlanData(state, event.plan_id, (data) => ({
+            ...data,
+            status: 'in_progress',
+          }));
+
+        case 'plan_revised':
+          return updatePlanData(state, event.plan_id, (data) => ({
+            ...data,
+            status: 'awaiting_replan',
+            lastTransitionReason: event.revision_reason,
+          }));
+
+        case 'plan_aborted':
+          return updatePlanData(state, event.plan_id, (data) => ({
+            ...data,
+            status: 'aborted',
+            lastTransitionReason: event.reason,
+          }));
+
+        case 'plan_complete':
+          return updatePlanData(state, event.plan_id, (data) => ({
+            ...data,
+            status: 'complete',
+            durationMs: event.duration_ms,
+          }));
+
+        case 'task_started': {
+          const id = `task:${event.task_id}`;
+          const exists = state.nodes.some((n) => n.id === id);
+          if (exists) {
+            return updateTaskData(state, event.task_id, (data) => ({
+              ...data,
+              status: 'running',
+              agentId: event.agent_id,
+            }));
+          }
+          const newNode: TaskReactFlowNode = {
+            id,
+            type: 'task',
+            position: { x: 0, y: -180 },
+            data: {
+              taskId: event.task_id,
+              planId: event.plan_id,
+              agentId: event.agent_id,
+              title: '',
+              status: 'running',
+              hitl: false,
+              failureCount: 0,
+              maxFailures: null,
+              lastError: null,
+              durationMs: null,
+              rollbackSnapshotId: null,
+            },
+          };
+          return { ...state, nodes: [...state.nodes, newNode] };
+        }
+
+        case 'task_completed': {
+          const next = updateTaskData(state, event.task_id, (data) => ({
+            ...data,
+            status: 'done',
+            durationMs: event.duration_ms,
+          }));
+          return updatePlanData(next, event.plan_id, (data) => ({
+            ...data,
+            completedCount: data.completedCount + 1,
+          }));
+        }
+
+        case 'task_failed':
+          return updateTaskData(state, event.task_id, (data) => ({
+            ...data,
+            status: 'failed',
+            failureCount: event.failure_count,
+            lastError: event.error,
+          }));
+
+        case 'task_skipped':
+          return updateTaskData(state, event.task_id, (data) => ({
+            ...data,
+            status: 'skipped',
+            lastError: event.reason,
+          }));
+
+        case 'task_escalated':
+          return updateTaskData(state, event.task_id, (data) => ({
+            ...data,
+            status: 'escalated',
+            failureCount: event.failure_count,
+            maxFailures: event.max_failures,
+          }));
+
+        case 'task_rolled_back':
+          return updateTaskData(state, event.task_id, (data) => ({
+            ...data,
+            status: 'failed',
+            rollbackSnapshotId: event.snapshot_id,
+          }));
+
+        // ── Verify / Hook / Rail (spec §4a; M04 Stage D) ──
+        // verify_started: spawn a VerifyNode (`category === 'verify'`)
+        // or HookNode (other categories), keyed by hook_id. Idempotent
+        // on re-emit — re-emitting verify_started for the same hook_id
+        // updates the existing node's status back to active.
+
+        case 'verify_started': {
+          if (event.category === 'verify') {
+            const id = `verify:${event.hook_id}`;
+            const exists = state.nodes.some((n) => n.id === id);
+            if (exists) {
+              return updateVerifyData(state, event.hook_id, (data) => ({
+                ...data,
+                status: 'active',
+                firingPoint: event.firing_point,
+                level: event.level ?? null,
+                durationMs: null,
+                outputPreview: null,
+                error: null,
+                onFailure: null,
+              }));
+            }
+            const newNode: VerifyReactFlowNode = {
+              id,
+              type: 'verify',
+              position: nextHookPosition(state.nodes),
+              data: {
+                hookId: event.hook_id,
+                level: event.level ?? null,
+                firingPoint: event.firing_point,
+                status: 'active',
+                durationMs: null,
+                outputPreview: null,
+                error: null,
+                onFailure: null,
+              },
+            };
+            return { ...state, nodes: [...state.nodes, newNode] };
+          }
+          const id = `hook:${event.hook_id}`;
+          const exists = state.nodes.some((n) => n.id === id);
+          if (exists) {
+            return updateHookData(state, event.hook_id, (data) => ({
+              ...data,
+              status: 'active',
+              firingPoint: event.firing_point,
+              category: event.category,
+              durationMs: null,
+              error: null,
+            }));
+          }
+          const newNode: HookReactFlowNode = {
+            id,
+            type: 'hook',
+            position: nextHookPosition(state.nodes),
+            data: {
+              hookId: event.hook_id,
+              hookName: event.hook_id,
+              category: event.category,
+              firingPoint: event.firing_point,
+              status: 'active',
+              durationMs: null,
+              error: null,
+            },
+          };
+          return { ...state, nodes: [...state.nodes, newNode] };
+        }
+
+        case 'verify_passed': {
+          // The event payload doesn't carry category; both VerifyNode
+          // (verify category) and HookNode (other categories) are
+          // candidates. Update whichever exists for this hook_id.
+          const verifyTarget = `verify:${event.hook_id}`;
+          if (state.nodes.some((n) => n.id === verifyTarget)) {
+            return updateVerifyData(state, event.hook_id, (data) => ({
+              ...data,
+              status: 'pass',
+              durationMs: event.duration_ms,
+              outputPreview: event.output_preview ?? null,
+            }));
+          }
+          return updateHookData(state, event.hook_id, (data) => ({
+            ...data,
+            status: 'complete',
+            durationMs: event.duration_ms,
+          }));
+        }
+
+        case 'verify_failed': {
+          const verifyTarget = `verify:${event.hook_id}`;
+          if (state.nodes.some((n) => n.id === verifyTarget)) {
+            return updateVerifyData(state, event.hook_id, (data) => ({
+              ...data,
+              status: 'fail',
+              durationMs: event.duration_ms,
+              error: event.error,
+              onFailure: event.on_failure,
+            }));
+          }
+          return updateHookData(state, event.hook_id, (data) => ({
+            ...data,
+            status: 'error',
+            durationMs: event.duration_ms,
+            error: event.error,
+          }));
+        }
+
+        case 'rail_triggered':
+          return {
+            ...state,
+            triggeredRails: [
+              ...state.triggeredRails,
+              {
+                railId: event.rail_id,
+                policy: event.policy,
+                firingPoint: event.firing_point,
+                message: event.message,
+                agentId: event.agent_id ?? null,
+              },
+            ],
+          };
+
+        // ── HITL (spec §6a; M04 Stage E) ──
+        case 'hitl_requested': {
+          const { prompt_id } = event;
+          return {
+            ...state,
+            pendingHitl: {
+              ...state.pendingHitl,
+              [prompt_id]: {
+                promptId: prompt_id,
+                trigger: event.trigger,
+                agentId: event.agent_id ?? null,
+                question: event.question,
+                options: event.options,
+                uiVariant: event.ui_variant,
+                timeoutAtUnixMs: event.timeout_at_unix_ms,
+              },
+            },
+          };
+        }
+
+        case 'hitl_resolved': {
+          const { [event.prompt_id]: _resolved, ...rest } = state.pendingHitl;
+          // The notifier records for this prompt are no longer surfaced
+          // once the prompt resolves; clear them to keep the map bounded.
+          const { [event.prompt_id]: _records, ...remainingRecords } = state.notifierRecords;
+          return { ...state, pendingHitl: rest, notifierRecords: remainingRecords };
+        }
+
+        case 'hitl_timeout': {
+          const { [event.prompt_id]: _timedOut, ...rest } = state.pendingHitl;
+          const { [event.prompt_id]: _records, ...remainingRecords } = state.notifierRecords;
+          return { ...state, pendingHitl: rest, notifierRecords: remainingRecords };
+        }
+
+        case 'notifier_dispatched': {
+          // Notifier records are tagged by trigger; the prompt_id isn't
+          // on the event, so we attach the record to every pending HITL
+          // for that trigger. v0.1 single-session means at most one open
+          // prompt; this remains sound when multiple are open per the
+          // multi-prompt map shape.
+          const next = { ...state.notifierRecords };
+          for (const id of Object.keys(state.pendingHitl)) {
+            const pending = state.pendingHitl[id];
+            if (pending !== undefined && pending.trigger === event.trigger) {
+              next[id] = [
+                ...(next[id] ?? []),
+                {
+                  notifierType: event.notifier_type,
+                  trigger: event.trigger,
+                  outcome: 'dispatched',
+                  error: null,
+                },
+              ];
+            }
+          }
+          return { ...state, notifierRecords: next };
+        }
+
+        case 'notifier_failed': {
+          const next = { ...state.notifierRecords };
+          for (const id of Object.keys(state.pendingHitl)) {
+            const pending = state.pendingHitl[id];
+            if (pending !== undefined && pending.trigger === event.trigger) {
+              next[id] = [
+                ...(next[id] ?? []),
+                {
+                  notifierType: event.notifier_type,
+                  trigger: event.trigger,
+                  outcome: 'failed',
+                  error: event.error,
+                },
+              ];
+            }
+          }
+          return { ...state, notifierRecords: next };
+        }
+
+        case 'budget_warn': {
+          // Spec §2a (M04 Stage F): the four budget events drive the
+          // BudgetHeaderBar's color gradient + spend display.
+          return {
+            ...state,
+            budget: {
+              spentUsd: event.spent_usd,
+              capUsd: event.cap_usd,
+              percent: event.percent,
+              status: 'warn',
+            },
+          };
+        }
+
+        case 'budget_downshift': {
+          // BudgetDownshift carries `from_model` / `to_model` (not
+          // spend/cap in the current schema); preserve last-known
+          // spend/cap snapshot and flip status. The header bar shows
+          // "downshift" badge regardless of cap data.
+          const prev = state.budget;
+          return {
+            ...state,
+            budget: {
+              spentUsd: prev?.spentUsd ?? 0,
+              capUsd: prev?.capUsd ?? 0,
+              percent: prev?.percent ?? 75,
+              status: 'downshift',
+            },
+          };
+        }
+
+        case 'budget_suspended':
+          return {
+            ...state,
+            budget: {
+              spentUsd: event.spent_usd,
+              capUsd: event.cap_usd,
+              percent: Math.round((event.spent_usd / Math.max(event.cap_usd, 1e-9)) * 100),
+              status: 'suspended',
+            },
+          };
+
+        case 'budget_exceeded':
+          return {
+            ...state,
+            budget: {
+              spentUsd: event.spent_usd,
+              capUsd: event.cap_usd,
+              percent: 100,
+              status: 'exceeded',
+            },
+          };
+
+        // No-op variants — light up at M5 (gap/capability), future
+        // stages. The exhaustive default below is the forcing function:
+        // any new variant added to the schema breaks the compile until
+        // handled here.
         case 'session_end':
         case 'tool_error':
-        case 'plan_created':
-        case 'plan_approved':
-        case 'plan_rejected':
-        case 'task_started':
-        case 'task_completed':
-        case 'task_failed':
-        case 'task_rolled_back':
-        case 'task_escalated':
         case 'mode_changed':
-        case 'verify_started':
-        case 'verify_passed':
-        case 'verify_failed':
-        case 'rail_triggered':
         case 'skill_missing':
         case 'tool_missing':
         case 'gap_resolved':
-        case 'hitl_requested':
-        case 'hitl_resolved':
         case 'capability_violation':
         case 'capability_grant':
-        case 'budget_warn':
-        case 'budget_downshift':
-        case 'budget_suspended':
-        case 'budget_exceeded':
         case 'stream_text':
         case 'decision_record':
         case 'token_usage':
@@ -563,7 +1173,36 @@ export const useGraphStore = create<GraphState>((set) => ({
       }
     }),
 
-  clear: () => set({ nodes: [], edges: [], selectedNodeId: null }),
+  clear: () =>
+    set({
+      nodes: [],
+      edges: [],
+      selectedNodeId: null,
+      triggeredRails: [],
+      pendingHitl: {},
+      notifierRecords: {},
+      budget: null,
+      uncertainInvocations: [],
+    }),
 
   selectNode: (id) => set({ selectedNodeId: id }),
+
+  recordUncertainInvocation: (invocation) =>
+    set((state) => {
+      if (state.uncertainInvocations.some((u) => u.invocationId === invocation.invocationId)) {
+        return state;
+      }
+      return {
+        ...state,
+        uncertainInvocations: [...state.uncertainInvocations, invocation],
+      };
+    }),
+
+  resolveUncertainInvocation: (invocationId) =>
+    set((state) => ({
+      ...state,
+      uncertainInvocations: state.uncertainInvocations.filter(
+        (u) => u.invocationId !== invocationId,
+      ),
+    })),
 }));

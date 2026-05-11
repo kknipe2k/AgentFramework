@@ -22,6 +22,10 @@ export default tseslint.config(
       // Generated TypeScript bindings — owned by `cargo xtask regenerate-types`.
       // Per CLAUDE.md §14 schemas-as-source-of-truth.
       'src/types/agent_event.ts',
+      'src/types/error.ts',
+      'src/types/plan.ts',
+      'src/types/task.ts',
+      'src/types/hitl.ts',
     ],
   },
   js.configs.recommended,

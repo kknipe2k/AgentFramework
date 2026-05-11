@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aria-runtime.dev/hitl.v1.json",
+  "title": "HitlPolicy",
+  "description": "Spec §6a HITL Policy Primitive — structured object with 9 trigger types + 3 UI variants + notifier plugin interface. Locked at WI-16 (2026-04-18). v0.1 STANDARD-mode-hardcoded (per CLAUDE.md §3); mode-keyed HITL overrides in framework JSON are loaded but only STANDARD is evaluated at runtime.",
+
+  "$defs": {
+    "HitlTrigger": {
+      "type": "string",
+      "title": "HitlTrigger",
+      "description": "Spec §6a HITL trigger types (9 values, locked). Each names a condition under which the runtime suspends to await human input. Exhaustive matching is required throughout the SDK; Rust enum exhaustiveness + this schema's `enum` closure are the two enforcement layers.",
+      "enum": [
+        "on_gap",
+        "on_risky_tool",
+        "on_dont_touch_edit",
+        "on_failure_threshold",
+        "on_capability_violation",
+        "on_budget_threshold",
+        "on_plan_approval",
+        "per_task",
+        "per_epic"
+      ]
+    },
+
+    "HitlUiVariant": {
+      "type": "string",
+      "title": "HitlUiVariant",
+      "description": "Spec §6a UI variants. Panel: full takeover, dims graph, ARIA non-modal (graph queryable). Modal: floating dialog, blocks adjacent interaction, ARIA modal, Escape-closeable. Toast: non-blocking, auto-dismiss after 30s (treated as `notifier_failed` if no user response).",
+      "enum": ["panel", "modal", "toast"]
+    },
+
+    "HitlNotifierType": {
+      "type": "string",
+      "title": "HitlNotifierType",
+      "description": "Notifier plugin discriminator. The 3 built-in types ship in v1 (terminal_bell, desktop, sound). `plugin` is the open extension point — external notifier plugins from `notifiers/` dir under §8.security model; M9 generators wire the loader, M04.E ships only the 3 built-ins.",
+      "enum": ["terminal_bell", "desktop", "sound", "plugin"]
+    },
+
+    "HitlNotifier": {
+      "type": "object",
+      "title": "HitlNotifier",
+      "description": "Notifier plugin shape per spec §6a. Built-in types ignore the `name` + `config` fields; plugin notifiers (type = `plugin`) require both. v0.1 plugin loader returns NotImplemented per M9 deferral.",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "$ref": "#/$defs/HitlNotifierType" },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Disabled notifiers are loaded but skipped at dispatch time."
+        },
+        "name": {
+          "type": "string",
+          "description": "Plugin identifier (required when `type = plugin`). Ignored for built-in types."
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Plugin-specific configuration (required when `type = plugin`). Secrets reference via `secret://name` per spec §15d. Ignored for built-in types."
+        }
+      }
+    },
+
+    "HitlTriggerPolicy": {
+      "type": "object",
+      "title": "HitlTriggerPolicy",
+      "description": "Per-trigger configuration. `enabled` is the master switch; `ui` overrides the default UI variant for this trigger; remaining fields are trigger-specific (e.g. `tools` for on_risky_tool, `threshold` for on_failure_threshold, `percent` for on_budget_threshold).",
+      "required": ["enabled"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "ui": { "$ref": "#/$defs/HitlUiVariant" },
+        "tools": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Risky-tool match patterns for `on_risky_tool` (e.g. `Bash:rm`, `WebFetch:*`). Ignored for other triggers."
+        },
+        "threshold": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Failure count that fires `on_failure_threshold` (default 3 per spec §3a `max_failures`). Ignored for other triggers."
+        },
+        "percent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Budget percent that fires `on_budget_threshold` (default 90). Ignored for other triggers."
+        }
+      }
+    }
+  },
+
+  "type": "object",
+  "title": "HitlPolicy",
+  "description": "Framework JSON `hitl_policy` field per spec §6a. Each of the 9 triggers is independently configurable; absent keys default to disabled.",
+  "additionalProperties": false,
+  "properties": {
+    "on_gap":                  { "$ref": "#/$defs/HitlTriggerPolicy" },
+    "on_risky_tool":           { "$ref": "#/$defs/HitlTriggerPolicy" },
+    "on_dont_touch_edit":      { "$ref": "#/$defs/HitlTriggerPolicy" },
+    "on_failure_threshold":    { "$ref": "#/$defs/HitlTriggerPolicy" },
+    "on_capability_violation": { "$ref": "#/$defs/HitlTriggerPolicy" },
+    "on_budget_threshold":     { "$ref": "#/$defs/HitlTriggerPolicy" },
+    "on_plan_approval":        { "$ref": "#/$defs/HitlTriggerPolicy" },
+    "per_task":                { "$ref": "#/$defs/HitlTriggerPolicy" },
+    "per_epic":                { "$ref": "#/$defs/HitlTriggerPolicy" },
+
+    "notifiers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/HitlNotifier" },
+      "default": [],
+      "description": "Notifiers fire in parallel when any enabled trigger evaluates. v0.1 ships terminal_bell + desktop + sound; plugin notifiers deferred to M9."
+    },
+    "timeout_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 3600,
+      "description": "Wall-clock seconds the seam waits before treating the request as timed out. v0.1 default 1h per spec §6a; per-trigger override deferred to v1.0."
+    },
+    "default_action_on_timeout": {
+      "type": "string",
+      "default": "abort",
+      "description": "Free-text action token emitted in `hitl_timeout` events. SDK consumers route this to plan/task FSM transitions (e.g. `abort` → plan_aborted)."
+    }
+  }
+}

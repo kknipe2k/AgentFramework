@@ -355,6 +355,123 @@ async fn malformed_sse_skipped() {
     ));
 }
 
+// ── /v1/messages/count_tokens — M04 Stage A2 wiremock coverage. ────────
+// Replaces the M02 chars/4 approximation. Budget enforcement (M04 Stage F)
+// queries this endpoint pre-message; the wire-format invariants asserted
+// here are the contract Stage F builds on. Per spec §2c.3 (added M03.5).
+
+#[tokio::test]
+async fn count_tokens_happy_path_returns_input_tokens_field() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages/count_tokens"))
+        .and(header("x-api-key", "sk-ant-test"))
+        .and(header("anthropic-version", "2023-06-01"))
+        .and(header("content-type", "application/json"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_json(serde_json::json!({"input_tokens": 42})),
+        )
+        .mount(&server)
+        .await;
+
+    let provider =
+        AnthropicProvider::with_base_url(SecretString::from("sk-ant-test"), server.uri());
+    let messages = vec![Message {
+        role: MessageRole::User,
+        content: vec![ContentBlock::Text {
+            text: "Hello, Claude".into(),
+        }],
+    }];
+    let n = provider.count_tokens(&messages).await.expect("count");
+    assert_eq!(n, 42);
+}
+
+#[tokio::test]
+async fn count_tokens_auth_failure_surfaces_provider_error_auth() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages/count_tokens"))
+        .respond_with(ResponseTemplate::new(401).set_body_string(
+            r#"{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let provider =
+        AnthropicProvider::with_base_url(SecretString::from("sk-ant-bogus"), server.uri());
+    let messages = vec![Message {
+        role: MessageRole::User,
+        content: vec![ContentBlock::Text { text: "x".into() }],
+    }];
+    let result = provider.count_tokens(&messages).await;
+    assert!(matches!(result, Err(ProviderError::Auth)), "got {result:?}");
+}
+
+#[tokio::test]
+async fn count_tokens_rate_limit_includes_retry_after() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages/count_tokens"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("retry-after", "45")
+                .set_body_string("rate limited"),
+        )
+        .mount(&server)
+        .await;
+
+    let provider =
+        AnthropicProvider::with_base_url(SecretString::from("sk-ant-test"), server.uri());
+    let messages = vec![Message {
+        role: MessageRole::User,
+        content: vec![ContentBlock::Text { text: "x".into() }],
+    }];
+    let result = provider.count_tokens(&messages).await;
+    match result {
+        Err(ProviderError::RateLimit { retry_after_secs }) => {
+            assert_eq!(retry_after_secs, 45);
+        }
+        Err(other) => panic!("expected RateLimit, got {other:?}"),
+        Ok(_) => panic!("expected RateLimit error, got Ok"),
+    }
+}
+
+#[tokio::test]
+async fn count_tokens_response_missing_input_tokens_field_surfaces_api_error() {
+    // Defends against an upstream response-shape regression. The
+    // `CountTokensResponse` struct uses serde_json::from_slice via
+    // reqwest::Response::json, which fails when the field is missing
+    // — that maps to ProviderError::Http (transport-level wrapper for
+    // serde failures inside the json() call). Either way, the error
+    // is observable; the test asserts that the provider does NOT
+    // panic and does NOT silently return 0 tokens (which would
+    // under-report budget pressure).
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages/count_tokens"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_json(serde_json::json!({"unexpected_field": 7})),
+        )
+        .mount(&server)
+        .await;
+
+    let provider =
+        AnthropicProvider::with_base_url(SecretString::from("sk-ant-test"), server.uri());
+    let messages = vec![Message {
+        role: MessageRole::User,
+        content: vec![ContentBlock::Text { text: "x".into() }],
+    }];
+    let result = provider.count_tokens(&messages).await;
+    assert!(
+        result.is_err(),
+        "missing input_tokens field must surface as error, got {result:?}"
+    );
+}
+
 #[tokio::test]
 async fn partial_chunk_reassembled() {
     let server = MockServer::start().await;

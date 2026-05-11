@@ -220,31 +220,24 @@ describe('graphStore.applyEvent', () => {
   it('every_other_AgentEvent_variant_is_a_safe_no_op', () => {
     // Coverage discipline: assert that every variant the v0.1 schema can
     // emit but the store does NOT surface as nodes leaves the store
-    // unchanged. Stage C lit up session_start (FrameworkNode root) so
-    // it leaves this list; the remaining variants stay no-ops until M4+.
+    // unchanged. M04 Stage B lit up the 11 plan/task variants; this list
+    // shrinks accordingly. Plan/task event coverage lives in the
+    // dedicated test block below.
     useGraphStore.getState().applyEvent(spawnA);
     const before = useGraphStore.getState();
     const noopVariants: AgentEvent[] = [
       { type: 'session_end', session_id: 's1', duration_ms: 100, end_reason: 'ok' },
       { type: 'tool_error', agent_id: 'a1', tool_name: 't', error: 'e' },
-      { type: 'plan_created', plan_id: 'p1', task_count: 3 },
-      { type: 'plan_approved', plan_id: 'p1' },
-      { type: 'plan_rejected', plan_id: 'p1', reason: 'no' },
-      { type: 'task_started', plan_id: 'p1', task_id: 't1', agent_id: 'a1' },
-      { type: 'task_completed', plan_id: 'p1', task_id: 't1', duration_ms: 5 },
-      { type: 'task_failed', plan_id: 'p1', task_id: 't1', error: 'e', failure_count: 1 },
-      { type: 'task_rolled_back', plan_id: 'p1', task_id: 't1', snapshot_id: 'snap' },
-      { type: 'task_escalated', plan_id: 'p1', task_id: 't1', reason: 'r' },
       { type: 'mode_changed', from: 'STANDARD', to: 'PROMOTED', reason: 'r' },
-      { type: 'verify_started', hook_id: 'h', level: 'L1' },
-      { type: 'verify_passed', hook_id: 'h', duration_ms: 5 },
-      { type: 'verify_failed', hook_id: 'h', error: 'e' },
-      { type: 'rail_triggered', rail_id: 'r', severity: 'warn', message: 'm' },
+      // verify_started / verify_passed / verify_failed / rail_triggered
+      // moved to dedicated tests below — M04 Stage D wires them to live
+      // VerifyNode/HookNode + triggeredRails state.
       { type: 'skill_missing', agent_id: 'a1', skill_name: 's', severity: 'warn' },
       { type: 'tool_missing', agent_id: 'a1', tool_name: 't', severity: 'block' },
       { type: 'gap_resolved', agent_id: 'a1', capability: 'c', kind: 'k' },
-      { type: 'hitl_requested', agent_id: 'a1', prompt: 'p', hitl_kind: 'k' },
-      { type: 'hitl_resolved', agent_id: 'a1', response: 'r', duration_ms: 100 },
+      // hitl_requested / hitl_resolved / hitl_timeout / notifier_dispatched /
+      // notifier_failed moved to dedicated tests below — M04 Stage E wires
+      // them to live pendingHitl + notifierRecords state.
       { type: 'capability_violation', agent_id: 'a1', declared: 'd', attempted: 'a' },
       { type: 'capability_grant', agent_id: 'a1', capability: 'c', scope: 's' },
       { type: 'budget_warn', spent_usd: 1, cap_usd: 10, percent: 0.1 },
@@ -259,6 +252,269 @@ describe('graphStore.applyEvent', () => {
     const after = useGraphStore.getState();
     expect(after.nodes).toEqual(before.nodes);
     expect(after.edges).toEqual(before.edges);
+  });
+
+  // ---- M04 Stage B: plan/task event-driven state mutations ----
+
+  it('plan_created_with_approval_required_inserts_PlanNode_pending_approval', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'plan_created',
+      plan_id: 'p1',
+      title: 'Migrate auth',
+      task_count: 3,
+      approval_required: true,
+    });
+    const plan = useGraphStore.getState().nodes.find((n) => n.id === 'plan:p1');
+    expect(plan).toBeDefined();
+    expect(plan?.type).toBe('plan');
+    if (plan?.type === 'plan') {
+      expect(plan.data.status).toBe('pending_approval');
+      expect(plan.data.title).toBe('Migrate auth');
+      expect(plan.data.taskCount).toBe(3);
+      expect(plan.data.approvalRequired).toBe(true);
+    }
+  });
+
+  it('plan_created_without_approval_required_starts_approved', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'plan_created',
+      plan_id: 'p1',
+      title: 'Auto plan',
+      task_count: 1,
+      approval_required: false,
+    });
+    const plan = useGraphStore.getState().nodes.find((n) => n.id === 'plan:p1');
+    if (plan?.type === 'plan') {
+      expect(plan.data.status).toBe('approved');
+    }
+  });
+
+  it('plan_created_is_idempotent_on_duplicate', () => {
+    const e: AgentEvent = {
+      type: 'plan_created',
+      plan_id: 'p1',
+      title: 'T',
+      task_count: 1,
+      approval_required: false,
+    };
+    useGraphStore.getState().applyEvent(e);
+    useGraphStore.getState().applyEvent(e);
+    const planNodes = useGraphStore.getState().nodes.filter((n) => n.id === 'plan:p1');
+    expect(planNodes.length).toBe(1);
+  });
+
+  it('plan_approval_requested_advances_to_awaiting_approval', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'plan_created',
+      plan_id: 'p1',
+      title: 'T',
+      task_count: 1,
+      approval_required: true,
+    });
+    useGraphStore.getState().applyEvent({ type: 'plan_approval_requested', plan_id: 'p1' });
+    const plan = useGraphStore.getState().nodes.find((n) => n.id === 'plan:p1');
+    if (plan?.type === 'plan') {
+      expect(plan.data.status).toBe('awaiting_approval');
+    }
+  });
+
+  it('plan_approved_advances_to_in_progress', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'plan_created',
+      plan_id: 'p1',
+      title: 'T',
+      task_count: 1,
+      approval_required: true,
+    });
+    useGraphStore
+      .getState()
+      .applyEvent({ type: 'plan_approved', plan_id: 'p1', approved_by: 'user' });
+    const plan = useGraphStore.getState().nodes.find((n) => n.id === 'plan:p1');
+    if (plan?.type === 'plan') {
+      expect(plan.data.status).toBe('in_progress');
+    }
+  });
+
+  it('plan_revised_advances_to_awaiting_replan_with_reason', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'plan_created',
+      plan_id: 'p1',
+      title: 'T',
+      task_count: 1,
+      approval_required: false,
+    });
+    useGraphStore
+      .getState()
+      .applyEvent({ type: 'plan_revised', plan_id: 'p1', revision_reason: 'expand scope' });
+    const plan = useGraphStore.getState().nodes.find((n) => n.id === 'plan:p1');
+    if (plan?.type === 'plan') {
+      expect(plan.data.status).toBe('awaiting_replan');
+      expect(plan.data.lastTransitionReason).toBe('expand scope');
+    }
+  });
+
+  it('plan_aborted_carries_reason', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'plan_created',
+      plan_id: 'p1',
+      title: 'T',
+      task_count: 1,
+      approval_required: false,
+    });
+    useGraphStore.getState().applyEvent({ type: 'plan_aborted', plan_id: 'p1', reason: 'cancel' });
+    const plan = useGraphStore.getState().nodes.find((n) => n.id === 'plan:p1');
+    if (plan?.type === 'plan') {
+      expect(plan.data.status).toBe('aborted');
+      expect(plan.data.lastTransitionReason).toBe('cancel');
+    }
+  });
+
+  it('plan_complete_records_duration', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'plan_created',
+      plan_id: 'p1',
+      title: 'T',
+      task_count: 1,
+      approval_required: false,
+    });
+    useGraphStore
+      .getState()
+      .applyEvent({ type: 'plan_complete', plan_id: 'p1', duration_ms: 1234 });
+    const plan = useGraphStore.getState().nodes.find((n) => n.id === 'plan:p1');
+    if (plan?.type === 'plan') {
+      expect(plan.data.status).toBe('complete');
+      expect(plan.data.durationMs).toBe(1234);
+    }
+  });
+
+  it('task_started_inserts_TaskNode_running', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'task_started',
+      plan_id: 'p1',
+      task_id: 't1',
+      agent_id: 'a1',
+    });
+    const task = useGraphStore.getState().nodes.find((n) => n.id === 'task:t1');
+    expect(task).toBeDefined();
+    if (task?.type === 'task') {
+      expect(task.data.status).toBe('running');
+      expect(task.data.agentId).toBe('a1');
+    }
+  });
+
+  it('task_completed_increments_plan_completed_count', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'plan_created',
+      plan_id: 'p1',
+      title: 'T',
+      task_count: 2,
+      approval_required: false,
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'task_started',
+      plan_id: 'p1',
+      task_id: 't1',
+      agent_id: 'a1',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'task_completed',
+      plan_id: 'p1',
+      task_id: 't1',
+      duration_ms: 50,
+    });
+    const task = useGraphStore.getState().nodes.find((n) => n.id === 'task:t1');
+    const plan = useGraphStore.getState().nodes.find((n) => n.id === 'plan:p1');
+    if (task?.type === 'task') {
+      expect(task.data.status).toBe('done');
+      expect(task.data.durationMs).toBe(50);
+    }
+    if (plan?.type === 'plan') {
+      expect(plan.data.completedCount).toBe(1);
+    }
+  });
+
+  it('task_failed_records_failure_count_and_error', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'task_started',
+      plan_id: 'p1',
+      task_id: 't1',
+      agent_id: 'a1',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'task_failed',
+      plan_id: 'p1',
+      task_id: 't1',
+      error: 'boom',
+      failure_count: 2,
+    });
+    const task = useGraphStore.getState().nodes.find((n) => n.id === 'task:t1');
+    if (task?.type === 'task') {
+      expect(task.data.status).toBe('failed');
+      expect(task.data.failureCount).toBe(2);
+      expect(task.data.lastError).toBe('boom');
+    }
+  });
+
+  it('task_skipped_records_reason', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'task_started',
+      plan_id: 'p1',
+      task_id: 't1',
+      agent_id: 'a1',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'task_skipped',
+      plan_id: 'p1',
+      task_id: 't1',
+      reason: 'HITL skip',
+    });
+    const task = useGraphStore.getState().nodes.find((n) => n.id === 'task:t1');
+    if (task?.type === 'task') {
+      expect(task.data.status).toBe('skipped');
+      expect(task.data.lastError).toBe('HITL skip');
+    }
+  });
+
+  it('task_escalated_records_failure_count_and_max', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'task_started',
+      plan_id: 'p1',
+      task_id: 't1',
+      agent_id: 'a1',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'task_escalated',
+      plan_id: 'p1',
+      task_id: 't1',
+      failure_count: 3,
+      max_failures: 3,
+    });
+    const task = useGraphStore.getState().nodes.find((n) => n.id === 'task:t1');
+    if (task?.type === 'task') {
+      expect(task.data.status).toBe('escalated');
+      expect(task.data.failureCount).toBe(3);
+      expect(task.data.maxFailures).toBe(3);
+    }
+  });
+
+  it('task_rolled_back_records_snapshot_id', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'task_started',
+      plan_id: 'p1',
+      task_id: 't1',
+      agent_id: 'a1',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'task_rolled_back',
+      plan_id: 'p1',
+      task_id: 't1',
+      snapshot_id: 'snap-1',
+    });
+    const task = useGraphStore.getState().nodes.find((n) => n.id === 'task:t1');
+    if (task?.type === 'task') {
+      expect(task.data.status).toBe('failed');
+      expect(task.data.rollbackSnapshotId).toBe('snap-1');
+    }
   });
 
   // ---- Stage C: FrameworkNode root + MCP lazy spawn + animated edges ----
@@ -471,5 +727,438 @@ describe('graphStore.applyEvent', () => {
     expect(tool.data).toMatchObject({ tokensIn: 0, tokensOut: 0 });
     const agent = useGraphStore.getState().nodes.find((n) => n.id === 'agent:a1')!;
     expect(agent.data).toMatchObject({ tokensIn: 0, tokensOut: 0 });
+  });
+
+  // ── M04 Stage D: verify / hook / rail event-driven mutations (spec §4a) ──
+
+  it('verify_started_with_verify_category_inserts_VerifyNode_active', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'verify_started',
+      hook_id: 'verify',
+      category: 'verify',
+      firing_point: 'post_task',
+      level: 'standard',
+    });
+    const node = useGraphStore.getState().nodes.find((n) => n.id === 'verify:verify');
+    expect(node).toBeDefined();
+    expect(node?.type).toBe('verify');
+    expect(node?.data).toMatchObject({
+      hookId: 'verify',
+      level: 'standard',
+      firingPoint: 'post_task',
+      status: 'active',
+      durationMs: null,
+      outputPreview: null,
+      error: null,
+      onFailure: null,
+    });
+  });
+
+  it('verify_started_with_non_verify_category_inserts_HookNode_active', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'verify_started',
+      hook_id: 'lint',
+      category: 'lint',
+      firing_point: 'post_file_edit',
+      level: null,
+    });
+    const node = useGraphStore.getState().nodes.find((n) => n.id === 'hook:lint');
+    expect(node).toBeDefined();
+    expect(node?.type).toBe('hook');
+    expect(node?.data).toMatchObject({
+      hookId: 'lint',
+      hookName: 'lint',
+      category: 'lint',
+      firingPoint: 'post_file_edit',
+      status: 'active',
+      durationMs: null,
+      error: null,
+    });
+  });
+
+  it('verify_passed_transitions_VerifyNode_to_pass_with_duration_and_preview', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'verify_started',
+      hook_id: 'verify',
+      category: 'verify',
+      firing_point: 'post_task',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'verify_passed',
+      hook_id: 'verify',
+      duration_ms: 1234,
+      output_preview: 'Tests passed',
+    });
+    const node = useGraphStore.getState().nodes.find((n) => n.id === 'verify:verify');
+    expect(node?.data).toMatchObject({
+      status: 'pass',
+      durationMs: 1234,
+      outputPreview: 'Tests passed',
+    });
+  });
+
+  it('verify_failed_transitions_VerifyNode_to_fail_with_error_and_on_failure', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'verify_started',
+      hook_id: 'verify',
+      category: 'verify',
+      firing_point: 'post_task',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'verify_failed',
+      hook_id: 'verify',
+      duration_ms: 800,
+      error: 'verify.sh exited 1',
+      on_failure: 'rollback',
+    });
+    const node = useGraphStore.getState().nodes.find((n) => n.id === 'verify:verify');
+    expect(node?.data).toMatchObject({
+      status: 'fail',
+      durationMs: 800,
+      error: 'verify.sh exited 1',
+      onFailure: 'rollback',
+    });
+  });
+
+  it('verify_passed_for_non_verify_hook_transitions_HookNode_to_complete', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'verify_started',
+      hook_id: 'lint',
+      category: 'lint',
+      firing_point: 'post_file_edit',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'verify_passed',
+      hook_id: 'lint',
+      duration_ms: 50,
+    });
+    const node = useGraphStore.getState().nodes.find((n) => n.id === 'hook:lint');
+    expect(node?.data).toMatchObject({ status: 'complete', durationMs: 50 });
+  });
+
+  it('verify_failed_for_non_verify_hook_transitions_HookNode_to_error', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'verify_started',
+      hook_id: 'lint',
+      category: 'lint',
+      firing_point: 'post_file_edit',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'verify_failed',
+      hook_id: 'lint',
+      duration_ms: 30,
+      error: 'lint warnings: 12',
+      on_failure: 'warn',
+    });
+    const node = useGraphStore.getState().nodes.find((n) => n.id === 'hook:lint');
+    expect(node?.data).toMatchObject({
+      status: 'error',
+      durationMs: 30,
+      error: 'lint warnings: 12',
+    });
+  });
+
+  it('verify_started_re_emit_for_same_hook_id_resets_to_active', () => {
+    // Lock idempotence + re-fire semantics: re-emitting verify_started
+    // for the same hook_id (e.g., retry after rollback) updates status
+    // back to active and clears duration/error fields.
+    useGraphStore.getState().applyEvent({
+      type: 'verify_started',
+      hook_id: 'verify',
+      category: 'verify',
+      firing_point: 'post_task',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'verify_failed',
+      hook_id: 'verify',
+      duration_ms: 100,
+      error: 'first attempt failed',
+      on_failure: 'rollback',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'verify_started',
+      hook_id: 'verify',
+      category: 'verify',
+      firing_point: 'post_task',
+    });
+    const verifyCount = useGraphStore
+      .getState()
+      .nodes.filter((n) => n.id === 'verify:verify').length;
+    expect(verifyCount).toBe(1);
+    const node = useGraphStore.getState().nodes.find((n) => n.id === 'verify:verify');
+    expect(node?.data).toMatchObject({
+      status: 'active',
+      durationMs: null,
+      error: null,
+      onFailure: null,
+    });
+  });
+
+  it('rail_triggered_appends_to_triggeredRails_state', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'rail_triggered',
+      rail_id: 'no_secrets',
+      policy: 'hard',
+      firing_point: 'pre_commit',
+      message: 'Secret detected',
+      agent_id: 'a1',
+    });
+    const rails = useGraphStore.getState().triggeredRails;
+    expect(rails).toHaveLength(1);
+    expect(rails[0]).toMatchObject({
+      railId: 'no_secrets',
+      policy: 'hard',
+      firingPoint: 'pre_commit',
+      message: 'Secret detected',
+      agentId: 'a1',
+    });
+  });
+
+  it('rail_triggered_without_agent_id_records_null', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'rail_triggered',
+      rail_id: 'dont_touch',
+      policy: 'hard',
+      firing_point: 'pre_file_edit',
+      message: '.env matches dont_touch glob: .env*',
+    });
+    expect(useGraphStore.getState().triggeredRails[0]).toMatchObject({ agentId: null });
+  });
+
+  it('rail_triggered_appends_in_order_for_multiple_emits', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'rail_triggered',
+      rail_id: 'r1',
+      policy: 'soft',
+      firing_point: 'post_file_edit',
+      message: '1',
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'rail_triggered',
+      rail_id: 'r2',
+      policy: 'hard',
+      firing_point: 'pre_commit',
+      message: '2',
+    });
+    const rails = useGraphStore.getState().triggeredRails;
+    expect(rails).toHaveLength(2);
+    expect(rails.map((r) => r.railId)).toEqual(['r1', 'r2']);
+  });
+
+  it('clear_resets_triggeredRails_along_with_nodes_and_edges', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'rail_triggered',
+      rail_id: 'r1',
+      policy: 'soft',
+      firing_point: 'post_file_edit',
+      message: 'm',
+    });
+    useGraphStore.getState().clear();
+    expect(useGraphStore.getState().triggeredRails).toEqual([]);
+    expect(useGraphStore.getState().nodes).toEqual([]);
+    expect(useGraphStore.getState().edges).toEqual([]);
+  });
+
+  // ── M04 Stage E: HITL events ────────────────────────────────────
+
+  it('hitl_requested_inserts_pendingHitl_keyed_by_prompt_id', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_requested',
+      prompt_id: 'u-1',
+      trigger: 'on_failure_threshold',
+      agent_id: null,
+      question: 'Continue?',
+      options: ['retry', 'skip'],
+      ui_variant: 'panel',
+      timeout_at_unix_ms: 9_999,
+    });
+    const pending = useGraphStore.getState().pendingHitl;
+    expect(Object.keys(pending)).toEqual(['u-1']);
+    expect(pending['u-1']).toMatchObject({
+      promptId: 'u-1',
+      trigger: 'on_failure_threshold',
+      agentId: null,
+      question: 'Continue?',
+      uiVariant: 'panel',
+    });
+    expect(pending['u-1']?.options).toEqual(['retry', 'skip']);
+  });
+
+  it('hitl_resolved_removes_pendingHitl_entry', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_requested',
+      prompt_id: 'u-2',
+      trigger: 'on_risky_tool',
+      agent_id: 'a1',
+      question: 'Run Bash:rm?',
+      options: ['allow', 'block'],
+      ui_variant: 'modal',
+      timeout_at_unix_ms: 1_000,
+    });
+    expect(useGraphStore.getState().pendingHitl['u-2']).toBeDefined();
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_resolved',
+      prompt_id: 'u-2',
+      choice: 'allow',
+      duration_ms: 500,
+    });
+    expect(useGraphStore.getState().pendingHitl['u-2']).toBeUndefined();
+  });
+
+  it('hitl_timeout_removes_pendingHitl_entry', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_requested',
+      prompt_id: 'u-3',
+      trigger: 'on_gap',
+      agent_id: null,
+      question: '?',
+      options: [],
+      ui_variant: 'panel',
+      timeout_at_unix_ms: 1,
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_timeout',
+      prompt_id: 'u-3',
+      trigger: 'on_gap',
+      default_action: 'abort',
+    });
+    expect(useGraphStore.getState().pendingHitl['u-3']).toBeUndefined();
+  });
+
+  it('notifier_dispatched_appends_to_notifierRecords_per_matching_trigger', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_requested',
+      prompt_id: 'u-4',
+      trigger: 'on_failure_threshold',
+      agent_id: null,
+      question: '?',
+      options: [],
+      ui_variant: 'panel',
+      timeout_at_unix_ms: 1,
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'notifier_dispatched',
+      notifier_type: 'terminal_bell',
+      trigger: 'on_failure_threshold',
+      success: true,
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'notifier_dispatched',
+      notifier_type: 'desktop',
+      trigger: 'on_failure_threshold',
+      success: true,
+    });
+    const records = useGraphStore.getState().notifierRecords['u-4'] ?? [];
+    expect(records).toHaveLength(2);
+    expect(records.map((r) => r.notifierType)).toEqual(['terminal_bell', 'desktop']);
+    expect(records.every((r) => r.outcome === 'dispatched')).toBe(true);
+  });
+
+  it('notifier_failed_appends_record_with_error_text', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_requested',
+      prompt_id: 'u-5',
+      trigger: 'on_failure_threshold',
+      agent_id: null,
+      question: '?',
+      options: [],
+      ui_variant: 'panel',
+      timeout_at_unix_ms: 1,
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'notifier_failed',
+      notifier_type: 'desktop',
+      trigger: 'on_failure_threshold',
+      error: 'permission denied',
+    });
+    const records = useGraphStore.getState().notifierRecords['u-5'] ?? [];
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      notifierType: 'desktop',
+      outcome: 'failed',
+      error: 'permission denied',
+    });
+  });
+
+  it('notifier_records_only_attach_to_matching_trigger', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_requested',
+      prompt_id: 'u-failure',
+      trigger: 'on_failure_threshold',
+      agent_id: null,
+      question: '?',
+      options: [],
+      ui_variant: 'panel',
+      timeout_at_unix_ms: 1,
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_requested',
+      prompt_id: 'u-gap',
+      trigger: 'on_gap',
+      agent_id: null,
+      question: '?',
+      options: [],
+      ui_variant: 'panel',
+      timeout_at_unix_ms: 1,
+    });
+    // Notifier event for on_gap only — must NOT attach to u-failure.
+    useGraphStore.getState().applyEvent({
+      type: 'notifier_dispatched',
+      notifier_type: 'terminal_bell',
+      trigger: 'on_gap',
+      success: true,
+    });
+    const records = useGraphStore.getState().notifierRecords;
+    expect(records['u-gap']).toHaveLength(1);
+    expect(records['u-failure']).toBeUndefined();
+  });
+
+  it('resolving_a_pending_hitl_clears_its_notifier_records', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_requested',
+      prompt_id: 'u-6',
+      trigger: 'on_failure_threshold',
+      agent_id: null,
+      question: '?',
+      options: [],
+      ui_variant: 'panel',
+      timeout_at_unix_ms: 1,
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'notifier_dispatched',
+      notifier_type: 'terminal_bell',
+      trigger: 'on_failure_threshold',
+      success: true,
+    });
+    expect(useGraphStore.getState().notifierRecords['u-6']).toBeDefined();
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_resolved',
+      prompt_id: 'u-6',
+      choice: 'skip',
+      duration_ms: 100,
+    });
+    expect(useGraphStore.getState().notifierRecords['u-6']).toBeUndefined();
+  });
+
+  it('clear_resets_pendingHitl_and_notifierRecords', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_requested',
+      prompt_id: 'u-7',
+      trigger: 'on_gap',
+      agent_id: null,
+      question: '?',
+      options: [],
+      ui_variant: 'panel',
+      timeout_at_unix_ms: 1,
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'notifier_dispatched',
+      notifier_type: 'sound',
+      trigger: 'on_gap',
+      success: true,
+    });
+    useGraphStore.getState().clear();
+    expect(useGraphStore.getState().pendingHitl).toEqual({});
+    expect(useGraphStore.getState().notifierRecords).toEqual({});
   });
 });

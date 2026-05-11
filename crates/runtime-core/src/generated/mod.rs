@@ -7,11 +7,35 @@
 
 /// Types generated from `schemas/agent.v1.json`.
 pub mod agent;
+/// Types generated from `schemas/budget.v1.json` — Budget primitive (spec §2a).
+/// M04 Stage F authored the schema + 3-scope tightest-cap-wins enforcer + 4
+/// threshold actions + downshift_hook seam.
+pub mod budget;
 /// Types generated from `schemas/common.v1.json`.
 pub mod common;
+/// Types generated from `schemas/error.v1.json` — wire-format `CmdError`
+/// envelope for Tauri renderer↔main IPC. Stage A2 (M04) refactors
+/// `src-tauri/src/commands.rs::CmdError` + `src/lib/ipc.ts::unwrapCmdError`
+/// to consume this generated shape.
+pub mod error;
+/// Types generated from `schemas/event.v1.json` — canonical `AgentEvent`
+/// union. Stage A1 (M04) commits the generated parallel artifact alongside
+/// the hand-curated `crates/runtime-core/src/event.rs`; consumer
+/// reconciliation is downstream-stage scope.
+pub mod event;
 /// Types generated from `schemas/framework.v1.json`.
 pub mod framework;
+/// Types generated from `schemas/hitl.v1.json` — HITL primitive (spec §6a).
+/// M04 Stage E authored the schema + 9-trigger policy evaluator + notifier
+/// plugin interface + 3 built-in notifiers + HITL seam.
+pub mod hitl;
+/// Types generated from `schemas/plan.v1.json` — Plan primitive (spec §3a +
+/// §10). M04 Stage B authored the schema + Plan FSM + projection.
+pub mod plan;
 /// Types generated from `schemas/skill.v1.json`.
 pub mod skill;
+/// Types generated from `schemas/task.v1.json` — Task primitive (spec §3a +
+/// §10). M04 Stage B authored the schema + Task FSM + projection.
+pub mod task;
 /// Types generated from `schemas/tool.v1.json`.
 pub mod tool;

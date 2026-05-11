@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aria-runtime.dev/plan.v1.json",
+  "title": "Plan",
+  "description": "Plan primitive — orchestrator-emitted multi-task work unit. Spec §3a (Data types) + spec §10 (plans table DDL). The renderer's PlanNode + projector's plans table both consume this shape. v0.1 hardcodes `loop_policy = fresh_context_per_task` (one_shot + continuous are spec-prep enum variants only).",
+  "$defs": {
+    "PlanTitle": {
+      "type": "string",
+      "minLength": 1,
+      "title": "PlanTitle",
+      "description": "Human-readable plan title. Non-empty per validation; not localized at v0.1."
+    },
+    "PlanStatus": {
+      "type": "string",
+      "title": "PlanStatus",
+      "enum": [
+        "pending_approval",
+        "approved",
+        "in_progress",
+        "awaiting_replan",
+        "complete",
+        "aborted"
+      ],
+      "description": "Plan FSM state per spec §3a. Transitions enforced by `runtime_main::plan::state_machine::PlanStateMachine`."
+    },
+    "LoopPolicy": {
+      "type": "string",
+      "title": "LoopPolicy",
+      "enum": ["one_shot", "fresh_context_per_task", "continuous"],
+      "description": "Loop policy for task execution. v0.1 hardcodes `fresh_context_per_task`; the other two variants exist as spec-prep and the SDK's loop-policy seam returns `LoopPolicyError::NotImplemented` for them."
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "session_id",
+    "title",
+    "status",
+    "approval_required",
+    "loop_policy",
+    "hitl_checkpoints",
+    "risks",
+    "created_at"
+  ],
+  "properties": {
+    "id": { "type": "string", "description": "Plan UUID." },
+    "session_id": { "type": "string", "description": "Owning session UUID." },
+    "title": { "$ref": "#/$defs/PlanTitle" },
+    "description": { "type": ["string", "null"], "description": "Free-text plan description." },
+    "status": { "$ref": "#/$defs/PlanStatus" },
+    "approval_required": {
+      "type": "boolean",
+      "description": "When true, plan suspends on `plan_approval_requested` until the approval seam resolves."
+    },
+    "loop_policy": { "$ref": "#/$defs/LoopPolicy" },
+    "hitl_checkpoints": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Task IDs at which HITL checkpoints fire. Stage E wires the trigger flow."
+    },
+    "risks": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Free-text risk callouts. Surfaced in the Stage C ApprovalPanel."
+    },
+    "created_by": {
+      "type": ["string", "null"],
+      "description": "Agent ID that created the plan, or `'user'` for user-authored plans."
+    },
+    "created_at": { "type": "integer", "minimum": 0, "description": "Unix milliseconds." },
+    "approved_at": { "type": ["integer", "null"], "minimum": 0 },
+    "completed_at": { "type": ["integer", "null"], "minimum": 0 }
+  }
+}
