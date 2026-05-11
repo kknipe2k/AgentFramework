@@ -6,6 +6,74 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M04 Stage E (§6a HITL primitive — 9 trigger types + 3 UI variants + notifier plugin interface)
+
+Sixth stage of M04. Builds the §6a HITL primitive end-to-end: 9-trigger policy evaluator + `HitlSeam` (oneshot-channel gate mirroring Stage B's `ApprovalSeam`) + notifier plugin interface + 3 built-in notifiers (`terminal_bell`, `desktop` via Tauri 2.x notification plugin, `sound`) + 3 renderer surfaces (Panel non-modal / Modal aria-modal=true / Toast role=status with 30s auto-dismiss) + `respond_hitl` Tauri command + failure-escalation integration test driving `task_escalated` → `on_failure_threshold` → seam-resolve-with-Skip end-to-end.
+
+**Decisions documented in M04.E retrospective:**
+- The phase doc's `respond_hitl` example threaded the call through `Arc<DroneClient>` IPC. Mirrored Stage B's `ApprovalSeam` pattern instead: the seam is `tokio::sync::oneshot`-backed and lives in-process — Tauri-managed `Arc<HitlSeam>` registered in `src-tauri/src/main.rs` setup hook, resolved directly by `respond_hitl` without a drone round-trip. Same architectural rationale as Stage C's approve_plan/revise_plan/abort_plan path.
+- The pre-Stage-E `HitlRequested`/`HitlResolved` events had a provisional minimal shape (`prompt`, `hitl_kind`, `agent_id`, `response`, `duration_ms`). No live producers existed (audit-verified). Replaced with the spec §6a `HitlNotifyEvent`-aligned shape: `prompt_id` (correlation id), `trigger` (HitlTriggerRef), `agent_id` (nullable for plan-scoped triggers), `question`, `options[]`, `ui_variant`, `timeout_at_unix_ms` on `HitlRequested`; `prompt_id` + `choice` + `duration_ms` on `HitlResolved`.
+
+**New artifacts:**
+- **`schemas/hitl.v1.json`** (new) — `HitlPolicy` (9 trigger configs + notifier list + `timeout_seconds` + `default_action_on_timeout`), `HitlTrigger` enum (9 values, locked), `HitlUiVariant` enum (panel/modal/toast), `HitlNotifierType` enum (terminal_bell/desktop/sound/plugin), `HitlNotifier` shape, `HitlTriggerPolicy` (enabled + ui override + trigger-specific fields tools/threshold/percent).
+- **`crates/runtime-core/src/generated/hitl.rs`** (generated via typify), **`src/types/hitl.ts`** (generated via json-schema-to-typescript).
+- **`crates/runtime-main/src/hitl/`** (new module) — five files:
+  - `mod.rs` — re-exports + module documentation.
+  - `seam.rs` — `HitlSeam` (oneshot-channel gate). `await_response(prompt_id, wait)` registers the awaiter + races against a tokio timeout; on timeout the registration is removed before returning so a late `resolve` returns `NotFound` not `ReceiverDropped`. `resolve(prompt_id, choice)`, `cancel(prompt_id)`, `pending_len()` mirror `ApprovalSeam`'s contract.
+  - `policy.rs` — 9-trigger policy evaluator. `HitlPolicyEvaluator::evaluate(policy, context)` returns `Some(ResolvedTrigger { trigger, ui_variant, timeout_seconds, default_action })` when enabled + trigger-specific preconditions met (risky-tool allowlist match; failure-threshold count ≥ threshold; budget percent ≥ percent), else `None`. `default_ui_for(trigger)` encodes the spec §6a default-UI-per-trigger table. Tool-pattern matcher supports exact and trailing-wildcard forms (`Bash:rm`, `WebFetch:*`).
+  - `notifiers/mod.rs` — `HitlNotifier` trait (`fn notifier_type() -> &str`; `async fn notify(event) -> Result<(), NotifierError>`). `NotifierRegistry::build(configs)` skips disabled entries and rejects `plugin` type with `NotifierError::PluginNotSupported` per the v0.1 / M9 deferral. `dispatch_all(event)` fires every notifier in parallel (`futures::join_all`) and returns per-notifier `NotifierOutcome` (notifier_type + Result); errors are NON-FATAL — every notifier runs regardless of which ones fail.
+  - `notifiers/terminal_bell.rs` — writes ASCII BEL (`\x07`) to stderr via the `emit_bell_with` testable seam.
+  - `notifiers/sound.rs` — v0.1 BEL stub (same audible bell, `notifier_type = "sound"`). Cross-platform sound playback deferred to v1.0 / M11.
+  - `notifiers/desktop.rs` — Tauri 2.x notification plugin wrapper. `Desktop::with_dispatcher(closure)` accepts an injectable async dispatcher; production wires the closure to call `tauri_plugin_notification::NotificationExt::notification()` (real Tauri call lives in `src-tauri`); tests inject in-memory stubs. `compose_title_body(event)` produces the title + body strings (body truncated at 240 chars with `…`). Per CLAUDE.md §5 OS-call wrapper-vs-seam pattern: the testable seam is covered; the real Tauri call path is structurally untestable cross-platform.
+- **`crates/runtime-main/tests/hitl_failure_escalation.rs`** (new integration test) — full lifecycle: drive a `TaskState` to `Escalated` via 3 Failed events → evaluate `on_failure_threshold` policy fires → build registry from framework JSON + observer notifier → dispatch → seam await → resolve with `skip` → assert FSM rejects further events on terminal state. Also: timeout-without-response surfaces `HitlError::TimedOut`; plugin notifier type rejected at registry-build time.
+- **`src/components/HITLPanel.tsx`** — non-modal (`aria-modal="false"`) full-takeover panel. Renders one button per option; falls back to a textarea form when `options[]` is empty. Escape dismisses locally without resolving the seam (seam keeps awaiting; same Stage C ApprovalPanel pattern).
+- **`src/components/HITLModal.tsx`** — floating modal dialog with `aria-modal="true"`, `aria-labelledby`/`aria-describedby`, Escape closes.
+- **`src/components/HITLToast.tsx`** — `role="status"` + `aria-live="polite"`. Renders a summary button when collapsed; clicking expands to options. Auto-dismisses after 30s of no interaction (renderer-local; the SDK seam keeps awaiting until its own timeout).
+- **`tests/e2e/hitl_failure_escalation.spec.ts`** (new Playwright spec) — 6 tests driving `window.__graphStore` to verify panel/modal/toast surface on `hitl_requested`, dismiss on `hitl_resolved`, ARIA-modal attributes per variant, notifier-record attach on `notifier_dispatched`, and Escape-dismiss-without-resolving.
+
+**Schema edits:**
+- `schemas/event.v1.json` — provisional `HitlRequested`/`HitlResolved` shape replaced with the spec §6a-aligned shape (prompt_id, trigger, options, ui_variant, timeout_at_unix_ms on Requested; prompt_id, choice on Resolved); 3 new variants added (`hitl_timeout`, `notifier_dispatched`, `notifier_failed`); 2 new shared $defs (`HitlTriggerRef`, `HitlUiVariantRef`) — typify-friendly enum-in-$defs pattern per M04.D precedent.
+- `crates/runtime-core/src/event.rs` (hand-curated) — mirrored to match schema; new public enums `HitlTriggerRef` and `HitlUiVariantRef`.
+- `crates/xtask/src/main.rs` — `hitl` added to the schemas list (Rust + TS codegen).
+
+**Tauri shell (Stage E wiring):**
+- `src-tauri/src/main.rs` — registers `tauri_plugin_notification::init()` plugin; registers `Arc<HitlSeam>` Tauri-managed state alongside `Arc<ApprovalSeam>`; `respond_hitl` added to the `invoke_handler` list.
+- `src-tauri/src/commands.rs` — new `respond_hitl(prompt_id, choice)` Tauri command + `respond_hitl_with(prompt_id, choice, &HitlSeam)` testable seam. Soft-Ok on no-pending-awaiter (same rationale as `approve_plan`).
+- `src-tauri/capabilities/default.json` — `notification:default` permission added so the desktop notifier reaches the OS notification system. Locked-down capability list otherwise unchanged.
+- `Cargo.toml` workspace + `src-tauri/Cargo.toml` — `tauri-plugin-notification = "2"`. Install + capability + permission API verified verbatim against <https://v2.tauri.app/plugin/notification/> at 2026-05-10 per gotcha #32.
+- `package.json` — `@tauri-apps/plugin-notification ^2.0.0` (renderer-side dep for future renderer-driven notifications).
+
+**Renderer:**
+- `src/lib/graphStore.ts` — 5 formerly-no-op event cases now drive live state: `hitl_requested` inserts into `pendingHitl: Record<promptId, PendingHitl>`; `hitl_resolved` / `hitl_timeout` delete; `notifier_dispatched` / `notifier_failed` append to `notifierRecords: Record<promptId, NotifierRecord[]>` per matching trigger. `clear()` resets both. The exhaustive `_exhaustive: never` switch holds.
+- `src/lib/ipc.ts` — `invokeRespondHitl(promptId, choice)` wrapper.
+- `src/App.tsx` — mounts `<HITLPanel />` alongside `<ApprovalPanel />` and `<HITLModal />` / `<HITLToast />` at the App layout root.
+
+**Tests:**
+- HITL Rust unit tests: `hitl/seam.rs` 12 cases (await→resolve, timeout, double-resolve, cancel, receiver-dropped, concurrent, ReceiverDropped path); `hitl/policy.rs` 22 cases (9-trigger exhaustive happy path + 3 trigger-specific precondition tables + UI override + missing/disabled → None + matches_tool variants); `hitl/notifiers/mod.rs` 8 cases (build empty / disabled / each built-in / plugin reject / dispatch parallel / continue-on-failure / outcome shape); `hitl/notifiers/{terminal_bell,sound,desktop}.rs` 6 cases each.
+- `crates/runtime-main/tests/hitl_failure_escalation.rs` 3 cases — full failure-escalation lifecycle + seam-timeout + build-rejects-plugin.
+- `src-tauri/src/commands.rs` 3 new cases — `respond_hitl_with` resolve / no-pending-awaiter / receiver-dropped paths.
+- `tests/unit/components/HITLPanel.test.tsx` 14 cases — render shape, ARIA, options, textarea fallback, Escape, error display, internal `_testing` helpers.
+- `tests/unit/components/HITLModal.test.tsx` 9 cases — ARIA modal attributes, Escape, error display.
+- `tests/unit/components/HITLToast.test.tsx` 9 cases — collapsed summary, expand-on-click, auto-dismiss timer, error display.
+- `tests/unit/graphStore.test.ts` extended with 7 new cases — HITL request/resolve/timeout/notifier-dispatched/notifier-failed/trigger-routing/clear-resets.
+- `tests/unit/ipc.test.ts` extended with 1 case — `invokeRespondHitl` arg-shape.
+- `tests/e2e/hitl_failure_escalation.spec.ts` 6 Playwright cases.
+
+**Coverage (measured locally, Linux CI runs same gates):**
+- workspace ≥80% — actual 93.83% line.
+- runtime-main ≥95% — actual 97.17% line (hitl/seam.rs 99.47%, hitl/policy.rs 99.81%, hitl/notifiers/desktop.rs 100%, hitl/notifiers/mod.rs 92.78%, hitl/notifiers/sound.rs 94.34%, hitl/notifiers/terminal_bell.rs 94.44%).
+- runtime-drone ≥95% — actual 95.89% line.
+- src/ ≥80% — actual 97.8% line.
+
+**Coverage holdout:**
+- `notifiers/desktop.rs` real-Tauri-call path: the `Desktop::with_dispatcher` testable seam is covered to 100% line; production wiring (the closure built around `tauri_plugin_notification::NotificationExt::notification()`) lives in `src-tauri` and is exercised end-to-end only by the production renderer, not by the workspace coverage gate. Same OS-call wrapper-vs-seam holdout pattern as `providers/anthropic.rs` + `key_store.rs` + `drone_ipc/connection.rs` + `hooks/shell.rs::TokioShellSpawner::spawn`.
+
+**v0.1 scope:**
+- STANDARD mode hardcoded — mode-keyed HITL policy overrides in framework JSON are loaded + validated but only STANDARD is evaluated.
+- `on_capability_violation` trigger seam exposed but not wired — M5 wires the trigger source.
+- Plugin notifiers from `notifiers/` dir return `PluginNotSupported` — M9 generators wire the plugin loader.
+- 1h default HITL timeout (`HitlPolicy::timeout_seconds = 3600`) — per-trigger override deferred to v1.0.
+
 ### Added — M04 Stage D (§4a Verify & Rails primitive — Hook executor + JSONLogic-evaluated rails + don't-touch + revert_to_snapshot)
 
 Fifth stage of M04. Builds the §4a Verify & Rails primitive end-to-end. Hook executor (shell|tool|agent variants × 7 firing points) + Rails (hard/soft + JSONLogic operator allowlist per gotcha #18) + globset-backed don't-touch glob matcher (new `pre_file_edit` firing point) + drone-side `RevertToSnapshot` handler extended to consume `RevertReason::HookRollback { hook_id }`. VerifyNode + HookNode upgrade from M03.C synthetic-state stubs to live-event-driven; rail_triggered events accumulate into a new `triggeredRails` store field for M05 capability-enforcer surface.

@@ -8,6 +8,13 @@
 //! - [`key_store`] — OS-keychain-backed Anthropic API key storage (M02 Stage E).
 
 pub mod drone_ipc;
+/// HITL primitive — spec §6a (M04 Stage E).
+///
+/// 9-trigger policy evaluator + `HitlSeam` (oneshot-channel gate) +
+/// notifier plugin interface + 3 built-in notifiers (`terminal_bell`,
+/// `desktop`, `sound`). Wires Stage B's failure-escalation flow to the
+/// renderer's Panel / Modal / Toast surfaces.
+pub mod hitl;
 /// Verify & Rails primitive — spec §4a (M04 Stage D).
 ///
 /// Hook executor + `JSONLogic`-evaluated rails + globset-backed

@@ -829,51 +829,162 @@ pub mod error {
 #[doc = "    },"]
 #[doc = "    {"]
 #[doc = "      \"title\": \"HitlRequested\","]
+#[doc = "      \"description\": \"M04.E §6a — emitted when an enabled HITL trigger evaluates. Carries the correlation id (prompt_id) the renderer round-trips back via respond_hitl, the UI variant the renderer should render, the user-facing question, and the available choices. The original M03 minimal shape (prompt + hitl_kind) is replaced; no live producers existed pre-M04.E (audit-verified).\","]
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"required\": ["]
-#[doc = "        \"agent_id\","]
-#[doc = "        \"hitl_kind\","]
-#[doc = "        \"prompt\","]
-#[doc = "        \"type\""]
+#[doc = "        \"options\","]
+#[doc = "        \"prompt_id\","]
+#[doc = "        \"question\","]
+#[doc = "        \"timeout_at_unix_ms\","]
+#[doc = "        \"trigger\","]
+#[doc = "        \"type\","]
+#[doc = "        \"ui_variant\""]
 #[doc = "      ],"]
 #[doc = "      \"properties\": {"]
 #[doc = "        \"agent_id\": {"]
+#[doc = "          \"description\": \"Originating agent, when applicable (per_task / per_epic are plan-level, not agent-level).\","]
+#[doc = "          \"type\": ["]
+#[doc = "            \"string\","]
+#[doc = "            \"null\""]
+#[doc = "          ]"]
+#[doc = "        },"]
+#[doc = "        \"options\": {"]
+#[doc = "          \"description\": \"Expected choice tokens. Empty array means free-text response. Built-in options for on_failure_threshold: [retry, skip, abort].\","]
+#[doc = "          \"type\": \"array\","]
+#[doc = "          \"items\": {"]
+#[doc = "            \"type\": \"string\""]
+#[doc = "          }"]
+#[doc = "        },"]
+#[doc = "        \"prompt_id\": {"]
+#[doc = "          \"description\": \"Correlation id (UUID) tying this request to the eventual hitl_resolved / hitl_timeout. The renderer passes this back via respond_hitl(prompt_id, choice).\","]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
-#[doc = "        \"hitl_kind\": {"]
+#[doc = "        \"question\": {"]
+#[doc = "          \"description\": \"User-facing question. Free-text per spec §6a; framework JSON authors compose.\","]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
-#[doc = "        \"prompt\": {"]
-#[doc = "          \"type\": \"string\""]
+#[doc = "        \"timeout_at_unix_ms\": {"]
+#[doc = "          \"description\": \"Wall-clock deadline (unix milliseconds). Renderer may display countdown; seam fires hitl_timeout when crossed.\","]
+#[doc = "          \"type\": \"integer\","]
+#[doc = "          \"minimum\": 0.0"]
+#[doc = "        },"]
+#[doc = "        \"trigger\": {"]
+#[doc = "          \"$ref\": \"#/$defs/HitlTriggerRef\""]
 #[doc = "        },"]
 #[doc = "        \"type\": {"]
 #[doc = "          \"const\": \"hitl_requested\""]
+#[doc = "        },"]
+#[doc = "        \"ui_variant\": {"]
+#[doc = "          \"$ref\": \"#/$defs/HitlUiVariantRef\""]
 #[doc = "        }"]
 #[doc = "      },"]
 #[doc = "      \"additionalProperties\": false"]
 #[doc = "    },"]
 #[doc = "    {"]
 #[doc = "      \"title\": \"HitlResolved\","]
+#[doc = "      \"description\": \"M04.E §6a — emitted when the user responds to a HITL prompt. Carries the same prompt_id as the originating hitl_requested + the chosen token (from options[]) + how long the user took.\","]
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"required\": ["]
-#[doc = "        \"agent_id\","]
+#[doc = "        \"choice\","]
 #[doc = "        \"duration_ms\","]
-#[doc = "        \"response\","]
+#[doc = "        \"prompt_id\","]
 #[doc = "        \"type\""]
 #[doc = "      ],"]
 #[doc = "      \"properties\": {"]
-#[doc = "        \"agent_id\": {"]
+#[doc = "        \"choice\": {"]
+#[doc = "          \"description\": \"Selected token; one of the originating options[], or a free-text response when options[] was empty.\","]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
 #[doc = "        \"duration_ms\": {"]
 #[doc = "          \"type\": \"integer\","]
 #[doc = "          \"minimum\": 0.0"]
 #[doc = "        },"]
-#[doc = "        \"response\": {"]
+#[doc = "        \"prompt_id\": {"]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
 #[doc = "        \"type\": {"]
 #[doc = "          \"const\": \"hitl_resolved\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"title\": \"HitlTimeout\","]
+#[doc = "      \"description\": \"M04.E §6a — emitted when a HITL prompt's timeout_at_unix_ms elapses without a hitl_resolved. The default_action_on_timeout from the framework JSON (e.g. `abort`) drives downstream FSM transitions.\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"default_action\","]
+#[doc = "        \"prompt_id\","]
+#[doc = "        \"trigger\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"default_action\": {"]
+#[doc = "          \"description\": \"Free-text action token from framework JSON (e.g. `abort`). SDK consumers route this to plan / task FSM transitions.\","]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"prompt_id\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"trigger\": {"]
+#[doc = "          \"$ref\": \"#/$defs/HitlTriggerRef\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"hitl_timeout\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"title\": \"NotifierDispatched\","]
+#[doc = "      \"description\": \"M04.E §6a — emitted when a notifier (terminal_bell / desktop / sound / plugin) successfully fires for a HITL request. Notifier failures emit notifier_failed instead.\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"notifier_type\","]
+#[doc = "        \"success\","]
+#[doc = "        \"trigger\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"notifier_type\": {"]
+#[doc = "          \"description\": \"Type of notifier that fired (terminal_bell / desktop / sound / plugin).\","]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"success\": {"]
+#[doc = "          \"type\": \"boolean\""]
+#[doc = "        },"]
+#[doc = "        \"trigger\": {"]
+#[doc = "          \"$ref\": \"#/$defs/HitlTriggerRef\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"notifier_dispatched\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"title\": \"NotifierFailed\","]
+#[doc = "      \"description\": \"M04.E §6a — emitted when a notifier raises an error (e.g. desktop notification permission denied). Notifier failures are NON-FATAL: the HITL seam still resolves on user response or timeout regardless of which notifiers fired.\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"error\","]
+#[doc = "        \"notifier_type\","]
+#[doc = "        \"trigger\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"error\": {"]
+#[doc = "          \"description\": \"Human-readable error text. Renderer surfaces in inspector or toast.\","]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"notifier_type\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"trigger\": {"]
+#[doc = "          \"$ref\": \"#/$defs/HitlTriggerRef\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"notifier_failed\""]
 #[doc = "        }"]
 #[doc = "      },"]
 #[doc = "      \"additionalProperties\": false"]
@@ -1327,19 +1438,54 @@ pub enum AgentEvent {
         capability: ::std::string::String,
         kind: ::std::string::String,
     },
-    #[doc = "HitlRequested"]
+    #[doc = "HitlRequested\n\nM04.E §6a — emitted when an enabled HITL trigger evaluates. Carries the correlation id (prompt_id) the renderer round-trips back via respond_hitl, the UI variant the renderer should render, the user-facing question, and the available choices. The original M03 minimal shape (prompt + hitl_kind) is replaced; no live producers existed pre-M04.E (audit-verified)."]
     #[serde(rename = "hitl_requested")]
     HitlRequested {
-        agent_id: ::std::string::String,
-        hitl_kind: ::std::string::String,
-        prompt: ::std::string::String,
+        #[doc = "Originating agent, when applicable (per_task / per_epic are plan-level, not agent-level)."]
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        agent_id: ::std::option::Option<::std::string::String>,
+        #[doc = "Expected choice tokens. Empty array means free-text response. Built-in options for on_failure_threshold: [retry, skip, abort]."]
+        options: ::std::vec::Vec<::std::string::String>,
+        #[doc = "Correlation id (UUID) tying this request to the eventual hitl_resolved / hitl_timeout. The renderer passes this back via respond_hitl(prompt_id, choice)."]
+        prompt_id: ::std::string::String,
+        #[doc = "User-facing question. Free-text per spec §6a; framework JSON authors compose."]
+        question: ::std::string::String,
+        #[doc = "Wall-clock deadline (unix milliseconds). Renderer may display countdown; seam fires hitl_timeout when crossed."]
+        timeout_at_unix_ms: u64,
+        trigger: HitlTriggerRef,
+        ui_variant: HitlUiVariantRef,
     },
-    #[doc = "HitlResolved"]
+    #[doc = "HitlResolved\n\nM04.E §6a — emitted when the user responds to a HITL prompt. Carries the same prompt_id as the originating hitl_requested + the chosen token (from options[]) + how long the user took."]
     #[serde(rename = "hitl_resolved")]
     HitlResolved {
-        agent_id: ::std::string::String,
+        #[doc = "Selected token; one of the originating options[], or a free-text response when options[] was empty."]
+        choice: ::std::string::String,
         duration_ms: u64,
-        response: ::std::string::String,
+        prompt_id: ::std::string::String,
+    },
+    #[doc = "HitlTimeout\n\nM04.E §6a — emitted when a HITL prompt's timeout_at_unix_ms elapses without a hitl_resolved. The default_action_on_timeout from the framework JSON (e.g. `abort`) drives downstream FSM transitions."]
+    #[serde(rename = "hitl_timeout")]
+    HitlTimeout {
+        #[doc = "Free-text action token from framework JSON (e.g. `abort`). SDK consumers route this to plan / task FSM transitions."]
+        default_action: ::std::string::String,
+        prompt_id: ::std::string::String,
+        trigger: HitlTriggerRef,
+    },
+    #[doc = "NotifierDispatched\n\nM04.E §6a — emitted when a notifier (terminal_bell / desktop / sound / plugin) successfully fires for a HITL request. Notifier failures emit notifier_failed instead."]
+    #[serde(rename = "notifier_dispatched")]
+    NotifierDispatched {
+        #[doc = "Type of notifier that fired (terminal_bell / desktop / sound / plugin)."]
+        notifier_type: ::std::string::String,
+        success: bool,
+        trigger: HitlTriggerRef,
+    },
+    #[doc = "NotifierFailed\n\nM04.E §6a — emitted when a notifier raises an error (e.g. desktop notification permission denied). Notifier failures are NON-FATAL: the HITL seam still resolves on user response or timeout regardless of which notifiers fired."]
+    #[serde(rename = "notifier_failed")]
+    NotifierFailed {
+        #[doc = "Human-readable error text. Renderer surfaces in inspector or toast."]
+        error: ::std::string::String,
+        notifier_type: ::std::string::String,
+        trigger: HitlTriggerRef,
     },
     #[doc = "CapabilityViolation"]
     #[serde(rename = "capability_violation")]
@@ -1466,6 +1612,194 @@ impl ::std::convert::TryFrom<&::std::string::String> for ApprovedBy {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for ApprovedBy {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "HITL trigger discriminator embedded in HITL + notifier events. Spec §6a — mirrors hitl.v1.json HitlTrigger (9 values, locked). The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy)."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"HitlTriggerRef\","]
+#[doc = "  \"description\": \"HITL trigger discriminator embedded in HITL + notifier events. Spec §6a — mirrors hitl.v1.json HitlTrigger (9 values, locked). The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy).\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"on_gap\","]
+#[doc = "    \"on_risky_tool\","]
+#[doc = "    \"on_dont_touch_edit\","]
+#[doc = "    \"on_failure_threshold\","]
+#[doc = "    \"on_capability_violation\","]
+#[doc = "    \"on_budget_threshold\","]
+#[doc = "    \"on_plan_approval\","]
+#[doc = "    \"per_task\","]
+#[doc = "    \"per_epic\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum HitlTriggerRef {
+    #[serde(rename = "on_gap")]
+    OnGap,
+    #[serde(rename = "on_risky_tool")]
+    OnRiskyTool,
+    #[serde(rename = "on_dont_touch_edit")]
+    OnDontTouchEdit,
+    #[serde(rename = "on_failure_threshold")]
+    OnFailureThreshold,
+    #[serde(rename = "on_capability_violation")]
+    OnCapabilityViolation,
+    #[serde(rename = "on_budget_threshold")]
+    OnBudgetThreshold,
+    #[serde(rename = "on_plan_approval")]
+    OnPlanApproval,
+    #[serde(rename = "per_task")]
+    PerTask,
+    #[serde(rename = "per_epic")]
+    PerEpic,
+}
+impl ::std::fmt::Display for HitlTriggerRef {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::OnGap => f.write_str("on_gap"),
+            Self::OnRiskyTool => f.write_str("on_risky_tool"),
+            Self::OnDontTouchEdit => f.write_str("on_dont_touch_edit"),
+            Self::OnFailureThreshold => f.write_str("on_failure_threshold"),
+            Self::OnCapabilityViolation => f.write_str("on_capability_violation"),
+            Self::OnBudgetThreshold => f.write_str("on_budget_threshold"),
+            Self::OnPlanApproval => f.write_str("on_plan_approval"),
+            Self::PerTask => f.write_str("per_task"),
+            Self::PerEpic => f.write_str("per_epic"),
+        }
+    }
+}
+impl ::std::str::FromStr for HitlTriggerRef {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "on_gap" => Ok(Self::OnGap),
+            "on_risky_tool" => Ok(Self::OnRiskyTool),
+            "on_dont_touch_edit" => Ok(Self::OnDontTouchEdit),
+            "on_failure_threshold" => Ok(Self::OnFailureThreshold),
+            "on_capability_violation" => Ok(Self::OnCapabilityViolation),
+            "on_budget_threshold" => Ok(Self::OnBudgetThreshold),
+            "on_plan_approval" => Ok(Self::OnPlanApproval),
+            "per_task" => Ok(Self::PerTask),
+            "per_epic" => Ok(Self::PerEpic),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for HitlTriggerRef {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for HitlTriggerRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for HitlTriggerRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "HITL UI variant discriminator embedded in `hitl_requested` events. Spec §6a — mirrors hitl.v1.json HitlUiVariant."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"HitlUiVariantRef\","]
+#[doc = "  \"description\": \"HITL UI variant discriminator embedded in `hitl_requested` events. Spec §6a — mirrors hitl.v1.json HitlUiVariant.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"panel\","]
+#[doc = "    \"modal\","]
+#[doc = "    \"toast\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum HitlUiVariantRef {
+    #[serde(rename = "panel")]
+    Panel,
+    #[serde(rename = "modal")]
+    Modal,
+    #[serde(rename = "toast")]
+    Toast,
+}
+impl ::std::fmt::Display for HitlUiVariantRef {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Panel => f.write_str("panel"),
+            Self::Modal => f.write_str("modal"),
+            Self::Toast => f.write_str("toast"),
+        }
+    }
+}
+impl ::std::str::FromStr for HitlUiVariantRef {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "panel" => Ok(Self::Panel),
+            "modal" => Ok(Self::Modal),
+            "toast" => Ok(Self::Toast),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for HitlUiVariantRef {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for HitlUiVariantRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for HitlUiVariantRef {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,

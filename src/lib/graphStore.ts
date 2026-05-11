@@ -1,6 +1,13 @@
 import type { Edge, Node } from '@xyflow/react';
 import { create } from 'zustand';
-import type { AgentEvent, HookCategoryRef, OnFailureRef, RailPolicy } from '../types/agent_event';
+import type {
+  AgentEvent,
+  HitlTriggerRef,
+  HitlUiVariantRef,
+  HookCategoryRef,
+  OnFailureRef,
+  RailPolicy,
+} from '../types/agent_event';
 
 /**
  * Status field shared by Agent / Tool / MCP / Hook / Framework / Verify
@@ -217,6 +224,35 @@ export interface TriggeredRail {
 }
 
 /**
+ * Outstanding HITL prompt — spec §6a (M04 Stage E). Driven by
+ * `hitl_requested` events; cleared on the matching `hitl_resolved` /
+ * `hitl_timeout`. The renderer's HITLPanel / HITLModal / HITLToast
+ * subscribes and dispatches `respond_hitl(prompt_id, choice)` on user
+ * action.
+ */
+export interface PendingHitl {
+  promptId: string;
+  trigger: HitlTriggerRef;
+  agentId: string | null;
+  question: string;
+  options: string[];
+  uiVariant: HitlUiVariantRef;
+  timeoutAtUnixMs: number;
+}
+
+/**
+ * Notifier dispatch record — spec §6a. Driven by `notifier_dispatched`
+ * / `notifier_failed` events. Append-only diagnostic log surfaced in
+ * the inspector when a HITL prompt is open; cleared at session reset.
+ */
+export interface NotifierRecord {
+  notifierType: string;
+  trigger: HitlTriggerRef;
+  outcome: 'dispatched' | 'failed';
+  error: string | null;
+}
+
+/**
  * FrameworkNode — spec §3. The graph's root, spawned on session_start.
  */
 export interface FrameworkNodeData extends Record<string, unknown> {
@@ -270,6 +306,20 @@ interface GraphState {
    * surfaces them in the capability-enforcer UI. Append-only.
    */
   triggeredRails: TriggeredRail[];
+  /**
+   * Spec §6a (M04 Stage E): outstanding HITL prompts keyed by prompt_id.
+   * `hitl_requested` inserts; `hitl_resolved` / `hitl_timeout` deletes.
+   * v0.1 single-session per spec §0d expects at most one entry at a
+   * time, but the keyed map keeps the wiring sound for concurrent
+   * prompts (per_task / per_epic in framework JSON).
+   */
+  pendingHitl: Record<string, PendingHitl>;
+  /**
+   * Spec §6a: per-prompt notifier dispatch records. Cleared when the
+   * owning prompt resolves or times out. Renders in the inspector as a
+   * "Notifications fired" list alongside the prompt UI.
+   */
+  notifierRecords: Record<string, NotifierRecord[]>;
 
   /**
    * Single entry point for translating AgentEvent into node + edge
@@ -409,6 +459,8 @@ export const useGraphStore = create<GraphState>((set) => ({
   edges: [],
   selectedNodeId: null,
   triggeredRails: [],
+  pendingHitl: {},
+  notifierRecords: {},
 
   applyEvent: (event) =>
     set((state) => {
@@ -910,6 +962,83 @@ export const useGraphStore = create<GraphState>((set) => ({
             ],
           };
 
+        // ── HITL (spec §6a; M04 Stage E) ──
+        case 'hitl_requested': {
+          const { prompt_id } = event;
+          return {
+            ...state,
+            pendingHitl: {
+              ...state.pendingHitl,
+              [prompt_id]: {
+                promptId: prompt_id,
+                trigger: event.trigger,
+                agentId: event.agent_id ?? null,
+                question: event.question,
+                options: event.options,
+                uiVariant: event.ui_variant,
+                timeoutAtUnixMs: event.timeout_at_unix_ms,
+              },
+            },
+          };
+        }
+
+        case 'hitl_resolved': {
+          const { [event.prompt_id]: _resolved, ...rest } = state.pendingHitl;
+          // The notifier records for this prompt are no longer surfaced
+          // once the prompt resolves; clear them to keep the map bounded.
+          const { [event.prompt_id]: _records, ...remainingRecords } = state.notifierRecords;
+          return { ...state, pendingHitl: rest, notifierRecords: remainingRecords };
+        }
+
+        case 'hitl_timeout': {
+          const { [event.prompt_id]: _timedOut, ...rest } = state.pendingHitl;
+          const { [event.prompt_id]: _records, ...remainingRecords } = state.notifierRecords;
+          return { ...state, pendingHitl: rest, notifierRecords: remainingRecords };
+        }
+
+        case 'notifier_dispatched': {
+          // Notifier records are tagged by trigger; the prompt_id isn't
+          // on the event, so we attach the record to every pending HITL
+          // for that trigger. v0.1 single-session means at most one open
+          // prompt; this remains sound when multiple are open per the
+          // multi-prompt map shape.
+          const next = { ...state.notifierRecords };
+          for (const id of Object.keys(state.pendingHitl)) {
+            const pending = state.pendingHitl[id];
+            if (pending !== undefined && pending.trigger === event.trigger) {
+              next[id] = [
+                ...(next[id] ?? []),
+                {
+                  notifierType: event.notifier_type,
+                  trigger: event.trigger,
+                  outcome: 'dispatched',
+                  error: null,
+                },
+              ];
+            }
+          }
+          return { ...state, notifierRecords: next };
+        }
+
+        case 'notifier_failed': {
+          const next = { ...state.notifierRecords };
+          for (const id of Object.keys(state.pendingHitl)) {
+            const pending = state.pendingHitl[id];
+            if (pending !== undefined && pending.trigger === event.trigger) {
+              next[id] = [
+                ...(next[id] ?? []),
+                {
+                  notifierType: event.notifier_type,
+                  trigger: event.trigger,
+                  outcome: 'failed',
+                  error: event.error,
+                },
+              ];
+            }
+          }
+          return { ...state, notifierRecords: next };
+        }
+
         // No-op variants — light up at M5 (gap/capability), M9 (budget),
         // future stages. The exhaustive default below is the forcing
         // function: any new variant added to the schema breaks the
@@ -920,8 +1049,6 @@ export const useGraphStore = create<GraphState>((set) => ({
         case 'skill_missing':
         case 'tool_missing':
         case 'gap_resolved':
-        case 'hitl_requested':
-        case 'hitl_resolved':
         case 'capability_violation':
         case 'capability_grant':
         case 'budget_warn':
@@ -940,7 +1067,15 @@ export const useGraphStore = create<GraphState>((set) => ({
       }
     }),
 
-  clear: () => set({ nodes: [], edges: [], selectedNodeId: null, triggeredRails: [] }),
+  clear: () =>
+    set({
+      nodes: [],
+      edges: [],
+      selectedNodeId: null,
+      triggeredRails: [],
+      pendingHitl: {},
+      notifierRecords: {},
+    }),
 
   selectNode: (id) => set({ selectedNodeId: id }),
 }));

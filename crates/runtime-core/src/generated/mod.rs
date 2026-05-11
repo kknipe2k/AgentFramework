@@ -21,6 +21,10 @@ pub mod error;
 pub mod event;
 /// Types generated from `schemas/framework.v1.json`.
 pub mod framework;
+/// Types generated from `schemas/hitl.v1.json` — HITL primitive (spec §6a).
+/// M04 Stage E authored the schema + 9-trigger policy evaluator + notifier
+/// plugin interface + 3 built-in notifiers + HITL seam.
+pub mod hitl;
 /// Types generated from `schemas/plan.v1.json` — Plan primitive (spec §3a +
 /// §10). M04 Stage B authored the schema + Plan FSM + projection.
 pub mod plan;

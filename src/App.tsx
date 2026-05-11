@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { ApprovalPanel } from './components/ApprovalPanel';
 import { GraphCanvas } from './components/GraphCanvas';
+import { HITLModal } from './components/HITLModal';
+import { HITLPanel } from './components/HITLPanel';
+import { HITLToast } from './components/HITLToast';
 import { InspectorPanel } from './components/InspectorPanel';
 import { SetupPanel } from './components/SetupPanel';
 import { SmokeButton } from './components/SmokeButton';
@@ -107,7 +110,10 @@ export function App(): JSX.Element {
         <GraphCanvas />
         <InspectorPanel />
         <ApprovalPanel />
+        <HITLPanel />
       </div>
+      <HITLModal />
+      <HITLToast />
       <SqlInspector />
     </main>
   );

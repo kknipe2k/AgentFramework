@@ -235,8 +235,9 @@ describe('graphStore.applyEvent', () => {
       { type: 'skill_missing', agent_id: 'a1', skill_name: 's', severity: 'warn' },
       { type: 'tool_missing', agent_id: 'a1', tool_name: 't', severity: 'block' },
       { type: 'gap_resolved', agent_id: 'a1', capability: 'c', kind: 'k' },
-      { type: 'hitl_requested', agent_id: 'a1', prompt: 'p', hitl_kind: 'k' },
-      { type: 'hitl_resolved', agent_id: 'a1', response: 'r', duration_ms: 100 },
+      // hitl_requested / hitl_resolved / hitl_timeout / notifier_dispatched /
+      // notifier_failed moved to dedicated tests below — M04 Stage E wires
+      // them to live pendingHitl + notifierRecords state.
       { type: 'capability_violation', agent_id: 'a1', declared: 'd', attempted: 'a' },
       { type: 'capability_grant', agent_id: 'a1', capability: 'c', scope: 's' },
       { type: 'budget_warn', spent_usd: 1, cap_usd: 10, percent: 0.1 },
@@ -956,5 +957,208 @@ describe('graphStore.applyEvent', () => {
     expect(useGraphStore.getState().triggeredRails).toEqual([]);
     expect(useGraphStore.getState().nodes).toEqual([]);
     expect(useGraphStore.getState().edges).toEqual([]);
+  });
+
+  // ── M04 Stage E: HITL events ────────────────────────────────────
+
+  it('hitl_requested_inserts_pendingHitl_keyed_by_prompt_id', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_requested',
+      prompt_id: 'u-1',
+      trigger: 'on_failure_threshold',
+      agent_id: null,
+      question: 'Continue?',
+      options: ['retry', 'skip'],
+      ui_variant: 'panel',
+      timeout_at_unix_ms: 9_999,
+    });
+    const pending = useGraphStore.getState().pendingHitl;
+    expect(Object.keys(pending)).toEqual(['u-1']);
+    expect(pending['u-1']).toMatchObject({
+      promptId: 'u-1',
+      trigger: 'on_failure_threshold',
+      agentId: null,
+      question: 'Continue?',
+      uiVariant: 'panel',
+    });
+    expect(pending['u-1']?.options).toEqual(['retry', 'skip']);
+  });
+
+  it('hitl_resolved_removes_pendingHitl_entry', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_requested',
+      prompt_id: 'u-2',
+      trigger: 'on_risky_tool',
+      agent_id: 'a1',
+      question: 'Run Bash:rm?',
+      options: ['allow', 'block'],
+      ui_variant: 'modal',
+      timeout_at_unix_ms: 1_000,
+    });
+    expect(useGraphStore.getState().pendingHitl['u-2']).toBeDefined();
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_resolved',
+      prompt_id: 'u-2',
+      choice: 'allow',
+      duration_ms: 500,
+    });
+    expect(useGraphStore.getState().pendingHitl['u-2']).toBeUndefined();
+  });
+
+  it('hitl_timeout_removes_pendingHitl_entry', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_requested',
+      prompt_id: 'u-3',
+      trigger: 'on_gap',
+      agent_id: null,
+      question: '?',
+      options: [],
+      ui_variant: 'panel',
+      timeout_at_unix_ms: 1,
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_timeout',
+      prompt_id: 'u-3',
+      trigger: 'on_gap',
+      default_action: 'abort',
+    });
+    expect(useGraphStore.getState().pendingHitl['u-3']).toBeUndefined();
+  });
+
+  it('notifier_dispatched_appends_to_notifierRecords_per_matching_trigger', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_requested',
+      prompt_id: 'u-4',
+      trigger: 'on_failure_threshold',
+      agent_id: null,
+      question: '?',
+      options: [],
+      ui_variant: 'panel',
+      timeout_at_unix_ms: 1,
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'notifier_dispatched',
+      notifier_type: 'terminal_bell',
+      trigger: 'on_failure_threshold',
+      success: true,
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'notifier_dispatched',
+      notifier_type: 'desktop',
+      trigger: 'on_failure_threshold',
+      success: true,
+    });
+    const records = useGraphStore.getState().notifierRecords['u-4'] ?? [];
+    expect(records).toHaveLength(2);
+    expect(records.map((r) => r.notifierType)).toEqual(['terminal_bell', 'desktop']);
+    expect(records.every((r) => r.outcome === 'dispatched')).toBe(true);
+  });
+
+  it('notifier_failed_appends_record_with_error_text', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_requested',
+      prompt_id: 'u-5',
+      trigger: 'on_failure_threshold',
+      agent_id: null,
+      question: '?',
+      options: [],
+      ui_variant: 'panel',
+      timeout_at_unix_ms: 1,
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'notifier_failed',
+      notifier_type: 'desktop',
+      trigger: 'on_failure_threshold',
+      error: 'permission denied',
+    });
+    const records = useGraphStore.getState().notifierRecords['u-5'] ?? [];
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      notifierType: 'desktop',
+      outcome: 'failed',
+      error: 'permission denied',
+    });
+  });
+
+  it('notifier_records_only_attach_to_matching_trigger', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_requested',
+      prompt_id: 'u-failure',
+      trigger: 'on_failure_threshold',
+      agent_id: null,
+      question: '?',
+      options: [],
+      ui_variant: 'panel',
+      timeout_at_unix_ms: 1,
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_requested',
+      prompt_id: 'u-gap',
+      trigger: 'on_gap',
+      agent_id: null,
+      question: '?',
+      options: [],
+      ui_variant: 'panel',
+      timeout_at_unix_ms: 1,
+    });
+    // Notifier event for on_gap only — must NOT attach to u-failure.
+    useGraphStore.getState().applyEvent({
+      type: 'notifier_dispatched',
+      notifier_type: 'terminal_bell',
+      trigger: 'on_gap',
+      success: true,
+    });
+    const records = useGraphStore.getState().notifierRecords;
+    expect(records['u-gap']).toHaveLength(1);
+    expect(records['u-failure']).toBeUndefined();
+  });
+
+  it('resolving_a_pending_hitl_clears_its_notifier_records', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_requested',
+      prompt_id: 'u-6',
+      trigger: 'on_failure_threshold',
+      agent_id: null,
+      question: '?',
+      options: [],
+      ui_variant: 'panel',
+      timeout_at_unix_ms: 1,
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'notifier_dispatched',
+      notifier_type: 'terminal_bell',
+      trigger: 'on_failure_threshold',
+      success: true,
+    });
+    expect(useGraphStore.getState().notifierRecords['u-6']).toBeDefined();
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_resolved',
+      prompt_id: 'u-6',
+      choice: 'skip',
+      duration_ms: 100,
+    });
+    expect(useGraphStore.getState().notifierRecords['u-6']).toBeUndefined();
+  });
+
+  it('clear_resets_pendingHitl_and_notifierRecords', () => {
+    useGraphStore.getState().applyEvent({
+      type: 'hitl_requested',
+      prompt_id: 'u-7',
+      trigger: 'on_gap',
+      agent_id: null,
+      question: '?',
+      options: [],
+      ui_variant: 'panel',
+      timeout_at_unix_ms: 1,
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'notifier_dispatched',
+      notifier_type: 'sound',
+      trigger: 'on_gap',
+      success: true,
+    });
+    useGraphStore.getState().clear();
+    expect(useGraphStore.getState().pendingHitl).toEqual({});
+    expect(useGraphStore.getState().notifierRecords).toEqual({});
   });
 });

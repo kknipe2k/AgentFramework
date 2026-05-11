@@ -19,6 +19,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 import {
   invokeQuerySessionDb,
   invokeReplaySession,
+  invokeRespondHitl,
   invokeRunSmokeSession,
   invokeSetApiKey,
   subscribeAgentEvents,
@@ -169,5 +170,14 @@ describe('ipc', () => {
     // `message` field falls through to the last-resort String() branch.
     const e = { foo: 'bar' };
     expect(unwrapCmdError(e)).toBe('[object Object]');
+  });
+
+  it('invokeRespondHitl_passes_promptId_and_choice', async () => {
+    invokeMock.mockResolvedValueOnce(undefined);
+    await invokeRespondHitl('u-1', 'skip');
+    expect(invokeMock).toHaveBeenCalledWith('respond_hitl', {
+      promptId: 'u-1',
+      choice: 'skip',
+    });
   });
 });

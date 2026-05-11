@@ -59,6 +59,13 @@ wiremock            = "0.6"
 # pattern indices for pattern-recovery on hard-rail emit.
 globset             = "0.4"
 
+# M04 Stage E — Tauri 2.x notification plugin for the `desktop` HITL
+# notifier (spec §6a). 2.x matches the Tauri 2 baseline pinned in
+# src-tauri/Cargo.toml. Per docs/gotchas.md #32 cross-stack discipline:
+# install + capability + permission API verified against
+# https://v2.tauri.app/plugin/notification/ at 2026-05-10.
+tauri-plugin-notification = "2"
+
 # runtime-core path-dep for runtime-main + future provider consumers.
 # Version pin avoids the cargo-deny wildcard rule.
 runtime-core        = { path = "crates/runtime-core", version = "0.1.0" }

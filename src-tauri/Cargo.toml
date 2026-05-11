@@ -11,6 +11,10 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri              = { version = "2", features = [] }
+# M04 Stage E — Tauri 2.x notification plugin for the `desktop` HITL
+# notifier (spec §6a). Wired through `runtime_main::hitl::notifiers::desktop`
+# via a Tauri-side dispatcher closure (gotcha #32 cross-stack discipline).
+tauri-plugin-notification = { workspace = true }
 runtime-core       = { workspace = true }
 runtime-main       = { path = "../crates/runtime-main", version = "0.1.0" }
 async-trait        = { workspace = true }

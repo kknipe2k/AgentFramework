@@ -25,6 +25,7 @@ export default tseslint.config(
       'src/types/error.ts',
       'src/types/plan.ts',
       'src/types/task.ts',
+      'src/types/hitl.ts',
     ],
   },
   js.configs.recommended,

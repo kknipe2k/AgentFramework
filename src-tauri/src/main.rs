@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use drone_lifecycle::DroneLifecycle;
 use runtime_main::drone_ipc::DroneClient;
+use runtime_main::hitl::HitlSeam;
 use runtime_main::sdk::ApprovalSeam;
 use tauri::{Manager, RunEvent};
 use tokio::sync::Mutex;
@@ -25,6 +26,13 @@ fn main() {
     );
 
     let app = tauri::Builder::default()
+        // M04 Stage E (spec §6a) — Tauri notification plugin powers the
+        // `desktop` HITL notifier. Registered alongside the existing
+        // invoke handlers; permission granted via
+        // src-tauri/capabilities/default.json `notification:default`.
+        // Verified against https://v2.tauri.app/plugin/notification/ at
+        // 2026-05-10 (gotcha #32).
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             commands::set_api_key,
             commands::run_smoke_session,
@@ -33,6 +41,7 @@ fn main() {
             commands::approve_plan,
             commands::revise_plan,
             commands::abort_plan,
+            commands::respond_hitl,
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();
@@ -44,6 +53,12 @@ fn main() {
             // SDK awaiter is registered, per commands.rs::resolve_or_log).
             let seam: Arc<ApprovalSeam> = Arc::new(ApprovalSeam::new());
             app_handle.manage(seam);
+            // M04 Stage E: register the in-process HitlSeam as
+            // managed-state. Same rationale as ApprovalSeam — no I/O at
+            // construction; the renderer's respond_hitl command resolves
+            // pending awaits via this seam.
+            let hitl_seam: Arc<HitlSeam> = Arc::new(HitlSeam::new());
+            app_handle.manage(hitl_seam);
             // The setup hook runs on the Tauri main thread; we need an
             // async block for the drone spawn + connect. block_on uses
             // the Tauri runtime that's already configured.

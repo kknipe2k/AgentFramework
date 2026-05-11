@@ -39,6 +39,47 @@ pub enum ApprovedBy {
     Auto,
 }
 
+/// HITL trigger discriminator. Spec §6a (9 values, locked).
+///
+/// Embedded in HITL + notifier events. Mirrors
+/// `runtime_core::generated::hitl::HitlTrigger`; duplicated here because
+/// typify does not cross-schema-`$ref` enums and the hand-curated
+/// `event.rs` keeps the renderer's union flat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HitlTriggerRef {
+    /// Gap detected (missing tool / skill) — §4b.
+    OnGap,
+    /// Agent attempted a tool in the `tools` allowlist of the trigger.
+    OnRiskyTool,
+    /// Agent attempted to edit a `dont_touch` path — §4a.
+    OnDontTouchEdit,
+    /// Task escalated after `failure_count >= max_failures` — §3a.
+    OnFailureThreshold,
+    /// Capability violation — §8.security L2 (M5 source).
+    OnCapabilityViolation,
+    /// Budget percent threshold crossed — §2a (M04 Stage F source).
+    OnBudgetThreshold,
+    /// Plan approval gate — §3a (Stage C already wired via `ApprovalSeam`).
+    OnPlanApproval,
+    /// HITL gate before each task.
+    PerTask,
+    /// HITL gate at plan / epic boundaries.
+    PerEpic,
+}
+
+/// HITL UI variant discriminator embedded in `HitlRequested` events. Spec §6a.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HitlUiVariantRef {
+    /// Full-takeover panel; graph stays queryable (ARIA non-modal).
+    Panel,
+    /// Floating modal dialog; blocks adjacent interaction (ARIA modal).
+    Modal,
+    /// Non-blocking auto-dismiss notification (`role=status`).
+    Toast,
+}
+
 /// The canonical event union emitted by the runtime across all phases.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -368,23 +409,71 @@ pub enum AgentEvent {
     },
 
     // ── HITL (spec §6a) ──
-    /// A human-in-the-loop interaction was requested.
+    /// A HITL trigger fired. M04 Stage E aligned this variant to the spec
+    /// §6a `HitlNotifyEvent` shape: `prompt_id` (correlation id for resolve),
+    /// `trigger` (which of 9), `question`, `options[]`, `ui_variant`, timeout.
+    /// The M03 minimal shape (`prompt` + `hitl_kind`) had no live producers and
+    /// is replaced; the rename is documented as ambiguity-event in M04.E retro.
     HitlRequested {
-        /// The requesting agent.
-        agent_id: String,
-        /// The prompt shown to the human.
-        prompt: String,
-        /// Kind of HITL interaction.
-        hitl_kind: String,
+        /// Correlation id (UUID) tying this request to the eventual
+        /// `hitl_resolved` / `hitl_timeout`. The renderer passes this back
+        /// via `respond_hitl(prompt_id, choice)`.
+        prompt_id: String,
+        /// Which of the 9 HITL triggers fired (spec §6a).
+        trigger: HitlTriggerRef,
+        /// Originating agent, when applicable. `per_task` / `per_epic` are
+        /// plan-level — `agent_id` is `None` in those cases.
+        agent_id: Option<String>,
+        /// User-facing question.
+        question: String,
+        /// Expected choice tokens. Empty array means free-text response.
+        options: Vec<String>,
+        /// UI variant the renderer should mount.
+        ui_variant: HitlUiVariantRef,
+        /// Wall-clock deadline (unix milliseconds).
+        timeout_at_unix_ms: u64,
     },
-    /// A human-in-the-loop interaction was resolved.
+    /// A HITL prompt was resolved by user response.
     HitlResolved {
-        /// The requesting agent.
-        agent_id: String,
-        /// The human's response.
-        response: String,
-        /// Time the human took to respond in milliseconds.
+        /// Correlation id matching the originating [`AgentEvent::HitlRequested`].
+        prompt_id: String,
+        /// Selected token; one of the originating `options[]`, or free-text
+        /// when `options[]` was empty.
+        choice: String,
+        /// How long the user took to respond, in milliseconds.
         duration_ms: u64,
+    },
+    /// A HITL prompt's `timeout_at_unix_ms` elapsed without a response.
+    /// The `default_action_on_timeout` from framework JSON drives downstream
+    /// FSM transitions.
+    HitlTimeout {
+        /// Correlation id of the timed-out prompt.
+        prompt_id: String,
+        /// Which trigger fired the original prompt.
+        trigger: HitlTriggerRef,
+        /// Free-text action token from framework JSON (e.g. `"abort"`).
+        default_action: String,
+    },
+    /// A notifier successfully fired for a HITL request.
+    NotifierDispatched {
+        /// Notifier type (`terminal_bell`, `desktop`, `sound`, `plugin`).
+        notifier_type: String,
+        /// Trigger that produced the originating HITL request.
+        trigger: HitlTriggerRef,
+        /// Always `true` when this variant is emitted; carried for parity
+        /// with the renderer's exhaustive narrow.
+        success: bool,
+    },
+    /// A notifier raised an error (e.g. desktop notification permission
+    /// denied). Notifier failures are NON-FATAL — the seam still resolves
+    /// on user response or timeout regardless of which notifiers fired.
+    NotifierFailed {
+        /// Notifier type that failed.
+        notifier_type: String,
+        /// Trigger that produced the originating HITL request.
+        trigger: HitlTriggerRef,
+        /// Human-readable error text.
+        error: String,
     },
 
     // ── Capability enforcement (spec §8.security) ──

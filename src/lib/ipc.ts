@@ -63,6 +63,17 @@ export async function invokeAbortPlan(planId: string, reason: string): Promise<v
   await invoke('abort_plan', { planId, reason });
 }
 
+/**
+ * Resolve a pending HITL prompt with the user's choice (M04 Stage E).
+ * Resolves the in-process `HitlSeam` (Tauri-managed-state); the SDK's
+ * awaiting HITL gate wakes and the plan loop routes per the chosen token.
+ *
+ * Spec §6a HITL Policy primitive.
+ */
+export async function invokeRespondHitl(promptId: string, choice: string): Promise<void> {
+  await invoke('respond_hitl', { promptId, choice });
+}
+
 export async function subscribeAgentEvents(
   handler: (event: AgentEvent) => void,
 ): Promise<UnlistenFn> {

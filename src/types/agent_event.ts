@@ -48,6 +48,9 @@ export type AgentEvent =
   | GapResolved
   | HitlRequested
   | HitlResolved
+  | HitlTimeout
+  | NotifierDispatched
+  | NotifierFailed
   | CapabilityViolation
   | CapabilityGrant
   | BudgetWarn
@@ -77,6 +80,23 @@ export type OnFailureRef = "block" | "warn" | "rollback";
  * Rail policy — spec §4a. Hard rails block; soft rails warn.
  */
 export type RailPolicy = "hard" | "soft";
+/**
+ * HITL trigger discriminator embedded in HITL + notifier events. Spec §6a — mirrors hitl.v1.json HitlTrigger (9 values, locked). The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy).
+ */
+export type HitlTriggerRef =
+  | "on_gap"
+  | "on_risky_tool"
+  | "on_dont_touch_edit"
+  | "on_failure_threshold"
+  | "on_capability_violation"
+  | "on_budget_threshold"
+  | "on_plan_approval"
+  | "per_task"
+  | "per_epic";
+/**
+ * HITL UI variant discriminator embedded in `hitl_requested` events. Spec §6a — mirrors hitl.v1.json HitlUiVariant.
+ */
+export type HitlUiVariantRef = "panel" | "modal" | "toast";
 
 export interface SessionStart {
   type: "session_start";
@@ -258,17 +278,81 @@ export interface GapResolved {
   capability: string;
   kind: string;
 }
+/**
+ * M04.E §6a — emitted when an enabled HITL trigger evaluates. Carries the correlation id (prompt_id) the renderer round-trips back via respond_hitl, the UI variant the renderer should render, the user-facing question, and the available choices. The original M03 minimal shape (prompt + hitl_kind) is replaced; no live producers existed pre-M04.E (audit-verified).
+ */
 export interface HitlRequested {
   type: "hitl_requested";
-  agent_id: string;
-  prompt: string;
-  hitl_kind: string;
+  /**
+   * Correlation id (UUID) tying this request to the eventual hitl_resolved / hitl_timeout. The renderer passes this back via respond_hitl(prompt_id, choice).
+   */
+  prompt_id: string;
+  trigger: HitlTriggerRef;
+  /**
+   * Originating agent, when applicable (per_task / per_epic are plan-level, not agent-level).
+   */
+  agent_id?: string | null;
+  /**
+   * User-facing question. Free-text per spec §6a; framework JSON authors compose.
+   */
+  question: string;
+  /**
+   * Expected choice tokens. Empty array means free-text response. Built-in options for on_failure_threshold: [retry, skip, abort].
+   */
+  options: string[];
+  ui_variant: HitlUiVariantRef;
+  /**
+   * Wall-clock deadline (unix milliseconds). Renderer may display countdown; seam fires hitl_timeout when crossed.
+   */
+  timeout_at_unix_ms: number;
 }
+/**
+ * M04.E §6a — emitted when the user responds to a HITL prompt. Carries the same prompt_id as the originating hitl_requested + the chosen token (from options[]) + how long the user took.
+ */
 export interface HitlResolved {
   type: "hitl_resolved";
-  agent_id: string;
-  response: string;
+  prompt_id: string;
+  /**
+   * Selected token; one of the originating options[], or a free-text response when options[] was empty.
+   */
+  choice: string;
   duration_ms: number;
+}
+/**
+ * M04.E §6a — emitted when a HITL prompt's timeout_at_unix_ms elapses without a hitl_resolved. The default_action_on_timeout from the framework JSON (e.g. `abort`) drives downstream FSM transitions.
+ */
+export interface HitlTimeout {
+  type: "hitl_timeout";
+  prompt_id: string;
+  trigger: HitlTriggerRef;
+  /**
+   * Free-text action token from framework JSON (e.g. `abort`). SDK consumers route this to plan / task FSM transitions.
+   */
+  default_action: string;
+}
+/**
+ * M04.E §6a — emitted when a notifier (terminal_bell / desktop / sound / plugin) successfully fires for a HITL request. Notifier failures emit notifier_failed instead.
+ */
+export interface NotifierDispatched {
+  type: "notifier_dispatched";
+  /**
+   * Type of notifier that fired (terminal_bell / desktop / sound / plugin).
+   */
+  notifier_type: string;
+  trigger: HitlTriggerRef;
+  success: boolean;
+}
+/**
+ * M04.E §6a — emitted when a notifier raises an error (e.g. desktop notification permission denied). Notifier failures are NON-FATAL: the HITL seam still resolves on user response or timeout regardless of which notifiers fired.
+ */
+export interface NotifierFailed {
+  type: "notifier_failed";
+  notifier_type: string;
+  trigger: HitlTriggerRef;
+  /**
+   * Human-readable error text. Renderer surfaces in inspector or toast.
+   */
+  error: string;
 }
 export interface CapabilityViolation {
   type: "capability_violation";

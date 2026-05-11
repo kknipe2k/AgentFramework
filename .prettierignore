@@ -26,5 +26,6 @@ src/types/agent_event.ts
 src/types/error.ts
 src/types/plan.ts
 src/types/task.ts
+src/types/hitl.ts
 *.yml
 *.yaml
