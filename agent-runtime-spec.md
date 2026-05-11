@@ -647,6 +647,8 @@ For each such tool call:
 
 3. User decision is recorded as a `tool_call_uncertainty_resolved` decision signal.
 
+> **Mark-complete output-text input field (v1.0 deferral).** v0.1's mark-complete action records the user's choice but does NOT accept a free-form output-text payload from the user — the agent resumes as if the tool returned `null`. The "(provide output if known)" suffix above describes the v1.0 target where the UI prompts for an optional output string that the agent receives as the tool result. v0.1 ships the 4-action prompt without the text input; v1.0 adds it. M04 Stage F ships the v0.1 UI; M04 gap-analysis 🟡 carry-forward.
+
 #### MCP reconnection
 
 On resume:
@@ -1246,6 +1248,8 @@ Frameworks can replace the hook with their own selector (e.g., a port of `model-
 
 `budget_exceeded` triggers immediate agent kill via the drone's `stop_process` command for all session-spawned agents.
 
+> **v0.1 implementation note (M04 Stage F).** The shipped v0.1 event variants currently use `budget_warn` (no `ing` suffix) and omit some `scope`/`spent_usd`/`cap_usd`/`percent` fields on the `budget_downshift` + `budget_exceeded` variants — these were pre-existing in `schemas/event.v1.json` before M04. M04 Stage F wired the enforcer to emit the existing variants as-is rather than reshape mid-milestone. Full reshape to the spec-canonical names + complete field set is queued as a v1.0 escalation candidate via `schemas/event.v1.1.json` (M04 gap-analysis 🟡 backlog). Renderer + projector consume the v0.1 shape; the spec's canonical shape above is the v1.0 target.
+
 ### Graph integration
 
 Session header bar shows `spent / cap` with color gradient:
@@ -1420,12 +1424,17 @@ The Task TypeScript shape additionally includes timestamp fields (`created_at`, 
 | { type: 'plan_revised'; plan_id: string; revision_reason: string }
 | { type: 'plan_aborted'; plan_id: string; reason: string }
 | { type: 'plan_complete'; plan_id: string; duration_ms: number }
-| { type: 'task_started'; task_id: string; agent_id: string }
-| { type: 'task_completed'; task_id: string; duration_ms: number }
-| { type: 'task_failed'; task_id: string; error: string; failure_count: number }
-| { type: 'task_skipped'; task_id: string; reason: string }
-| { type: 'task_escalated'; task_id: string; failure_count: number; max_failures: number }   // failure_count >= max_failures
+| { type: 'task_started'; plan_id: string; task_id: string; agent_id: string }
+| { type: 'task_completed'; plan_id: string; task_id: string; duration_ms: number }
+| { type: 'task_failed'; plan_id: string; task_id: string; error: string; failure_count: number }
+| { type: 'task_skipped'; plan_id: string; task_id: string; reason: string }
+| { type: 'task_escalated'; plan_id: string; task_id: string; failure_count: number; max_failures: number }   // failure_count >= max_failures
+| { type: 'task_rolled_back'; plan_id: string; task_id: string; snapshot_id: string }   // §4a Verify+Rails: typed event for post-hook rollback (replaces stringly-typed 'task_failed { error: "rolled_back_*" }')
 ```
+
+> **All `task_*` events include `plan_id` for projection self-containment** (M04 Stage B carve-out). The denormalization makes events self-contained for downstream consumers — renderer's `applyEvent` switch, drone's `plan_projector::project_signal`, and replay paths don't need to perform a separate `task_id → plan_id` lookup. Same trade-off used for `tool_result.tool_invocation_id`-style cross-references in M02's event taxonomy.
+
+> **`task_rolled_back` is a typed event with structured `snapshot_id` field** (M04 Stage B carve-out, ratified). Earlier spec text suggested emitting `task_failed { error: 'rolled_back_after_hook_<hook_id>' }` — a stringly-typed encoding that violates the "no stringly-typed APIs" anti-pattern from the runtime's style guide. Stage D verify+rails work consumes the typed event directly. The drone's `RevertReason::HookRollback { hook_id }` IPC variant pairs with this event.
 
 ### Approval-gate primitive
 
@@ -1508,6 +1517,8 @@ When `loop_policy: continuous`, `PlanNode` shows the goal-store progress instead
 (Mode-keyed overrides above use the §3b mode primitive — added by WI-15.)
 
 `examples/aria/framework.json` uses the structure above. `examples/ralph/framework.json` overrides with `loop_policy: { kind: 'continuous', goal_store: '.ralph/prd.json' }` and `approval_required: false`.
+
+> **Plan-loop driver placement (M04 Stage B carve-out).** The SDK module that drives the plan FSM against real agent execution (`crates/runtime-main/src/sdk/plan_loop.rs` in the M04 codebase) is deferred to **M07** — the framework JSON loader is the natural callsite for plan-loop instantiation (the framework defines `plan_creation.agent`, which the loop binds to). M04 Stages B–F ship the primitives (Plan + Task FSM, structured emitter, ApprovalSeam, plan/task projector, fresh_context_per_task seam, failure escalation) and exercise them via integration tests with manual shims. Production wiring through real framework JSON loads at M07. See M04 gap-analysis for status.
 
 -----
 
@@ -1844,7 +1855,7 @@ Drone command surface added:
 | { type: 'revert_to_snapshot'; snapshot_id: string; reason: 'hook_rollback' | 'user_rollback' | 'gap_recovery' }
 ```
 
-After rollback, runtime emits `task_failed` with `error: 'rolled_back_after_hook_<hook_id>'` and the failure-escalation path (§3a) takes over.
+After rollback, runtime emits the typed `task_rolled_back { plan_id, task_id, snapshot_id }` event (defined in §3a Events). The hook context that triggered the rollback is recoverable from the preceding `hook_failed` event in the signal log (which carries `hook_id` + `on_failure: 'rollback'`). The failure-escalation path (§3a) takes over via the failure_count increment that pairs with the rollback. *(Earlier spec text suggested stringly-typed `task_failed { error: 'rolled_back_after_hook_<hook_id>' }`; updated post-M04 Stage B carve-out — the typed event with structured `snapshot_id` field is the canonical shape.)*
 
 ### Graph integration
 
@@ -2050,6 +2061,8 @@ ARIA's HITL fires for: gaps, destructive operations, risky tools, per-epic gates
   "default_action_on_timeout": "abort"
 }
 ```
+
+> **Per-trigger timeout configurability (v1.0 deferral).** v0.1 ships one session-wide `timeout_seconds` covering all triggers. Per-trigger timeouts (e.g., `on_gap` = 3600s, `on_capability_violation` = 300s, `on_budget_threshold` = no timeout) are queued for v1.0 as a `timeouts_per_trigger: { <trigger>: <seconds> }` framework JSON field. M04 Stage E (HitlPolicy) ships the session-wide timeout primitive; M04 gap-analysis 🟡 carry-forward.
 
 ### HITL trigger types (locked)
 
@@ -2526,6 +2539,72 @@ CREATE TABLE sessions (
   mode TEXT     -- active mode value (see §3b)
   -- snapshot_count derivable via COUNT(*) FROM snapshots WHERE session_id = ?
 );
+```
+
+#### Session status FSM
+
+The `sessions.status` column is a finite state machine. Legal transitions:
+
+```
+                                  ┌──────────────────┐
+                                  │ user end OR      │
+                                  │ plan_complete    │
+                                  ▼                  │
+              ┌──────────┐   ┌────────┐         ┌──────────┐
+   start ───▶ │  active  │──▶│        │────────▶│ complete │  (terminal)
+              │          │   │        │         └──────────┘
+              └────┬─────┘   │        │
+                ▲  │ user    │        │
+                │  │ pause   │        │              ┌────────────────┐
+                │  │ OR      │        │ §2a hard ───▶│budget_exceeded │  (terminal;
+                │  │ HITL    │        │  stop        └────────────────┘   agents
+                │  │ block   │        │                                   killed)
+                │  ▼         │        │
+                │ ┌──────────┴┐       │
+                │ │ suspended │       │
+                │ └─────┬─────┘       │
+                │       │             │
+                │ user  │             │ irrecoverable
+                │ resume│             │ (drone unreachable after
+                └───────┘             │  recovery_attempts, IPC EOF,
+                                      │  SQLite WAL corrupt > window)
+                                      ▼
+                                  ┌─────────┐         ┌───────────┐
+                                  │ crashed │────────▶│ recovered │
+                                  └─────────┘  user   └─────┬─────┘
+                                              resume         │
+                                              from §1b       │ user reviews +
+                                                             │ resumes
+                                                             ▼
+                                                       (re-enters active)
+                                                             │
+                                                             │ user reviews +
+                                                             │ closes
+                                                             ▼
+                                                        complete
+```
+
+Legal transitions:
+
+| From | To | Trigger |
+|---|---|---|
+| `(initial)` | `active` | session start (user-initiated OR replay-from-snapshot promotion) |
+| `active` | `suspended` | user pause; HITL trigger fires with policy variant `panel` (full takeover); plan reaches `plan_approval_requested` and awaits approval |
+| `active` | `complete` | user-requested end; `plan_complete` event fires; final task in `loop_policy: one_shot` reaches terminal status |
+| `active` | `budget_exceeded` | §2a `budget_exceeded` event (hard-stop threshold met); agents killed via drone `stop_process` |
+| `active` | `crashed` | drone IPC EOF beyond recovery (>2 reconnect attempts fail); SQLite WAL corruption beyond `degraded_session_window_seconds`; provider auth/quota irrecoverable + no fallback model |
+| `suspended` | `active` | user resume from UI; HITL `respond_hitl` resolves; `plan_approved` fires |
+| `suspended` | `complete` | user-requested end while suspended |
+| `suspended` | `budget_exceeded` | §2a hard-stop fires while waiting (rare; cap reduced mid-suspension) |
+| `crashed` | `recovered` | user opens crashed session in first-run launcher; runtime loads from latest snapshot per §1b recovery semantics |
+| `recovered` | `active` | user reviews tool-call uncertainty prompts + chooses resume; runtime promotes state back to `active` for continued execution |
+| `recovered` | `complete` | user reviews + closes without continuing; session terminates clean |
+
+Terminal states: `complete`, `budget_exceeded`. Resumable states: `suspended` (via user resume), `crashed` (via crash-recovery flow → `recovered`). The `recovered` state is short-lived (during the resume-review window); sessions exit it within minutes.
+
+(Pre-M01 carry-forward closure; M04-blocking dependency met. Codepath references: `crates/runtime-drone/src/db.rs` for the `sessions` table CREATE; status writes happen via `runtime-main/src/sdk/agent_sdk.rs` session-lifecycle hooks; recovery flow at `runtime-main/src/recovery/resume.rs` per M04.F.)
+
+```sql
 
 -- Snapshots (drone written)
 CREATE TABLE snapshots (
