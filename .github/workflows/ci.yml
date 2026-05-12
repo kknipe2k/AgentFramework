@@ -143,6 +143,19 @@ jobs:
           fail: false   # advisory; tighten once links are stable
         continue-on-error: true
 
+  stage-prompts-validate:
+    name: Stage-prompt schema validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Validate stage-prompt XML schemas
+        run: node bin/validate-stage-prompts.mjs
+
   # ────────────────────────────────────────────────────────────────────────
   # Code jobs — gated on Cargo workspace existing.
   # These activate at M1 (Foundation) when crates/ lands.

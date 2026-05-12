@@ -19,6 +19,8 @@ export default tseslint.config(
       'playwright-report/**',
       'test-results/**',
       'coverage/**',
+      // Node tooling scripts — not part of the typed TS project.
+      'bin/**',
       // Generated TypeScript bindings — owned by `cargo xtask regenerate-types`.
       // Per CLAUDE.md §14 schemas-as-source-of-truth.
       'src/types/agent_event.ts',
