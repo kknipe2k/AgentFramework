@@ -1,242 +1,89 @@
-# ARIA: Agentic Rail-based Intent Architecture
+# Agent Runtime
 
-> *Autonomous AI development with safety rails, human oversight, and adaptive learning.*
+> Local Tauri desktop runtime for agentic AI workflows. Live graph of agent execution, capability sandboxing, gap detection that suspends the session cleanly when an agent needs something it doesn't have.
 
-## What is ARIA?
+## What this is
 
-ARIA is a comprehensive orchestration system for autonomous AI-assisted development. It combines:
+A local desktop application (Windows v0.1; Linux + macOS post-v1.0) that runs agentic AI workflows defined as JSON frameworks. Each session executes inside a sandboxed runtime with:
 
-- **Ralph's Autonomous Loop** - PRD-driven, fresh-context iteration
-- **Boris Cherny's Patterns** - Verification, subagents, structured prompts
-- **Safety Rails** - Hard blocks on dangerous operations
-- **Human-in-the-Loop** - Intervention when automation fails
-- **Adaptive Learning** - Model selection that improves over time
+- **Live graph** — every agent spawn, tool invocation, plan/task transition, verify result, and HITL gate renders on the canvas in real time (React Flow v12).
+- **Capability enforcement** — tools declare what they need; the runtime narrows agent→agent capability transfers; sandbox process enforces L3 validation for generated artifacts.
+- **Gap detection** — when an agent needs a skill, tool, or MCP server it doesn't have, the session suspends cleanly with a structured prompt to fix the framework.
+- **Direct Anthropic streaming** — no third-party SDK; `reqwest` + `eventsource-stream` straight to the API.
 
-## Quick Start
+## What this isn't
 
-```bash
-# 1. Initialize a feature
-./.aria/ralph/ralph.sh init "Add user authentication"
+A chatbot wrapper. A framework. A general-purpose terminal. A low-code tool for non-technical users in v0.1. The runtime executes what exists; it doesn't modify itself mid-run.
 
-# 2. Edit the PRD with your user stories
-vim .aria/ralph/prd.json
+## Stack
 
-# 3. Run the autonomous loop
-./.aria/ralph/ralph.sh run 25
+- **Shell:** Tauri 2.x (OS webview)
+- **Backend:** Rust 1.95.0 (workspace at `crates/`, pinned via `rust-toolchain.toml`)
+- **Async:** tokio
+- **Frontend:** React 18 + TypeScript + React Flow v12 + Tailwind + Vite
+- **LLM client:** direct HTTP + SSE to Anthropic via `reqwest` + `eventsource-stream`
+- **Persistence:** SQLite (WAL mode) via `rusqlite`
+- **IPC:** Tauri typed IPC (renderer ↔ main); Unix socket / Windows named pipe with framed JSON (main ↔ drone)
 
-# 4. Monitor progress (in another terminal)
-tail -f .aria/ralph/progress.txt
-```
+Stack rationale: [ADR-0002](docs/adr/0002-tauri-rust-over-electron.md).
 
-## Workspace Setup
+## Status
 
-For testing and evaluation, keep ARIA pristine and create isolated project workspaces:
+In flight. Per [`docs/MVP-v0.1.md`](docs/MVP-v0.1.md):
 
-```bash
-# Windows
-.aria\scripts\setup-project.bat SVM
+- [x] **M01 Foundation** — Cargo workspace + 5 crates + typify codegen + drone Phase 1 + Tauri 2.x shell + React skeleton
+- [x] **M02 Event Pipeline** — `LLMProvider` trait + `AnthropicProvider` + IPC + OS keychain + smoke session against live Anthropic
+- [x] **M03 Live Graph** — React Flow v12 + 11 node types + SQL inspector + cold-start replay + dagre layout
+- [x] **M04 Plan / Verify / HITL / Budget** — Plan FSM + Verify hooks + Rails + HITL (3 UI variants × 9 triggers) + Budget enforcer + Recovery
+- [x] **M04.5 Protocol Iteration** — `docs/gotchas.md` graduations + ADR-0007 (in-process HITL seam) + STAGE-PROMPT-PROTOCOL v1.4
+- [ ] **M05 Gap + Capability** — §4b gap detection + capability enforcer (L1–L5) + sandbox subprocess + tier system + audit log + GapPanel *(next)*
+- [ ] **M06–M11** — MCP basic, Registry import, Workbench Builder Canvas, Generators, First-run + polish, Signed installer *(planned)*
 
-# Mac/Linux
-.aria/scripts/setup-project.sh SVM
-```
+The runtime binary builds; M04 acceptance criteria are met end-to-end. See [`CHANGELOG.md`](CHANGELOG.md) for milestone-by-milestone history.
 
-This creates `~/aria/eval/SVM` (or `c:\aria\eval\SVM`) with:
-- Symlinks to ARIA framework files (immutable)
-- Fresh state directories (per-project)
-- Ready for your source materials
+## Quick start
 
-**Workflow:**
-1. Clone ARIA once: `git clone ... ~/aria-test`
-2. Create project: `setup-project.sh MyResearch`
-3. Drop papers/docs into `~/aria/eval/MyResearch`
-4. Open VS Code there, run ARIA
-5. Results stay in project folder, ARIA stays clean
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         DEVELOPER INTERFACE LAYER                            │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │ Claude Code │  │  VS Code    │  │ Git Hooks   │  │   Shell     │        │
-│  │  /aria      │  │   Tasks     │  │ pre-commit  │  │  Aliases    │        │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘        │
-└─────────┴────────────────┴────────────────┴────────────────┴────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              ARIA ENGINE                                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  Ralph Loop    │  Safety Rails   │  Model Selector  │  Git Ops   │  HITL   │
-│  - PRD-driven  │  - Hard blocks  │  - Learning      │  - Checkpoint│ - Notify│
-│  - Iterations  │  - Verification │  - Budget        │  - Rollback  │ - Wait  │
-│  - Progress    │  - Executors    │  - Complexity    │  - Auto-PR   │ - Guide │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-## Key Features
-
-| Feature | Description |
-|---------|-------------|
-| **PRD-Driven** | Clear goals with acceptance criteria |
-| **Fresh Context** | Each iteration starts clean |
-| **Safety Rails** | Blocks secrets, broken tests, bad patterns |
-| **Verification** | Types, lint, tests, build, E2E |
-| **Checkpoints** | Rollback to any point |
-| **HITL** | Human help when needed |
-| **Model Selection** | Opus/Sonnet/Haiku based on task |
-| **Meta-Reasoning** | Systematic decision-making with Thompson Sampling |
-| **Offline RL** | Learns from past sessions to improve over time |
-| **Deep Research** | Web research with HITL gates and source quality scoring |
-| **Auto-PR** | Creates PR when feature complete |
-| **Dashboard** | Web UI with Claude native log integration |
-| **Signal Schema v2** | Full traceability with 8 signal types |
-| **Slide Generation** | Create presentations from research |
-| **Test Suite** | 20 tests (15 unit, 3 integration, 2 validation) |
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| **[User Guide](.aria/docs/USER-GUIDE.md)** | Complete usage guide - start here |
-| [Cheatsheet](.aria/docs/CHEATSHEET.md) | Quick reference for all modes/skills |
-| [Skill Registry](.aria/skills/REGISTRY.md) | All 14 skills with triggers |
-| [Meta-Reasoning](.aria/skills/meta-reasoning.md) | Systematic decision-making with offline RL |
-| [Deep Research](.aria/skills/deep-research.md) | Web research with HITL gates |
-| [Observability](.aria/docs/OBSERVABILITY.md) | Decision tracing, signals, and dashboard |
-| [Signal Schema v2](.aria/docs/SIGNAL-SCHEMA-V2.md) | Full traceability with 8 signal types |
-| [Architecture](.aria/docs/CONCEPT-aria-architecture.md) | System design and components |
-| [Parking Lot](.aria/docs/PARKING-LOT.md) | Future ideas (whisper, metrics) |
-
-## Commands
+Prerequisites: Rust 1.95.0 (pinned via `rust-toolchain.toml`), Node 20+, an Anthropic API key.
 
 ```bash
-# Ralph Loop
-./.aria/ralph/ralph.sh init "description"   # Initialize feature
-./.aria/ralph/ralph.sh run [iterations]     # Run autonomous loop
-./.aria/ralph/ralph.sh status               # Show status
-
-# Verification
-./.aria/verify-executor.sh quick            # Types + lint
-./.aria/verify-executor.sh standard         # + tests + build
-./.aria/verify-executor.sh full             # + integration + E2E
-
-# Git Operations
-./.aria/git-ops.sh checkpoint [name]        # Save checkpoint
-./.aria/git-ops.sh rollback checkpoint X    # Rollback
-./.aria/git-ops.sh pr create                # Create PR
-
-# Model Selection & Meta-Reasoning
-./.aria/model-selector.sh status            # Show budget/usage
-./.aria/model-selector.sh stats             # Show learning data
-source .aria/lib/meta-reasoning.sh          # Load meta-reasoning functions
-meta_select_model "feature" 6 "api"         # Get model recommendation
-meta_reason "Implement retry logic" "feature" 6  # Full meta-reasoning
-
-# Offline Learning
-python .aria/lib/offline-learner.py learn   # Run learning pipeline
-python .aria/lib/offline-learner.py stats   # View learning statistics
-python .aria/lib/offline-learner.py export-policy  # Export current policy
-
-# Test Suite
-python .aria/tests/run-tests.py             # Run all tests
-python .aria/tests/run-tests.py unit        # Run unit tests only
-python .aria/tests/run-tests.py --offline   # Run offline tests (no API)
-
-# Human-in-the-Loop
-./.aria/hitl.sh status                      # Show pending requests
-./.aria/hitl.sh respond "guidance"          # Provide guidance
-
-# Dashboard & Research
-python .aria/scripts/serve-dashboard.py     # Open dashboard at :8420
-python .aria/scripts/generate-slides.py     # Generate slides from IDEA.md
-
-# Workspace Setup
-.aria/scripts/setup-project.sh <name>       # Create isolated project workspace
+git clone https://github.com/kknipe2k/AgentFramework.git
+cd AgentFramework
+npm install
+npm run tauri dev
 ```
 
-## IDE Integration
+First cold build: 5–10 minutes (~444 transitive Rust deps). Subsequent runs: ~30 seconds. The Tauri window opens automatically; save your API key in the setup panel — it's stored in the OS keychain via `keyring` 3.x, never in plaintext.
 
-**Claude Code:** `/aria`, `/aria-verify`, `/aria-start`, `/aria-status`, `/aria-summary`
+For a full IRL feature walkthrough (50+ manual test cases covering M01→M04): [`docs/M04-irl-test-plan.md`](docs/M04-irl-test-plan.md).
 
-**VS Code:** `Cmd+Shift+P` → "Tasks: Run Task" → ARIA tasks
+## Where to read more
 
-**Git Hooks:** `./.aria/hooks/install.sh install`
+| Document | Purpose |
+|---|---|
+| [`agent-runtime-spec.md`](agent-runtime-spec.md) | The contract. Capability matrix (§0a), scope matrix (§0d), all phases. |
+| [`docs/MVP-v0.1.md`](docs/MVP-v0.1.md) | v0.1 milestone breakdown + acceptance criteria. |
+| [`CLAUDE.md`](CLAUDE.md) | Working agreement for AI-assisted development: hard rules, TDD discipline, quality gates, PR workflow. |
+| [`docs/adr/`](docs/adr/) | Architecture decision records (currently 0001–0007). |
+| [`docs/gotchas.md`](docs/gotchas.md) | 65 named traps surfaced during M01–M04 build. |
+| [`docs/gap-analysis.md`](docs/gap-analysis.md) | Cumulative product↔spec audit, per-milestone, append-only. |
+| [`STAGE-PROMPT-PROTOCOL.md`](STAGE-PROMPT-PROTOCOL.md) | XML schema for milestone stage prompts (v1.4). |
+| [`SECURITY.md`](SECURITY.md) | Vulnerability disclosure process. |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contributing guide + DCO sign-off. |
 
-## Directory Structure
+## ARIA — reference framework
 
-```
-.aria/
-├── aria-engine.sh          # Main orchestrator
-├── ralph/                  # Autonomous loop
-│   ├── ralph.sh           # Loop runner
-│   ├── prd.json           # Product requirements
-│   └── progress.txt       # Progress log
-├── verify-executor.sh      # Verification pipeline
-├── rails-executor.sh       # YAML rails executor
-├── model-selector.sh       # Intelligent model selection
-├── git-ops.sh             # Checkpoint/rollback/PR
-├── hitl.sh                # Human-in-the-loop
-├── hooks/                 # Git hooks
-├── rails/                 # YAML rail definitions
-├── lib/                   # Core libraries
-│   ├── meta-reasoning.sh  # Thompson Sampling, model selection
-│   └── offline-learner.py # Offline RL learning pipeline
-├── learned/               # Learning artifacts
-│   ├── policy.json        # Current learned policy
-│   └── priors/            # Beta distribution priors
-├── scripts/               # Utility scripts
-│   ├── serve-dashboard.py # Decision lineage dashboard
-│   ├── generate-slides.py # Slide generation
-│   ├── setup-project.sh   # Workspace setup (Mac/Linux)
-│   └── setup-project.bat  # Workspace setup (Windows)
-├── skills/                # Skill definitions (14 skills)
-├── outputs/               # Generated artifacts (slides, etc.)
-├── dashboard/             # Dashboard web UI
-├── tests/                 # Test suite (20 tests)
-│   ├── run-tests.py       # Cross-platform Python runner
-│   ├── test-runner.sh     # Bash test framework
-│   ├── unit/              # 15 unit tests
-│   ├── integration/       # 3 integration tests
-│   └── validation/        # 2 validation tests
-└── docs/                  # Documentation
-```
+[`examples/aria/framework.json`](examples/aria/framework.json) reconstructs the shell-based ARIA framework as the runtime's reference archetype. ARIA is the test case that proves the §0a Capability Matrix is complete — every primitive listed there must be reconstructible into ARIA's behavior without modifying the runtime. See [ADR-0001](docs/adr/0001-aria-as-archetype.md) for positioning.
 
-## Two Entry Points
+The original shell-based ARIA implementation lives at [`.aria/`](.aria/) (moves to `archive/aria-shell/` at v0.1 ship time per CLAUDE.md §10). It runs independently of the runtime; the two products coexist. See [`.aria/CLAUDE.md`](.aria/CLAUDE.md) for ARIA-specific instructions.
 
-ARIA supports two operational modes:
+## Telemetry
 
-| Mode | Entry Point | Use Case |
-|------|-------------|----------|
-| **External** | `ralph.sh` | Terminal-based autonomous loop |
-| **Hybrid** | `/aria-start` | Inside Claude Code / VS Code |
+None. The runtime collects nothing about the user — no analytics, no crash reporters, no usage metrics. Adding any phone-home would require an ADR with a public dashboard plan + opt-in mechanism. Default: don't. See `agent-runtime-spec.md` §13 for the full privacy stance.
 
-**External Mode** (this README): Shell scripts orchestrate Claude as subprocess. Best for autonomous batch work.
+## License + contributing
 
-**Hybrid Mode** ([CLAUDE.md](./CLAUDE.md)): Skills-based system with ARIA rules embedded in Claude's context. Best for interactive development.
+Apache 2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
 
-**Hybrid Quick Start:**
-```
-/aria-start → Dashboard launches → Select: [b]uild / [m]odify / [r]esearch / [d]eep-research
-```
+Contributions accepted via PR with DCO sign-off (`git commit -s`). See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the engineering charter (TDD, quality gates, schema-as-source-of-truth, ADRs for capability / IPC / schema changes).
 
-## Four Use Cases
-
-| Use Case | Trigger | Flow |
-|----------|---------|------|
-| **Build** | New project | brainstorm → plan → execute → verify |
-| **Modify** | Existing codebase | discovery → plan → execute → verify |
-| **Research** | Article/paper | researcher → brainstorm → slides? → prototype? |
-| **Deep Research** | Any question | Web search with HITL gates → synthesis → IDEA.md |
-
-See also:
-- [Cheatsheet](.aria/docs/CHEATSHEET.md) - Quick reference
-- [Skill Registry](.aria/skills/REGISTRY.md) - Available skills
-
-## Archive
-
-Prior work on an ARIA programming language concept is archived in [`archive/aria-language/`](./archive/aria-language/).
-
----
-
-*ARIA: Autonomous, safe, and intelligent AI-assisted development.*
+Working with Claude Code? [`CLAUDE.md`](CLAUDE.md) is loaded automatically and defines the project's hard rules + PR workflow + quality gates.
