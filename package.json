@@ -16,7 +16,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install --with-deps",
-    "test:e2e:tauri": "wdio run wdio.conf.ts"
+    "test:e2e:tauri": "wdio run wdio.conf.ts",
+    "validate:prompts": "node bin/validate-stage-prompts.mjs"
   },
   "overrides": {
     "serialize-javascript": "^7.0.5"
