@@ -39,12 +39,15 @@ import { join } from 'node:path';
 const PHASE_DOC_DIR = 'docs/build-prompts';
 const ID_PATTERN = /^M\d{2}(\.\d+)?\.[A-Z]\d?(\.fix)?$/;
 
-const KNOWN_ROOTS = new Set(['work_stage_prompt', 'closeout_stage_prompt']);
+const KNOWN_ROOTS = new Set([
+  'work_stage_prompt',
+  'closeout_stage_prompt',
+  'verifier_stage_prompt',
+]);
 
 const COMMON_REQUIRED = [
   'context',
   'read_first',
-  'scope_locks',
   'gates',
   'retrospective_requirements',
   'commit_protocol',
@@ -53,14 +56,25 @@ const COMMON_REQUIRED = [
 ];
 
 const REQUIRED_BY_ROOT = {
-  work_stage_prompt: [...COMMON_REQUIRED, 'deliverable'],
+  work_stage_prompt: [...COMMON_REQUIRED, 'scope_locks', 'deliverable'],
   closeout_stage_prompt: [
     ...COMMON_REQUIRED,
+    'scope_locks',
     'cumulative_reads',
     'deliverables',
     'gap_analysis_requirements',
     'append_only_verification',
     'three_artifact_review',
+  ],
+  // Verifier (v1.5+, see STAGE-PROMPT-PROTOCOL.md §14): replaces
+  // `<deliverable>` with `<scope_to_verify>` + the four pass declarations.
+  // Omits `<scope_locks>` (V's role is verification, not constraint).
+  verifier_stage_prompt: [
+    ...COMMON_REQUIRED,
+    'scope_to_verify',
+    'verification_passes',
+    'findings_format',
+    'merge_gate',
   ],
 };
 
@@ -102,6 +116,31 @@ function hasTag(xml, tag) {
   return re.test(xml);
 }
 
+// Bias-guard rule for the v1.5 verifier schema (STAGE-PROMPT-PROTOCOL.md §14):
+// V's <read_first> must NOT load prior retros, milestone summaries, or
+// gap-analysis entries. Structural enforcement of the "fresh-context" mandate.
+const VERIFIER_FORBIDDEN_READ_FIRST_PATTERNS = [
+  { regex: /retrospectives\/M\d/i, label: 'per-stage retrospective' },
+  { regex: /-summary\.md/i, label: 'milestone summary' },
+  { regex: /gap-analysis\.md/i, label: 'gap-analysis ledger' },
+];
+
+function checkVerifierBiasGuard(xml, idLabel) {
+  const errors = [];
+  const readFirstMatch = xml.match(/<read_first>([\s\S]*?)<\/read_first>/i);
+  if (!readFirstMatch) return errors; // already flagged by missing required tag
+  const readFirstContent = readFirstMatch[1];
+  for (const { regex, label } of VERIFIER_FORBIDDEN_READ_FIRST_PATTERNS) {
+    if (regex.test(readFirstContent)) {
+      errors.push(
+        `<verifier_stage_prompt ${idLabel}> bias guard: <read_first> references ${label} ` +
+          `(forbidden per STAGE-PROMPT-PROTOCOL.md §14 — verifier must run with fresh context)`,
+      );
+    }
+  }
+  return errors;
+}
+
 function validateBlock(block) {
   const errors = [];
   const { tag, idAttr } = detectRoot(block.xml);
@@ -120,7 +159,7 @@ function validateBlock(block) {
   } else if (!ID_PATTERN.test(idAttr)) {
     errors.push(
       `<${tag} id="${idAttr}"> id does not match M[NN][.<minor>].<X>[<d>][.fix] ` +
-        `(e.g. M01.A, M04.A2, M03.5.A, M04.B.fix)`,
+        `(e.g. M01.A, M04.A2, M03.5.A, M04.B.fix, M05.V)`,
     );
   }
 
@@ -129,6 +168,10 @@ function validateBlock(block) {
     if (!hasTag(block.xml, required)) {
       errors.push(`<${tag} ${idLabel}> missing required <${required}>`);
     }
+  }
+
+  if (tag === 'verifier_stage_prompt') {
+    errors.push(...checkVerifierBiasGuard(block.xml, idLabel));
   }
 
   return { errors, skip: false };

@@ -6,6 +6,65 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M04.6 protocol iteration (Stage V Verifier introduced, validator extended, M04 IRL bug patterns graduated to gotchas)
+
+Documentation + protocol. Adds the Stage V (Verifier) ceremony between work
+stages and closeout for M05 onward; extends the existing schema validator
+to recognize the new third schema variant; graduates seven M04 IRL bug
+patterns into `docs/gotchas.md`. M01–M04 grandfathered as v1.0/v1.2/v1.3/v1.4
+per their existing banners — M04 receives a retroactive V run (no Phase doc
+edit, no gap-analysis edit; findings land in
+`docs/build-prompts/retrospectives/M04.V-retrospective.md` only). Per
+ADR-0008 + `STAGE-PROMPT-PROTOCOL.md` v1.5 §14.
+
+- **`docs/adr/0008-milestone-stage-v-verifier.md`** *(new)* — records the
+  decision to adopt Stage V; three alternatives rejected on substance
+  (strengthened-closeout, continuous per-stage hooks, automated-coverage-only).
+  Calibrated against M04's five IRL bug classes; fourth Behavior pass added
+  in round 4 of the design review after the BudgetHeaderBar-CSS bug was
+  identified as static-uncatchable.
+- **`STAGE-PROMPT-PROTOCOL.md`** — v1.4 → v1.5 bump. Adds the
+  `<verifier_stage_prompt>` schema variant (new §14) with five required tags
+  (`<scope_to_verify>`, `<verification_passes>`, `<findings_format>`,
+  `<merge_gate>`, plus common tags adapted for V), three forbidden tags
+  (`<read_prior_stages>`, `<deliverable>`, `<test_plan_required>`), and four
+  verification passes (Inventory + Wire + Behavior + Multi-call invariants).
+  §4 (programmatic extraction) + §5 (the schemas) updated to acknowledge the
+  third variant. v1.5 changelog entry in §15 (renamed from §14 Versioning).
+- **`bin/validate-stage-prompts.mjs`** — extended to recognize
+  `<verifier_stage_prompt>` as a third root variant + enforce the bias-guard
+  rule (V's `<read_first>` must NOT reference per-stage retros, milestone
+  summaries, or gap-analysis ledger paths).
+- **`docs/build-prompts/STAGE-V-VERIFIER-PROMPT-TEMPLATE.md`** *(new)* — parameterized
+  prompt template. Per-milestone V prompt is a copy + parameterization of
+  this template into the milestone's V.5 section. Documents the
+  clear-and-paste session pattern (the bias guard).
+- **`docs/build-prompts/TEMPLATE.md`** — adds the Stage V section template
+  parallel to Stage A–D + Closeout. Six subsections (V.1 Problem statement,
+  V.2 Scope to verify, V.3 Verification passes, V.4 Findings format, V.5 CLI
+  prompt, V.6 Commit message). M01–M04 phase docs predate the protocol and
+  are grandfathered; M05+ phase docs include the Stage V section.
+- **`docs/build-prompts/retrospectives/VERIFIER-RETROSPECTIVE-TEMPLATE.md`**
+  *(new)* — per-V retrospective shape. Verification axes (coverage adequacy,
+  finding signal-to-noise, fresh-context discipline) replace work axes.
+  Outcomes (Sound / Sound-but-rough / Friction-heavy / Not-ready) feed merge
+  gating rather than next-stage prep.
+- **`docs/tech-debt.md`** *(new)* — append-only ledger for Stage V 🟢
+  findings. Distinct from `gap-analysis.md` (product↔spec drift) and
+  `gotchas.md` (don't-do-this patterns). Seeded empty.
+- **`docs/gotchas.md`** — entries #66–#72 graduated from M04 IRL findings:
+  meta-gotcha "tests-pass-but-contract-fails is a distinct bug class"; the
+  CSS-rule-missing pattern; the wrong-field-read pattern; the multi-call
+  invariant pattern; the viewport-CSS-assumption pattern; the schema-field-
+  missing-renders-blank pattern; the tokio-duplex-EOF-propagation pattern
+  (the bug that hung CI on PR #64). Each ties to a specific M04 IRL test ID
+  + PR #64 regression test.
+- **`CLAUDE.md`** — §17 (reference index) adds the four new files
+  (`STAGE-V-VERIFIER-PROMPT-TEMPLATE.md`, `VERIFIER-RETROSPECTIVE-TEMPLATE.md`,
+  `tech-debt.md`, validator script). §19 (retrospective protocol) adds
+  Stage V as a fourth retro type and introduces the inline summary of the
+  protocol with pointers to ADR-0008 + `STAGE-PROMPT-PROTOCOL.md` §14.
+
 ### Added — M04 Stage G (Phase Closeout — gap analysis + parent-milestone summary)
 
 Final stage of M04. Documentation-only; no code changes. Per CLAUDE.md §20:
