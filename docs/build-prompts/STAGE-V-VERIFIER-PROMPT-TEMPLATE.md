@@ -141,6 +141,32 @@ This is the load-bearing discipline. The build agent + per-stage retro agent + c
 
 ## Authoring guidance for the per-milestone parameterization
 
+### Choosing `<scope_to_verify>` — the file lists for all four passes
+
+**Derive from the phase doc, NOT from spec-section pattern-matching.** This is the lesson from M04.V finding #6 (logged at `docs/tech-debt.md` TD-004): pattern-matching "§4a Verify ⇒ `schemas/verification.v1.json`" produced a file path that doesn't exist in the codebase. The phase doc's reality wins; spec sections describe intent, not necessarily what shipped.
+
+The derivation chain:
+
+```
+per-stage X.2 "Files to Change" tables (authored when each stage was planned)
+    │
+    ▼
+milestone V.2 "Scope to verify" table (aggregates every X.2 row across stages A → last-work-stage)
+    │
+    ▼
+V prompt's `<scope_to_verify>` (reference form pointing at V.2; inline form only for grandfathered milestones)
+```
+
+For M05+ phase docs (which include the Stage V section per `docs/build-prompts/TEMPLATE.md`), use reference form:
+
+```xml
+<scope_to_verify ref="docs/build-prompts/{{MNN}}-{{milestone-short-title}}.md" section="V.2 Scope to verify"/>
+```
+
+The V.2 table itself is authored at phase-doc-writing time by aggregating every X.2 row across stages A → last-work-stage. **Do not add files that aren't in any X.2 table.** If a spec section seems to imply a file the phase doc didn't claim shipped, that's spec/code drift — flag it during V's Wire pass as a 🟡 finding (the analogous M04.V finding #2 surfaced exactly this pattern: spec §4a names `hook_*` events; code ships `verify_*`). Do NOT add the imagined file to `<scope_to_verify>`.
+
+For grandfathered milestones (M04 only, per ADR-0008) where no V.2 section exists, the V prompt uses inline form with explicit `<files>` and `<spec_sections>` children — and the inline list is still derived from the milestone's X.2 tables, not from spec pattern-matching. `docs/build-prompts/M04-V-prompt.md` shows the inline shape; M04.V finding #6 documents the calibration data from that first real-world run.
+
 ### Choosing `{{behavior-targets}}` — the Pass 3 inputs
 
 This is the pass that catches the M04 BudgetHeaderBar-CSS class of bug. Each behavior target needs:
