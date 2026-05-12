@@ -11,7 +11,7 @@
 use std::pin::Pin;
 use std::time::Duration;
 
-use futures::stream::{Stream, StreamExt};
+use futures::stream::Stream;
 use runtime_core::drone::{DroneCommand, DroneEvent};
 use serde_json::Value;
 use tokio::sync::Mutex;
@@ -226,18 +226,16 @@ pub struct RecoveredSession {
 }
 
 async fn await_recovery(conn: &mut Connection) -> Result<RecoveredSession, DroneIpcError> {
-    let stream = conn.take_event_stream();
-    tokio::pin!(stream);
-    let timed = tokio::time::timeout(RESPONSE_TIMEOUT, async move {
-        while let Some(item) = stream.next().await {
-            match item {
-                Ok(DroneEvent::SessionRecovered {
+    let timed = tokio::time::timeout(RESPONSE_TIMEOUT, async {
+        loop {
+            match conn.next_event().await {
+                Some(Ok(DroneEvent::SessionRecovered {
                     snapshot_id,
                     state,
                     plans,
                     tasks,
                     uncertain_tool_invocations,
-                }) => {
+                })) => {
                     return Ok(RecoveredSession {
                         snapshot_id,
                         state,
@@ -246,16 +244,20 @@ async fn await_recovery(conn: &mut Connection) -> Result<RecoveredSession, Drone
                         uncertain_tool_invocations,
                     });
                 }
-                Ok(DroneEvent::Alert { message, .. }) if message.starts_with("recover_session") => {
+                Some(Ok(DroneEvent::Alert { message, .. }))
+                    if message.starts_with("recover_session") =>
+                {
                     return Err(DroneIpcError::Codec(message));
                 }
-                Ok(_) => {}
-                Err(e) => return Err(e),
+                Some(Ok(_)) => {}
+                Some(Err(e)) => return Err(e),
+                None => {
+                    return Err(DroneIpcError::Codec(
+                        "event stream ended without recover_session response".into(),
+                    ));
+                }
             }
         }
-        Err(DroneIpcError::Codec(
-            "event stream ended without recover_session response".into(),
-        ))
     })
     .await;
     timed.unwrap_or_else(|_| {
@@ -266,30 +268,38 @@ async fn await_recovery(conn: &mut Connection) -> Result<RecoveredSession, Drone
     })
 }
 
-/// Pull events from the connection's reader half (via the take-once
-/// stream) until `filter` returns `Some`. Used by `query_session_db`
-/// and `read_signals` to ignore Heartbeats / interleaved events while
-/// the matching response arrives.
+/// Pull events from the connection's reader half (via borrow-not-move
+/// [`Connection::next_event`]) until `filter` returns `Some`. Used by
+/// `query_session_db` and `read_signals` to ignore Heartbeats / unrelated
+/// events while the matching response arrives.
+///
+/// The borrow-not-move pattern is load-bearing: each request-response
+/// call leaves the reader installed on the connection so the *next*
+/// request-response call can read more events. The prior `take_event_stream`
+/// pattern moved the reader into a per-call stream that was dropped at
+/// return; the second call would see an empty reader and immediately
+/// surface `"event stream ended without response"`. Caught by M04 IRL test
+/// (SQL inspector + replay both broken post-smoke).
 async fn await_event(
     conn: &mut Connection,
     mut filter: impl FnMut(DroneEvent) -> Option<Result<Vec<Value>, DroneIpcError>>,
 ) -> Result<Vec<Value>, DroneIpcError> {
-    let stream = conn.take_event_stream();
-    tokio::pin!(stream);
-    let timed = tokio::time::timeout(RESPONSE_TIMEOUT, async move {
-        while let Some(item) = stream.next().await {
-            match item {
-                Ok(event) => {
+    let timed = tokio::time::timeout(RESPONSE_TIMEOUT, async {
+        loop {
+            match conn.next_event().await {
+                Some(Ok(event)) => {
                     if let Some(result) = filter(event) {
                         return result;
                     }
                 }
-                Err(e) => return Err(e),
+                Some(Err(e)) => return Err(e),
+                None => {
+                    return Err(DroneIpcError::Codec(
+                        "event stream ended without response".into(),
+                    ));
+                }
             }
         }
-        Err(DroneIpcError::Codec(
-            "event stream ended without response".into(),
-        ))
     })
     .await;
     timed.unwrap_or_else(|_| {
@@ -518,6 +528,66 @@ mod tests {
             .expect("query");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].get("id").and_then(|v| v.as_str()), Some("x"));
+    }
+
+    /// Regression test for the M04 IRL drone-IPC bug: two consecutive
+    /// `query_session_db` calls must both succeed. Prior to the borrow-not-
+    /// move refactor in `Connection::next_event`, the first call moved the
+    /// reader into a per-call stream that was dropped at return; the second
+    /// call would see an empty reader and immediately surface
+    /// `"event stream ended without response"`. Caught by the M04 IRL test
+    /// (SQL inspector returned no rows after the smoke session). Pairs with
+    /// `connection::tests::next_event_returns_consecutive_events_without_consuming_reader`.
+    #[tokio::test]
+    async fn query_session_db_succeeds_twice_in_sequence() {
+        use std::pin::Pin;
+        use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+
+        type DynRead = Pin<Box<dyn AsyncRead + Send + Unpin>>;
+        type DynWrite = Pin<Box<dyn AsyncWrite + Send + Unpin>>;
+        let (a, b) = tokio::io::duplex(4096);
+        let (a_rd, a_wr) = tokio::io::split(a);
+        let (b_rd, mut b_wr) = tokio::io::split(b);
+        let conn = Connection::from_streams(
+            "/test",
+            Box::pin(a_rd) as DynRead,
+            Box::pin(a_wr) as DynWrite,
+        );
+        // Pre-write two QueryResult events — one for each call.
+        let qr1 = serde_json::to_string(&DroneEvent::QueryResult {
+            rows: vec![serde_json::json!({"call": "first"})],
+        })
+        .unwrap();
+        let qr2 = serde_json::to_string(&DroneEvent::QueryResult {
+            rows: vec![serde_json::json!({"call": "second"})],
+        })
+        .unwrap();
+        b_wr.write_all(format!("{qr1}\n{qr2}\n").as_bytes())
+            .await
+            .expect("write peer");
+        b_wr.flush().await.expect("flush");
+        drop(b_rd);
+
+        let client = DroneClient {
+            inner: tokio::sync::Mutex::new(conn),
+        };
+
+        let first = client
+            .query_session_db("SELECT 1".to_string())
+            .await
+            .expect("first query");
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].get("call").and_then(|v| v.as_str()), Some("first"));
+
+        let second = client
+            .query_session_db("SELECT 2".to_string())
+            .await
+            .expect("second query must also succeed (M04 IRL regression)");
+        assert_eq!(second.len(), 1);
+        assert_eq!(
+            second[0].get("call").and_then(|v| v.as_str()),
+            Some("second")
+        );
     }
 
     /// Round-trip for `read_signals` with a duplex peer feeding a

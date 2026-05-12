@@ -96,4 +96,56 @@ describe('AgentNode', () => {
     const handles = root.querySelectorAll('.react-flow__handle');
     expect(handles.length).toBe(2);
   });
+
+  it('reads_tokensTotal_for_visual_scale_not_tokensIn_plus_tokensOut', () => {
+    // M04 IRL regression: AgentNode previously read
+    // `tokensIn + tokensOut`, which only populate from `tool_result`
+    // events. The session-cumulative count from `agent_complete.tokens_total`
+    // landed in `tokensTotal` but was ignored — visual scaling was
+    // always 0.8 (floor) regardless of actual spend.
+    function scaleFor(data: AgentNodeData): string {
+      const { unmount } = render(
+        <ReactFlowProvider>
+          <AgentNode
+            id="agent:a"
+            type="agent"
+            data={data}
+            dragging={false}
+            zIndex={0}
+            selectable
+            deletable
+            selected={false}
+            draggable
+            isConnectable
+            positionAbsoluteX={0}
+            positionAbsoluteY={0}
+          />
+        </ReactFlowProvider>,
+      );
+      const root = screen.getByTestId(`agent-node-${data.agentId}`);
+      const transform = root.getAttribute('style')?.match(/scale\(([\d.]+)\)/)?.[1] ?? '';
+      unmount();
+      return transform;
+    }
+
+    // tokensTotal drives the scale. Two agents with identical tokensIn /
+    // tokensOut but different tokensTotal should render at different sizes.
+    const lowScale = scaleFor({ ...baseData, agentId: 'low', tokensTotal: 10 });
+    const highScale = scaleFor({ ...baseData, agentId: 'high', tokensTotal: 50000 });
+
+    expect(Number(lowScale)).toBeLessThan(Number(highScale));
+    // ≥1.5× delta keeps the side-by-side visual comparison readable.
+    expect(Number(highScale) / Number(lowScale)).toBeGreaterThan(1.5);
+
+    // tokensIn/tokensOut are NOT inputs — varying them must NOT change scale.
+    const baselineScale = scaleFor({ ...baseData, agentId: 'a', tokensTotal: 100 });
+    const sameWithIO = scaleFor({
+      ...baseData,
+      agentId: 'b',
+      tokensTotal: 100,
+      tokensIn: 5000,
+      tokensOut: 5000,
+    });
+    expect(baselineScale).toBe(sameWithIO);
+  });
 });

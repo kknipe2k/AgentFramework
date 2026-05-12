@@ -127,6 +127,13 @@ impl Connection {
 
     /// Take the inbound `DroneEvent` stream. Single-consumer; subsequent
     /// calls return an empty stream.
+    ///
+    /// Use [`Self::next_event`] for request-response paths (e.g.
+    /// `query_session_db`, `read_signals`, `recover_session`): those need
+    /// to call repeatedly across the connection's lifetime, and taking the
+    /// stream would dispose of the reader after one call. Keep this method
+    /// for long-lived subscriptions where the stream's lifetime equals the
+    /// connection's (the renderer's `events()` subscription pattern).
     pub fn take_event_stream(
         &mut self,
     ) -> Pin<Box<dyn Stream<Item = Result<DroneEvent, DroneIpcError>> + Send>> {
@@ -144,6 +151,37 @@ impl Connection {
             }))
         } else {
             Box::pin(futures::stream::empty())
+        }
+    }
+
+    /// Read one event from the reader half, borrowing rather than moving.
+    /// Unlike [`Self::take_event_stream`], the reader stays in the
+    /// connection across calls — callers can invoke `next_event` repeatedly
+    /// across the connection's lifetime. Returns `None` when the underlying
+    /// stream is exhausted (e.g. drone disconnected); on exhaustion, the
+    /// reader is dropped so subsequent calls are fast no-ops.
+    ///
+    /// Returns `None` on a noop connection (no reader installed).
+    ///
+    /// Used by request-response paths: `query_session_db`, `read_signals`,
+    /// `recover_session`. Each request sends a command and then loops on
+    /// `next_event` filtering for the matching response. Without this
+    /// borrow-not-move pattern, the second call to any request-response
+    /// method would see an empty reader and immediately surface
+    /// `"event stream ended without response"` — the M04 IRL-test bug.
+    pub async fn next_event(&mut self) -> Option<Result<DroneEvent, DroneIpcError>> {
+        let reader = self.reader.as_mut()?;
+        match reader.next().await {
+            Some(Ok(line)) => {
+                Some(serde_json::from_str::<DroneEvent>(&line).map_err(DroneIpcError::Json))
+            }
+            Some(Err(e)) => Some(Err(DroneIpcError::from(e))),
+            None => {
+                // Reader exhausted; drop it so future calls return None
+                // immediately without re-polling the closed stream.
+                self.reader = None;
+                None
+            }
         }
     }
 
@@ -325,5 +363,59 @@ mod tests {
         let mut second = conn.take_event_stream();
         assert!(second.next().await.is_none());
         drop(peer);
+    }
+
+    #[tokio::test]
+    async fn noop_next_event_returns_none() {
+        let mut conn = Connection::noop();
+        assert!(conn.next_event().await.is_none());
+        // Multiple calls are safe — still None.
+        assert!(conn.next_event().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn next_event_returns_consecutive_events_without_consuming_reader() {
+        use tokio::io::AsyncWriteExt;
+        // Pair: peer writer feeds two heartbeat lines; client reads via
+        // next_event. The reader must survive across calls — the M04 IRL
+        // bug was every read disposing of the reader.
+        //
+        // Asserts only the multi-call invariant (two reads succeed in
+        // sequence). EOF-on-drop behavior is covered by the
+        // `*_stream_close_*` tests in client.rs which run with paused
+        // tokio time; reproducing it here would require either explicit
+        // timeout wrapping or paused-time machinery to avoid a hang on
+        // duplex EOF-propagation semantics with the unused peer-rd half.
+        let ((client_rd, client_wr), (_peer_rd, mut peer_wr)) = dyn_pair(256);
+        let mut conn = Connection::from_streams("/test", client_rd, client_wr);
+
+        let hb1 = serde_json::to_string(&DroneEvent::Heartbeat {
+            status: runtime_core::HeartbeatStatus::Ok,
+            timestamp: 1,
+        })
+        .expect("ser1");
+        let hb2 = serde_json::to_string(&DroneEvent::Heartbeat {
+            status: runtime_core::HeartbeatStatus::Ok,
+            timestamp: 2,
+        })
+        .expect("ser2");
+        peer_wr
+            .write_all(format!("{hb1}\n{hb2}\n").as_bytes())
+            .await
+            .expect("peer write");
+
+        let first = conn.next_event().await.expect("first").expect("ok1");
+        let second = conn.next_event().await.expect("second").expect("ok2");
+
+        assert!(matches!(first, DroneEvent::Heartbeat { timestamp: 1, .. }));
+        assert!(matches!(second, DroneEvent::Heartbeat { timestamp: 2, .. }));
+        // Reader stays installed across consecutive reads — that's the
+        // invariant the M04 IRL bug violated. (Old `take_event_stream`
+        // moved the reader into a per-call stream that was dropped at
+        // return; the second call would see an empty reader.)
+        assert!(
+            conn.reader.is_some(),
+            "reader must persist across next_event calls",
+        );
     }
 }

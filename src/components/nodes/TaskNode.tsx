@@ -18,15 +18,22 @@ function formatFailureCount(count: number, max: number | null): string {
 
 export function TaskNode({ data }: NodeProps<TaskReactFlowNode>): JSX.Element {
   const { taskId, title, status, hitl, failureCount, maxFailures, durationMs }: TaskNodeData = data;
+  // Fallback when the projection has no title yet: the `task_started`
+  // event schema has no `title` field, so graphStore creates the TaskNode
+  // with title=''. M07 plan-loop driver may populate titles from plan
+  // metadata; until then, render `task <id-prefix>` so the node has a
+  // readable label rather than appearing blank. M04 IRL: TaskNodes
+  // surfaced as "untitled" in the inspector + canvas.
+  const displayTitle = title || `task ${taskId.slice(0, 8)}`;
   return (
     <div
       className={`task-node task-node--${status}`}
       data-testid={`task-node-${taskId}`}
       data-status={status}
-      aria-label={`task ${title} (${status})`}
+      aria-label={`task ${displayTitle} (${status})`}
     >
       <Handle type="target" position={Position.Top} />
-      <div className="task-node__title">{truncate(title, TITLE_MAX)}</div>
+      <div className="task-node__title">{truncate(displayTitle, TITLE_MAX)}</div>
       {hitl && <div className="task-node__hitl-badge">HITL</div>}
       {failureCount > 0 && (
         <div className="task-node__failure-badge">
