@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const invokeMock = vi.fn(async (..._args: unknown[]) => undefined);
 
@@ -160,6 +162,23 @@ describe('BudgetHeaderBar', () => {
     expect(_testing.colorClass('downshift')).toContain('--downshift');
     expect(_testing.colorClass('suspended')).toContain('--suspended');
     expect(_testing.colorClass('exceeded')).toContain('--exceeded');
+  });
+
+  it('every_status_class_has_a_corresponding_CSS_rule_in_styles_css', () => {
+    // M04 IRL regression: the React component was authored but its CSS
+    // rules were never written. colorClass returned the right class
+    // names ('budget-bar__bar--warn' etc.) and the DOM applied them,
+    // but styles.css had zero matching rules — so the bar never
+    // changed color. The prior `helper_colorClass_maps_each_status`
+    // test passed (the JS layer is correct) yet the user saw no
+    // amber/orange/red. Catch this at the unit-test layer by parsing
+    // styles.css and asserting each class has a defined rule.
+    const cssPath = resolve(__dirname, '../../../src/styles.css');
+    const css = readFileSync(cssPath, 'utf8');
+    for (const status of ['ok', 'warn', 'downshift', 'suspended', 'exceeded'] as const) {
+      const selector = `.budget-bar__bar--${status}`;
+      expect(css, `missing CSS rule for ${selector}`).toContain(selector);
+    }
   });
 
   it('helper_statusLabel_maps_each_status', () => {
