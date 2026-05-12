@@ -32,3 +32,18 @@ __pycache__/
 # see docs/gap-analysis.md M01 entry Important "src-tauri/gen/schemas/
 # should be gitignored to prevent future drift" (surfaced in PR #36).
 src-tauri/gen/schemas/
+
+# Environment variables — NEVER commit; .env.example is opt-in if needed
+.env
+.env.*
+!.env.example
+
+# OS-specific clutter
+.DS_Store
+Thumbs.db
+
+# General logs
+*.log
+
+# Tauri development cache / dev-mode state
+.tauri/
