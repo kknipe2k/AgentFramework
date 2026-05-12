@@ -54,24 +54,26 @@ The Phase doc looks roughly like this:
 ## 4. Programmatic extraction
 The contract for extraction is simple and stable:
 Every stage prompt is inside a fenced ````xml` block.
-Exactly one root element per block: `<work_stage_prompt>` or `<closeout_stage_prompt>`.
-The root element has an `id` attribute formatted `M[NN].<X>` (e.g., `M01.A`, `M01.E`).
-A regex extractor: ````xml\n(<(?:work_stage_prompt|closeout_stage_prompt)[\s\S]*?</(?:work_stage_prompt|closeout_stage_prompt)>)\n````
+Exactly one root element per block: `<work_stage_prompt>`, `<closeout_stage_prompt>`, or `<verifier_stage_prompt>` (v1.5+).
+The root element has an `id` attribute formatted `M[NN].<X>` (e.g., `M01.A`, `M01.E`, `M05.V`).
+A regex extractor: ````xml\n(<(?:work_stage_prompt|closeout_stage_prompt|verifier_stage_prompt)[\s\S]*?</(?:work_stage_prompt|closeout_stage_prompt|verifier_stage_prompt)>)\n````
 A validator should:
 Confirm one and only one root element per block
-Confirm the root tag is one of the two valid schemas
+Confirm the root tag is one of the three valid schemas
 Confirm `id` attribute matches the format
 Confirm all required tags for the schema are present
 Confirm no foreign tags appear (every tag must be in the protocol)
-## 5. The two schemas
-There are exactly two stage prompt schemas. They share most tags but the closeout adds requirements that don't apply to work stages.
+## 5. The three schemas
+There are exactly three stage prompt schemas. The work and closeout schemas share most tags; the verifier schema deliberately diverges to enforce its fresh-context contract-fidelity role.
 Schema	Used for	Distinct requirements
 `<work_stage_prompt>`	Work stages (A, B, C, D, …)	Concrete deliverable, test plan required, acceptance criteria
 `<closeout_stage_prompt>`	Closeout stage (E, the final stage of every milestone)	Cumulative reads, gap-analysis entry, append-only verification, three-artifact review
-The closeout is genuinely a different ceremony — it does cumulative review and writes the immutable ledger entry that gates the milestone PR. Forcing it into the work-stage schema with optional tags would lose enforcement: a closeout missing `<cumulative_reads>` is broken; a work stage missing `<cumulative_reads>` is fine. Two schemas make this difference enforceable.
+`<verifier_stage_prompt>` (v1.5+)	Verifier stage (V, between last work stage and closeout)	Four verification passes (inventory + wire + behavior + multi-call), severity-tagged findings, deliberately omits prior retros from `<read_first>` (bias guard), iteration cap on D.fix loop
+Each schema is a different ceremony with distinct cognitive mode. The closeout is cumulative review + immutable ledger entry. The verifier is fresh-context contract fidelity — same milestone, but the agent shows up knowing only what the spec said, not what the work-stage agents narrated. Forcing any pair into one schema would lose enforcement: a closeout missing `<cumulative_reads>` is broken; a verifier reading prior retros is structurally untrusted; a work stage doing either is overkill. Three schemas make these differences enforceable. See §14 (Verifier-only tags) for the v1.5 schema definition and ADR-0008 for the design rationale.
 ## 6. Common tags (used by both schemas)
+> **Note:** "Both schemas" in this section refers to `<work_stage_prompt>` and `<closeout_stage_prompt>`. The v1.5 verifier schema deliberately diverges from these common tags — see §14 for which tags it uses and which it omits.
 ### Root attribute: `id`
-Required. Format `M[NN].<X>`. Examples: `M01.A`, `M01.E`, `M11.D`. Used for retrospective filenames, session register entries, and cross-references.
+Required. Format `M[NN].<X>`. Examples: `M01.A`, `M01.E`, `M11.D`, `M05.V` (verifier — see §14).
 ### `<context>`
 Required. Two to four sentences. Why this stage exists, what it builds on, what's about to happen. The orientation paragraph the agent reads first after expanding the prompt.
 ```xml
@@ -891,7 +893,174 @@ Inline cross-stack integration example without upstream-verification guard (v1.2
 
 `<phase_doc_inventory_audit>` treating `status="exists"` as informational. The whole point of the audit is to fail the stage if a file claimed as "exists" doesn't, or a file claimed as "new" already does. If your stage runs without the validator asserting on `git ls-files` mismatches, the audit slot is decoration. The `status` enum is load-bearing: `exists` MUST verify file presence, `new` MUST verify file absence (the file is created during the stage), `deleted` MUST verify file presence (the file is removed during the stage), `renamed` MUST verify both old-path absence and new-path presence at stage end.
 
-## 14. Versioning this protocol
+## 14. Verifier-only tags (v1.5+)
+
+These tags are valid only inside `<verifier_stage_prompt>`. The verifier schema deliberately diverges from the work + closeout schemas — same root-attribute conventions (`id`, format `M[NN].V`), but the body shape is structured around the four verification passes rather than build deliverables. See ADR-0008 for the design rationale.
+
+The verifier schema requires these tags:
+- `<context>` (same as common §6)
+- `<read_first>` (same as common §6 — but with the bias-guard rule below)
+- `<scope_to_verify>` (new — replaces `<deliverable>` for V's role)
+- `<verification_passes>` (new — wraps the four pass declarations)
+- `<findings_format>` (new — declares the structured-output shape V produces)
+- `<merge_gate>` (new — declares 🔴/🟡/🟢 severity model + D.fix iteration cap)
+- `<gates milestone="M[NN]"/>` (same as common §6)
+- `<retrospective_requirements>` (same as common §6 — references the verifier-retro template)
+- `<commit_protocol>` (same as common §6)
+- `<commit_message>` (same as common §6 — typically `verify(MNN): findings — N🔴 N🟡 N🟢`)
+- `<approval_surface>` (same as common §6 — verifier-flavored item ordering)
+
+The verifier schema forbids:
+- `<read_prior_stages>` — the per-stage retrospectives are bias-loaded; reading them defeats the fresh-context guard
+- `<deliverable>` — V produces findings, not build artifacts (use `<scope_to_verify>` instead)
+- `<test_plan_required>` — V is the test plan, not a stage that adds tests
+
+### `<read_first>` (verifier-specific authoring rule)
+
+Required, but with one rule that distinguishes the verifier schema from work + closeout. The verifier's `<read_first>` MUST include:
+- The phase doc (what was promised)
+- The spec sections it implements (what was contracted)
+- Pointers to the current code (what shipped — typically resolved by the agent at runtime via `git ls-files` rather than enumerated)
+
+The verifier's `<read_first>` MUST omit:
+- Per-stage retrospectives (`docs/build-prompts/retrospectives/M[NN].*-retrospective.md`)
+- The milestone summary (`docs/build-prompts/retrospectives/M[NN]-summary.md`)
+- Prior gap-analysis entries (the verifier reads the spec, not what prior milestones decided about the spec)
+
+This is the bias guard: the verifier agent shows up knowing what was supposed to ship, not the work narrative that justified what did ship. The clear-and-paste session pattern (the user clears the CLI session and pastes the V prompt fresh) is the structural enforcement; the `<read_first>` omission is the artifact-level discipline.
+
+Validator behavior (v1.5 lean): structural — error if any of the forbidden retros/summary/gap-analysis paths appear in `<file>` children.
+
+Example:
+
+```xml
+<read_first>
+  <file>STAGE-PROMPT-PROTOCOL.md (v1.5 — for the verifier schema you are running under)</file>
+  <file>docs/build-prompts/M[NN]-<short-title>.md (the phase doc — every X.1 problem statement, X.2 files, X.3 changes, X.4 tests)</file>
+  <file>agent-runtime-spec.md (the spec sections the milestone implements)</file>
+  <file>docs/adr/0008-milestone-stage-v-verifier.md (this stage's design rationale)</file>
+  <file>docs/build-prompts/retrospectives/VERIFIER-RETROSPECTIVE-TEMPLATE.md</file>
+  <file>docs/build-prompts/STAGE-V-VERIFIER-PROMPT-TEMPLATE.md (the parameterized prompt this stage instantiates)</file>
+  <!-- NO prior retros. NO milestone summary. NO gap-analysis entries. -->
+</read_first>
+```
+
+### `<scope_to_verify>`
+
+Required. Replaces `<deliverable>` for the verifier role. Enumerates the files + spec sections the four passes operate on. Inline form lists files + sections explicitly; reference form points at a Phase doc section that does the same.
+
+Reference form (preferred — keeps source-of-truth in the Phase doc):
+
+```xml
+<scope_to_verify ref="docs/build-prompts/M[NN]-<short-title>.md" section="V.2 Scope to verify"/>
+```
+
+Inline form (one-or-two-item scopes — rare for V; V usually covers a whole milestone):
+
+```xml
+<scope_to_verify>
+  <files>crates/runtime-main/src/drone_ipc/*.rs</files>
+  <files>src/components/nodes/*.tsx</files>
+  <spec_sections>§1d (drone IPC), §3 (visual design), §2a (budget)</spec_sections>
+</scope_to_verify>
+```
+
+### `<verification_passes>`
+
+Required. Wraps the four pass declarations. Each pass is a `<pass>` child with a `name="..."` attribute and inline detail. Passes run in order; later passes may consume findings from earlier passes (e.g., Pass 3 Behavior tests primitives surfaced by Pass 1 Inventory).
+
+```xml
+<verification_passes>
+  <pass name="inventory">
+    Every file the phase doc said would be created / modified — does it exist in `git ls-files` and match the shape claimed in X.2 + X.3? Missing files → 🔴. Files present but empty/stub → 🟡. Files present with wrong scope → 🟡.
+  </pass>
+  <pass name="wire">
+    Every spec claim must have a verifiable code path. Use 5-step data-path tracing:
+    (1) Pick a spec claim (e.g., "node size scales with token spend").
+    (2) Identify the source event / API surface (`agent_complete.tokens_total`).
+    (3) Identify the projection / store path (`graphStore.ts` writes `tokensTotal`).
+    (4) Identify the consumer (`AgentNode.tsx` should read `tokensTotal`).
+    (5) Verify the consumer reads what the projector writes.
+    Trace breaks at step 4 with zero matching consumers OR multiple plausible consumers → 🔴 ("wire incomplete" or "ambiguous"). Forces the build agent to either fix the wire or file an ADR-class waiver explaining why the projection is unused.
+  </pass>
+  <pass name="behavior">
+    Runtime-render check. For each user-observable primitive, exercise it with a synthetic harness and observe the output. Renderer: Vitest + jsdom DOM-render with computed-style inspection. IPC: integration test with real subprocess + duplex pair. Static analysis is insufficient for this class — bugs where every static check passes but the running thing is broken (M04 BudgetHeaderBar-CSS) are caught here, not in Pass 1 or 2.
+  </pass>
+  <pass name="multi_call_invariants">
+    Every public API / IPC method / Tauri command survives "called twice in sequence." Build agent declares the public surface in the Phase doc's V.3 section; verifier asserts a sequential-call test exists OR runs one inline. M04 IRL drone IPC bug (`take_event_stream` single-use) is the canonical case.
+  </pass>
+</verification_passes>
+```
+
+Validator behavior (v1.5 lean): structural — error if `<verification_passes>` is missing or empty; error if any `<pass>` child lacks the `name` attribute; error if `name` is not one of the four enum values (`inventory` | `wire` | `behavior` | `multi_call_invariants`).
+
+### `<findings_format>`
+
+Required. Declares the structured-output shape the verifier produces. Inline form lists the sections and severity model; reference form points at the verifier-retro template (the canonical source).
+
+Reference form (preferred — keeps the format definition in the template):
+
+```xml
+<findings_format ref="docs/build-prompts/retrospectives/VERIFIER-RETROSPECTIVE-TEMPLATE.md" section="Findings"/>
+```
+
+Inline form:
+
+```xml
+<findings_format>
+  <section name="per_pass_summary">N files inventoried; N hook claims data-path-traced; N behavior tests exercised; N multi-call invariants verified.</section>
+  <section name="findings_list">Per finding: severity 🔴/🟡/🟢, pass that surfaced it, primitive affected, observed-vs-expected, recommended action.</section>
+  <section name="merge_recommendation">"Proceed to E (closeout)" | "Open D.fix for 🔴 findings (cite finding numbers)" | "Re-tier — fix is broader than the bug."</section>
+</findings_format>
+```
+
+### `<merge_gate>`
+
+Required. Declares how findings interact with the milestone PR merge gate. Self-closing with three attributes:
+- `red_blocks="true"` — 🔴 findings block the milestone PR merge; require a D.fix iteration to resolve. Always true in v1.5.
+- `dfix_iteration_cap="2"` — maximum D.fix iterations before escalation to maintainer. The cap is the structural signal that a fix needs design, not patching.
+- `waiver_path="docs/adr/NNNN-waiver-M[NN]-finding-N.md"` — the build agent's escape valve. If V flags 🔴 but the build agent disputes on interpretation grounds, the build agent files an ADR-class waiver with one-paragraph reasoning; maintainer adjudicates.
+
+```xml
+<merge_gate red_blocks="true" dfix_iteration_cap="2" waiver_path="docs/adr/NNNN-waiver-M[NN]-finding-N.md"/>
+```
+
+🟡 findings carry forward to the next milestone's Stage A (per `CLAUDE.md` §20 gap-analysis carry-forward). 🟢 findings land in `docs/tech-debt.md` (an append-only ledger distinct from gap-analysis and gotchas).
+
+Validator behavior (v1.5 lean): structural — error if any of the three required attributes are missing; warning if `dfix_iteration_cap` is not a positive integer.
+
+### `<commit_message>` (verifier-specific format)
+
+Same tag as common §6 (typically reference form `ref="docs/build-prompts/M[NN]-<short-title>.md" section="V.6 Commit Message"`). The convention for the verifier's commit message:
+
+```
+verify(MNN): findings — N🔴 N🟡 N🟢
+
+<one-paragraph summary of what V exercised and the headline finding count>
+
+[per-finding detail, mirroring the verifier-retrospective body]
+
+https://claude.ai/code/session_<id>
+```
+
+### `<approval_surface>` (verifier-specific item ordering)
+
+Same tag as common §6, but the item ordering differs from work/closeout:
+
+```xml
+<approval_surface>
+  <item>cross-machine state (build machine git log + retrospective file listing)</item>
+  <item>findings list, sorted by severity (🔴 first, then 🟡, then 🟢)</item>
+  <item>per-pass summary (N files inventoried; N wires traced; N behaviors exercised; N multi-call invariants checked)</item>
+  <item>retrospective filled-in [END] section (briefer than work-stage retros — no work axes, just verification axes per VERIFIER-RETROSPECTIVE-TEMPLATE.md)</item>
+  <item>merge recommendation (proceed to E / open D.fix / re-tier)</item>
+  <item>explicit statement: "Stage M[NN].V is ready. I will not commit until you approve."</item>
+</approval_surface>
+```
+
+The "I will not commit" surface preserves CLAUDE.md §4 Hard Rule 1 — V findings, like work stages, ship via user-approved commits.
+
+## 15. Versioning this protocol
 This protocol changes when:
 A new tag is needed across all stages (additive)
 A tag's semantics change (breaking; requires migration of in-flight Phase docs)
@@ -900,6 +1069,16 @@ Validation rules change (e.g., a previously-warning becomes an error)
 Substantive changes get clear `docs(stage-prompt-protocol): ...` commit messages and a CHANGELOG entry. The commit history of this file is itself an audit of how stage prompts evolved.
 If this protocol disagrees with `BUILD-PLAYBOOK.md`, the playbook wins. This protocol is the schema; the playbook is the authority on what stages are and how they run.
 ### Changelog
+v1.5 — New third schema variant `<verifier_stage_prompt>` for Stage V (Milestone Verifier), informed by M04 IRL bug-finding (five contract-fidelity failures the existing protocol missed). Companion ADR-0008 documents the design rationale:
+1. **New schema variant `<verifier_stage_prompt>`** parallel to `<work_stage_prompt>` and `<closeout_stage_prompt>`. Used for the verifier stage (V) between the last work stage and closeout. Documented in new §14 (Verifier-only tags).
+2. **Five new required tags** for the verifier schema: `<scope_to_verify>` (replaces `<deliverable>` for V's role), `<verification_passes>` (wraps the four pass declarations), `<findings_format>` (declares the structured output shape), `<merge_gate>` (severity model + D.fix iteration cap + waiver path), and the standard common tags adapted for V. Three tags are forbidden in V: `<read_prior_stages>` (bias guard), `<deliverable>` (V produces findings not artifacts), `<test_plan_required>` (V is the test plan).
+3. **Four verification passes** (Inventory + Wire + Behavior + Multi-call invariants), each declared as a `<pass name="...">` child of `<verification_passes>`. Pass 2 (Wire) ships with the explicit 5-step data-path tracing structure to replace bare grep. Pass 3 (Behavior) adds runtime-render coverage that closes the M04 BudgetHeaderBar-CSS class of bug (static checks insufficient).
+4. **Fresh-context bias guard** via the `<read_first>` discipline: V's read list MUST omit prior retrospectives, the milestone summary, and prior gap-analysis entries. Structural enforcement is the clear-and-paste session pattern (the user clears the CLI session and pastes the V prompt fresh); the `<read_first>` omission is the artifact-level discipline.
+5. **Severity model + merge gate** aligned with gap-analysis: 🔴 blocks merge (triggers D.fix); 🟡 carries forward to next milestone's Stage A; 🟢 lands in `docs/tech-debt.md` (new append-only ledger distinct from gap-analysis and gotchas). Maximum 2 D.fix iterations before escalation. Waiver path uses ADR-class artifacts (no new artifact class introduced).
+6. **Lean validator continued.** All verifier-specific tags are structural-only at the v1.5 validator level. Cross-checks (e.g., "verifier prompt's `<read_first>` references prior retros → reject") deferred to v1.6 once v1.5 has 2+ milestones of clean signal.
+7. **Validator extended** to recognize the new root element (`<verifier_stage_prompt>`) alongside the existing two. Same regex pattern, third schema variant. See `bin/validate-stage-prompts.mjs` for the implementation.
+8. **M01–M04 + M04.5 grandfathered as v1.0/v1.2/v1.3/v1.4 per their existing banners.** M05 is the first milestone authored on v1.5 — the first to include a Stage V section in its Phase doc. M04 retroactively receives a V run (no Phase doc edit; results land in `M04.V-retrospective.md`) as the protocol's first real-world test.
+
 v1.4 — Four additive optional tags + four anti-patterns informed by M04 friction. Lean-validator pattern continued from v1.3 (structural checks only; cross-checks deferred to v1.5+):
 1. **New optional slot `<architecture_check>`** in work stages. Children: `<claim description="..." verify="..." />` elements. Verifies HOW-claims about cross-process flow, IPC topology, in-process-vs-out-of-process state ownership. Companion to gotcha #41 (WHAT-claims grep verification) for *invariants about codebase structure*. Addresses M04.C + M04.E approval/HITL seam architecture surprise (phase doc text implied drone-mediated; reality is in-process per ADR-0007).
 2. **New optional slot `<schema_audit>`** in work stages. Children: `<survey pattern="..." purpose="..." />` elements. Pre-flight enumeration of existing `$defs` + root types in `schemas/*.v1.json` before authoring a new schema file — phase-doc claims of "new schema X" may collide with an existing `$defs/X` elsewhere. Addresses M04.D (`hooks.v1.json` proposal — `Hook` + `HookRef` + `HookCategory` + `JsonLogicExpression` already in `common.v1.json`; `Rail` already in `framework.v1.json`).

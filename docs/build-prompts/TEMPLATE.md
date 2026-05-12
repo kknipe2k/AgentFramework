@@ -412,6 +412,84 @@ EOF
 ---
 
 <!-- ============================================================ -->
+<!-- ============================================================ -->
+<!-- Stage V — Verifier (M05+ only; precedes Closeout)             -->
+<!-- ============================================================ -->
+<!-- Stage V is a fresh-context contract-fidelity check between    -->
+<!-- the last work stage and the closeout. Per ADR-0008 and        -->
+<!-- STAGE-PROMPT-PROTOCOL.md §14. Four passes: Inventory + Wire   -->
+<!-- + Behavior + Multi-call invariants. Findings tagged           -->
+<!-- 🔴/🟡/🟢 with merge gating per the severity model.            -->
+<!-- M01–M04 predate the protocol — grandfathered.                 -->
+<!-- ============================================================ -->
+
+## Stage V — Verifier (M05+)
+
+> **Per ADR-0008 + `STAGE-PROMPT-PROTOCOL.md` §14.** This stage runs between the last work stage and the closeout. It produces a verifier retrospective (`docs/build-prompts/retrospectives/M[NN].V-retrospective.md`) and a findings commit; no code ships in V. The user clears the CLI session and pastes the V prompt fresh (the bias guard).
+
+### V.1 Problem Statement
+
+Run the four-pass verifier against `{{MNN}}`'s deliverables: Inventory (every file claimed shipped exists and matches shape) + Wire (every spec claim has a verifiable code path via 5-step data-path tracing) + Behavior (each user-observable primitive exercised with a runtime harness, not just static analysis) + Multi-call invariants (every public surface survives "called twice in sequence"). Findings are tagged 🔴 (block merge), 🟡 (carry forward to next milestone's Stage A), 🟢 (log to `docs/tech-debt.md`).
+
+### V.2 Scope to verify
+
+| Layer | Files / surfaces in scope |
+|---|---|
+| Inventory | All files in stages A–D's X.2 "Files to Change" tables |
+| Wire | All spec claims this milestone implements (cite spec section + page/line if applicable) |
+| Behavior | List of user-observable primitives (per the milestone's X.3 detailed changes) — each gets a Vitest+jsdom or integration-test harness call |
+| Multi-call | All public APIs / IPC methods / Tauri commands the milestone adds or modifies |
+
+### V.3 Verification passes (per-pass detail)
+
+For each pass, declare the specific items the verifier exercises. The parameterized prompt template at `docs/build-prompts/STAGE-V-VERIFIER-PROMPT-TEMPLATE.md` is the source for the XML; this section enumerates what to plug into the template.
+
+**Inventory:** every file path from §A.2 through §D.2 — verifier checks `git ls-files` presence + shape match.
+
+**Wire (data-path trace targets):**
+- *Example:* spec §3 "Token spend shown as node weight" → trace: `agent_complete.tokens_total` → `graphStore.applyEvent` → `AgentNodeData.tokensTotal` → `AgentNode.tsx` consumer → `tokenScale()` → DOM `transform: scale(...)`.
+- Add one trace per user-observable spec claim. Multiple plausible consumers OR zero consumers → 🔴 ("wire ambiguous" or "wire incomplete"). The trace forces the verifier to enumerate rather than infer.
+
+**Behavior (runtime-harness targets):**
+- *Example:* Vitest+jsdom render of `BudgetHeaderBar` per status; assert computed `background-color` is not transparent for each status class.
+- Add one entry per user-observable primitive. Each entry names the harness type (`Vitest+jsdom` / `tokio integration test` / `Playwright` / etc.) + the specific assertion.
+
+**Multi-call invariants:**
+- *Example:* call `query_session_db` twice in sequence; both must return rows.
+- Add one entry per public API / IPC method / Tauri command in scope. Each entry names the surface + the two-call assertion + the failure mode it catches.
+
+### V.4 Findings format
+
+Use the shape defined at `docs/build-prompts/retrospectives/VERIFIER-RETROSPECTIVE-TEMPLATE.md` § "Findings". Findings are numbered globally (#1, #2, …) across passes. Each finding cites: pass, primitive, spec claim, observed-vs-expected, recommended action (open D.fix #N for cited finding numbers / carry forward / log to tech-debt / re-tier / file ADR-class waiver).
+
+### V.5 CLI Prompt
+
+Paste the XML block below into a **fresh** Claude Code session (clear-and-paste pattern is load-bearing; reading prior retros defeats the V stage entirely). Per `STAGE-PROMPT-PROTOCOL.md` v1.5 §14.
+
+```xml
+<verifier_stage_prompt id="M[NN].V">
+  <!-- Parameterize per the STAGE-V-VERIFIER-PROMPT-TEMPLATE.md template. -->
+  <!-- All {{placeholders}} resolved against this milestone's V.2 and V.3 sections. -->
+</verifier_stage_prompt>
+```
+
+(Full XML body in `docs/build-prompts/STAGE-V-VERIFIER-PROMPT-TEMPLATE.md`; copy and parameterize for each milestone.)
+
+### V.6 Commit Message
+
+```
+verify(M[NN]): findings — N🔴 N🟡 N🟢
+
+<one-paragraph summary of what V exercised and the headline finding count>
+
+[per-finding detail mirroring the verifier-retrospective body]
+
+https://claude.ai/code/session_<id>
+```
+
+After V's commit lands, surface for user approval. If 🔴 findings present, the user pastes a D.fix prompt (authored on demand by the orchestration session, scoped to the cited findings); after D.fix lands, re-paste V. If no 🔴 findings or D.fix iteration successful (≤ 2 iterations), proceed to closeout.
+
+<!-- ============================================================ -->
 <!-- Phase Closeout — Gap Analysis (always the FINAL stage,         -->
 <!-- regardless of how many work stages preceded it). Per           -->
 <!-- CLAUDE.md §20, every parent milestone produces an              -->

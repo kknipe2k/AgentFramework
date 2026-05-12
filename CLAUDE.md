@@ -664,7 +664,11 @@ This checklist is the orientation before TDD's "Red" phase. Skip it and you'll d
 | Current scope and milestones | `docs/MVP-v0.1.md` |
 | Per-milestone prompt | `docs/build-prompts/M[NN]-*.md` |
 | Per-milestone template (v1.0 grandfathered) | `docs/build-prompts/TEMPLATE.md` |
-| Stage prompt XML schema (v1.2; M03 onward) | `STAGE-PROMPT-PROTOCOL.md` (repo root) |
+| Stage prompt XML schema (v1.5; M03 onward) | `STAGE-PROMPT-PROTOCOL.md` (repo root) |
+| Stage prompt schema validator | `bin/validate-stage-prompts.mjs` + `npm run validate:prompts` |
+| Stage V (Verifier) prompt template (v1.5+) | `docs/build-prompts/STAGE-V-VERIFIER-PROMPT-TEMPLATE.md` |
+| Verifier retrospective template (v1.5+) | `docs/build-prompts/retrospectives/VERIFIER-RETROSPECTIVE-TEMPLATE.md` |
+| Tech-debt ledger (Stage V 🟢 findings; append-only) | `docs/tech-debt.md` |
 | Per-stage retrospectives | `docs/build-prompts/retrospectives/` |
 | Cumulative gap analysis (append-only) | `docs/gap-analysis.md` (per §20) |
 | Persistence architecture (HLA) | `docs/persistence-architecture.md` |
@@ -714,6 +718,7 @@ Full protocol (per-stage workflow steps, scoring rubric, threshold gates, outcom
 - **`docs/build-prompts/PROCESS-VALIDATION.md`** — framework reference (3 axes, 5 hard + 5 soft gates, outcome matrix)
 - **`docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md`** — per-stage shape Claude fills in
 - **`docs/build-prompts/retrospectives/SUMMARY-TEMPLATE.md`** — per-parent-milestone roll-up shape
+- **`docs/build-prompts/retrospectives/VERIFIER-RETROSPECTIVE-TEMPLATE.md`** — Stage V shape (M05+; per ADR-0008 + `STAGE-PROMPT-PROTOCOL.md` §14). Brief — verification axes (coverage adequacy, finding signal-to-noise, fresh-context discipline) replace the work-axis scoring of regular retros. Filed at `docs/build-prompts/retrospectives/M[NN].V-retrospective.md`.
 
 ### The non-negotiable rules
 
@@ -731,6 +736,21 @@ Full protocol (per-stage workflow steps, scoring rubric, threshold gates, outcom
 - **Sound but rough** → brief protocol-iteration session first, then proceed.
 - **Friction-heavy** → stop; iterate on protocol before next stage.
 - **Not ready** → hard gate failed; diagnose, possibly file ADR, possibly recovery session.
+
+### Stage V (Verifier) — fresh-context contract-fidelity check (M05+, per ADR-0008)
+
+Between the last work stage and the closeout, every milestone M05 onward runs a **Stage V** verifier session. V is structurally separate from work + closeout stages — fresh CLI session, deliberately omits prior retros / summary / gap-analysis from its read-list, runs four passes (Inventory + Wire + Behavior + Multi-call invariants) against the milestone's deliverables. The clear-and-paste session pattern is the bias guard.
+
+V's role: catch the **implementation-tests-green, contract-tests-missing** bug class — code that passes its own unit tests but fails when a user exercises it. M04 shipped five such bugs (drone IPC single-use, AgentNode wrong-field, Budget CSS missing, "untitled" nodes, viewport sizing); V's protocol is structured to catch every one going forward.
+
+- **Schema variant**: `<verifier_stage_prompt>` in `STAGE-PROMPT-PROTOCOL.md` §14.
+- **Parameterized prompt template**: `docs/build-prompts/STAGE-V-VERIFIER-PROMPT-TEMPLATE.md`.
+- **Outcomes** (`merge_gate` per ADR-0008):
+  - 🔴 findings block merge → trigger a D.fix stage (scoped to the cited findings; max 2 iterations before maintainer escalation).
+  - 🟡 findings carry forward to next milestone's Stage A.
+  - 🟢 findings log to `docs/tech-debt.md` (append-only).
+  - Interpretation disputes → build agent files an ADR-class waiver (`docs/adr/NNNN-waiver-M[NN]-finding-N.md`); maintainer adjudicates.
+- **Grandfathering**: M01–M04 predate V; their gap-analysis entries stand (per §20 append-only). M04 receives a retroactive V run as the protocol's first real-world test; findings land in `docs/build-prompts/retrospectives/M04.V-retrospective.md` (no prior gap-analysis edit; resolution flows through M05's Carry-forward).
 
 ---
 
