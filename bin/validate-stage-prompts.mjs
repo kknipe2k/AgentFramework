@@ -178,9 +178,7 @@ function main() {
     console.log('PASS: all stage-prompt blocks conform to STAGE-PROMPT-PROTOCOL.md.');
     process.exit(0);
   }
-  console.error(
-    `\nFAIL: ${totalErrors} error(s) across ${filesWithIssues.size} file(s).`,
-  );
+  console.error(`\nFAIL: ${totalErrors} error(s) across ${filesWithIssues.size} file(s).`);
   process.exit(1);
 }
 
