@@ -335,6 +335,38 @@ export interface UncertainInvocation {
   agentId?: string;
 }
 
+/**
+ * Spec §8.security L2a (M05 Stage B): per-agent record of the most-recent
+ * `capability_violation` event. Map shape (keyed by `agent_id`) so the
+ * inspector + capability-violation modal can look up the violation that
+ * is currently blocking a given agent without scanning a log.
+ * Last-write-wins on repeat violations from the same agent — the renderer
+ * surfaces the most recent rejection state.
+ */
+export interface CapabilityViolationRecord {
+  capabilityKind: string;
+  requestedAction: string;
+  declaredScope: string;
+  timestamp: number;
+}
+
+/**
+ * Spec §8.security L2a (M05 Stage B): one row of the capability-grant
+ * log. Append-only. Driven by `capability_grant` events emitted by the
+ * framework loader (root grants; `parentAgentId` absent) and by the
+ * SDK's L2a narrowing path (sub-agent spawns; `parentAgentId` present).
+ * The inspector renders the log so the user can audit "what was granted
+ * to whom, from where."
+ */
+export interface CapabilityGrantRecord {
+  parentAgentId: string | null;
+  grantedTo: string;
+  capabilityKind: string;
+  resource: string;
+  narrowedFrom: string | null;
+  timestamp: number;
+}
+
 interface GraphState {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -371,6 +403,20 @@ interface GraphState {
    * invocations are removed in-place by `respond_uncertainty`.
    */
   uncertainInvocations: UncertainInvocation[];
+  /**
+   * Spec §8.security L2a (M05 Stage B): per-agent most-recent
+   * capability-violation state, keyed by `agent_id`. Inspector +
+   * capability-violation modal read this to surface what's blocking
+   * an agent's dispatch. Last-write-wins on repeat violations.
+   */
+  capabilityViolations: Record<string, CapabilityViolationRecord>;
+  /**
+   * Spec §8.security L2a (M05 Stage B): append-only log of every
+   * granted capability — root grants from the framework loader +
+   * narrowed grants from sub-agent spawns. Inspector renders the log
+   * for audit-visibility.
+   */
+  capabilityGrants: CapabilityGrantRecord[];
 
   /**
    * Single entry point for translating AgentEvent into node + edge
@@ -563,6 +609,8 @@ export const useGraphStore = create<GraphState>((set) => ({
   notifierRecords: {},
   budget: null,
   uncertainInvocations: [],
+  capabilityViolations: {},
+  capabilityGrants: [],
 
   applyEvent: (event) =>
     set((state) => {
@@ -1267,17 +1315,53 @@ export const useGraphStore = create<GraphState>((set) => ({
           };
         }
 
-        // No-op variants — Stage B (capability) lights up
-        // capability_violation + capability_grant; stream_text +
-        // decision_record + token_usage feed the inspector, not the graph;
-        // session_end + tool_error + mode_changed are graph-no-op by design.
-        // The exhaustive default below is the forcing function: any new
-        // variant added to the schema breaks the compile until handled.
+        case 'capability_violation': {
+          // Spec §8.security L2a (M05 Stage B): record the rejection
+          // keyed by agent. Last-write-wins on repeat violations from
+          // the same agent — the inspector + capability-violation modal
+          // read this to surface the current blocking state.
+          return {
+            ...state,
+            capabilityViolations: {
+              ...state.capabilityViolations,
+              [event.agent_id]: {
+                capabilityKind: event.capability_kind,
+                requestedAction: event.requested_action,
+                declaredScope: event.declared_scope,
+                timestamp: Date.now(),
+              },
+            },
+          };
+        }
+
+        case 'capability_grant': {
+          // Spec §8.security L2a (M05 Stage B): append the grant to the
+          // audit log. parent_agent_id present → narrowed sub-agent grant;
+          // absent → root grant from the framework loader.
+          return {
+            ...state,
+            capabilityGrants: [
+              ...state.capabilityGrants,
+              {
+                parentAgentId: event.parent_agent_id ?? null,
+                grantedTo: event.granted_to,
+                capabilityKind: event.capability_kind,
+                resource: event.resource,
+                narrowedFrom: event.narrowed_from ?? null,
+                timestamp: Date.now(),
+              },
+            ],
+          };
+        }
+
+        // No-op variants — stream_text + decision_record + token_usage
+        // feed the inspector, not the graph; session_end + tool_error +
+        // mode_changed are graph-no-op by design. The exhaustive default
+        // below is the forcing function: any new variant added to the
+        // schema breaks the compile until handled.
         case 'session_end':
         case 'tool_error':
         case 'mode_changed':
-        case 'capability_violation':
-        case 'capability_grant':
         case 'stream_text':
         case 'decision_record':
         case 'token_usage':
@@ -1300,6 +1384,8 @@ export const useGraphStore = create<GraphState>((set) => ({
       notifierRecords: {},
       budget: null,
       uncertainInvocations: [],
+      capabilityViolations: {},
+      capabilityGrants: [],
     }),
 
   selectNode: (id) => set({ selectedNodeId: id }),

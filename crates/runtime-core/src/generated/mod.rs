@@ -11,6 +11,10 @@ pub mod agent;
 /// M04 Stage F authored the schema + 3-scope tightest-cap-wins enforcer + 4
 /// threshold actions + downshift_hook seam.
 pub mod budget;
+/// Types generated from `schemas/capability.v1.json` — Capability primitive
+/// (spec §8.security L1). M05 Stage B authored the schema + L1 enforcer +
+/// L2a narrowing evaluator.
+pub mod capability;
 /// Types generated from `schemas/common.v1.json`.
 pub mod common;
 /// Types generated from `schemas/error.v1.json` — wire-format `CmdError`

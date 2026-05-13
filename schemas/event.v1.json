@@ -33,6 +33,30 @@
       "title": "RailPolicy",
       "description": "Rail policy — spec §4a. Hard rails block; soft rails warn."
     },
+    "CapabilityKindRef": {
+      "type": "string",
+      "title": "CapabilityKindRef",
+      "description": "Capability-kind discriminator embedded in capability_violation + capability_grant events. Spec §8.security L1 — mirrors capability.v1.json CapabilityKind (5 values, locked). The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, GapSeverityRef).",
+      "enum": ["read", "write", "exec", "network", "process_spawn"]
+    },
+    "RequestedAction": {
+      "type": "string",
+      "title": "RequestedAction",
+      "description": "Plain-English description of what the agent attempted; surfaced in the HITL prompt + capability-violation modal so the user understands the rejection. Per gotcha #43 (typify-friendly extraction): validated inline strings inside oneOf variants are extracted to $defs with a title.",
+      "minLength": 1
+    },
+    "DeclaredScope": {
+      "type": "string",
+      "title": "DeclaredScope",
+      "description": "Plain-English description of the scope the agent's grants cover. Renderer pairs with `requested_action` to surface the mismatch (e.g., grants cover `src/**` glob; request targeted `~/.ssh/keys`). Per gotcha #43 (typify-friendly extraction).",
+      "minLength": 1
+    },
+    "GrantedResource": {
+      "type": "string",
+      "title": "GrantedResource",
+      "description": "Resource name the grant covers — tool name, file glob, network hostname, or sub-agent id depending on `capability_kind`. Per gotcha #43 (typify-friendly extraction).",
+      "minLength": 1
+    },
     "HitlTriggerRef": {
       "type": "string",
       "title": "HitlTriggerRef",
@@ -567,24 +591,44 @@
       "type": "object",
       "title": "CapabilityViolation",
       "additionalProperties": false,
-      "required": ["type", "agent_id", "declared", "attempted"],
+      "required": ["type", "agent_id", "capability_kind", "requested_action", "declared_scope"],
       "properties": {
         "type": { "const": "capability_violation" },
-        "agent_id": { "type": "string" },
-        "declared": { "type": "string" },
-        "attempted": { "type": "string" }
+        "agent_id": {
+          "type": "string",
+          "description": "Agent whose dispatch the §8.security L2a enforcer rejected."
+        },
+        "capability_kind": {
+          "$ref": "#/$defs/CapabilityKindRef",
+          "description": "Coarse category of access the attempted dispatch needed."
+        },
+        "requested_action": { "$ref": "#/$defs/RequestedAction" },
+        "declared_scope": { "$ref": "#/$defs/DeclaredScope" }
       }
     },
     {
       "type": "object",
       "title": "CapabilityGrant",
       "additionalProperties": false,
-      "required": ["type", "agent_id", "capability", "scope"],
+      "required": ["type", "granted_to", "capability_kind", "resource"],
       "properties": {
         "type": { "const": "capability_grant" },
-        "agent_id": { "type": "string" },
-        "capability": { "type": "string" },
-        "scope": { "type": "string" }
+        "parent_agent_id": {
+          "type": "string",
+          "description": "Optional — agent whose grants this grant narrows from. Absent for framework-loader-issued root grants; present whenever an agent spawns a sub-agent and narrows a subset of its grants to the child (§8.security L2a narrowing)."
+        },
+        "granted_to": {
+          "type": "string",
+          "description": "Agent receiving the grant."
+        },
+        "capability_kind": {
+          "$ref": "#/$defs/CapabilityKindRef"
+        },
+        "resource": { "$ref": "#/$defs/GrantedResource" },
+        "narrowed_from": {
+          "type": "string",
+          "description": "Optional — plain-English description of the parent's broader scope. Renderer uses this in the inspector to show 'narrowed from ... to ...' attribution; absent for root grants."
+        }
       }
     },
     {

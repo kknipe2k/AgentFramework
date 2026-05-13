@@ -123,6 +123,30 @@ pub enum GapSourceRef {
     RequestCapability,
 }
 
+/// Capability-kind discriminator embedded in `CapabilityViolation` +
+/// `CapabilityGrant` events — spec §8.security L1 (M05 Stage B).
+///
+/// Mirrors `runtime_core::generated::capability::CapabilityKind` and the
+/// `CapabilityKindRef` enum in `event.v1.json` `$defs`. Five values
+/// covering the v0.1 enforcer surface; adding a kind requires a v2
+/// schema bump + ADR per the schema-versioning policy. Hand-rolled here
+/// because typify cross-schema `$ref` is unsupported, matching the
+/// [`HitlTriggerRef`] / [`GapSeverityRef`] / [`GapSourceRef`] precedent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityKindRef {
+    /// Read access to a file path / glob.
+    Read,
+    /// Write access to a file path / glob.
+    Write,
+    /// Invocation of a tool by name.
+    Exec,
+    /// Network egress to a hostname / domain.
+    Network,
+    /// Spawning a child process.
+    ProcessSpawn,
+}
+
 /// The canonical event union emitted by the runtime across all phases.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -564,24 +588,50 @@ pub enum AgentEvent {
         error: String,
     },
 
-    // ── Capability enforcement (spec §8.security) ──
-    /// An agent attempted an action outside its declared capabilities.
+    // ── Capability enforcement (spec §8.security L1+L2a — M05 Stage B) ──
+    /// An agent's tool dispatch or sub-agent spawn was rejected by the
+    /// §8.security L2a enforcer.
+    ///
+    /// Emitted BEFORE the `on_capability_violation` HITL prompt fires so
+    /// the renderer surfaces state immediately (gotcha trap #4 — emission
+    /// ordering matters for renderer responsiveness).
     CapabilityViolation {
-        /// The violating agent.
+        /// Agent whose dispatch the enforcer rejected.
         agent_id: String,
-        /// What was declared.
-        declared: String,
-        /// What was attempted.
-        attempted: String,
+        /// Coarse category of access the attempted dispatch needed.
+        capability_kind: CapabilityKindRef,
+        /// Plain-English description of what the agent attempted; surfaced
+        /// in the HITL prompt + capability-violation modal so the user
+        /// understands the rejection.
+        requested_action: String,
+        /// Plain-English description of the scope the agent's grants
+        /// cover. Renderer pairs with `requested_action` to surface the
+        /// mismatch (e.g., grants cover `src/**` glob; request targeted
+        /// `~/.ssh/keys`).
+        declared_scope: String,
     },
-    /// A capability was granted to an agent.
+    /// A capability was granted to an agent — either at framework load
+    /// (root grant; `parent_agent_id` absent) or via L2a narrowing on a
+    /// sub-agent spawn (`parent_agent_id` present).
     CapabilityGrant {
-        /// The agent receiving the grant.
-        agent_id: String,
-        /// The granted capability.
-        capability: String,
-        /// Scope of the grant.
-        scope: String,
+        /// Optional — agent whose grants this grant narrows from. Absent
+        /// for framework-loader-issued root grants; present whenever an
+        /// agent spawns a sub-agent and narrows a subset of its grants
+        /// to the child.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_agent_id: Option<String>,
+        /// Agent receiving the grant.
+        granted_to: String,
+        /// Coarse category of access the grant covers.
+        capability_kind: CapabilityKindRef,
+        /// Resource name the grant covers — tool name, file glob,
+        /// hostname, or sub-agent id depending on `capability_kind`.
+        resource: String,
+        /// Optional — plain-English description of the parent's broader
+        /// scope. Renderer uses this in the inspector to show "narrowed
+        /// from ... to ..." attribution; absent for root grants.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        narrowed_from: Option<String>,
     },
 
     // ── Budget (spec §2a) ──

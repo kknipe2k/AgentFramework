@@ -111,6 +111,26 @@ export type HitlTriggerRef =
  * HITL UI variant discriminator embedded in `hitl_requested` events. Spec §6a — mirrors hitl.v1.json HitlUiVariant.
  */
 export type HitlUiVariantRef = "panel" | "modal" | "toast";
+/**
+ * Coarse category of access the attempted dispatch needed.
+ */
+export type CapabilityKindRef = "read" | "write" | "exec" | "network" | "process_spawn";
+/**
+ * Plain-English description of what the agent attempted; surfaced in the HITL prompt + capability-violation modal so the user understands the rejection. Per gotcha #43 (typify-friendly extraction): validated inline strings inside oneOf variants are extracted to $defs with a title.
+ */
+export type RequestedAction = string;
+/**
+ * Plain-English description of the scope the agent's grants cover. Renderer pairs with `requested_action` to surface the mismatch (e.g., grants cover `src/**` glob; request targeted `~/.ssh/keys`). Per gotcha #43 (typify-friendly extraction).
+ */
+export type DeclaredScope = string;
+/**
+ * Capability-kind discriminator embedded in capability_violation + capability_grant events. Spec §8.security L1 — mirrors capability.v1.json CapabilityKind (5 values, locked). The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, GapSeverityRef).
+ */
+export type CapabilityKindRef1 = "read" | "write" | "exec" | "network" | "process_spawn";
+/**
+ * Resource name the grant covers — tool name, file glob, network hostname, or sub-agent id depending on `capability_kind`. Per gotcha #43 (typify-friendly extraction).
+ */
+export type GrantedResource = string;
 
 export interface SessionStart {
   type: "session_start";
@@ -402,15 +422,30 @@ export interface NotifierFailed {
 }
 export interface CapabilityViolation {
   type: "capability_violation";
+  /**
+   * Agent whose dispatch the §8.security L2a enforcer rejected.
+   */
   agent_id: string;
-  declared: string;
-  attempted: string;
+  capability_kind: CapabilityKindRef;
+  requested_action: RequestedAction;
+  declared_scope: DeclaredScope;
 }
 export interface CapabilityGrant {
   type: "capability_grant";
-  agent_id: string;
-  capability: string;
-  scope: string;
+  /**
+   * Optional — agent whose grants this grant narrows from. Absent for framework-loader-issued root grants; present whenever an agent spawns a sub-agent and narrows a subset of its grants to the child (§8.security L2a narrowing).
+   */
+  parent_agent_id?: string;
+  /**
+   * Agent receiving the grant.
+   */
+  granted_to: string;
+  capability_kind: CapabilityKindRef1;
+  resource: GrantedResource;
+  /**
+   * Optional — plain-English description of the parent's broader scope. Renderer uses this in the inspector to show 'narrowed from ... to ...' attribution; absent for root grants.
+   */
+  narrowed_from?: string;
 }
 export interface BudgetWarn {
   type: "budget_warn";

@@ -87,10 +87,42 @@ fn agent_event_session_start_round_trip() {
 
 #[test]
 fn agent_event_capability_violation_round_trip() {
+    use runtime_core::event::CapabilityKindRef;
     let event = AgentEvent::CapabilityViolation {
         agent_id: "a1".into(),
-        declared: "tools_called: [Read]".into(),
-        attempted: "Bash".into(),
+        capability_kind: CapabilityKindRef::Exec,
+        requested_action: "invoke tool 'Bash'".into(),
+        declared_scope: "tools_called: [Read]".into(),
+    };
+    let json: serde_json::Value = serde_json::to_value(&event).unwrap();
+    let back: AgentEvent = serde_json::from_value(json).unwrap();
+    assert_eq!(event, back);
+}
+
+#[test]
+fn agent_event_capability_grant_root_round_trip() {
+    use runtime_core::event::CapabilityKindRef;
+    let event = AgentEvent::CapabilityGrant {
+        parent_agent_id: None,
+        granted_to: "worker".into(),
+        capability_kind: CapabilityKindRef::Read,
+        resource: "src/**".into(),
+        narrowed_from: None,
+    };
+    let json: serde_json::Value = serde_json::to_value(&event).unwrap();
+    let back: AgentEvent = serde_json::from_value(json).unwrap();
+    assert_eq!(event, back);
+}
+
+#[test]
+fn agent_event_capability_grant_narrowed_round_trip() {
+    use runtime_core::event::CapabilityKindRef;
+    let event = AgentEvent::CapabilityGrant {
+        parent_agent_id: Some("orchestrator".into()),
+        granted_to: "subagent".into(),
+        capability_kind: CapabilityKindRef::Network,
+        resource: "api.example.com".into(),
+        narrowed_from: Some("any *.example.com host".into()),
     };
     let json: serde_json::Value = serde_json::to_value(&event).unwrap();
     let back: AgentEvent = serde_json::from_value(json).unwrap();

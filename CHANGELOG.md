@@ -6,6 +6,102 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M05.B §8.security L1 + L2a Capability Enforcer (new safety primitive ≥95%)
+
+Code + schema. M05 Stage B ships the in-process capability enforcer + L2a
+narrowing evaluator as a new safety primitive at 100% per-module coverage.
+Default-deny semantics: an agent with no declared grants is rejected; the
+asymmetric `parent.subsumes(child)` predicate is the load-bearing
+invariant proptest-verified. Renderer applyEvent branches lit up for
+`capability_violation` + `capability_grant` (previously no-op).
+
+- **`schemas/capability.v1.json`** *(new)* — `CapabilityDeclaration`
+  shape: `kind` (`CapabilityKind` enum: `read | write | exec | network |
+  process_spawn`), `resource` (newtype `ResourceName`, minLength 1),
+  `scope` (`CapabilityScope` oneOf: `GlobScope { glob }` / `DomainScope
+  { domain }` / `PathScope { path }`), `side_effect_class`
+  (`SideEffectClass` enum: `pure | filesystem_mutate | network_egress |
+  process_spawn | irreversible`). Per gotcha #43 every validated inline
+  string is extracted to a titled `$def` so typify generates clean
+  newtypes (`GlobPattern`, `DomainPattern`, `PathPattern`,
+  `ResourceName`).
+- **`schemas/event.v1.json`** — `capability_violation` enriched with
+  `agent_id` + `capability_kind` + `requested_action` + `declared_scope`
+  (was: `declared` + `attempted`). `capability_grant` enriched with
+  optional `parent_agent_id` + `granted_to` + `capability_kind` +
+  `resource` + optional `narrowed_from` (was: `agent_id` +
+  `capability` + `scope`). New `$defs`: `CapabilityKindRef`,
+  `RequestedAction`, `DeclaredScope`, `GrantedResource`.
+- **`crates/runtime-core/src/generated/{capability,event}.rs` +
+  `src/types/{capability,agent_event}.ts`** — regenerated via
+  `cargo xtask regenerate-types`.
+- **`crates/runtime-core/src/event.rs`** — hand-rolled canonical
+  `AgentEvent` mirrors the schema enrichment. `CapabilityViolation` +
+  `CapabilityGrant` variants replaced with the enriched payload. Added
+  `CapabilityKindRef` enum (5 values; follows the
+  `HitlTriggerRef` / `GapSeverityRef` cross-schema mirror pattern).
+- **`crates/runtime-main/src/capability/`** *(new module)* —
+  - `mod.rs` — module root + re-exports.
+  - `declaration.rs` — pure-function `subsumes(parent, requested)` +
+    `scope_contains(outer, inner)` per-variant containment (glob via
+    `globset::Glob`; domain with leading-`.` subdomain support; path
+    prefix-with-separator). 15 unit tests; 100% line coverage.
+  - `enforcer.rs` — `CapabilityEnforcer` struct + `check` /
+    `grant` / `grants_for` / `grant_count` API. Default-deny: agent
+    with no entries gets `Err(Denied { reason: NoDeclarations })`.
+    `DenyReason` discriminates `NoDeclarations` vs `NoMatchingGrant`
+    for renderer copy. 11 unit tests; 100% line coverage.
+  - `narrowing.rs` — `narrow(parent, proposed)` evaluator enforces
+    "child grants ⊆ parent grants" on sub-agent spawn. Short-circuits
+    on first uncovered proposed declaration. 7 unit tests + 2 proptest
+    properties (`property_narrowing_preserves_invariant` +
+    `property_widening_always_denied`); 100% line coverage.
+  - `error.rs` — `CapabilityError::Denied { agent_id, reason }` +
+    `NarrowingError::CapabilityNotHeldByParent { proposed }`.
+- **`crates/runtime-main/tests/capability_enforcer_smoke.rs`** *(new)*
+  — 6 integration tests stand in for the SDK's eventual `dispatch_tool`
+  wrap (D1 in M05.B retrospective — no production dispatch path in v0.1
+  yet). Covers: grant→success+capability_grant emission;
+  no-grants→denial+capability_violation emission BEFORE err returns
+  (gotcha trap #4 ordering); declarations-exist-but-no-match path;
+  L2a narrowing emits per-narrowed-grant; widening denied; multi-call
+  invariant.
+- **`crates/runtime-core/tests/round_trip.rs`** — extended
+  `agent_event_capability_violation_round_trip` for the new shape +
+  added `agent_event_capability_grant_{root,narrowed}_round_trip`.
+- **`src/lib/graphStore.ts`** — replaced the M04-era no-op cases for
+  `capability_violation` + `capability_grant` with real `applyEvent`
+  branches. New state slots: `capabilityViolations:
+  Record<agentId, CapabilityViolationRecord>` (last-write-wins per
+  agent) + `capabilityGrants: CapabilityGrantRecord[]` (append-only
+  log). `clear()` resets both.
+- **`tests/unit/graphStore.test.ts`** — new "capability events (M05
+  Stage B)" describe block: 6 tests covering violation state recording,
+  grant log append, narrowed-grant metadata, multi-call append-only
+  invariant, and clear reset.
+- **`.prettierignore` + `eslint.config.js`** — added
+  `src/types/capability.ts` to both ignore lists per gotcha #44.
+- **`crates/xtask/src/main.rs`** — wired `capability` into the
+  schemas list + the TS-targets list so `cargo xtask regenerate-types`
+  produces the new Rust + TS bindings.
+
+D1 (SDK wire-up): the production SDK has no `dispatch_tool` /
+`spawn_sub_agent` path to wrap yet (M02-shipped single-turn streaming
+only); the smoke test stands in as the canonical wrapping shape so
+the enforcer's check + grant + narrow contract is exercised end-to-end.
+The phase doc's `<execution_warnings>` explicitly authorizes this
+scoping. M06+ wires the enforcer to the live dispatch path when
+multi-turn tool loops land.
+
+Not in this stage: sandbox subprocess (Stage C1+C2), tier system
+(Stage D), audit log (Stage E), capability-violation modal +
+CapabilityBadge UI (Stage F).
+
+Coverage: workspace 94.29% line; runtime-drone 95.79% line;
+runtime-main 97.16% line; `capability/declaration.rs` 100%;
+`capability/enforcer.rs` 100%; `capability/narrowing.rs` 100%.
+All ≥ gates.
+
 ### Added — M05.A §4b Gap Detection (framework_loader + request_capability meta-tool + schema enrichment + M04.V carry-forwards)
 
 Code + schema. M05 Stage A wires spec §4b Layer 1 (framework_loader) +

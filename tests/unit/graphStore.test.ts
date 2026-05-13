@@ -306,6 +306,97 @@ describe('graphStore.applyEvent', () => {
     });
   });
 
+  // Spec §8.security L2a — M05 Stage B capability-event applyEvent branches.
+  describe('capability events (M05 Stage B)', () => {
+    const violation: AgentEvent = {
+      type: 'capability_violation',
+      agent_id: 'worker',
+      capability_kind: 'exec',
+      requested_action: "invoke tool 'Bash'",
+      declared_scope: 'declared grants do not cover this request',
+    };
+    const rootGrant: AgentEvent = {
+      type: 'capability_grant',
+      granted_to: 'worker',
+      capability_kind: 'read',
+      resource: 'src/**',
+    };
+    const narrowedGrant: AgentEvent = {
+      type: 'capability_grant',
+      parent_agent_id: 'orchestrator',
+      granted_to: 'subagent',
+      capability_kind: 'network',
+      resource: 'api.example.com',
+      narrowed_from: 'any *.example.com host',
+    };
+
+    it('applies_capability_violation_records_state_keyed_by_agent', () => {
+      useGraphStore.getState().applyEvent(violation);
+      const record = useGraphStore.getState().capabilityViolations['worker'];
+      expect(record).toBeDefined();
+      expect(record!.capabilityKind).toBe('exec');
+      expect(record!.requestedAction).toBe("invoke tool 'Bash'");
+      expect(record!.declaredScope).toContain('declared grants');
+      expect(record!.timestamp).toBeGreaterThan(0);
+    });
+
+    it('capability_violation_last_write_wins_on_same_agent', () => {
+      useGraphStore.getState().applyEvent(violation);
+      const later: AgentEvent = {
+        ...violation,
+        requested_action: "invoke tool 'WebFetch'",
+      };
+      useGraphStore.getState().applyEvent(later);
+      const record = useGraphStore.getState().capabilityViolations['worker']!;
+      expect(record.requestedAction).toBe("invoke tool 'WebFetch'");
+      // Still only one entry for this agent — Map shape, not log.
+      expect(Object.keys(useGraphStore.getState().capabilityViolations)).toEqual(['worker']);
+    });
+
+    it('applies_capability_grant_appends_to_log_with_parent_absent', () => {
+      useGraphStore.getState().applyEvent(rootGrant);
+      const grants = useGraphStore.getState().capabilityGrants;
+      expect(grants).toHaveLength(1);
+      const grant = grants[0]!;
+      expect(grant.parentAgentId).toBeNull();
+      expect(grant.grantedTo).toBe('worker');
+      expect(grant.capabilityKind).toBe('read');
+      expect(grant.resource).toBe('src/**');
+      expect(grant.narrowedFrom).toBeNull();
+      expect(grant.timestamp).toBeGreaterThan(0);
+    });
+
+    it('applies_capability_grant_appends_to_log_with_narrowed_metadata', () => {
+      useGraphStore.getState().applyEvent(narrowedGrant);
+      const grant = useGraphStore.getState().capabilityGrants[0]!;
+      expect(grant.parentAgentId).toBe('orchestrator');
+      expect(grant.grantedTo).toBe('subagent');
+      expect(grant.narrowedFrom).toBe('any *.example.com host');
+    });
+
+    it('capability_grants_log_is_append_only_on_repeated_emission', () => {
+      // Gotcha #69 / multi-call invariant: two sequential grants both
+      // land. The log preserves order and doesn't dedupe (re-grant of
+      // the same capability is a legitimate event — re-narrowing on a
+      // re-spawn, for example).
+      useGraphStore.getState().applyEvent(rootGrant);
+      useGraphStore.getState().applyEvent(rootGrant);
+      useGraphStore.getState().applyEvent(narrowedGrant);
+      const grants = useGraphStore.getState().capabilityGrants;
+      expect(grants).toHaveLength(3);
+      expect(grants[2]!.parentAgentId).toBe('orchestrator');
+    });
+
+    it('clear_resets_capability_state_slots', () => {
+      useGraphStore.getState().applyEvent(violation);
+      useGraphStore.getState().applyEvent(rootGrant);
+      useGraphStore.getState().clear();
+      const { capabilityViolations, capabilityGrants } = useGraphStore.getState();
+      expect(capabilityViolations).toEqual({});
+      expect(capabilityGrants).toEqual([]);
+    });
+  });
+
   it('clear_empties_nodes_edges_and_selectedNodeId', () => {
     useGraphStore.getState().applyEvent(spawnA);
     useGraphStore.getState().applyEvent(spawnB);
@@ -362,8 +453,10 @@ describe('graphStore.applyEvent', () => {
       // hitl_requested / hitl_resolved / hitl_timeout / notifier_dispatched /
       // notifier_failed moved to dedicated tests below — M04 Stage E wires
       // them to live pendingHitl + notifierRecords state.
-      { type: 'capability_violation', agent_id: 'a1', declared: 'd', attempted: 'a' },
-      { type: 'capability_grant', agent_id: 'a1', capability: 'c', scope: 's' },
+      // M05 Stage B: capability_violation / capability_grant moved to
+      // the "capability events (M05 Stage B)" describe block below —
+      // they now mutate dedicated state slots (`capabilityViolations`,
+      // `capabilityGrants`), no longer no-op.
       { type: 'budget_warn', spent_usd: 1, cap_usd: 10, percent: 0.1 },
       { type: 'budget_downshift', from_model: 'a', to_model: 'b', reason: 'r' },
       { type: 'budget_suspended', spent_usd: 9, cap_usd: 10 },

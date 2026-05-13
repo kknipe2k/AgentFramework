@@ -13,6 +13,14 @@
 /// (warn / downshift / hitl / hard-stop) + LRU `count_tokens` cache +
 /// hardcoded opus → sonnet → haiku downshift ladder.
 pub mod budget;
+/// Capability enforcer — spec §8.security L1 + L2a (M05 Stage B).
+///
+/// In-process default-deny check fired before every tool dispatch +
+/// sub-agent spawn. Owns per-agent capability grants; narrowing
+/// evaluator enforces "child grants ⊆ parent grants" on Agent→Agent
+/// edges. L3 sandbox is Stage C; L4 tier gates are Stage D; L5
+/// provenance is Stage E.
+pub mod capability;
 pub mod drone_ipc;
 /// Framework loader — spec §4b Layer 1 gap detection (M05 Stage A).
 ///
