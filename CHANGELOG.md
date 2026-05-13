@@ -6,6 +6,91 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M05.C2 §8.security L3 Cross-platform OS isolation (seccomp / landlock / Job Objects) (new safety primitive ≥95%)
+
+Code + CI gate updates. M05 Stage C2 layers kernel-level isolation on top of
+Stage C1's sandbox plumbing. Isolation installs ONCE at sandbox subprocess
+startup, BEFORE `ipc::serve` binds the socket — so even a maliciously-crafted
+artifact reaching the validator is bounded by the kernel-level fence.
+
+- **`crates/runtime-sandbox/src/seccomp.rs`** *(new; `cfg(target_os = "linux")`)*:
+  - `ALLOWED_SYSCALLS: &[&str]` — curated allowlist of ~55 syscalls covering
+    tokio multi-thread runtime + LinesCodec framed-JSON I/O + Unix domain
+    sockets + serde construction. Forbidden syscalls (`execve`, `ptrace`,
+    `mount`, `fork`, `clone3`, `kexec_load`, `reboot`, etc.) are NOT in the
+    list; the default `KillProcess` action terminates the subprocess on any
+    disallowed syscall.
+  - `build_filter()` — pure function constructing the `ScmpFilterContext`
+    with `KillProcess` default + the allowlist applied + `ScmpArch::X8664`.
+    Returns the filter without loading; testable without touching kernel state.
+  - `install()` — builds the filter and calls `load()`. `PR_SET_NO_NEW_PRIVS`
+    is set automatically by libseccomp.
+- **`crates/runtime-sandbox/src/landlock.rs`** *(new; `cfg(target_os = "linux")`)*:
+  - `build_ruleset(allowed_paths)` — constructs (without committing) a
+    landlock ruleset using ABI v3 (Linux 6.2+) with read+write+create+remove
+    access on the supplied paths. `BestEffort` compatibility mode degrades
+    gracefully on older kernels.
+  - `install(allowed_paths)` — commits the ruleset via `restrict_self`. Status
+    `NotEnforced` (kernel < 5.13) logs `warn` but does NOT error — seccomp
+    remains the primary safety net.
+- **`crates/runtime-sandbox/src/job_objects.rs`** *(new; `cfg(windows)`)*:
+  - `SANDBOX_JOB_FLAGS` — `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE |
+    JOB_OBJECT_LIMIT_BREAKAWAY_OK`. Closing the job kills the entire process
+    tree; the BREAKAWAY_OK flag controls children of the sandbox subprocess.
+  - `build_limit_info()` — pure constructor returning a configured
+    `JOBOBJECT_EXTENDED_LIMIT_INFORMATION`. Testable on any thread.
+  - `install_restrictions()` — `CreateJobObjectW` + `SetInformationJobObject`
+    + `AssignProcessToJobObject(job, GetCurrentProcess())`. Job handle is
+    intentionally leaked so `KILL_ON_JOB_CLOSE` fires on abnormal subprocess
+    exit (kernel reclaims the handle when the process dies). Every `unsafe`
+    block carries a `// SAFETY:` comment naming the invariant per CLAUDE.md
+    §4 Rule 7.
+- **`crates/runtime-sandbox/src/lib.rs`** *(edited)*:
+  - `install_isolation(ipc_socket)` — new private helper. On Linux installs
+    landlock (filesystem fence over the socket's parent dir) THEN seccomp
+    (syscall allowlist). On Windows installs the Job Object. Called from
+    `run_inner` BEFORE the `tokio::select!` that drives `ipc::serve`.
+  - `seccomp` / `landlock` / `job_objects` module declarations gated by
+    `cfg(target_os = ...)`.
+  - The C1 `run(session_id, ipc_socket)` entry point + `SandboxRequest` /
+    `SandboxResponse` wire format are unchanged. Isolation is transparent
+    to the IPC client (runtime-main's sandbox_ipc).
+- **`crates/runtime-sandbox/src/error.rs`** *(edited)*: added
+  `SandboxError::Isolation(String)` variant covering all platform isolation
+  errors with a platform-specific message body.
+- **`crates/runtime-sandbox/Cargo.toml`** *(edited)*:
+  - `[target.'cfg(target_os = "linux")'.dependencies]` adds `libseccomp` 0.3
+    + `landlock` 0.4.
+  - `[target.'cfg(windows)'.dependencies]` + dev-dependencies add
+    `windows-sys` 0.59 with the JobObjects + Threading + Foundation feature
+    flags.
+  - `[lints.rust] unsafe_code = "allow"` (was `"warn"`) for the FFI in
+    `job_objects.rs`. `warnings = "deny"` remains; workspace `forbid` stays
+    in effect for every other crate per CLAUDE.md §4 Rule 7.
+- **`crates/runtime-sandbox/tests/integration.rs`** *(edited)*:
+  - `isolation_active_under_real_subprocess` — spawns the binary; on Linux
+    reads `/proc/$pid/status` and asserts `Seccomp:\t2` (filter mode loaded);
+    on Windows queries `IsProcessInJob` against the child handle and asserts
+    membership.
+  - `isolation_persists_across_validate_calls` — three sequential
+    `ValidateArtifact` round trips, re-asserting the isolation state after
+    each. Proves isolation isn't reset per call.
+- **Workspace `Cargo.toml`** *(edited)*: pinned `libseccomp` 0.3, `landlock`
+  0.4, `windows-sys` 0.59 in `[workspace.dependencies]`. Member crates pull
+  via `[target.'cfg(...)'.dependencies]`.
+- **`.github/workflows/ci.yml`** *(edited)*:
+  - All three Linux apt-get sections add `libseccomp-dev` (required by the
+    `libseccomp` crate at compile time).
+  - Per-crate `runtime-sandbox` coverage gate's `--ignore-filename-regex`
+    drops `src.ipc\.rs` (lifted into the gate per the C1 carry-forward).
+    The lcov-generation step is updated to match.
+- **`codecov.yml`** *(edited)*: `ignore` list drops
+  `crates/runtime-sandbox/src/ipc.rs`; only `lib.rs` remains (OS-signal
+  orchestrator). Platform-cfg files contribute coverage per the platform
+  that compiles them.
+- **`CLAUDE.md`** *(edited)*: §5 + §6 reflect the lifted `ipc.rs` gate,
+  the new isolation modules, and per-platform coverage attribution.
+
 ### Added — M05.C1 §8.security L3 Sandbox crate plumbing + main-side IPC + lifecycle (new safety primitive ≥95%)
 
 Code-only. M05 Stage C1 lights up `crates/runtime-sandbox/` from the M01

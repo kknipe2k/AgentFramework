@@ -82,6 +82,23 @@ runtime-drone       = { path = "crates/runtime-drone", version = "0.1.0" }
 # itself; the runtime-main consumer side stays unchanged.
 runtime-sandbox     = { path = "crates/runtime-sandbox", version = "0.1.0" }
 
+# M05 Stage C2 — Linux OS isolation primitives. Both crates ship via
+# crates.io with MIT / Apache-2.0 licenses; libseccomp dynamically links
+# against the system libseccomp v2.5+ (build dep installed on CI Linux
+# runners via apt `libseccomp-dev`). The crates are pulled only by
+# runtime-sandbox via `[target.'cfg(target_os = "linux")'.dependencies]`
+# — Windows + macOS builds don't see them.
+libseccomp          = { version = "0.3", default-features = false }
+landlock            = { version = "0.4", default-features = false }
+
+# M05 Stage C2 — Windows Job Objects FFI. `windows-sys` is already in
+# the Cargo.lock transitively (via tokio + tauri); pinning here gates
+# runtime-sandbox's job_objects.rs to a known version with the
+# Win32_System_JobObjects feature. The `multiple-versions = "warn"`
+# lint in deny.toml may surface other windows-sys versions; that's an
+# existing transitive landscape, not C2-specific.
+windows-sys         = { version = "0.59", default-features = false }
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 warnings    = "deny"

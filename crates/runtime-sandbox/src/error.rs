@@ -2,8 +2,8 @@
 //!
 //! Mirrors `runtime_drone::DroneError`: a thiserror enum that wraps each
 //! subsystem's error so the binary's `main` can `process::exit(1)` on
-//! a single error type. Stage C2 may add `Isolation` and `JobObject`
-//! variants when seccomp / Job Objects land.
+//! a single error type. Stage C2 adds the `Isolation` variant covering
+//! seccomp / landlock / Job Objects setup errors.
 
 use thiserror::Error;
 
@@ -28,4 +28,10 @@ pub enum SandboxError {
     /// IPC server / client framing error.
     #[error(transparent)]
     Ipc(#[from] IpcError),
+    /// OS isolation setup failed: seccomp filter, landlock ruleset, or
+    /// Windows Job Object setup error. The string carries the
+    /// platform-specific error message; a failed install aborts the
+    /// subprocess so main can spawn a fresh one in a known-good state.
+    #[error("isolation: {0}")]
+    Isolation(String),
 }

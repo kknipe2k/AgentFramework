@@ -216,7 +216,8 @@ jobs:
             build-essential \
             curl \
             wget \
-            file
+            file \
+            libseccomp-dev
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
@@ -343,7 +344,8 @@ jobs:
             build-essential \
             curl \
             wget \
-            file
+            file \
+            libseccomp-dev
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-llvm-cov --locked
       # Workspace gate — generated code + binary stubs excluded.
@@ -380,20 +382,24 @@ jobs:
           cargo llvm-cov --package runtime-main \
             --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs|src.key_store\.rs" \
             --fail-under-lines 95
-      # runtime-sandbox safety-primitive gate (M05 Stage C1) — measure
-      # the plumbing files (validator + protocol + error) at ≥95%. The
-      # cfg-platform accept-loop wrapper (src/ipc.rs) is excluded under
-      # the same OS-call-wrapper rationale as drone's lib.rs+shutdown.rs
-      # — handle_connection IS unit-tested in-module, but the
-      # cfg(unix)/cfg(windows) accept_loop variants + send_response
-      # error mapping require pipe-level harness work that Stage C2
-      # will bring with the OS-isolation files (seccomp / landlock /
-      # Job Objects). Stage C2 will lift the gate to cover ipc.rs.
-      # Per CLAUDE.md §5 + M05-gap-capability.md C1.4.
-      - name: runtime-sandbox coverage (≥95%, ipc.rs holdout for C2)
+      # runtime-sandbox safety-primitive gate (M05 Stage C2 lifted ipc.rs
+      # into the gate per the C1 carry-forward; OS-isolation files
+      # seccomp.rs / landlock.rs are now in scope on Linux). The only
+      # exclusion that remains is src/lib.rs — the run/run_inner
+      # OS-signal orchestrator wrapping the testable seam (parallel to
+      # drone's lib.rs + shutdown.rs exclusion). The cfg-platform
+      # accept-loop wrapper in src/ipc.rs has its tests via the
+      # subprocess integration test in tests/integration.rs; coverage
+      # is measured on Linux CI where the binary builds with the
+      # libseccomp + landlock deps. job_objects.rs builds only on
+      # Windows, so its line coverage is contributed by the Windows
+      # CI matrix; per-crate fail-under-lines on Linux therefore
+      # excludes job_objects.rs via the cfg-platform compile-out.
+      # Per CLAUDE.md §5 + M05-gap-capability.md C2.4.
+      - name: runtime-sandbox coverage (≥95%)
         run: |
           cargo llvm-cov --package runtime-sandbox \
-            --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.ipc\.rs" \
+            --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs" \
             --fail-under-lines 95
       # lcov export for Codecov — workspace + per-crate uploads. The
       # cargo-llvm-cov --fail-under-lines gates above remain authoritative
@@ -419,7 +425,7 @@ jobs:
         run: |
           cargo llvm-cov --package runtime-sandbox --lcov \
             --output-path lcov-sandbox.info \
-            --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.ipc\.rs"
+            --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs"
       # Codecov uploads — required from M02 onward (per CLAUDE.md §5
       # "Coverage delta gating (from M02 onward) — Codecov-enforced").
       # The codecov.yml `informational: false` flags make Codecov status

@@ -411,16 +411,8 @@ mod tests {
         peer_wr.flush().await.expect("flush");
         drop(peer_rd);
 
-        // Split the client side; drop client_rd (server's write target
-        // is the peer's read half — but actually the server writes via
-        // its `wr` half which goes to peer_rd; we already dropped that).
         let (rd, wr) = tokio::io::split(client);
-        // Also drop peer_wr so the framed reader EOFs after handling
-        // the queued request (otherwise it'd block forever).
         let handle = tokio::spawn(async move { handle_connection(rd, wr).await });
-        // Let the server try to write a response; the dropped peer_rd
-        // means the duplex write half eventually errors. Then drop
-        // peer_wr to push the read loop past its current line.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         drop(peer_wr);
         let result = tokio::time::timeout(std::time::Duration::from_secs(2), handle)
@@ -432,5 +424,24 @@ mod tests {
         // EOFed cleanly first (also false). Either way the return is
         // false; the assertion is that we don't return true.
         assert!(!result, "write failure must not be treated as Shutdown");
+    }
+
+    /// Direct test of `send_response` failure surface. Drops the peer
+    /// outright so the `FramedWrite`'s first flush fails. Exercises
+    /// `send_response`'s `?` propagation through `map_codec_err`.
+    /// Uses a payload larger than the duplex capacity so the flush
+    /// must actually attempt an underlying write.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn send_response_propagates_io_error_on_dead_peer() {
+        let (client, peer) = tokio::io::duplex(8);
+        drop(peer);
+        let (_rd, wr) = tokio::io::split(client);
+        let mut writer = FramedWrite::new(wr, LinesCodec::new());
+        let resp = SandboxResponse::Alert {
+            level: AlertLevel::Warn,
+            message: "x".repeat(256),
+        };
+        let result = send_response(&mut writer, &resp).await;
+        assert!(result.is_err(), "send_response must surface BrokenPipe");
     }
 }
