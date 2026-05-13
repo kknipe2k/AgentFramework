@@ -33,7 +33,13 @@ pub mod evaluator;
 pub mod matrix;
 /// Read / write the user's current tier from `<dir>/tier.json`.
 pub mod persistence;
+/// Tier transition primitive (M05 Stage E).
+///
+/// Emits the audit line + returns the previous/next tier pair so the
+/// Tauri layer can update renderer state and persist the new value.
+pub mod transition;
 
 pub use error::{TierError, TierPersistenceError};
 pub use evaluator::{Tier, TierEvaluator};
 pub use persistence::{load_tier, save_tier};
+pub use transition::{transition, TierTransitionRecord};

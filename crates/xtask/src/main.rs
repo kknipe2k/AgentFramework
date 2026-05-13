@@ -55,6 +55,7 @@ fn regenerate_types(check: bool) -> Result<()> {
         "hitl",
         "budget",
         "capability",
+        "audit",
     ];
     let mut all_drift = Vec::new();
 

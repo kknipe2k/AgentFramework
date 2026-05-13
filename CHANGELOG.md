@@ -6,6 +6,98 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M05.E §8.security L5 Provenance + skills.audit.jsonl audit log
+
+New module `crates/runtime-main/src/audit/` implements the L5
+append-only JSONL writer for the runtime's safety primitives. One line
+per security decision (framework load / gap detection / capability
+grant / capability denial / tier transition). Best-effort observability
+per phase doc E.3.4 + spec §13.5 — write failures `tracing::error!`
+and continue; audit availability is NOT a dispatch gate.
+
+- **`crates/runtime-main/src/audit/writer.rs`** *(new)*:
+  - `AuditWriter::open(path: &Path)` — async open in append mode.
+  - `AuditWriter::log(&entry: &AuditEntry)` — async write of one JSONL
+    line (`serde_json::to_string(entry) + write_all + b"\n" + flush`).
+  - `tokio::sync::Mutex<File>` around the handle so concurrent callers
+    serialize per the phase-doc gotcha-trap-#3.
+- **`crates/runtime-main/src/audit/entry.rs`** *(new)*:
+  - Per-kind constructors that pin the `details` shape at the call site
+    (`framework_loaded`, `gap_detected`, `gap_resolved`,
+    `capability_granted`, `capability_denied`, `tier_transition`). The
+    on-disk shape is the schema-generated
+    `runtime_core::generated::audit::AuditEntry`.
+  - `now_unix_ms()` helper — wall-clock unix milliseconds captured at
+    entry-construction (not at writer-mutex-acquisition).
+- **`crates/runtime-main/src/audit/file_path.rs`** *(new)*:
+  - `AUDIT_FILE_NAME = "skills.audit.jsonl"` constant.
+  - `audit_path(dir: &Path) -> PathBuf` — path-agnostic join. Mirrors
+    the M05.D `tier::persistence` archetype; Tauri layer owns the
+    directory side via `AppHandle::path().app_local_data_dir()`.
+- **`crates/runtime-main/src/audit/error.rs`** *(new)*:
+  - `AuditError::{Io, Json}` — surfaced to the call site so callers
+    can `tracing::error!` and continue. Never propagated into dispatch.
+- **`schemas/audit.v1.json`** *(new)* — `AuditEntry` shape + `kind`
+  enum + `AuditSessionId` validated newtype. Per gotcha #43, the
+  validated-string + enum get the `title` + local-`$defs` extraction
+  pattern.
+- **`crates/runtime-core/src/generated/audit.rs`** *(new, regenerated)*.
+
+Wiring:
+
+- **`crates/runtime-main/src/capability/enforcer.rs`** *(edited)*:
+  - Added `audit_writer: Option<Arc<AuditWriter>>` + `session_id`
+    field. Optional so existing default-constructible callers + unit
+    tests stay valid.
+  - `set_audit_writer(writer, session_id)` setter.
+  - `audit_grant(&self, agent, capability)` — async emit after a sync
+    `grant()`. The two are split so the historic synchronous `grant()`
+    surface stays available to unit tests; production chains
+    `enforcer.grant(...); enforcer.audit_grant(...).await;`.
+  - `audit_check_result(&self, agent, requested, result)` — async emit
+    for `Err(Denied)` + `Err(TierForbidden)` only; `Ok` is the hot path
+    and skips emission per phase doc E.1.
+- **`crates/runtime-main/src/tier/transition.rs`** *(new)*:
+  - `transition(writer, session_id, previous, current, reason)` — async
+    fn returning `TierTransitionRecord`. Records the audit line iff
+    `previous != current`; same-tier no-ops skip emission.
+- **`crates/runtime-main/src/framework_loader/mod.rs`** *(edited)*:
+  - `AuditContext { writer, session_id }` + `_with_audit` variants of
+    `load_and_validate` + `load_and_validate_str`. Audit emits
+    `framework_loaded` on success + `gap_detected` per Layer-1 gap.
+  - The historic `load_and_validate` / `load_and_validate_str` surfaces
+    stay valid — they delegate to the `_with_audit` variants with a
+    `AuditContext::default()` (no audit emission).
+- **`src-tauri/src/main.rs`** *(edited)*:
+  - Opens the audit writer at app startup via
+    `AppHandle::path().app_local_data_dir()` + `audit_path(dir)` +
+    `AuditWriter::open(path)`. Managed-state as `Arc<AuditWriter>` so
+    the M09+ wiring can consume it. Open failure `tracing::warn!`s
+    and continues without an audit trail (per the §13.5 + phase doc
+    E.3.4 best-effort posture).
+
+Tests:
+
+- **`crates/runtime-main/src/audit/writer.rs`** — 6 unit tests
+  (single, twice-sequential, three-sequential-preserve-order,
+  concurrent-10-mutex-serialized, append-preserves-pre-existing,
+  open-missing-dir-io-error).
+- **`crates/runtime-main/src/audit/entry.rs`** — 9 unit tests
+  (per-kind shapes, compact JSON, empty session_id sentinel,
+  now_unix_ms post-epoch).
+- **`crates/runtime-main/src/audit/file_path.rs`** — 3 unit tests.
+- **`crates/runtime-main/src/tier/transition.rs`** — 5 unit tests
+  (promotion + demotion write, same-tier no-op, no-writer silent
+  no-op, three-sequential-flips multi-call invariant per gotcha #69).
+- **`crates/runtime-main/tests/audit_smoke.rs`** *(new)* — 7
+  integration tests covering all five seams + the no-writer silent
+  no-op + the end-to-end multi-seam scenario.
+
+Coverage: workspace ≥80%; per-module ≥95% on `audit/writer.rs` +
+`audit/entry.rs` (pure-function logic). The runtime-main 95% per-crate
+gate's exclusion list adds no new entries — the audit module is fully
+testable with `tempfile`-backed paths + `tokio::test`.
+
 ### Added — M05.D §8.security L4 Tier system (Novice + Promoted)
 
 New module `crates/runtime-main/src/tier/` implements the L4 tier gate

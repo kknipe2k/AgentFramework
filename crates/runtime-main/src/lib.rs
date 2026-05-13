@@ -7,6 +7,14 @@
 //! - [`drone_ipc`] — `DroneClient` main-side connection to the M01 drone (M02 Stage D).
 //! - [`key_store`] — OS-keychain-backed Anthropic API key storage (M02 Stage E).
 
+/// Audit log — spec §8.security L5 (M05 Stage E).
+///
+/// Append-only `skills.audit.jsonl` writer; one line per security
+/// decision (framework load / gap / capability grant / capability
+/// denial / tier transition). Best-effort observability — write
+/// failures are logged via `tracing::error!` and never propagate
+/// into dispatch.
+pub mod audit;
 /// Budget primitive — spec §2a (M04 Stage F).
 ///
 /// 3-scope tightest-cap-wins enforcer + 4 threshold actions

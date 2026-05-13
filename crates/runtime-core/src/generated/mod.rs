@@ -7,6 +7,10 @@
 
 /// Types generated from `schemas/agent.v1.json`.
 pub mod agent;
+/// Types generated from `schemas/audit.v1.json` — Audit log entry (spec
+/// §8.security L5). M05 Stage E authored the schema + JSONL writer +
+/// wiring into framework_loader / capability_enforcer / tier_evaluator.
+pub mod audit;
 /// Types generated from `schemas/budget.v1.json` — Budget primitive (spec §2a).
 /// M04 Stage F authored the schema + 3-scope tightest-cap-wins enforcer + 4
 /// threshold actions + downshift_hook seam.

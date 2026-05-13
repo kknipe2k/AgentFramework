@@ -25,9 +25,11 @@
 //! HITL prompt for renderer responsiveness).
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use runtime_core::generated::capability::CapabilityDeclaration;
 
+use crate::audit::{self, AuditWriter};
 use crate::capability::declaration::subsumes;
 use crate::capability::error::CapabilityError;
 use crate::tier::{Tier, TierError, TierEvaluator};
@@ -66,6 +68,12 @@ pub enum DenyReason {
 pub struct CapabilityEnforcer {
     grants_by_agent: HashMap<String, Vec<CapabilityDeclaration>>,
     current_tier: Tier,
+    // M05 Stage E: optional audit writer + session id. None in tests
+    // that don't care about audit; Some in production wired from the
+    // Tauri shell at app startup. Best-effort — write failures
+    // `tracing::error!` and continue per phase doc E.3.4.
+    audit_writer: Option<Arc<AuditWriter>>,
+    session_id: String,
 }
 
 impl CapabilityEnforcer {
@@ -77,6 +85,18 @@ impl CapabilityEnforcer {
         Self::default()
     }
 
+    /// Wire an audit writer + session id.
+    ///
+    /// Optional — when unset, the audit emission helpers
+    /// ([`Self::audit_grant`] + [`Self::audit_check_result`]) silently
+    /// skip emission (best-effort observability per phase doc E.3.4).
+    /// The Tauri shell wires `Some(Arc<AuditWriter>)` at app startup;
+    /// unit tests typically leave it unset.
+    pub fn set_audit_writer(&mut self, writer: Arc<AuditWriter>, session_id: impl Into<String>) {
+        self.audit_writer = Some(writer);
+        self.session_id = session_id.into();
+    }
+
     /// Grant a capability to `agent`. Repeated grants append (do not
     /// deduplicate); the matching predicate is order-independent.
     pub fn grant(&mut self, agent: impl Into<String>, capability: CapabilityDeclaration) {
@@ -84,6 +104,81 @@ impl CapabilityEnforcer {
             .entry(agent.into())
             .or_default()
             .push(capability);
+    }
+
+    /// Emit a `capability_granted` audit line.
+    ///
+    /// Records the grant that was just recorded by [`Self::grant`].
+    /// Async because audit writes hit disk; best-effort because audit
+    /// availability is not a dispatch gate (write failures
+    /// `tracing::error!` and continue).
+    ///
+    /// Split from [`Self::grant`] so the historic synchronous grant
+    /// surface stays available to unit tests + call sites that don't
+    /// care about audit; production callers chain
+    /// `grant(); audit_grant().await;`.
+    pub async fn audit_grant(&self, agent: &str, capability: &CapabilityDeclaration) {
+        let kind = capability.kind.to_string();
+        let resource = capability.resource.to_string();
+        self.audit_log(audit::capability_granted(
+            &self.session_id,
+            agent,
+            &kind,
+            &resource,
+        ))
+        .await;
+    }
+
+    /// Emit a `capability_denied` audit line for a rejected check.
+    ///
+    /// Matches against the [`Self::check`] result — emits on
+    /// `Err(CapabilityError::Denied)` or `Err(CapabilityError::TierForbidden)`,
+    /// no-ops on `Ok` (the success path is hot — audit emits only on the
+    /// cold rejection paths per phase doc E.1).
+    pub async fn audit_check_result(
+        &self,
+        agent: &str,
+        requested: &CapabilityDeclaration,
+        result: &Result<(), CapabilityError>,
+    ) {
+        let kind = requested.kind.to_string();
+        match result {
+            Ok(()) => {}
+            Err(CapabilityError::Denied { reason, agent_id }) => {
+                let id = if agent_id.is_empty() { agent } else { agent_id };
+                self.audit_log(audit::capability_denied(
+                    &self.session_id,
+                    id,
+                    &kind,
+                    *reason,
+                ))
+                .await;
+            }
+            Err(CapabilityError::TierForbidden { agent_id, .. }) => {
+                // Tier rejection lands under `capability_denied` with
+                // `no_matching_grant` analogue. The dedicated
+                // `tier_transition` audit kind covers tier flips; tier
+                // *violations* leave the tier-specific context in the
+                // `TierViolation` event (Stage F renderer reads that),
+                // not the audit log.
+                let id = if agent_id.is_empty() { agent } else { agent_id };
+                self.audit_log(audit::capability_denied(
+                    &self.session_id,
+                    id,
+                    &kind,
+                    super::DenyReason::NoMatchingGrant,
+                ))
+                .await;
+            }
+        }
+    }
+
+    async fn audit_log(&self, entry: runtime_core::generated::audit::AuditEntry) {
+        if let Some(writer) = &self.audit_writer {
+            if let Err(e) = writer.log(&entry).await {
+                tracing::error!(error = %e, "audit log write failed");
+            }
+        }
     }
 
     /// Update the enforcer's current tier. Called at app startup with

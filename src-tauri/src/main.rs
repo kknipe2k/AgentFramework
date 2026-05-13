@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use commands::{CurrentTierState, GlobalBudgetState};
 use drone_lifecycle::DroneLifecycle;
+use runtime_main::audit::{audit_path, AuditWriter};
 use runtime_main::drone_ipc::DroneClient;
 use runtime_main::hitl::HitlSeam;
 use runtime_main::sandbox_ipc::SandboxClient;
@@ -27,6 +28,10 @@ type ManagedLifecycle = Mutex<Option<DroneLifecycle>>;
 /// handler can drain + shutdown identically.
 type ManagedSandbox = Mutex<Option<SandboxLifecycle>>;
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "Tauri shell startup is a linear sequence of registrations + spawns; splitting hides the order-of-events that's load-bearing for diagnosis."
+)]
 fn main() {
     init_tracing();
     tracing::info!(
@@ -97,6 +102,10 @@ fn main() {
             };
             let tier_state: CurrentTierState = Mutex::new(tier_from_disk);
             app_handle.manage(tier_state);
+            // M05 Stage E §8.security L5: best-effort audit log open.
+            if let Some(w) = open_audit_writer(&app_handle) {
+                app_handle.manage(w);
+            }
             // The setup hook runs on the Tauri main thread; we need an
             // async block for the drone spawn + connect. block_on uses
             // the Tauri runtime that's already configured.
@@ -175,6 +184,38 @@ fn main() {
             }
         }
     });
+}
+
+/// Open the M05 Stage E §8.security L5 audit log at app startup.
+///
+/// Returns `Some(Arc<AuditWriter>)` when the file opens; `None` (with a
+/// `tracing::warn!`) when the data-directory resolve / `create_dir_all`
+/// / `AuditWriter::open` fails. Per phase doc E.3.4 + spec §13.5, audit
+/// availability is best-effort observability — the runtime continues
+/// without an audit trail rather than abort startup.
+fn open_audit_writer<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<Arc<AuditWriter>> {
+    let dir = match app.path().app_local_data_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!(error = %e, "app_local_data_dir unavailable; audit disabled");
+            return None;
+        }
+    };
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::warn!(error = %e, "audit log dir create failed");
+    }
+    let path = audit_path(&dir);
+    match tauri::async_runtime::block_on(AuditWriter::open(&path)) {
+        Ok(w) => Some(Arc::new(w)),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                path = %path.display(),
+                "audit log open failed; continuing without audit"
+            );
+            None
+        }
+    }
 }
 
 /// Resolve the `SQLite` database path for v0.1.

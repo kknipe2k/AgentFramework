@@ -30,6 +30,9 @@ pub use walker::{walk, Gap, GapKind};
 use runtime_core::event::AgentEvent;
 use runtime_core::event::GapSourceRef;
 use std::path::Path;
+use std::sync::Arc;
+
+use crate::audit::{self, AuditWriter};
 
 /// In-process event-emission seam.
 ///
@@ -49,11 +52,35 @@ pub trait Emitter: Send + Sync {
     async fn emit(&self, event: AgentEvent);
 }
 
+/// Audit emission seam — M05 Stage E.
+///
+/// Carries the `Arc<AuditWriter>` + the session id through to
+/// [`load_and_validate`] so successful loads emit `framework_loaded`
+/// audit lines and each detected gap emits a `gap_detected` audit
+/// line. `None` skips audit emission entirely (tests + headless
+/// invocations); `Some` wires the production audit trail.
+#[derive(Clone, Default)]
+pub struct AuditContext {
+    /// Audit writer reference. `None` skips audit emission.
+    pub writer: Option<Arc<AuditWriter>>,
+    /// Session id carried per-entry per phase doc E.3.1.
+    pub session_id: String,
+}
+
+
+async fn audit_log(audit_ctx: &AuditContext, entry: runtime_core::generated::audit::AuditEntry) {
+    if let Some(writer) = &audit_ctx.writer {
+        if let Err(e) = writer.log(&entry).await {
+            tracing::error!(error = %e, "audit log write failed");
+        }
+    }
+}
+
 /// Load a framework JSON from `path` + walk it for Layer-1 gaps.
 ///
-/// Returns `Ok(Framework)` only when every declared reference resolves.
-/// Otherwise emits one gap event (`requested_via: loader`) per unresolved
-/// reference via `emitter` and returns `Err(FrameworkLoadError::GapsFound)`.
+/// Convenience wrapper around [`load_and_validate_with_audit`] that
+/// skips audit emission. Tests + headless invocations use this; the
+/// Tauri shell uses the `_with_audit` variant.
 ///
 /// # Errors
 ///
@@ -65,31 +92,95 @@ pub async fn load_and_validate(
     path: &Path,
     emitter: &impl Emitter,
 ) -> Result<runtime_core::generated::framework::Framework, FrameworkLoadError> {
+    load_and_validate_with_audit(path, emitter, &AuditContext::default()).await
+}
+
+/// Like [`load_and_validate`] but wires audit emission.
+///
+/// On successful load, emits one `framework_loaded` audit line. On
+/// gaps, emits one `gap_detected` audit line per gap before returning
+/// the error. Audit failures `tracing::error!` and continue — never
+/// propagated.
+///
+/// # Errors
+///
+/// Same as [`load_and_validate`].
+pub async fn load_and_validate_with_audit(
+    path: &Path,
+    emitter: &impl Emitter,
+    audit_ctx: &AuditContext,
+) -> Result<runtime_core::generated::framework::Framework, FrameworkLoadError> {
     let raw = tokio::fs::read_to_string(path).await?;
-    load_and_validate_str(&raw, emitter).await
+    load_and_validate_str_with_audit(&raw, emitter, audit_ctx).await
 }
 
 /// Validate a framework JSON string (no disk read).
 ///
-/// Variant of [`load_and_validate`] for tests and callers that already
-/// have the bytes (e.g., framework-import flows in M07).
+/// Convenience wrapper around [`load_and_validate_str_with_audit`] that
+/// skips audit emission.
 ///
 /// # Errors
 ///
-/// Same as [`load_and_validate`], minus the `Io` variant (no disk read).
+/// Same as [`load_and_validate`], minus the `Io` variant.
 pub async fn load_and_validate_str(
     raw: &str,
     emitter: &impl Emitter,
 ) -> Result<runtime_core::generated::framework::Framework, FrameworkLoadError> {
+    load_and_validate_str_with_audit(raw, emitter, &AuditContext::default()).await
+}
+
+/// Like [`load_and_validate_str`] but wires audit emission.
+///
+/// # Errors
+///
+/// Same as [`load_and_validate_str`].
+pub async fn load_and_validate_str_with_audit(
+    raw: &str,
+    emitter: &impl Emitter,
+    audit_ctx: &AuditContext,
+) -> Result<runtime_core::generated::framework::Framework, FrameworkLoadError> {
     let framework: runtime_core::generated::framework::Framework = serde_json::from_str(raw)?;
     let gaps = walker::walk(&framework);
     if gaps.is_empty() {
+        audit_log(
+            audit_ctx,
+            audit::framework_loaded(
+                &audit_ctx.session_id,
+                &framework.name,
+                framework.agents.len(),
+            ),
+        )
+        .await;
         return Ok(framework);
     }
     for gap in &gaps {
+        audit_log(
+            audit_ctx,
+            audit::gap_detected(
+                &audit_ctx.session_id,
+                &gap.agent_id,
+                gap_kind_str(gap.kind),
+                &gap.missing_name,
+                "loader",
+            ),
+        )
+        .await;
         emitter.emit(gap.to_event(GapSourceRef::Loader)).await;
     }
     Err(FrameworkLoadError::GapsFound { count: gaps.len() })
+}
+
+/// Snake-case audit-log kind string for the gap. Mirrors the event
+/// variant naming (`tool_missing`, `skill_missing`, `mcp_missing`,
+/// `agent_missing`) so the audit log + the event stream + the
+/// renderer all share the same discriminator vocabulary.
+const fn gap_kind_str(kind: GapKind) -> &'static str {
+    match kind {
+        GapKind::Tool => "tool_missing",
+        GapKind::Skill => "skill_missing",
+        GapKind::Mcp => "mcp_missing",
+        GapKind::Agent => "agent_missing",
+    }
 }
 
 #[cfg(test)]

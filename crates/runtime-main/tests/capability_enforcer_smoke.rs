@@ -102,7 +102,9 @@ async fn dispatch_with_check(
                                 resource = *requested.resource
                             ),
                             declared_scope: match reason {
-                                DenyReason::NoDeclarations => "no capabilities declared".to_string(),
+                                DenyReason::NoDeclarations => {
+                                    "no capabilities declared".to_string()
+                                }
                                 DenyReason::NoMatchingGrant => {
                                     "declared grants do not cover this request".to_string()
                                 }
