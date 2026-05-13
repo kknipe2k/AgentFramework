@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ApprovalPanel } from './components/ApprovalPanel';
 import { BudgetHeaderBar } from './components/BudgetHeaderBar';
+import { GapPanel } from './components/GapPanel';
 import { GraphCanvas } from './components/GraphCanvas';
 import { HITLModal } from './components/HITLModal';
 import { HITLPanel } from './components/HITLPanel';
@@ -118,6 +119,7 @@ export function App(): JSX.Element {
         <InspectorPanel />
         <ApprovalPanel />
         <HITLPanel />
+        <GapPanel />
       </div>
       <HITLModal />
       <HITLToast />

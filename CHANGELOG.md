@@ -6,6 +6,57 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M05.F Renderer UI (GapPanel + CapabilityBadge + capability-violation modal wire)
+
+Renderer-only stage; no Rust changes. Three components/wires landed:
+
+- **`src/components/GapPanel.tsx`** *(new)* — right-rail list of
+  unresolved gaps. Subscribes to graphStore via selector
+  (`useGraphStore((s) => s.nodes.filter(n => n.type === 'gap'))`).
+  Auto-hides when zero gaps; auto-dismisses items on `gap_resolved`.
+  Severity drives the left-border accent color
+  (`.gap-panel__item--{critical,important,advisory,requested}`).
+- **`src/components/nodes/CapabilityBadge.tsx`** *(new)* — per-AgentNode
+  pill showing the user's current tier (`N` / `P`) + a count of
+  grants issued to this specific agent. Tier-color via
+  `.capability-badge--{novice,promoted}`.
+- **Capability-violation modal — reuses M04.E HITLModal per ADR-0007.**
+  No new modal component. The existing HITLModal already routes
+  `pendingHitl` entries with `ui_variant: 'modal'`; the runtime emits
+  `hitl_requested { trigger: 'on_capability_violation', ui_variant:
+  'modal', ... }` per spec §8.security L1 and the modal surfaces with
+  the request details + three action buttons (allow_once / deny /
+  abort).
+- **`src/components/nodes/AgentNode.tsx`** *(edit)* — mounts
+  `<CapabilityBadge agentId={agentId} />` as a child element.
+- **`src/App.tsx`** *(edit)* — mounts `<GapPanel />` inside the
+  graph-layout flex region alongside ApprovalPanel + HITLPanel.
+- **`src/styles.css`** *(edit)* — CSS rules for `.gap-panel*` and
+  `.capability-badge*` class families. Every class set by the React
+  components has a matching rule (gotcha #67); covered by the
+  `every_severity_class_has_a_corresponding_CSS_rule_in_styles_css`
+  + `every_tier_class_has_a_corresponding_CSS_rule_in_styles_css`
+  test assertions.
+
+#### Tests
+
+- `tests/unit/components/GapPanel.test.tsx` *(new)* — 7 Vitest cases:
+  empty-state hides, one item per gap, gotcha-#68 field-read assertion,
+  per-severity class application, `gap_resolved` dismissal, count in
+  title, gotcha-#67 CSS-rule existence, accessible-region role.
+- `tests/unit/nodes/CapabilityBadge.test.tsx` *(new)* — 7 Vitest cases:
+  novice glyph, promoted glyph after `tier_transition`, count hidden
+  at zero, count shown when nonzero, per-agent filter (gotcha #68),
+  gotcha-#67 CSS-rule existence, title attribute.
+- `tests/unit/nodes/AgentNode.test.tsx` *(edit)* — adds
+  `mounts_CapabilityBadge_as_child_with_matching_agent_id` to pin the
+  AgentNode → CapabilityBadge composition.
+- `tests/e2e/gap_panel.spec.ts` *(new)* — Playwright at the Vite-dev
+  layer per gotcha #54: injects `tool_missing` and asserts the panel
+  surfaces, dismisses on `gap_resolved`, and a `hitl_requested` with
+  `trigger: 'on_capability_violation'` + `ui_variant: 'modal'` mounts
+  the existing HITLModal end-to-end.
+
 ### Added — M05.E §8.security L5 Provenance + skills.audit.jsonl audit log
 
 New module `crates/runtime-main/src/audit/` implements the L5

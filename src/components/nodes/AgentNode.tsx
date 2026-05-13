@@ -1,6 +1,7 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { AgentNodeData, AgentReactFlowNode } from '../../lib/graphStore';
 import { tokenScale } from '../../lib/tokenScale';
+import { CapabilityBadge } from './CapabilityBadge';
 
 export function AgentNode({ data }: NodeProps<AgentReactFlowNode>): JSX.Element {
   const { agentId, agentName, status, tokensTotal }: AgentNodeData = data;
@@ -28,6 +29,7 @@ export function AgentNode({ data }: NodeProps<AgentReactFlowNode>): JSX.Element 
       <Handle type="target" position={Position.Top} />
       <div className="agent-node__name">{agentName}</div>
       <div className="agent-node__id">{agentId.slice(0, 8)}</div>
+      <CapabilityBadge agentId={agentId} />
       <Handle type="source" position={Position.Bottom} />
     </div>
   );
