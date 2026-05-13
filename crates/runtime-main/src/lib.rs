@@ -54,6 +54,16 @@ pub mod providers;
 /// records the user's 4-action choice as a
 /// `tool_call_uncertainty_resolved` decision signal.
 pub mod recovery;
+/// Sandbox IPC client — spec §8.security L3 (M05 Stage C1).
+///
+/// Main-side framed-JSON client wrapping the `runtime-sandbox` subprocess.
+/// Strict request-response (`validate(artifact, declaration) →
+/// ValidationResult`). Borrow-not-move `next_response` from day 1 per
+/// gotcha #72; multi-call invariant exercised by
+/// `validate_succeeds_twice_in_sequence` per gotcha #69. Stage C2 adds
+/// OS-level isolation inside the sandbox subprocess; this surface is
+/// unchanged.
+pub mod sandbox_ipc;
 pub mod sdk;
 
 /// Returns the string `"ok"`. Placeholder for Stage A; real exports come later.

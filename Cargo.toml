@@ -74,6 +74,13 @@ runtime-core        = { path = "crates/runtime-core", version = "0.1.0" }
 # plan_recovery.rs). Production callsites stay decoupled through IPC;
 # this is dev-only.
 runtime-drone       = { path = "crates/runtime-drone", version = "0.1.0" }
+# runtime-sandbox path-dep for runtime-main's sandbox_ipc client (M05 C1).
+# Production callsites stay decoupled through IPC; this dependency is
+# strictly so runtime-main can import the wire-format types
+# (SandboxRequest / SandboxResponse / ValidationResult) defined in the
+# sandbox crate. Stage C2 adds OS-isolation deps inside runtime-sandbox
+# itself; the runtime-main consumer side stays unchanged.
+runtime-sandbox     = { path = "crates/runtime-sandbox", version = "0.1.0" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

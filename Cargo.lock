@@ -3449,6 +3449,7 @@ dependencies = [
  "reqwest",
  "runtime-core",
  "runtime-drone",
+ "runtime-sandbox",
  "rusqlite",
  "secrecy",
  "serde",
@@ -3465,6 +3466,20 @@ dependencies = [
 [[package]]
 name = "runtime-sandbox"
 version = "0.1.0"
+dependencies = [
+ "clap",
+ "futures",
+ "runtime-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
 
 [[package]]
 name = "rusqlite"

@@ -2,6 +2,7 @@
 
 mod commands;
 mod drone_lifecycle;
+mod sandbox_lifecycle;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,7 +11,9 @@ use commands::GlobalBudgetState;
 use drone_lifecycle::DroneLifecycle;
 use runtime_main::drone_ipc::DroneClient;
 use runtime_main::hitl::HitlSeam;
+use runtime_main::sandbox_ipc::SandboxClient;
 use runtime_main::sdk::ApprovalSeam;
+use sandbox_lifecycle::SandboxLifecycle;
 use tauri::{Manager, RunEvent};
 use tokio::sync::Mutex;
 
@@ -18,6 +21,10 @@ use tokio::sync::Mutex;
 /// `RunEvent::ExitRequested` handler can `.take()` and call
 /// [`DroneLifecycle::shutdown`] before propagating exit.
 type ManagedLifecycle = Mutex<Option<DroneLifecycle>>;
+/// Tauri-managed type alias for the sandbox subprocess handle (M05 C1).
+/// Same `Mutex<Option<_>>` shape as `ManagedLifecycle` so the exit
+/// handler can drain + shutdown identically.
+type ManagedSandbox = Mutex<Option<SandboxLifecycle>>;
 
 fn main() {
     init_tracing();
@@ -81,7 +88,6 @@ fn main() {
                         app_handle.manage(client);
                         let managed: ManagedLifecycle = Mutex::new(Some(lifecycle));
                         app_handle.manage(managed);
-                        Ok::<(), Box<dyn std::error::Error>>(())
                     }
                     Err(e) => {
                         tracing::error!(error = %e, "drone spawn failed at setup");
@@ -89,6 +95,29 @@ fn main() {
                         // would fail at every invocation. Propagating the
                         // setup error here aborts startup with a visible
                         // error rather than producing a half-broken app.
+                        return Err(Box::<dyn std::error::Error>::from(e.to_string()));
+                    }
+                }
+                // M05 Stage C1: spawn the sandbox subprocess alongside the
+                // drone. v0.1 has no production caller for the sandbox
+                // (M09 generators wires the first one); the boundary
+                // stays callable-but-unwired here so the L3 surface is
+                // ready when M09 lands. Failure to spawn the sandbox at
+                // app startup currently aborts the app — same policy as
+                // the drone — because the L3 boundary is part of the
+                // §8.security contract and a half-broken sandbox is
+                // worse than no app at all.
+                tracing::info!("spawning runtime-sandbox");
+                match SandboxLifecycle::spawn().await {
+                    Ok(lifecycle) => {
+                        let client: Arc<SandboxClient> = Arc::clone(&lifecycle.client);
+                        app_handle.manage(client);
+                        let managed: ManagedSandbox = Mutex::new(Some(lifecycle));
+                        app_handle.manage(managed);
+                        Ok::<(), Box<dyn std::error::Error>>(())
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "sandbox spawn failed at setup");
                         Err(Box::<dyn std::error::Error>::from(e.to_string()))
                     }
                 }
@@ -109,6 +138,17 @@ fn main() {
                 tauri::async_runtime::block_on(async move {
                     if let Err(e) = lc.shutdown().await {
                         tracing::warn!(error = %e, "drone shutdown failed at exit");
+                    }
+                });
+            }
+            // Sandbox shutdown mirrors drone's: drain managed-state +
+            // graceful-then-kill.
+            let managed_sb = app_handle.state::<ManagedSandbox>();
+            let sandbox = tauri::async_runtime::block_on(async { managed_sb.lock().await.take() });
+            if let Some(lc) = sandbox {
+                tauri::async_runtime::block_on(async move {
+                    if let Err(e) = lc.shutdown().await {
+                        tracing::warn!(error = %e, "sandbox shutdown failed at exit");
                     }
                 });
             }
@@ -147,8 +187,7 @@ fn resolve_db_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Resul
 fn init_tracing() {
     use tracing_subscriber::{fmt, EnvFilter};
 
-    let default =
-        "info,runtime_core=debug,runtime_main=debug,runtime_drone=debug,agent_runtime=debug";
+    let default = "info,runtime_core=debug,runtime_main=debug,runtime_drone=debug,runtime_sandbox=debug,agent_runtime=debug";
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default));
 
     fmt()

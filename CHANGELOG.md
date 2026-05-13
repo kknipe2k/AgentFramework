@@ -6,6 +6,137 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M05.C1 §8.security L3 Sandbox crate plumbing + main-side IPC + lifecycle (new safety primitive ≥95%)
+
+Code-only. M05 Stage C1 lights up `crates/runtime-sandbox/` from the M01
+scaffold WITHOUT OS-specific isolation (Stage C2 layers seccomp /
+landlock / Job Objects on top). The sandbox is a separate subprocess
+spawned by the Tauri main process at app startup; main + sandbox
+communicate via framed JSON over Unix domain socket (Linux/macOS) or
+Windows named pipe. The pure-function validator scans an artifact's
+source text for syscall-name tokens against the agent's
+`CapabilityDeclaration.kind`; mismatches surface in
+`ValidationResult::Reject { reasons }`.
+
+- **`crates/runtime-sandbox/`** *(lit up from M01 stub)*:
+  - `Cargo.toml` — minimal deps (tokio + serde + thiserror + tokio-util +
+    tracing + clap + runtime-core + futures + uuid). Stage C2 adds the
+    platform-specific isolation crates (libseccomp-rs / landlock /
+    winapi). `[[bin]]` target added.
+  - `src/main.rs` *(new)* — binary entry point. CLI:
+    `runtime-sandbox --session-id <id> --ipc-socket <path>`. Mirrors
+    `runtime-drone/src/main.rs` exactly.
+  - `src/lib.rs` — `run(session_id, ipc_socket)` + test-friendly
+    `run_inner(.., shutdown_source)` with injectable shutdown future.
+    cfg-platform OS-signal handler (SIGTERM/SIGINT on Unix;
+    Ctrl-Break/Ctrl-C on Windows).
+  - `src/protocol.rs` *(new)* — `SandboxRequest` (`validate_artifact` /
+    `shutdown`) + `SandboxResponse` (`validation_result` / `alert`) +
+    `AlertLevel`. `#[serde(tag = "type", rename_all = "snake_case")]`
+    wire shape, parallel to `runtime_core::DroneCommand`. The
+    `CapabilityDeclaration` payload travels by-value across IPC and is
+    consumed from `runtime_core::generated::capability` (schema-derived,
+    M05.B-locked).
+  - `src/validator.rs` *(new)* — `Artifact { code }` + `scan_syscalls`
+    (13-token allow-list keyed off the five `CapabilityKind` variants) +
+    `validate(artifact, declaration) → ValidationResult`. C1
+    intentionally enforces `kind`-only matching; scope containment is
+    the L2a enforcer's job (`runtime_main::capability::declaration`)
+    cleared before the L3 check.
+  - `src/ipc.rs` *(new)* — framed-JSON request/response IPC server.
+    `serve(socket_path)` binds a Unix socket / Windows named pipe and
+    loops on the testable `handle_connection` seam. `Shutdown` request
+    exits the accept loop; malformed JSON surfaces as a `Warn` alert
+    rather than killing the server (parallel to drone IPC convention).
+  - `src/error.rs` *(new)* — `SandboxError` + `IpcError` thiserror
+    enums (parallel to `DroneError`). Stage C2 will add `Isolation` /
+    `JobObject` variants when seccomp / Job Objects land.
+  - `tests/integration.rs` *(new)* — spawns the real
+    `runtime-sandbox` binary, connects via the IPC client, sends a
+    `validate_artifact` request, asserts the `ValidationResult`
+    response. Plus a `kill-and-restart-resumes` test mirroring the
+    drone loopback's resilience check.
+
+- **`crates/runtime-main/src/sandbox_ipc/`** *(new)*:
+  - `mod.rs` — module root; re-exports `SandboxClient` + `SandboxIpcError`.
+  - `connection.rs` — `Connection` state machine + `MAX_RETRIES = 5` /
+    `BASE_BACKOFF = 200ms` reconnect policy. **Critical:** the
+    `next_response` borrow-not-move pattern is implemented from day 1
+    (NOT retrofitted) — per gotcha #72 codified in PR #64 for drone.
+    The reader stays installed across calls so multi-call
+    request-response paths work. Test seam `Connection::from_streams`
+    accepts arbitrary `AsyncRead` + `AsyncWrite` halves; unit tests
+    inject `tokio::io::duplex` pairs. cfg-platform `open()` is the
+    OS-call wrapper (excluded from coverage gate per CLAUDE.md §5).
+  - `client.rs` — `SandboxClient` wrapping `Mutex<Connection>`.
+    `validate(artifact_code, declaration) → ValidationResult` + `shutdown()`.
+    Noop affordance for tests/paths that don't exercise a real sandbox.
+    The `validate_succeeds_twice_in_sequence` test ships **FIRST**
+    (gotcha #69 first-class application — the multi-call invariant
+    that prevents the M04 IRL drone bug from recurring in sandbox).
+  - Tests: noop validate/shutdown; single round-trip; **twice-in-sequence
+    multi-call**; alert-as-codec-error; stream-close-not-hang;
+    timeout-when-peer-silent. All unit-tested via `tokio::io::duplex`
+    pairs.
+
+- **`src-tauri/src/sandbox_lifecycle.rs`** *(new)* — `SandboxLifecycle`
+  owning the spawned `runtime-sandbox` subprocess. Production `spawn()`
+  composes `spawn_with` (test seam) with the real `tokio::process::
+  Command` + `SandboxClient::connect`. Connect retry: 5 attempts × 200ms
+  exponential backoff. Cross-platform IPC addressing via
+  `compute_ipc_addr(session_id)` (Unix: `<temp>/runtime-sandbox-<id>.sock`;
+  Windows: `\\.\pipe\runtime-sandbox-<id>`). `kill_on_drop(true)`
+  failsafe. Graceful shutdown via `SandboxClient::shutdown` then
+  `Child::wait` (3s timeout) then `start_kill` fallback. 7 unit tests
+  parallel to `drone_lifecycle::tests`.
+
+- **`src-tauri/src/main.rs`** — sandbox subprocess spawned at the Tauri
+  setup hook alongside the drone. `Arc<SandboxClient>` registered as
+  Tauri-managed state; `ManagedSandbox` (`Mutex<Option<SandboxLifecycle>>`)
+  shutdown on `RunEvent::ExitRequested`. v0.1 has no production caller
+  for the sandbox client (M09 wires the first one); the boundary stays
+  callable-but-unwired per the phase doc `<execution_warnings>`.
+
+- **`Cargo.toml`** — workspace dep `runtime-sandbox = { path =
+  "crates/runtime-sandbox", version = "0.1.0" }`. `runtime-main` pulls
+  it as a regular dep (sandbox_ipc consumes the protocol + validator
+  types in production code, not just tests).
+
+- **Coverage gates** *(new + extended)*:
+  - **CLAUDE.md §5** + **§6** documented: runtime-sandbox per-crate
+    gate at ≥95% with `main.rs|lib.rs|ipc.rs` excluded (cfg-platform
+    accept-loop + OS-signal orchestrator holdouts — Stage C2 lifts the
+    gate to include ipc.rs when seccomp / landlock / job_objects files
+    land); runtime-main exclusion extended to add
+    `sandbox_ipc/connection.rs` (parallel to existing
+    `drone_ipc/connection.rs` OS-call wrapper exclusion).
+  - **`.github/workflows/ci.yml`** — new `runtime-sandbox coverage`
+    step + lcov generation + Codecov upload. runtime-main exclusion
+    regex extended.
+  - **`codecov.yml`** — new `runtime-sandbox` flag at 95% target;
+    `ignore` extended for `crates/runtime-sandbox/src/ipc.rs` +
+    `lib.rs`.
+
+- **Coverage actuals (M05.C1 measured on Windows):**
+  - Workspace: **93.06%** lines (≥80% gate).
+  - runtime-drone: **95.79%** lines (unchanged from M05.B).
+  - runtime-main: **97.04%** lines (≥95% gate with
+    sandbox_ipc/connection.rs added to exclusion list).
+  - runtime-sandbox: **97.40%** lines on plumbing files
+    (validator + protocol + error; ipc.rs excluded per above).
+    Per-module: `validator.rs` 96.30% line / 100% region;
+    `protocol.rs` 100%; `ipc.rs` 92.58% line / 94.01% region
+    (Stage C1 holdout).
+  - `sandbox_ipc/client.rs`: 94.09% lines (within ≥95% region gate);
+    `sandbox_ipc/connection.rs`: 88.89% lines / 91.39% regions
+    (excluded — cfg-platform OS-call wrapper).
+
+- **Tests:** 3 validator + 4 protocol round-trip + 7 ipc server +
+  2 lib.rs orchestrator + 11 sandbox_ipc::connection +
+  7 sandbox_ipc::client + 7 sandbox_lifecycle + 2 integration
+  (subprocess round-trip + kill-and-restart). Plus the multi-call
+  invariant tests applied **from day 1** per gotcha #69 + #72.
+
 ### Added — M05.B §8.security L1 + L2a Capability Enforcer (new safety primitive ≥95%)
 
 Code + schema. M05 Stage B ships the in-process capability enforcer + L2a

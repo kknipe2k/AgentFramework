@@ -6,12 +6,33 @@ license      = { workspace = true }
 repository   = { workspace = true }
 rust-version = { workspace = true }
 
+[[bin]]
+name = "runtime-sandbox"
+path = "src/main.rs"
+
 [lints.rust]
-# Sandbox needs unsafe for seccomp / landlock / Job Objects in M5+.
-# v0.1 has no unsafe blocks yet; warn-only keeps the door open.
+# Sandbox needs unsafe for seccomp / landlock / Job Objects in Stage C2.
+# Stage C1 ships zero unsafe blocks; warn-only keeps the door open.
 unsafe_code = "warn"
 warnings    = "deny"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 nursery  = { level = "warn", priority = -1 }
+
+[dependencies]
+runtime-core       = { workspace = true }
+serde              = { workspace = true, features = ["derive"] }
+serde_json         = { workspace = true }
+thiserror          = { workspace = true }
+tokio              = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net", "io-util", "fs"] }
+tokio-util         = { workspace = true, features = ["codec"] }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "json"] }
+clap               = { workspace = true, features = ["derive", "std", "help"] }
+futures            = { workspace = true }
+uuid               = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio    = { workspace = true, features = ["test-util", "rt-multi-thread", "macros", "sync", "time", "signal", "net", "io-util", "fs", "process"] }

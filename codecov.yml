@@ -22,6 +22,15 @@ coverage:
         threshold: 0.5%
         flags:     [runtime-main]
         informational: false
+      runtime-sandbox:
+        # New safety primitive — M05 Stage C1. Gate covers the plumbing
+        # files (validator + protocol + error). ipc.rs is excluded as a
+        # cfg-platform OS-call wrapper holdout; Stage C2 will lift the
+        # gate once OS-isolation files extend the test surface.
+        target:    95%
+        threshold: 0.5%
+        flags:     [runtime-sandbox]
+        informational: false
     patch:
       # Default patch gate — applies to everything EXCEPT src-tauri/** which
       # has its own gate below. The exclusion keeps Tauri-shell wrappers
@@ -62,3 +71,9 @@ ignore:
   - "**/src/main.rs"
   - "**/build.rs"
   - "src-tauri/gen/**"
+  # M05 Stage C1 runtime-sandbox holdouts: ipc.rs (cfg-platform accept
+  # loop wrapper) + lib.rs (OS-signal orchestrator wrapping run_inner).
+  # Per CLAUDE.md §5 — Stage C2 lifts these into the gate when OS-
+  # isolation files land.
+  - "crates/runtime-sandbox/src/ipc.rs"
+  - "crates/runtime-sandbox/src/lib.rs"

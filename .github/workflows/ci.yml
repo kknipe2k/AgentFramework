@@ -378,7 +378,22 @@ jobs:
       - name: runtime-main coverage (≥95%, OS-call holdouts excluded)
         run: |
           cargo llvm-cov --package runtime-main \
-            --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.key_store\.rs" \
+            --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs|src.key_store\.rs" \
+            --fail-under-lines 95
+      # runtime-sandbox safety-primitive gate (M05 Stage C1) — measure
+      # the plumbing files (validator + protocol + error) at ≥95%. The
+      # cfg-platform accept-loop wrapper (src/ipc.rs) is excluded under
+      # the same OS-call-wrapper rationale as drone's lib.rs+shutdown.rs
+      # — handle_connection IS unit-tested in-module, but the
+      # cfg(unix)/cfg(windows) accept_loop variants + send_response
+      # error mapping require pipe-level harness work that Stage C2
+      # will bring with the OS-isolation files (seccomp / landlock /
+      # Job Objects). Stage C2 will lift the gate to cover ipc.rs.
+      # Per CLAUDE.md §5 + M05-gap-capability.md C1.4.
+      - name: runtime-sandbox coverage (≥95%, ipc.rs holdout for C2)
+        run: |
+          cargo llvm-cov --package runtime-sandbox \
+            --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.ipc\.rs" \
             --fail-under-lines 95
       # lcov export for Codecov — workspace + per-crate uploads. The
       # cargo-llvm-cov --fail-under-lines gates above remain authoritative
@@ -399,7 +414,12 @@ jobs:
         run: |
           cargo llvm-cov --package runtime-main --lcov \
             --output-path lcov-main.info \
-            --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.key_store\.rs"
+            --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs|src.key_store\.rs"
+      - name: Generate runtime-sandbox lcov
+        run: |
+          cargo llvm-cov --package runtime-sandbox --lcov \
+            --output-path lcov-sandbox.info \
+            --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.ipc\.rs"
       # Codecov uploads — required from M02 onward (per CLAUDE.md §5
       # "Coverage delta gating (from M02 onward) — Codecov-enforced").
       # The codecov.yml `informational: false` flags make Codecov status
@@ -424,6 +444,13 @@ jobs:
         with:
           files:            lcov-main.info
           flags:            runtime-main
+          fail_ci_if_error: true
+          token:            ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload runtime-sandbox coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files:            lcov-sandbox.info
+          flags:            runtime-sandbox
           fail_ci_if_error: true
           token:            ${{ secrets.CODECOV_TOKEN }}
 
