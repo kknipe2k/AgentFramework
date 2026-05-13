@@ -2,6 +2,7 @@ import type { Edge, Node } from '@xyflow/react';
 import { create } from 'zustand';
 import type {
   AgentEvent,
+  CapabilityKindRef2,
   GapSeverity,
   GapSource,
   HitlTriggerRef,
@@ -9,6 +10,7 @@ import type {
   HookCategoryRef,
   OnFailureRef,
   RailPolicy,
+  TierRef,
 } from '../types/agent_event';
 
 /**
@@ -367,6 +369,20 @@ export interface CapabilityGrantRecord {
   timestamp: number;
 }
 
+/**
+ * Spec §8.security L4 (M05 Stage D): per-agent record of the most-recent
+ * `tier_violation` event. Distinct from `capabilityViolations` because
+ * the L4 gate fires BEFORE L1 — same event-store shape but different
+ * routing (tier-violation modal in Settings vs. capability-violation
+ * inspector). Last-write-wins per agent.
+ */
+export interface TierViolationRecord {
+  tier: TierRef;
+  capabilityKind: CapabilityKindRef2;
+  attemptedAction: string;
+  timestamp: number;
+}
+
 interface GraphState {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -417,6 +433,21 @@ interface GraphState {
    * for audit-visibility.
    */
   capabilityGrants: CapabilityGrantRecord[];
+  /**
+   * Spec §8.security L4 (M05 Stage D): current user tier. First-run
+   * default is `'novice'` (matches the runtime's `Tier::default()`).
+   * Updated by `tier_transition` events; the renderer's Settings panel
+   * reads this to display the current tier + render the promote/demote
+   * affordance correctly.
+   */
+  currentTier: TierRef;
+  /**
+   * Spec §8.security L4 (M05 Stage D): per-agent most-recent
+   * `tier_violation` state, keyed by `agent_id`. Renderer's
+   * tier-violation modal reads this. Last-write-wins on repeat
+   * violations from the same agent.
+   */
+  tierViolations: Record<string, TierViolationRecord>;
 
   /**
    * Single entry point for translating AgentEvent into node + edge
@@ -611,6 +642,8 @@ export const useGraphStore = create<GraphState>((set) => ({
   uncertainInvocations: [],
   capabilityViolations: {},
   capabilityGrants: [],
+  currentTier: 'novice',
+  tierViolations: {},
 
   applyEvent: (event) =>
     set((state) => {
@@ -1354,6 +1387,32 @@ export const useGraphStore = create<GraphState>((set) => ({
           };
         }
 
+        case 'tier_violation': {
+          // Spec §8.security L4 (M05 Stage D): the L4 tier gate rejected
+          // this dispatch before L1 ran. Record keyed by agent so the
+          // tier-violation modal can surface the current blocking state.
+          // Last-write-wins on repeat violations.
+          return {
+            ...state,
+            tierViolations: {
+              ...state.tierViolations,
+              [event.agent_id]: {
+                tier: event.tier,
+                capabilityKind: event.capability_kind,
+                attemptedAction: event.attempted_action,
+                timestamp: Date.now(),
+              },
+            },
+          };
+        }
+
+        case 'tier_transition': {
+          // Spec §8.security L4 (M05 Stage D): the user's tier changed.
+          // Settings panel reads `currentTier` to render the toggle's
+          // current state; toast surfaces the transition.
+          return { ...state, currentTier: event.current };
+        }
+
         // No-op variants — stream_text + decision_record + token_usage
         // feed the inspector, not the graph; session_end + tool_error +
         // mode_changed are graph-no-op by design. The exhaustive default
@@ -1374,8 +1433,8 @@ export const useGraphStore = create<GraphState>((set) => ({
       }
     }),
 
-  clear: () =>
-    set({
+  clear: (): void =>
+    set((state) => ({
       nodes: [],
       edges: [],
       selectedNodeId: null,
@@ -1386,7 +1445,13 @@ export const useGraphStore = create<GraphState>((set) => ({
       uncertainInvocations: [],
       capabilityViolations: {},
       capabilityGrants: [],
-    }),
+      // tierViolations are per-session — clear them. currentTier is a
+      // per-installation user preference loaded from tier.json at app
+      // start + mutated by tier_transition events; preserved across
+      // session clears so the Settings toggle keeps its state.
+      tierViolations: {},
+      currentTier: state.currentTier,
+    })),
 
   selectNode: (id) => set({ selectedNodeId: id }),
 

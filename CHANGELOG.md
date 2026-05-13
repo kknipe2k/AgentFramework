@@ -6,6 +6,130 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M05.D §8.security L4 Tier system (Novice + Promoted)
+
+New module `crates/runtime-main/src/tier/` implements the L4 tier gate
+between the SDK and the Stage B L1+L2a capability enforcer. Two tiers
+per §0d release scope (Full tier post-v0.1):
+
+- **Novice** — curated allowlist (`Read` any scope + `Network` Domain
+  scope only). The default-safe first-run posture; rejects `Write`,
+  `Exec`, `ProcessSpawn`, and glob-/path-scoped `Network` at L4 before
+  L1 ever runs.
+- **Promoted** — pass-through at L4. L1 still narrows by per-agent
+  grant declaration.
+
+The L4 evaluator sits BEFORE the L1+L2a enforcer in the dispatch chain:
+`tier check → enforcer check → dispatch`. A Novice user with a stale
+`Write` grant is rejected with `CapabilityError::TierForbidden` —
+distinct from `Denied` — so the renderer routes `tier_violation` events
+to a Settings-panel modal instead of the L1 `capability_violation`
+inspector. Demotion takes effect immediately on the next dispatch.
+
+- **`crates/runtime-main/src/tier/evaluator.rs`** *(new)*:
+  - `Tier` enum (`Novice` | `Promoted`) — serde `rename_all = "lowercase"`
+    pins the wire format for `tier.json`; `Default` returns `Novice`.
+  - `TierEvaluator::allows(tier, capability)` — stateless predicate.
+    Promoted → `Ok(())`; Novice → walks the matrix table; returns
+    `Err(TierError::ForbiddenInTier)` on rejection.
+- **`crates/runtime-main/src/tier/matrix.rs`** *(new)*:
+  - `NOVICE_ALLOWED: &[NoviceAllowance]` — 2-row const data table
+    (`(Read, Any)` + `(Network, DomainOnly)`). Adding a v1.0+ Full tier
+    means adding rows here, not nesting if/else in the evaluator.
+  - `ScopeShape::{Any, DomainOnly}` + `shape_matches` const fn — the
+    scope-shape constraint a row applies.
+  - `novice_table_permits(kind, scope)` — table lookup.
+- **`crates/runtime-main/src/tier/persistence.rs`** *(new)*:
+  - `load_tier(dir: &Path)` — reads `<dir>/tier.json`; returns
+    `Tier::Novice` (the `Default`) when absent (first-run safe).
+  - `save_tier(dir, tier)` — creates the parent dir if missing and
+    writes pretty JSON. Stores `since_unix_ms` for the renderer's
+    "Promoted since …" display (M10 first-run UX).
+  - Path-agnostic by design; the Tauri layer resolves
+    `AppHandle::path().app_local_data_dir()` (Windows: `%APPDATA%\<id>\`;
+    Linux: `$XDG_DATA_HOME/<id>/` or `~/.local/share/<id>/`) and passes
+    it in. Tests use `tempfile::TempDir`.
+- **`crates/runtime-main/src/tier/error.rs`** *(new)*:
+  - `TierError::ForbiddenInTier { tier, capability_kind }` — emitted by
+    the evaluator; the enforcer wraps it as
+    `CapabilityError::TierForbidden` with the agent id added.
+  - `TierPersistenceError::{Io, Json}` — load/save failures with full
+    error context via `#[from]` impls.
+- **`crates/runtime-main/src/capability/enforcer.rs`** *(edited)*:
+  - Added `current_tier: Tier` field (`Default::default()` = `Novice`)
+    + `set_tier(&mut self, tier)` + `current_tier(&self)` accessors.
+  - `check(agent, requested)` now runs `TierEvaluator::allows` BEFORE
+    the L1 grant lookup. `TierError::ForbiddenInTier` maps to
+    `CapabilityError::TierForbidden { agent_id, tier, capability_kind }`.
+  - 5 new unit tests pin layer ordering (TierForbidden before Denied),
+    default-tier semantics, set_tier flow, and demotion invalidation.
+- **`crates/runtime-main/src/capability/error.rs`** *(edited)*:
+  - New `CapabilityError::TierForbidden { agent_id, tier, capability_kind }`
+    struct-shape variant per gotcha #26. Stage B-era `let
+    CapabilityError::Denied { .. } = err` irrefutable bindings updated
+    to exhaustive `match` blocks.
+- **`schemas/event.v1.json`** *(edited)*: two new variants under the
+  AgentEvent `oneOf`:
+  - `tier_violation { agent_id, tier, capability_kind, attempted_action }`
+    — fired when L4 rejects before L1 runs. Distinct from
+    `capability_violation`; renderer routes differently.
+  - `tier_transition { previous, current, reason }` — fired after a
+    successful tier change. Renderer's `currentTier` slot updates from
+    `current`.
+  - New `$defs/TierRef` enum (`novice` | `promoted`) + validated string
+    `$defs` `TierForbiddenAction` + `TierTransitionReason` per gotcha
+    #43 (typify-friendly extraction).
+- **`crates/runtime-core/src/event.rs`** *(edited)*:
+  - Hand-rolled `TierRef` mirror enum (per `HitlTriggerRef` /
+    `CapabilityKindRef` precedent — typify cross-schema `$ref` not
+    supported).
+  - Two new AgentEvent variants `TierViolation` + `TierTransition`
+    aligned to the schema shapes.
+- **`crates/runtime-core/src/generated/event.rs`** + **`src/types/agent_event.ts`**
+  *(regenerated)*: typify + `json-schema-to-typescript` produce
+  `TierRef`, `TierViolation`, `TierTransition` per the schema.
+- **`crates/runtime-main/src/lib.rs`** *(edited)*: `pub mod tier`.
+- **`src/lib/graphStore.ts`** *(edited)*:
+  - New `currentTier: TierRef` slot (default `'novice'` — matches the
+    runtime's `Tier::default()`).
+  - New `tierViolations: Record<string, TierViolationRecord>` keyed by
+    `agent_id`, last-write-wins.
+  - Two new `applyEvent` cases for the schema-added variants.
+  - `clear()` clears `tierViolations` (per-session) but preserves
+    `currentTier` (per-installation preference loaded from `tier.json`).
+- **`src-tauri/src/commands.rs`** *(edited)*: two new Tauri commands +
+  testable `*_with` seams:
+  - `get_current_tier(state)` → returns the cached tier.
+  - `request_tier_transition(target_tier, reason)` → persists to disk,
+    updates the `CurrentTierState` cache, emits `tier_transition` via
+    `agent_event`. Idempotent on no-op (target == current). Promotion
+    is renderer-confirmed (Settings panel modal); demotion is direct,
+    no confirmation. No `HitlSeam` involvement — tier transitions are
+    an OS-level user preference, not a framework-JSON-driven trigger.
+  - New `CurrentTierState = Mutex<Tier>` type alias.
+- **`src-tauri/src/main.rs`** *(edited)*: load persisted tier from
+  `app_local_data_dir()/tier.json` at startup (falls back to Novice on
+  any error); register `CurrentTierState` as Tauri-managed; register
+  both new commands in `invoke_handler!`.
+- **`src-tauri/Cargo.toml`** *(edited)*: added `tempfile` dev-dep for
+  the tier-transition persistence tests.
+- **`crates/runtime-main/tests/tier_smoke.rs`** *(new)*: 10
+  integration tests pinning the end-to-end behavior (layer ordering,
+  default tier, scope-conditional Network, persistence round-trip,
+  Promoted bypass).
+- **`crates/runtime-main/tests/capability_enforcer_smoke.rs`** *(edited)*:
+  `dispatch_with_check` translator now handles both `CapabilityError`
+  variants, emitting `TierViolation` on L4 rejections.
+- **`tests/unit/graphStore.test.ts`** *(edited)*: 5 new tests pin
+  Stage D renderer behavior (first-run default Novice, tier-violation
+  keyed-by-agent recording, last-write-wins, tier-transition
+  current-tier flip, clear() preserves tier).
+- **Coverage**: per-module ≥95% on tier files —
+  `evaluator.rs` 100% line + region, `matrix.rs` 100% line + region,
+  `persistence.rs` 100% region / 97.45% line. Workspace 93.15% (gate
+  ≥80%); runtime-main 97.56% region / 96.58% line (gate ≥95%);
+  runtime-drone + runtime-sandbox preserved at baseline.
+
 ### Added — M05.C2 §8.security L3 Cross-platform OS isolation (seccomp / landlock / Job Objects) (new safety primitive ≥95%)
 
 Code + CI gate updates. M05 Stage C2 layers kernel-level isolation on top of

@@ -397,6 +397,77 @@ describe('graphStore.applyEvent', () => {
     });
   });
 
+  // Spec §8.security L4 — M05 Stage D tier-event applyEvent branches.
+  describe('tier events (M05 Stage D)', () => {
+    const tierViolation: AgentEvent = {
+      type: 'tier_violation',
+      agent_id: 'worker',
+      tier: 'novice',
+      capability_kind: 'write',
+      attempted_action: "write 'src/lib.rs' under Novice tier",
+    };
+    const promoteTransition: AgentEvent = {
+      type: 'tier_transition',
+      previous: 'novice',
+      current: 'promoted',
+      reason: 'user confirmed in Settings panel',
+    };
+    const demoteTransition: AgentEvent = {
+      type: 'tier_transition',
+      previous: 'promoted',
+      current: 'novice',
+      reason: 'user demoted',
+    };
+
+    it('first_run_state_has_novice_tier_default', () => {
+      // The runtime's first-run default is Novice; the renderer's
+      // initial-state default must match.
+      expect(useGraphStore.getState().currentTier).toBe('novice');
+    });
+
+    it('applies_tier_violation_updates_state_keyed_by_agent', () => {
+      useGraphStore.getState().applyEvent(tierViolation);
+      const record = useGraphStore.getState().tierViolations['worker'];
+      expect(record).toBeDefined();
+      expect(record!.tier).toBe('novice');
+      expect(record!.capabilityKind).toBe('write');
+      expect(record!.attemptedAction).toContain('src/lib.rs');
+      expect(record!.timestamp).toBeGreaterThan(0);
+    });
+
+    it('applies_tier_transition_flips_current_tier', () => {
+      useGraphStore.getState().applyEvent(promoteTransition);
+      expect(useGraphStore.getState().currentTier).toBe('promoted');
+      useGraphStore.getState().applyEvent(demoteTransition);
+      expect(useGraphStore.getState().currentTier).toBe('novice');
+    });
+
+    it('tier_violation_last_write_wins_on_same_agent', () => {
+      useGraphStore.getState().applyEvent(tierViolation);
+      const later: AgentEvent = {
+        ...tierViolation,
+        attempted_action: 'spawn process under Novice tier',
+      };
+      useGraphStore.getState().applyEvent(later);
+      const record = useGraphStore.getState().tierViolations['worker']!;
+      expect(record.attemptedAction).toBe('spawn process under Novice tier');
+      expect(Object.keys(useGraphStore.getState().tierViolations)).toEqual(['worker']);
+    });
+
+    it('clear_preserves_current_tier_but_resets_tier_violations', () => {
+      // Tier is a per-installation user preference; clear() is for
+      // per-session graph state. The runtime persists tier across
+      // sessions via tier.json, so the renderer must NOT reset it on
+      // session clear.
+      useGraphStore.getState().applyEvent(promoteTransition);
+      useGraphStore.getState().applyEvent(tierViolation);
+      useGraphStore.getState().clear();
+      expect(useGraphStore.getState().currentTier).toBe('promoted');
+      // Per-session violations DO clear.
+      expect(useGraphStore.getState().tierViolations).toEqual({});
+    });
+  });
+
   it('clear_empties_nodes_edges_and_selectedNodeId', () => {
     useGraphStore.getState().applyEvent(spawnA);
     useGraphStore.getState().applyEvent(spawnB);

@@ -7,12 +7,13 @@ mod sandbox_lifecycle;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use commands::GlobalBudgetState;
+use commands::{CurrentTierState, GlobalBudgetState};
 use drone_lifecycle::DroneLifecycle;
 use runtime_main::drone_ipc::DroneClient;
 use runtime_main::hitl::HitlSeam;
 use runtime_main::sandbox_ipc::SandboxClient;
 use runtime_main::sdk::ApprovalSeam;
+use runtime_main::tier::{load_tier, Tier};
 use sandbox_lifecycle::SandboxLifecycle;
 use tauri::{Manager, RunEvent};
 use tokio::sync::Mutex;
@@ -53,6 +54,8 @@ fn main() {
             commands::request_resume,
             commands::respond_uncertainty,
             commands::set_global_budget,
+            commands::get_current_tier,
+            commands::request_tier_transition,
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();
@@ -76,6 +79,24 @@ fn main() {
             // round-trips without a new dependency.
             let global_budget: GlobalBudgetState = Mutex::new(None);
             app_handle.manage(global_budget);
+            // M05 Stage D §8.security L4: load the persisted tier from
+            // `<app_data_dir>/tier.json` (first-run default is Novice).
+            // The CurrentTierState seam is the single source of truth
+            // for the get_current_tier + request_tier_transition
+            // commands; tier_transition events drive the renderer's
+            // currentTier state.
+            let tier_from_disk = match app_handle.path().app_local_data_dir() {
+                Ok(dir) => load_tier(&dir).unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, "tier load failed; defaulting to Novice");
+                    Tier::default()
+                }),
+                Err(e) => {
+                    tracing::warn!(error = %e, "app_local_data_dir unavailable; defaulting to Novice");
+                    Tier::default()
+                }
+            };
+            let tier_state: CurrentTierState = Mutex::new(tier_from_disk);
+            app_handle.manage(tier_state);
             // The setup hook runs on the Tauri main thread; we need an
             // async block for the drone spawn + connect. block_on uses
             // the Tauri runtime that's already configured.

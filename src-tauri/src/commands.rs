@@ -50,8 +50,9 @@ use runtime_main::recovery::{
 use runtime_main::sdk::{
     replay_signals_to_events, AgentSdk, ApprovalDecision, ApprovalError, ApprovalSeam, SessionId,
 };
+use runtime_main::tier::{save_tier, Tier, TierPersistenceError};
 use serde_json::Value;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
@@ -383,6 +384,134 @@ pub async fn abort_plan_with(
 /// Tauri-managed global budget cap. v0.1 holds the user-configured per-day
 /// global cap in process memory only — first-run UX persistence is M10.
 pub type GlobalBudgetState = Mutex<Option<f64>>;
+
+/// Tauri-managed current-tier cache. M05 Stage D loads this from
+/// `<app_data_dir>/tier.json` at startup; mutated by
+/// [`request_tier_transition`]. The renderer reads via
+/// [`get_current_tier`] and observes mutations through the
+/// `tier_transition` event channel.
+pub type CurrentTierState = Mutex<Tier>;
+
+/// Read the user's current tier — M05 Stage D (spec §8.security L4).
+///
+/// # Errors
+///
+/// Infallible by construction (Tauri state is initialized at setup).
+/// Returns `Result` to keep the surface uniform with the other tier
+/// commands.
+#[tauri::command]
+pub async fn get_current_tier(state: tauri::State<'_, CurrentTierState>) -> Result<Tier, CmdError> {
+    get_current_tier_with(state.inner()).await
+}
+
+/// Test-seam for [`get_current_tier`] (CLAUDE.md §5 `*_with` archetype).
+///
+/// # Errors
+///
+/// Infallible.
+pub async fn get_current_tier_with(state: &CurrentTierState) -> Result<Tier, CmdError> {
+    let tier = *state.lock().await;
+    tracing::info!(?tier, "get_current_tier invoked");
+    Ok(tier)
+}
+
+/// Request a tier transition — M05 Stage D (spec §8.security L4).
+///
+/// **Promotion** (Novice → Promoted) is authoritative on the renderer
+/// side: the Settings panel shows a confirmation modal; on confirm the
+/// renderer invokes this command, and the runtime treats the call as
+/// approved. No `HitlSeam` involvement — tier transitions are an OS-level
+/// user preference, not a framework-JSON-driven trigger.
+///
+/// **Demotion** (Promoted → Novice) is direct, no confirmation. Demotion
+/// is always safer.
+///
+/// On success: persists the new tier to `<app_data_dir>/tier.json`,
+/// updates the in-memory cache, and emits a `tier_transition` event
+/// through the `agent_event` channel so the renderer's graph store
+/// updates its `currentTier` slot.
+///
+/// # Errors
+///
+/// - [`CmdError::Internal`] if the persistence layer fails (filesystem
+///   I/O, JSON serialization).
+#[tauri::command]
+pub async fn request_tier_transition(
+    app: AppHandle,
+    target_tier: Tier,
+    reason: String,
+    state: tauri::State<'_, CurrentTierState>,
+) -> Result<(), CmdError> {
+    let app_data_dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| CmdError::internal(format!("app_local_data_dir: {e}")))?;
+    request_tier_transition_with(target_tier, reason, state.inner(), &app_data_dir, |event| {
+        let _ = app.emit("agent_event", &event);
+        Ok(())
+    })
+    .await
+}
+
+/// Test-seam for [`request_tier_transition`] (CLAUDE.md §5 `*_with`
+/// archetype). Accepts an injectable emit callback so unit tests
+/// exercise the persistence + event-emission paths without touching
+/// Tauri.
+///
+/// # Errors
+///
+/// - [`CmdError::Internal`] on filesystem write failure or emit-callback
+///   error (rare; persistence module surfaces structured errors).
+pub async fn request_tier_transition_with<F>(
+    target_tier: Tier,
+    reason: String,
+    state: &CurrentTierState,
+    app_data_dir: &std::path::Path,
+    emit: F,
+) -> Result<(), CmdError>
+where
+    F: FnOnce(AgentEvent) -> Result<(), CmdError>,
+{
+    let previous = {
+        let guard = state.lock().await;
+        *guard
+    };
+    tracing::info!(
+        ?previous,
+        target = ?target_tier,
+        reason_len = reason.len(),
+        "request_tier_transition invoked"
+    );
+    // Idempotent no-op when target matches current: surfaced as Ok so
+    // the renderer's settings panel can call freely without checking.
+    if previous == target_tier {
+        tracing::info!(?target_tier, "tier already at target; idempotent no-op");
+        return Ok(());
+    }
+    save_tier(app_data_dir, target_tier).map_err(|e: TierPersistenceError| {
+        tracing::error!(error = %e, "save_tier failed");
+        CmdError::internal(format!("save_tier: {e}"))
+    })?;
+    {
+        let mut guard = state.lock().await;
+        *guard = target_tier;
+    }
+    let event = AgentEvent::TierTransition {
+        previous: tier_to_ref(previous),
+        current: tier_to_ref(target_tier),
+        reason,
+    };
+    emit(event)?;
+    tracing::info!(?target_tier, "tier transition complete");
+    Ok(())
+}
+
+const fn tier_to_ref(tier: Tier) -> runtime_core::event::TierRef {
+    match tier {
+        Tier::Novice => runtime_core::event::TierRef::Novice,
+        Tier::Promoted => runtime_core::event::TierRef::Promoted,
+    }
+}
 
 /// Request a session resume — M04 Stage F (spec §1b). Reads the latest
 /// snapshot + projected plan/task state + uncertain tool-invocation ids
@@ -1176,6 +1305,134 @@ mod tests {
         }
         // State unchanged.
         assert!(state.lock().await.is_none());
+    }
+
+    // ── M05 Stage D — tier commands ──
+
+    #[tokio::test]
+    async fn get_current_tier_with_returns_state_value() {
+        let state: CurrentTierState = Mutex::new(Tier::Novice);
+        let t = get_current_tier_with(&state).await.unwrap();
+        assert_eq!(t, Tier::Novice);
+        *state.lock().await = Tier::Promoted;
+        let t = get_current_tier_with(&state).await.unwrap();
+        assert_eq!(t, Tier::Promoted);
+    }
+
+    #[tokio::test]
+    async fn request_tier_transition_promotes_persists_and_emits() {
+        let state: CurrentTierState = Mutex::new(Tier::Novice);
+        let dir = tempfile::tempdir().unwrap();
+        let emitted = std::sync::Arc::new(std::sync::Mutex::new(None::<AgentEvent>));
+        let emitted_clone = emitted.clone();
+        request_tier_transition_with(
+            Tier::Promoted,
+            "user confirmed".into(),
+            &state,
+            dir.path(),
+            move |event| {
+                *emitted_clone.lock().unwrap() = Some(event);
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(*state.lock().await, Tier::Promoted);
+        // Persisted: a subsequent load_tier reads back Promoted.
+        assert_eq!(
+            runtime_main::tier::load_tier(dir.path()).unwrap(),
+            Tier::Promoted
+        );
+        // Event shape: TierTransition with previous=Novice, current=Promoted.
+        let event = emitted.lock().unwrap().clone().expect("event emitted");
+        match event {
+            AgentEvent::TierTransition {
+                previous,
+                current,
+                reason,
+            } => {
+                assert_eq!(previous, runtime_core::event::TierRef::Novice);
+                assert_eq!(current, runtime_core::event::TierRef::Promoted);
+                assert_eq!(reason, "user confirmed");
+            }
+            other => panic!("expected TierTransition, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn request_tier_transition_demotes_without_confirmation() {
+        // Demotion is direct — same call path, no special handling.
+        let state: CurrentTierState = Mutex::new(Tier::Promoted);
+        let dir = tempfile::tempdir().unwrap();
+        request_tier_transition_with(
+            Tier::Novice,
+            "user demoted".into(),
+            &state,
+            dir.path(),
+            |_event| Ok(()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(*state.lock().await, Tier::Novice);
+    }
+
+    #[tokio::test]
+    async fn request_tier_transition_idempotent_when_target_matches_current() {
+        // Calling with the current tier is a no-op: state unchanged,
+        // event NOT emitted (no transition happened).
+        let state: CurrentTierState = Mutex::new(Tier::Novice);
+        let dir = tempfile::tempdir().unwrap();
+        let emitted = std::sync::Arc::new(std::sync::Mutex::new(false));
+        let emitted_clone = emitted.clone();
+        request_tier_transition_with(
+            Tier::Novice,
+            "noop".into(),
+            &state,
+            dir.path(),
+            move |_event| {
+                *emitted_clone.lock().unwrap() = true;
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(*state.lock().await, Tier::Novice);
+        assert!(
+            !*emitted.lock().unwrap(),
+            "no event should fire on idempotent call"
+        );
+    }
+
+    #[tokio::test]
+    async fn request_tier_transition_surfaces_persistence_error_as_internal() {
+        // Pass a path that cannot be created as a directory (a file
+        // path inside the temp dir) to trigger save_tier failure.
+        let state: CurrentTierState = Mutex::new(Tier::Novice);
+        let parent = tempfile::tempdir().unwrap();
+        let file_path = parent.path().join("not-a-dir");
+        std::fs::write(&file_path, b"placeholder").unwrap();
+        // Now ask save_tier to create a directory at the same path
+        // — fs::create_dir_all will fail because a regular file exists.
+        let result = request_tier_transition_with(
+            Tier::Promoted,
+            "expect-failure".into(),
+            &state,
+            &file_path,
+            |_event| Ok(()),
+        )
+        .await;
+        match result {
+            Err(CmdError::Internal(msg)) => {
+                assert!(
+                    format!("{msg:?}").contains("save_tier"),
+                    "expected save_tier in error, got {msg:?}"
+                );
+            }
+            other => panic!("expected Internal CmdError, got {other:?}"),
+        }
+        // State unchanged on error — the transition aborted before
+        // mutating the in-memory cache.
+        assert_eq!(*state.lock().await, Tier::Novice);
     }
 
     #[tokio::test]

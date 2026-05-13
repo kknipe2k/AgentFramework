@@ -1286,6 +1286,64 @@ pub mod error {
 #[doc = "      \"additionalProperties\": false"]
 #[doc = "    },"]
 #[doc = "    {"]
+#[doc = "      \"title\": \"TierViolation\","]
+#[doc = "      \"description\": \"M05 Stage D §8.security L4 — emitted when the L4 tier gate rejects a capability request before the L1 enforcer runs. Distinct from `capability_violation` (which fires on L1 rejection). Renderer routes to a tier-violation modal in the Settings panel: \\\"Your current tier (Novice) does not permit this action; promote to Promoted or modify the request.\\\" Carries the tier that rejected + the requested kind + a plain-English action.\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"agent_id\","]
+#[doc = "        \"attempted_action\","]
+#[doc = "        \"capability_kind\","]
+#[doc = "        \"tier\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"agent_id\": {"]
+#[doc = "          \"description\": \"Agent whose dispatch the §8.security L4 evaluator rejected.\","]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"attempted_action\": {"]
+#[doc = "          \"$ref\": \"#/$defs/TierForbiddenAction\""]
+#[doc = "        },"]
+#[doc = "        \"capability_kind\": {"]
+#[doc = "          \"description\": \"The coarse kind the tier's allowlist excludes.\","]
+#[doc = "          \"$ref\": \"#/$defs/CapabilityKindRef\""]
+#[doc = "        },"]
+#[doc = "        \"tier\": {"]
+#[doc = "          \"$ref\": \"#/$defs/TierRef\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"tier_violation\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"title\": \"TierTransition\","]
+#[doc = "      \"description\": \"M05 Stage D §8.security L4 — emitted on a successful tier change. `previous` is the tier before the change; `current` is the tier after. Includes a plain-English `reason`. Promotion is renderer-confirmed (Settings panel modal calls `request_tier_transition`); demotion is direct. Renderer applies the new tier to its current-tier state and surfaces a toast.\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"current\","]
+#[doc = "        \"previous\","]
+#[doc = "        \"reason\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"current\": {"]
+#[doc = "          \"$ref\": \"#/$defs/TierRef\""]
+#[doc = "        },"]
+#[doc = "        \"previous\": {"]
+#[doc = "          \"$ref\": \"#/$defs/TierRef\""]
+#[doc = "        },"]
+#[doc = "        \"reason\": {"]
+#[doc = "          \"$ref\": \"#/$defs/TierTransitionReason\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"tier_transition\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
 #[doc = "      \"title\": \"TokenUsage\","]
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"required\": ["]
@@ -1668,6 +1726,23 @@ pub enum AgentEvent {
         rationale: ::std::string::String,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         tool_used: ::std::option::Option<::std::string::String>,
+    },
+    #[doc = "TierViolation\n\nM05 Stage D §8.security L4 — emitted when the L4 tier gate rejects a capability request before the L1 enforcer runs. Distinct from `capability_violation` (which fires on L1 rejection). Renderer routes to a tier-violation modal in the Settings panel: \"Your current tier (Novice) does not permit this action; promote to Promoted or modify the request.\" Carries the tier that rejected + the requested kind + a plain-English action."]
+    #[serde(rename = "tier_violation")]
+    TierViolation {
+        #[doc = "Agent whose dispatch the §8.security L4 evaluator rejected."]
+        agent_id: ::std::string::String,
+        attempted_action: TierForbiddenAction,
+        #[doc = "The coarse kind the tier's allowlist excludes."]
+        capability_kind: CapabilityKindRef,
+        tier: TierRef,
+    },
+    #[doc = "TierTransition\n\nM05 Stage D §8.security L4 — emitted on a successful tier change. `previous` is the tier before the change; `current` is the tier after. Includes a plain-English `reason`. Promotion is renderer-confirmed (Settings panel modal calls `request_tier_transition`); demotion is direct. Renderer applies the new tier to its current-tier state and surfaces a toast."]
+    #[serde(rename = "tier_transition")]
+    TierTransition {
+        current: TierRef,
+        previous: TierRef,
+        reason: TierTransitionReason,
     },
     #[doc = "TokenUsage"]
     #[serde(rename = "token_usage")]
@@ -2698,6 +2773,220 @@ impl ::std::convert::TryFrom<::std::string::String> for SuggestedAction {
     }
 }
 impl<'de> ::serde::Deserialize<'de> for SuggestedAction {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "Plain-English description of what the agent attempted; surfaced in the tier-violation modal so the user understands the rejection. Pairs with `capability_kind` (e.g., \"attempted to write to src/lib.rs while in Novice tier\"). Per gotcha #43 (typify-friendly extraction)."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"TierForbiddenAction\","]
+#[doc = "  \"description\": \"Plain-English description of what the agent attempted; surfaced in the tier-violation modal so the user understands the rejection. Pairs with `capability_kind` (e.g., \\\"attempted to write to src/lib.rs while in Novice tier\\\"). Per gotcha #43 (typify-friendly extraction).\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"minLength\": 1"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct TierForbiddenAction(::std::string::String);
+impl ::std::ops::Deref for TierForbiddenAction {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<TierForbiddenAction> for ::std::string::String {
+    fn from(value: TierForbiddenAction) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for TierForbiddenAction {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for TierForbiddenAction {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for TierForbiddenAction {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for TierForbiddenAction {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for TierForbiddenAction {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "User tier discriminator — spec §8.security L4 + §0d release scope (M05 Stage D). Two-tier system in v0.1: `novice` (curated allowlist — read + HTTPS-only network) is the first-run default; `promoted` (full capability surface; L1 still narrows) is the user-toggled tier. Full tier is post-v0.1. The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef)."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"TierRef\","]
+#[doc = "  \"description\": \"User tier discriminator — spec §8.security L4 + §0d release scope (M05 Stage D). Two-tier system in v0.1: `novice` (curated allowlist — read + HTTPS-only network) is the first-run default; `promoted` (full capability surface; L1 still narrows) is the user-toggled tier. Full tier is post-v0.1. The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef).\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"novice\","]
+#[doc = "    \"promoted\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum TierRef {
+    #[serde(rename = "novice")]
+    Novice,
+    #[serde(rename = "promoted")]
+    Promoted,
+}
+impl ::std::fmt::Display for TierRef {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Novice => f.write_str("novice"),
+            Self::Promoted => f.write_str("promoted"),
+        }
+    }
+}
+impl ::std::str::FromStr for TierRef {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "novice" => Ok(Self::Novice),
+            "promoted" => Ok(Self::Promoted),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for TierRef {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for TierRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for TierRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Plain-English reason for the tier transition. For promotions: user clicked confirm in the Settings panel. For demotions: user clicked demote OR a downgrade-on-uncertainty affordance fired. Per gotcha #43 (typify-friendly extraction)."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"TierTransitionReason\","]
+#[doc = "  \"description\": \"Plain-English reason for the tier transition. For promotions: user clicked confirm in the Settings panel. For demotions: user clicked demote OR a downgrade-on-uncertainty affordance fired. Per gotcha #43 (typify-friendly extraction).\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"minLength\": 1"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct TierTransitionReason(::std::string::String);
+impl ::std::ops::Deref for TierTransitionReason {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<TierTransitionReason> for ::std::string::String {
+    fn from(value: TierTransitionReason) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for TierTransitionReason {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for TierTransitionReason {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for TierTransitionReason {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for TierTransitionReason {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for TierTransitionReason {
     fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
     where
         D: ::serde::Deserializer<'de>,

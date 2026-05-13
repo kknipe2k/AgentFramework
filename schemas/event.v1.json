@@ -96,6 +96,24 @@
       "title": "SuggestedAction",
       "description": "Plain-English next-step text the renderer surfaces in the GapPanel + HITL prompt. Free-form; emitter composes per severity (e.g. \"Install tool 'fetch_prs' and click Resume\" for critical; \"Skill 'rag' continues without — install async or dismiss\" for advisory). minLength 1 — emitters MUST supply a non-empty action.",
       "minLength": 1
+    },
+    "TierRef": {
+      "type": "string",
+      "title": "TierRef",
+      "description": "User tier discriminator — spec §8.security L4 + §0d release scope (M05 Stage D). Two-tier system in v0.1: `novice` (curated allowlist — read + HTTPS-only network) is the first-run default; `promoted` (full capability surface; L1 still narrows) is the user-toggled tier. Full tier is post-v0.1. The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef).",
+      "enum": ["novice", "promoted"]
+    },
+    "TierForbiddenAction": {
+      "type": "string",
+      "title": "TierForbiddenAction",
+      "description": "Plain-English description of what the agent attempted; surfaced in the tier-violation modal so the user understands the rejection. Pairs with `capability_kind` (e.g., \"attempted to write to src/lib.rs while in Novice tier\"). Per gotcha #43 (typify-friendly extraction).",
+      "minLength": 1
+    },
+    "TierTransitionReason": {
+      "type": "string",
+      "title": "TierTransitionReason",
+      "description": "Plain-English reason for the tier transition. For promotions: user clicked confirm in the Settings panel. For demotions: user clicked demote OR a downgrade-on-uncertainty affordance fired. Per gotcha #43 (typify-friendly extraction).",
+      "minLength": 1
     }
   },
   "oneOf": [
@@ -699,6 +717,39 @@
         "decision": { "type": "string" },
         "rationale": { "type": "string" },
         "tool_used": { "type": ["string", "null"] }
+      }
+    },
+    {
+      "type": "object",
+      "title": "TierViolation",
+      "description": "M05 Stage D §8.security L4 — emitted when the L4 tier gate rejects a capability request before the L1 enforcer runs. Distinct from `capability_violation` (which fires on L1 rejection). Renderer routes to a tier-violation modal in the Settings panel: \"Your current tier (Novice) does not permit this action; promote to Promoted or modify the request.\" Carries the tier that rejected + the requested kind + a plain-English action.",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "tier", "capability_kind", "attempted_action"],
+      "properties": {
+        "type": { "const": "tier_violation" },
+        "agent_id": {
+          "type": "string",
+          "description": "Agent whose dispatch the §8.security L4 evaluator rejected."
+        },
+        "tier": { "$ref": "#/$defs/TierRef" },
+        "capability_kind": {
+          "$ref": "#/$defs/CapabilityKindRef",
+          "description": "The coarse kind the tier's allowlist excludes."
+        },
+        "attempted_action": { "$ref": "#/$defs/TierForbiddenAction" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "TierTransition",
+      "description": "M05 Stage D §8.security L4 — emitted on a successful tier change. `previous` is the tier before the change; `current` is the tier after. Includes a plain-English `reason`. Promotion is renderer-confirmed (Settings panel modal calls `request_tier_transition`); demotion is direct. Renderer applies the new tier to its current-tier state and surfaces a toast.",
+      "additionalProperties": false,
+      "required": ["type", "previous", "current", "reason"],
+      "properties": {
+        "type": { "const": "tier_transition" },
+        "previous": { "$ref": "#/$defs/TierRef" },
+        "current": { "$ref": "#/$defs/TierRef" },
+        "reason": { "$ref": "#/$defs/TierTransitionReason" }
       }
     },
     {

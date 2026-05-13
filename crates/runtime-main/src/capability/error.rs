@@ -1,11 +1,21 @@
-//! Error types for the §8.security L1 enforcer + L2a narrowing evaluator.
+//! Error types for the §8.security L1 enforcer + L2a narrowing evaluator
+//! + L4 tier gate (M05 Stage D).
 
-use runtime_core::generated::capability::CapabilityDeclaration;
+use runtime_core::generated::capability::{CapabilityDeclaration, CapabilityKind};
 use thiserror::Error;
 
 use crate::capability::enforcer::DenyReason;
+use crate::tier::Tier;
 
 /// Errors raised by [`CapabilityEnforcer::check`].
+///
+/// Three failure shapes:
+/// - [`Self::TierForbidden`] — L4 rejected the request before L1 ran.
+///   Renderer routes `tier_violation` event.
+/// - [`Self::Denied`] — L1 rejected: either no declarations
+///   ([`DenyReason::NoDeclarations`]) or declarations present but
+///   nothing subsumes the request ([`DenyReason::NoMatchingGrant`]).
+///   Renderer routes `capability_violation` event.
 ///
 /// [`CapabilityEnforcer::check`]: crate::capability::CapabilityEnforcer::check
 #[derive(Debug, Clone, Error)]
@@ -20,6 +30,19 @@ pub enum CapabilityError {
         agent_id: String,
         /// Why the dispatch was denied.
         reason: DenyReason,
+    },
+    /// The L4 tier gate rejected the request — the user's current tier
+    /// does not permit this capability kind at all, regardless of
+    /// per-agent grants. Carries the tier and the requested kind so the
+    /// renderer's `tier_violation` event surfaces both.
+    #[error("capability {capability_kind:?} forbidden in tier {tier:?} for agent {agent_id}")]
+    TierForbidden {
+        /// The agent whose dispatch was rejected.
+        agent_id: String,
+        /// The tier that rejected the request.
+        tier: Tier,
+        /// The coarse kind that the tier's allowlist excludes.
+        capability_kind: CapabilityKind,
     },
 }
 

@@ -61,6 +61,8 @@ export type AgentEvent =
   | BudgetExceeded
   | StreamText
   | DecisionRecord
+  | TierViolation
+  | TierTransition
   | TokenUsage;
 /**
  * Origin of a tool invocation. Spec §0b + §2.
@@ -131,6 +133,22 @@ export type CapabilityKindRef1 = "read" | "write" | "exec" | "network" | "proces
  * Resource name the grant covers — tool name, file glob, network hostname, or sub-agent id depending on `capability_kind`. Per gotcha #43 (typify-friendly extraction).
  */
 export type GrantedResource = string;
+/**
+ * User tier discriminator — spec §8.security L4 + §0d release scope (M05 Stage D). Two-tier system in v0.1: `novice` (curated allowlist — read + HTTPS-only network) is the first-run default; `promoted` (full capability surface; L1 still narrows) is the user-toggled tier. Full tier is post-v0.1. The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef).
+ */
+export type TierRef = "novice" | "promoted";
+/**
+ * Capability-kind discriminator embedded in capability_violation + capability_grant events. Spec §8.security L1 — mirrors capability.v1.json CapabilityKind (5 values, locked). The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, GapSeverityRef).
+ */
+export type CapabilityKindRef2 = "read" | "write" | "exec" | "network" | "process_spawn";
+/**
+ * Plain-English description of what the agent attempted; surfaced in the tier-violation modal so the user understands the rejection. Pairs with `capability_kind` (e.g., "attempted to write to src/lib.rs while in Novice tier"). Per gotcha #43 (typify-friendly extraction).
+ */
+export type TierForbiddenAction = string;
+/**
+ * Plain-English reason for the tier transition. For promotions: user clicked confirm in the Settings panel. For demotions: user clicked demote OR a downgrade-on-uncertainty affordance fired. Per gotcha #43 (typify-friendly extraction).
+ */
+export type TierTransitionReason = string;
 
 export interface SessionStart {
   type: "session_start";
@@ -480,6 +498,28 @@ export interface DecisionRecord {
   decision: string;
   rationale: string;
   tool_used?: string | null;
+}
+/**
+ * M05 Stage D §8.security L4 — emitted when the L4 tier gate rejects a capability request before the L1 enforcer runs. Distinct from `capability_violation` (which fires on L1 rejection). Renderer routes to a tier-violation modal in the Settings panel: "Your current tier (Novice) does not permit this action; promote to Promoted or modify the request." Carries the tier that rejected + the requested kind + a plain-English action.
+ */
+export interface TierViolation {
+  type: "tier_violation";
+  /**
+   * Agent whose dispatch the §8.security L4 evaluator rejected.
+   */
+  agent_id: string;
+  tier: TierRef;
+  capability_kind: CapabilityKindRef2;
+  attempted_action: TierForbiddenAction;
+}
+/**
+ * M05 Stage D §8.security L4 — emitted on a successful tier change. `previous` is the tier before the change; `current` is the tier after. Includes a plain-English `reason`. Promotion is renderer-confirmed (Settings panel modal calls `request_tier_transition`); demotion is direct. Renderer applies the new tier to its current-tier state and surfaces a toast.
+ */
+export interface TierTransition {
+  type: "tier_transition";
+  previous: TierRef;
+  current: TierRef;
+  reason: TierTransitionReason;
 }
 export interface TokenUsage {
   type: "token_usage";

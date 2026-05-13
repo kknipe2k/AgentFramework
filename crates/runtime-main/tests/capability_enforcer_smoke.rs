@@ -87,27 +87,59 @@ async fn dispatch_with_check(
             Ok(())
         }
         Err(err) => {
-            let CapabilityError::Denied {
-                reason,
-                agent_id: agent,
-            } = &err;
-            emitter
-                .emit(AgentEvent::CapabilityViolation {
-                    agent_id: agent.clone(),
-                    capability_kind: kind_to_ref(requested.kind),
-                    requested_action: format!(
-                        "requested {kind:?} on '{resource}'",
-                        kind = requested.kind,
-                        resource = *requested.resource
-                    ),
-                    declared_scope: match reason {
-                        DenyReason::NoDeclarations => "no capabilities declared".to_string(),
-                        DenyReason::NoMatchingGrant => {
-                            "declared grants do not cover this request".to_string()
-                        }
-                    },
-                })
-                .await;
+            match &err {
+                CapabilityError::Denied {
+                    reason,
+                    agent_id: agent,
+                } => {
+                    emitter
+                        .emit(AgentEvent::CapabilityViolation {
+                            agent_id: agent.clone(),
+                            capability_kind: kind_to_ref(requested.kind),
+                            requested_action: format!(
+                                "requested {kind:?} on '{resource}'",
+                                kind = requested.kind,
+                                resource = *requested.resource
+                            ),
+                            declared_scope: match reason {
+                                DenyReason::NoDeclarations => "no capabilities declared".to_string(),
+                                DenyReason::NoMatchingGrant => {
+                                    "declared grants do not cover this request".to_string()
+                                }
+                            },
+                        })
+                        .await;
+                }
+                CapabilityError::TierForbidden {
+                    agent_id: agent,
+                    tier,
+                    capability_kind,
+                } => {
+                    // Stage D — L4 tier gate rejected before L1. Route
+                    // to the tier_violation event variant; the renderer
+                    // surfaces a tier-violation modal in the Settings
+                    // panel instead of the capability-violation modal.
+                    emitter
+                        .emit(AgentEvent::TierViolation {
+                            agent_id: agent.clone(),
+                            tier: match tier {
+                                runtime_main::tier::Tier::Novice => {
+                                    runtime_core::event::TierRef::Novice
+                                }
+                                runtime_main::tier::Tier::Promoted => {
+                                    runtime_core::event::TierRef::Promoted
+                                }
+                            },
+                            capability_kind: kind_to_ref(*capability_kind),
+                            attempted_action: format!(
+                                "requested {kind:?} on '{resource}' under {tier:?} tier",
+                                kind = capability_kind,
+                                resource = *requested.resource,
+                            ),
+                        })
+                        .await;
+                }
+            }
             Err(err)
         }
     }
@@ -190,8 +222,14 @@ async fn tool_call_without_grant_denied_and_emits_capability_violation_before_er
     }
 
     // The err carries the default-deny reason.
-    let CapabilityError::Denied { reason, .. } = err;
-    assert_eq!(reason, DenyReason::NoDeclarations);
+    match err {
+        CapabilityError::Denied { reason, .. } => {
+            assert_eq!(reason, DenyReason::NoDeclarations);
+        }
+        CapabilityError::TierForbidden { .. } => {
+            panic!("Read should pass L4 (Novice allows Read); L1 should reject");
+        }
+    }
 }
 
 #[tokio::test]
@@ -208,8 +246,14 @@ async fn dispatch_emits_no_matching_grant_violation_when_declarations_exist_but_
 
     let events = emitter.snapshot();
     assert_eq!(events.len(), 1);
-    let CapabilityError::Denied { reason, .. } = err;
-    assert_eq!(reason, DenyReason::NoMatchingGrant);
+    match &err {
+        CapabilityError::Denied { reason, .. } => {
+            assert_eq!(*reason, DenyReason::NoMatchingGrant);
+        }
+        CapabilityError::TierForbidden { .. } => {
+            panic!("Read should pass L4 (Novice allows Read); L1 should reject");
+        }
+    }
 
     match &events[0] {
         AgentEvent::CapabilityViolation { declared_scope, .. } => {

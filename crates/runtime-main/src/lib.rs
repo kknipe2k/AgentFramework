@@ -65,6 +65,15 @@ pub mod recovery;
 /// unchanged.
 pub mod sandbox_ipc;
 pub mod sdk;
+/// Tier system — spec §8.security L4 (M05 Stage D).
+///
+/// Two-tier evaluator (Novice + Promoted per §0d) that sits BEFORE the
+/// Stage B L1+L2a capability enforcer in the dispatch chain. Novice
+/// caps the surface to a curated allowlist (Read + Domain-scoped
+/// Network); Promoted is a pass-through at L4 (L1 still narrows).
+/// Persisted in `<app_data_dir>/tier.json`; first-run defaults to
+/// Novice.
+pub mod tier;
 
 /// Returns the string `"ok"`. Placeholder for Stage A; real exports come later.
 ///

@@ -147,6 +147,23 @@ pub enum CapabilityKindRef {
     ProcessSpawn,
 }
 
+/// User tier discriminator embedded in `TierViolation` + `TierTransition`
+/// events — spec §8.security L4 (M05 Stage D).
+///
+/// Mirrors `runtime_core::generated::event::TierRef` and the `TierRef`
+/// enum in `event.v1.json` `$defs`. Two values for v0.1 per §0d release
+/// scope; Full tier post-v0.1 would require a v2 schema bump + ADR.
+/// Hand-rolled here because typify cross-schema `$ref` is unsupported,
+/// matching the [`HitlTriggerRef`] / [`CapabilityKindRef`] precedent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TierRef {
+    /// Default-safe tier — curated allowlist (read + HTTPS-only network).
+    Novice,
+    /// Full capability surface — L1 still narrows by declaration.
+    Promoted,
+}
+
 /// The canonical event union emitted by the runtime across all phases.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -632,6 +649,35 @@ pub enum AgentEvent {
         /// from ... to ..." attribution; absent for root grants.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         narrowed_from: Option<String>,
+    },
+
+    // ── Tier system (spec §8.security L4 — M05 Stage D) ──
+    /// The L4 tier gate rejected an agent's dispatch BEFORE the L1
+    /// enforcer ran. Distinct from `CapabilityViolation` (L1) — the
+    /// renderer routes this to a tier-violation modal in the Settings
+    /// panel.
+    TierViolation {
+        /// Agent whose dispatch the L4 evaluator rejected.
+        agent_id: String,
+        /// The tier that rejected the request.
+        tier: TierRef,
+        /// The coarse kind the tier's allowlist excludes.
+        capability_kind: CapabilityKindRef,
+        /// Plain-English description of what the agent attempted.
+        attempted_action: String,
+    },
+    /// The user's tier changed. Emitted after the persistence layer
+    /// commits the new tier to `tier.json` so the renderer's graph
+    /// store can update `currentTier` and the Settings panel toggle
+    /// reflects the new state.
+    TierTransition {
+        /// The tier the user was on before the transition.
+        previous: TierRef,
+        /// The tier the user is now on.
+        current: TierRef,
+        /// Plain-English reason — confirmation copy / demote-on-uncertainty
+        /// trigger / etc.
+        reason: String,
     },
 
     // ── Budget (spec §2a) ──
