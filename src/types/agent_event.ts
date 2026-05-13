@@ -45,6 +45,8 @@ export type AgentEvent =
   | RailTriggered
   | SkillMissing
   | ToolMissing
+  | McpMissing
+  | AgentMissing
   | GapResolved
   | HitlRequested
   | HitlResolved
@@ -80,6 +82,18 @@ export type OnFailureRef = "block" | "warn" | "rollback";
  * Rail policy — spec §4a. Hard rails block; soft rails warn.
  */
 export type RailPolicy = "hard" | "soft";
+/**
+ * Severity matrix per spec §4b. `critical` blocks the session (loader-detected tool gaps; agent_missing); `important` blocks the owning agent but lets the session continue (request_capability tool gaps); `advisory` warns and continues (skill gaps from any source); `requested` is the M05 marker for request_capability-emitted gaps so the renderer can distinguish loader vs meta-tool origin in the same severity tier.
+ */
+export type GapSeverity = "critical" | "important" | "advisory" | "requested";
+/**
+ * Plain-English next-step text the renderer surfaces in the GapPanel + HITL prompt. Free-form; emitter composes per severity (e.g. "Install tool 'fetch_prs' and click Resume" for critical; "Skill 'rag' continues without — install async or dismiss" for advisory). minLength 1 — emitters MUST supply a non-empty action.
+ */
+export type SuggestedAction = string;
+/**
+ * How this gap was discovered. `loader` = the framework_loader walked the framework JSON at session start and the reference did not resolve. `request_capability` = a running agent asked for the capability mid-session via the meta-tool. Drives renderer display + HITL prompt copy.
+ */
+export type GapSource = "loader" | "request_capability";
 /**
  * HITL trigger discriminator embedded in HITL + notifier events. Spec §6a — mirrors hitl.v1.json HitlTrigger (9 values, locked). The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy).
  */
@@ -260,17 +274,49 @@ export interface RailTriggered {
   message: string;
   agent_id?: string | null;
 }
+/**
+ * Spec §4b Layer 1 (loader) or Layer 2 (request_capability) gap event for an unresolved skill reference. M05.A added `suggested_action` + `requested_via`; severity tightened from free-string to GapSeverity enum. Defaults to severity=advisory (skill gaps are recoverable per spec §4b severity matrix — load continues without).
+ */
 export interface SkillMissing {
   type: "skill_missing";
   agent_id: string;
   skill_name: string;
-  severity: string;
+  severity: GapSeverity;
+  suggested_action: SuggestedAction;
+  requested_via: GapSource;
 }
+/**
+ * Spec §4b Layer 1 (loader) or Layer 2 (request_capability) gap event for an unresolved tool reference. M05.A added `suggested_action` + `requested_via`; severity tightened from free-string to GapSeverity enum. Tool gaps are blocking per spec §4b severity matrix — the owning agent cannot proceed.
+ */
 export interface ToolMissing {
   type: "tool_missing";
   agent_id: string;
   tool_name: string;
-  severity: string;
+  severity: GapSeverity;
+  suggested_action: SuggestedAction;
+  requested_via: GapSource;
+}
+/**
+ * Spec §4b + §5: gap event for an unresolved MCP server reference. v0.1 emits this only from Layer 2 request_capability (the v0.1 framework JSON has no MCP-server declaration field — server lifecycle is M06). M05.A authoring decision: variant + payload land now so the schema is forward-compatible with M06's loader-time emission.
+ */
+export interface McpMissing {
+  type: "mcp_missing";
+  agent_id: string;
+  server_name: string;
+  severity: GapSeverity;
+  suggested_action: SuggestedAction;
+  requested_via: GapSource;
+}
+/**
+ * Spec §4b Layer 1 (loader) — `framework.agents[].spawns[]` references an agent id absent from `framework.agents[]`. Per spec §4b severity matrix this is a load-time block: the framework fails to load (severity=critical). Also emittable from Layer 2 request_capability when an agent asks for a sub-agent it cannot spawn.
+ */
+export interface AgentMissing {
+  type: "agent_missing";
+  agent_id: string;
+  missing_agent_id: string;
+  severity: GapSeverity;
+  suggested_action: SuggestedAction;
+  requested_via: GapSource;
 }
 export interface GapResolved {
   type: "gap_resolved";

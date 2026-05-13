@@ -19,7 +19,7 @@
  * This interface was referenced by `BudgetPolicy`'s JSON-Schema
  * via the `definition` "BudgetScope".
  */
-export type BudgetScope = 'session' | 'framework' | 'global';
+export type BudgetScope = "session" | "framework" | "global";
 
 /**
  * Spec §2a Budget Primitive — three budget scopes (session / framework / global) that stack with tightest-cap-wins semantics; four threshold actions (warn at 50%, downshift at 75%, hitl at 90%, hard-stop at 100%); optional downshift_hook referencing a tool by name. Locked at WI-07 (2026-04-18). v0.1 ships all four actions per §0d release scope matrix.
@@ -70,7 +70,7 @@ export interface DownshiftHook {
   /**
    * Hook kind discriminator. v0.1 supports only `tool`; v1.0 may add inline script hooks.
    */
-  type: 'tool';
+  type: "tool";
   /**
    * Tool id from the framework's tool registry.
    */

@@ -116,4 +116,19 @@ describe('TaskNode', () => {
     const handles = root.querySelectorAll('.react-flow__handle');
     expect(handles.length).toBe(2);
   });
+
+  it('renders_task_id_prefix_fallback_when_title_is_empty', () => {
+    // M04.V Decision 1 — IRL LG-02: TaskNodes from `task_started` events
+    // showed up "untitled" because the schema has no `title` field on the
+    // event. Fix lives at TaskNode.tsx:27 — `displayTitle = title || \`task
+    // ${taskId.slice(0,8)}\``. Without this regression test the fix's
+    // line is uncovered (per M04.V Finding #1) and a future refactor could
+    // silently drop the fallback. Per gotcha #71 (Schema field "missing"
+    // can render as blank string).
+    renderTask({ ...baseData, taskId: 'a1b2c3d4-deadbeef', title: '' });
+    const root = screen.getByTestId('task-node-a1b2c3d4-deadbeef');
+    // The fallback uses the first 8 chars of the task id.
+    expect(root.textContent).toMatch(/task a1b2c3d4/);
+    expect(root).toHaveAttribute('aria-label', expect.stringMatching(/task task a1b2c3d4/));
+  });
 });

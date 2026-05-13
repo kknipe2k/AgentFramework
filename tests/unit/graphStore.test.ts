@@ -181,6 +181,131 @@ describe('graphStore.applyEvent', () => {
     expect(after.edges).toHaveLength(before.edges.length);
   });
 
+  // Spec §4b — M05 Stage A gap-event applyEvent branches.
+  describe('gap events (M05 Stage A)', () => {
+    const toolMissingLoader: AgentEvent = {
+      type: 'tool_missing',
+      agent_id: 'worker',
+      tool_name: 'fetch_prs',
+      severity: 'critical',
+      suggested_action: "Install tool 'fetch_prs' and click Resume.",
+      requested_via: 'loader',
+    };
+    const skillMissingMeta: AgentEvent = {
+      type: 'skill_missing',
+      agent_id: 'worker',
+      skill_name: 'rag',
+      severity: 'requested',
+      suggested_action: 'Agent worker requested skill rag: needs to look up repo context',
+      requested_via: 'request_capability',
+    };
+    const mcpMissing: AgentEvent = {
+      type: 'mcp_missing',
+      agent_id: 'worker',
+      server_name: 'pdf-mcp',
+      severity: 'requested',
+      suggested_action: 'Agent worker requested mcp server pdf-mcp: extract text from a PDF',
+      requested_via: 'request_capability',
+    };
+    const agentMissing: AgentEvent = {
+      type: 'agent_missing',
+      agent_id: 'orchestrator',
+      missing_agent_id: 'nonexistent-child',
+      severity: 'critical',
+      suggested_action:
+        "Sub-agent 'nonexistent-child' not declared in framework; fix framework JSON before reloading.",
+      requested_via: 'loader',
+    };
+
+    it('applies_tool_missing_event_mounts_gap_node', () => {
+      useGraphStore.getState().applyEvent(toolMissingLoader);
+      const gaps = useGraphStore.getState().nodes.filter((n) => n.type === 'gap');
+      expect(gaps).toHaveLength(1);
+      const gap = gaps[0]!;
+      expect(gap.data).toMatchObject({
+        gapId: 'gap:tool_missing:fetch_prs:worker',
+        kind: 'tool_missing',
+        missingName: 'fetch_prs',
+        agentId: 'worker',
+        severity: 'critical',
+        requestedVia: 'loader',
+        status: 'gap',
+      });
+      expect(gap.data.suggestedAction).toContain('Resume');
+    });
+
+    it('applies_skill_missing_with_requested_via_distinguishes_layer', () => {
+      useGraphStore.getState().applyEvent(skillMissingMeta);
+      const gap = useGraphStore.getState().nodes.find((n) => n.type === 'gap')!;
+      expect(gap.data).toMatchObject({
+        kind: 'skill_missing',
+        missingName: 'rag',
+        severity: 'requested',
+        requestedVia: 'request_capability',
+      });
+    });
+
+    it('applies_mcp_missing_and_agent_missing_variants', () => {
+      useGraphStore.getState().applyEvent(mcpMissing);
+      useGraphStore.getState().applyEvent(agentMissing);
+      const gaps = useGraphStore.getState().nodes.filter((n) => n.type === 'gap');
+      expect(gaps).toHaveLength(2);
+      const kinds = gaps.map((g) => g.data.kind);
+      expect(kinds).toContain('mcp_missing');
+      expect(kinds).toContain('agent_missing');
+    });
+
+    it('tool_missing_idempotent_on_re_emission', () => {
+      // Re-emission of the same gap (same kind + missing primitive +
+      // agent) must collapse to one node. Mirrors agent_spawned_idempotent
+      // semantics so loader replays + duplicate request_capability calls
+      // don't double-mount.
+      useGraphStore.getState().applyEvent(toolMissingLoader);
+      useGraphStore.getState().applyEvent(toolMissingLoader);
+      const gaps = useGraphStore.getState().nodes.filter((n) => n.type === 'gap');
+      expect(gaps).toHaveLength(1);
+    });
+
+    it('latest_event_wins_on_severity_when_same_gap_re_emitted', () => {
+      // request_capability emission for an already-loader-detected gap
+      // should update the visible severity to the more-recent emission.
+      useGraphStore.getState().applyEvent(toolMissingLoader);
+      useGraphStore.getState().applyEvent({
+        ...toolMissingLoader,
+        severity: 'requested',
+        requested_via: 'request_capability',
+      });
+      const gap = useGraphStore.getState().nodes.find((n) => n.type === 'gap')!;
+      expect(gap.data.severity).toBe('requested');
+      expect(gap.data.requestedVia).toBe('request_capability');
+    });
+
+    it('applies_gap_resolved_dismisses_gap_node', () => {
+      useGraphStore.getState().applyEvent(toolMissingLoader);
+      expect(useGraphStore.getState().nodes.filter((n) => n.type === 'gap')).toHaveLength(1);
+      useGraphStore.getState().applyEvent({
+        type: 'gap_resolved',
+        agent_id: 'worker',
+        capability: 'fetch_prs',
+        kind: 'tool',
+      });
+      expect(useGraphStore.getState().nodes.filter((n) => n.type === 'gap')).toHaveLength(0);
+    });
+
+    it('gap_resolved_with_unknown_kind_is_safe_noop', () => {
+      // Defensive — `kind` is free-text on the schema; an unknown value
+      // shouldn't crash applyEvent.
+      useGraphStore.getState().applyEvent(toolMissingLoader);
+      useGraphStore.getState().applyEvent({
+        type: 'gap_resolved',
+        agent_id: 'worker',
+        capability: 'fetch_prs',
+        kind: 'something-else',
+      });
+      expect(useGraphStore.getState().nodes.filter((n) => n.type === 'gap')).toHaveLength(1);
+    });
+  });
+
   it('clear_empties_nodes_edges_and_selectedNodeId', () => {
     useGraphStore.getState().applyEvent(spawnA);
     useGraphStore.getState().applyEvent(spawnB);
@@ -232,9 +357,8 @@ describe('graphStore.applyEvent', () => {
       // verify_started / verify_passed / verify_failed / rail_triggered
       // moved to dedicated tests below — M04 Stage D wires them to live
       // VerifyNode/HookNode + triggeredRails state.
-      { type: 'skill_missing', agent_id: 'a1', skill_name: 's', severity: 'warn' },
-      { type: 'tool_missing', agent_id: 'a1', tool_name: 't', severity: 'block' },
-      { type: 'gap_resolved', agent_id: 'a1', capability: 'c', kind: 'k' },
+      // M05 Stage A: skill_missing / tool_missing / mcp_missing / agent_missing /
+      // gap_resolved moved to the "gap events (M05 Stage A)" describe block above.
       // hitl_requested / hitl_resolved / hitl_timeout / notifier_dispatched /
       // notifier_failed moved to dedicated tests below — M04 Stage E wires
       // them to live pendingHitl + notifierRecords state.

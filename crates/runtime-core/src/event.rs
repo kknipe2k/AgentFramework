@@ -80,6 +80,49 @@ pub enum HitlUiVariantRef {
     Toast,
 }
 
+/// Severity matrix for gap events — spec §4b (M05 Stage A).
+///
+/// Drives session-state transitions:
+/// - `Critical` blocks the session (loader-detected tool / agent gaps).
+/// - `Important` blocks the owning agent but lets the session continue.
+/// - `Advisory` warns and continues (skill gaps).
+/// - `Requested` marks `request_capability`-emitted gaps so the renderer
+///   distinguishes loader vs meta-tool origin within the same tier.
+///
+/// Mirrors `runtime_core::generated::event::GapSeverity`; hand-rolled here
+/// because typify cross-schema `$ref` is unsupported, matching the
+/// [`HitlTriggerRef`] / `HookCategoryRef` precedent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GapSeverityRef {
+    /// Blocks the session.
+    Critical,
+    /// Blocks the owning agent; session continues.
+    Important,
+    /// Warning; load / agent continues without the missing primitive.
+    Advisory,
+    /// `request_capability`-emitted marker — severity is set by the HITL
+    /// resolution flow rather than predetermined.
+    Requested,
+}
+
+/// How a gap was discovered — spec §4b (M05 Stage A).
+///
+/// `Loader` = `framework_loader` walked the framework JSON at session start
+/// and the reference did not resolve. `RequestCapability` = a running agent
+/// asked for the capability mid-session via the meta-tool. Drives renderer
+/// display + HITL prompt copy.
+///
+/// Mirrors `runtime_core::generated::event::GapSource`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GapSourceRef {
+    /// Discovered at framework-load time by the loader walker.
+    Loader,
+    /// Requested mid-session by an agent via the meta-tool.
+    RequestCapability,
+}
+
 /// The canonical event union emitted by the runtime across all phases.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -380,23 +423,68 @@ pub enum AgentEvent {
     },
 
     // ── Gap detection (spec §4b) ──
-    /// A required skill is missing.
+    /// A required skill is missing. M05.A added `suggested_action` +
+    /// `requested_via` per spec §4b severity matrix; severity tightened
+    /// from free-string to [`GapSeverityRef`].
     SkillMissing {
         /// The agent that needs the skill.
         agent_id: String,
         /// Name of the missing skill.
         skill_name: String,
-        /// Severity of the gap.
-        severity: String,
+        /// Severity per spec §4b severity matrix.
+        severity: GapSeverityRef,
+        /// Plain-English next-step text the renderer surfaces. minLength 1
+        /// per schema; emitters compose non-empty per gap kind.
+        suggested_action: String,
+        /// Layer-1 (`loader`) or Layer-2 (`request_capability`) origin.
+        requested_via: GapSourceRef,
     },
-    /// A required tool is missing.
+    /// A required tool is missing. M05.A added `suggested_action` +
+    /// `requested_via` per spec §4b severity matrix; severity tightened
+    /// from free-string to [`GapSeverityRef`].
     ToolMissing {
         /// The agent that needs the tool.
         agent_id: String,
         /// Name of the missing tool.
         tool_name: String,
-        /// Severity of the gap.
-        severity: String,
+        /// Severity per spec §4b severity matrix.
+        severity: GapSeverityRef,
+        /// Plain-English next-step text the renderer surfaces. minLength 1
+        /// per schema; emitters compose non-empty per gap kind.
+        suggested_action: String,
+        /// Layer-1 (`loader`) or Layer-2 (`request_capability`) origin.
+        requested_via: GapSourceRef,
+    },
+    /// An MCP server reference is missing — spec §4b + §5. v0.1 emits this
+    /// only from Layer 2 `request_capability`; M06 adds Layer-1 emission
+    /// once the framework schema declares MCP servers explicitly.
+    McpMissing {
+        /// The agent that needs the MCP server.
+        agent_id: String,
+        /// Name of the missing MCP server.
+        server_name: String,
+        /// Severity per spec §4b severity matrix.
+        severity: GapSeverityRef,
+        /// Plain-English next-step text the renderer surfaces.
+        suggested_action: String,
+        /// Layer-1 (`loader`) or Layer-2 (`request_capability`) origin.
+        requested_via: GapSourceRef,
+    },
+    /// A `spawns[]` reference is unresolved — spec §4b Layer 1. Per spec
+    /// §4b severity matrix this is a load-time block: framework fails to
+    /// load. Also emittable from Layer 2 when an agent asks for a
+    /// sub-agent it cannot spawn.
+    AgentMissing {
+        /// The parent agent whose `spawns[]` references the missing id.
+        agent_id: String,
+        /// Id of the missing sub-agent.
+        missing_agent_id: String,
+        /// Severity per spec §4b severity matrix.
+        severity: GapSeverityRef,
+        /// Plain-English next-step text the renderer surfaces.
+        suggested_action: String,
+        /// Layer-1 (`loader`) or Layer-2 (`request_capability`) origin.
+        requested_via: GapSourceRef,
     },
     /// A previously detected gap was resolved.
     GapResolved {
@@ -404,7 +492,7 @@ pub enum AgentEvent {
         agent_id: String,
         /// The capability that was provided.
         capability: String,
-        /// Kind of capability (tool or skill).
+        /// Kind of capability (tool / skill / mcp / agent).
         kind: String,
     },
 

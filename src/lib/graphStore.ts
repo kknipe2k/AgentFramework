@@ -2,6 +2,8 @@ import type { Edge, Node } from '@xyflow/react';
 import { create } from 'zustand';
 import type {
   AgentEvent,
+  GapSeverity,
+  GapSource,
   HitlTriggerRef,
   HitlUiVariantRef,
   HookCategoryRef,
@@ -109,14 +111,21 @@ export interface MCPNodeData extends Record<string, unknown> {
 }
 
 /**
- * GapNode — spec §3 + §4b. v0.1 schema does not yet emit `gap_added`
- * events; M5 wires them. Stage C ships the component so the M5 wiring
- * lands without renderer churn.
+ * GapNode — spec §3 + §4b. M05.A wires gap events end-to-end: the four
+ * `*_missing` event variants mount a GapNode; `gap_resolved` dismisses it
+ * by `gapId`. `severity` drives the visual tier (critical/important/advisory/
+ * requested → red/orange/amber/blue pulse); `suggestedAction` surfaces in
+ * the GapPanel; `requestedVia` distinguishes loader-driven (Layer 1) from
+ * `request_capability`-driven (Layer 2) gaps for renderer copy.
  */
 export interface GapNodeData extends Record<string, unknown> {
   gapId: string;
-  kind: 'tool_missing' | 'skill_missing';
+  kind: 'tool_missing' | 'skill_missing' | 'mcp_missing' | 'agent_missing';
   missingName: string;
+  agentId: string;
+  severity: GapSeverity;
+  suggestedAction: string;
+  requestedVia: GapSource;
   status: 'gap';
 }
 
@@ -507,6 +516,42 @@ function updateHookData(
       n.id === target && n.type === 'hook' ? { ...n, data: updater(n.data) } : n,
     ),
   };
+}
+
+/**
+ * Mount a GapNode keyed by `${kind}:${missingName}:${agentId}` so that
+ * re-emissions of the same gap (same kind + same missing primitive + same
+ * agent) are idempotent. Multi-source emissions (Layer 1 loader vs Layer 2
+ * request_capability) for the same primitive collapse to one node — the
+ * latest event wins on severity / suggestedAction / requestedVia.
+ */
+function gapNodeId(kind: GapNodeData['kind'], missingName: string, agentId: string): string {
+  return `gap:${kind}:${missingName}:${agentId}`;
+}
+
+function nextGapPosition(existing: GraphNode[]): { x: number; y: number } {
+  // GapNodes sit in the right margin so the agent-tool-skill layout stays
+  // unobstructed. Stagger vertically by gap count.
+  const gapCount = existing.filter((n) => n.type === 'gap').length;
+  return { x: 600, y: gapCount * 100 };
+}
+
+function mountOrUpdateGap(state: GraphState, data: GapNodeData): GraphState {
+  const id = gapNodeId(data.kind, data.missingName, data.agentId);
+  const existing = state.nodes.find((n) => n.id === id);
+  if (existing) {
+    return {
+      ...state,
+      nodes: state.nodes.map((n) => (n.id === id && n.type === 'gap' ? { ...n, data } : n)),
+    };
+  }
+  const newNode: GapReactFlowNode = {
+    id,
+    type: 'gap',
+    position: nextGapPosition(state.nodes),
+    data,
+  };
+  return { ...state, nodes: [...state.nodes, newNode] };
 }
 
 export const useGraphStore = create<GraphState>((set) => ({
@@ -1149,16 +1194,88 @@ export const useGraphStore = create<GraphState>((set) => ({
             },
           };
 
-        // No-op variants — light up at M5 (gap/capability), future
-        // stages. The exhaustive default below is the forcing function:
-        // any new variant added to the schema breaks the compile until
-        // handled here.
+        // Spec §4b M05 Stage A — light up the four `*_missing` variants
+        // and `gap_resolved`. Idempotent on `${kind}:${missingName}:${agentId}`.
+        // capability_violation + capability_grant remain no-op (Stage B
+        // lights up after the L1+L2a enforcer lands per phase doc).
+        case 'tool_missing':
+          return mountOrUpdateGap(state, {
+            gapId: gapNodeId('tool_missing', event.tool_name, event.agent_id),
+            kind: 'tool_missing',
+            missingName: event.tool_name,
+            agentId: event.agent_id,
+            severity: event.severity,
+            suggestedAction: event.suggested_action,
+            requestedVia: event.requested_via,
+            status: 'gap',
+          });
+
+        case 'skill_missing':
+          return mountOrUpdateGap(state, {
+            gapId: gapNodeId('skill_missing', event.skill_name, event.agent_id),
+            kind: 'skill_missing',
+            missingName: event.skill_name,
+            agentId: event.agent_id,
+            severity: event.severity,
+            suggestedAction: event.suggested_action,
+            requestedVia: event.requested_via,
+            status: 'gap',
+          });
+
+        case 'mcp_missing':
+          return mountOrUpdateGap(state, {
+            gapId: gapNodeId('mcp_missing', event.server_name, event.agent_id),
+            kind: 'mcp_missing',
+            missingName: event.server_name,
+            agentId: event.agent_id,
+            severity: event.severity,
+            suggestedAction: event.suggested_action,
+            requestedVia: event.requested_via,
+            status: 'gap',
+          });
+
+        case 'agent_missing':
+          return mountOrUpdateGap(state, {
+            gapId: gapNodeId('agent_missing', event.missing_agent_id, event.agent_id),
+            kind: 'agent_missing',
+            missingName: event.missing_agent_id,
+            agentId: event.agent_id,
+            severity: event.severity,
+            suggestedAction: event.suggested_action,
+            requestedVia: event.requested_via,
+            status: 'gap',
+          });
+
+        case 'gap_resolved': {
+          // Match by (kind, capability, agent_id). The `kind` field on
+          // gap_resolved is "tool" / "skill" / "mcp" / "agent" (singular);
+          // map to the `*_missing` discriminator we stored at mount.
+          const kindMap: Record<string, GapNodeData['kind']> = {
+            tool: 'tool_missing',
+            skill: 'skill_missing',
+            mcp: 'mcp_missing',
+            agent: 'agent_missing',
+          };
+          const targetKind = kindMap[event.kind];
+          if (!targetKind) {
+            return state;
+          }
+          const targetId = gapNodeId(targetKind, event.capability, event.agent_id);
+          return {
+            ...state,
+            nodes: state.nodes.filter((n) => n.id !== targetId),
+          };
+        }
+
+        // No-op variants — Stage B (capability) lights up
+        // capability_violation + capability_grant; stream_text +
+        // decision_record + token_usage feed the inspector, not the graph;
+        // session_end + tool_error + mode_changed are graph-no-op by design.
+        // The exhaustive default below is the forcing function: any new
+        // variant added to the schema breaks the compile until handled.
         case 'session_end':
         case 'tool_error':
         case 'mode_changed':
-        case 'skill_missing':
-        case 'tool_missing':
-        case 'gap_resolved':
         case 'capability_violation':
         case 'capability_grant':
         case 'stream_text':

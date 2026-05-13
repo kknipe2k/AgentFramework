@@ -26,7 +26,7 @@ pub use drone::{
     ProcessType, RevertReason, StopReason,
 };
 pub use error::RuntimeError;
-pub use event::{AgentEvent, ToolSource};
+pub use event::{AgentEvent, GapSeverityRef, GapSourceRef, ToolSource};
 // Re-export only schema-derived modules whose names don't collide with the
 // hand-curated top-level modules above. `generated::event` and
 // `generated::error` (M04 Stage A1 codegen extensions) are reachable via

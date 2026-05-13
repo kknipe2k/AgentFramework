@@ -14,6 +14,13 @@
 /// hardcoded opus → sonnet → haiku downshift ladder.
 pub mod budget;
 pub mod drone_ipc;
+/// Framework loader — spec §4b Layer 1 gap detection (M05 Stage A).
+///
+/// Parses framework JSON + walks declared primitives + emits gap events
+/// for unresolved tool / skill / agent references via the in-process
+/// [`framework_loader::Emitter`] trait. MCP gaps are Layer 2 only in
+/// v0.1 (M06 adds Layer 1 MCP-server declaration).
+pub mod framework_loader;
 /// HITL primitive — spec §6a (M04 Stage E).
 ///
 /// 9-trigger policy evaluator + `HitlSeam` (oneshot-channel gate) +

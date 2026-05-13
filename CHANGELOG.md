@@ -6,6 +6,92 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M05.A §4b Gap Detection (framework_loader + request_capability meta-tool + schema enrichment + M04.V carry-forwards)
+
+Code + schema. M05 Stage A wires spec §4b Layer 1 (framework_loader) +
+Layer 2 (request_capability meta-tool) gap detection end-to-end. Enriched
+gap-event payload per spec §4b severity matrix; new `mcp_missing` +
+`agent_missing` variants; `ContextType` reconciled with spec §2b
+(M02/M03/M04 carry-forward closed); M04.V Decision 1 absorbed via
+TaskNode regression test.
+
+- **`schemas/event.v1.json`** — added `mcp_missing` + `agent_missing`
+  event variants; enriched the four `*_missing` variants with `severity`
+  (`GapSeverity` enum: `critical | important | advisory | requested`),
+  `suggested_action` (validated minLength 1), and `requested_via`
+  (`GapSource` enum: `loader | request_capability`). New `$defs`:
+  `GapSeverity`, `GapSource`, `SuggestedAction`. Per gotcha #43 the
+  validated string extracts to `$defs/SuggestedAction` so typify generates
+  a clean newtype.
+- **`crates/runtime-core/src/generated/event.rs` + `src/types/agent_event.ts`**
+  — regenerated via `cargo xtask regenerate-types`.
+- **`crates/runtime-core/src/event.rs`** — hand-rolled canonical
+  `AgentEvent` union mirrors the schema enrichment. Added
+  `GapSeverityRef` + `GapSourceRef` enums (following the existing
+  `HitlTriggerRef` cross-schema mirror pattern). The four `*_missing`
+  variants gain the enriched payload.
+- **`crates/runtime-main/src/framework_loader/`** *(new module)* —
+  - `mod.rs` — `Emitter` trait (in-process event seam) +
+    `load_and_validate` async wrapper + `load_and_validate_str` test seam.
+  - `walker.rs` — pure-function walker over `Framework`: checks every
+    inline `Agent`'s `allowed_tools[]` / `allowed_skills[]` / `spawns[]`
+    against the framework's declared primitive sets, returns `Vec<Gap>`
+    with per-kind severity per spec §4b severity matrix. `mcp_missing`
+    is Layer-2-only in v0.1 (v0.1 framework schema declares no MCP
+    servers; M06 adds Layer-1 emission). 9 unit tests; 100% line on
+    `to_event` mapping.
+  - `error.rs` — `FrameworkLoadError { Io, Json, GapsFound }`.
+- **`crates/runtime-main/src/sdk/request_capability.rs`** *(new module)*
+  — spec §4b Layer 2 meta-tool. `CapabilityKind { Tool, Skill, Mcp, Agent }`
+  + `RequestCapabilityInvocation` + `handle_request_capability` emits the
+  matching `*_missing` event with `severity: Requested` +
+  `requested_via: RequestCapability` and returns `Pending`. M05.A
+  authoring decision: meta-tool accepts 4 kinds (spec §4b text says 2 —
+  surfaced in retro for reconciliation). 6 unit tests.
+- **`crates/runtime-main/tests/framework_loader_smoke.rs`** *(new)* —
+  integration test against `examples/aria/framework.json`: valid framework
+  loads with zero gaps + multi-call invariant (gotcha #69).
+- **`crates/runtime-core/src/signal.rs::ContextType`** — reconciled with
+  spec §2b. Old variants (`AgentLoop / SkillLoad / ToolInvoke /
+  HookExecute / PlanCreate / HitlPrompt / SessionLifecycle`) replaced by
+  spec set (`Skill / Framework / Code / Search / Verify / Commit /
+  Subagent`). M02 + M03 + M04 carry-forward CLOSED.
+- **`src/lib/graphStore.ts`** — lit up `applyEvent` branches for all
+  four `*_missing` + `gap_resolved`. GapNodes mount keyed by
+  `${kind}:${missingName}:${agentId}` (idempotent re-emission;
+  loader-vs-meta-tool re-emission of same gap collapses with latest
+  severity). `GapNodeData` extended with `agentId`, `severity`,
+  `suggestedAction`, `requestedVia`; `kind` widened to the 4-variant
+  union.
+- **`src/components/nodes/GapNode.tsx`** — renders severity-tier CSS
+  modifier class + `suggestedAction` text + DOM-readable
+  `data-kind` / `data-severity` / `data-requested-via` discriminators so
+  e2e + unit tests pin the wire-path contract (gotcha #66 / #68).
+- **`tests/unit/nodes/TaskNode.test.tsx`** — added M04.V Decision 1
+  regression test `renders_task_id_prefix_fallback_when_title_is_empty`
+  pinning the LG-02 IRL fix at `TaskNode.tsx:27`.
+- **`tests/unit/nodes/GapNode.test.tsx`** — 7 tests for enriched payload
+  rendering + 4-kind visual differentiation + accessibility.
+- **`tests/unit/graphStore.test.ts`** — 7 tests for the new gap-event
+  applyEvent branches (per-kind mount + idempotence + latest-wins on
+  re-emit + `gap_resolved` dismissal + safe-noop on unknown kind).
+- **`.prettierignore` + `eslint.config.js`** — added `src/types/budget.ts`
+  to ignore lists (M04.F oversight surfaced by M05.A regeneration; per
+  gotcha #44 every generated TS file goes in both ignore lists).
+
+M04.V Decision 2 (§4a `hook_*` vs `verify_*` spec/code naming) surfaced
+in `docs/build-prompts/retrospectives/M05.A-retrospective.md` for
+maintainer adjudication — no code change in this stage.
+
+Not in this stage: capability enforcer (Stage B), sandbox subprocess
+(Stage C1+C2), tier system (Stage D), audit log (Stage E), GapPanel UI +
+CapabilityBadge (Stage F).
+
+Coverage: workspace 94.06% line; runtime-drone 95.79% line;
+runtime-main 96.94% line; `framework_loader/walker.rs` 98.18% line;
+`framework_loader/mod.rs` 99.17% line; `sdk/request_capability.rs`
+98.33% line. All ≥ gates.
+
 ### Added — M04.6 protocol iteration (Stage V Verifier introduced, validator extended, M04 IRL bug patterns graduated to gotchas)
 
 Documentation + protocol. Adds the Stage V (Verifier) ceremony between work

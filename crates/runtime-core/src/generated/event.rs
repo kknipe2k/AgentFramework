@@ -754,22 +754,31 @@ pub mod error {
 #[doc = "    },"]
 #[doc = "    {"]
 #[doc = "      \"title\": \"SkillMissing\","]
+#[doc = "      \"description\": \"Spec §4b Layer 1 (loader) or Layer 2 (request_capability) gap event for an unresolved skill reference. M05.A added `suggested_action` + `requested_via`; severity tightened from free-string to GapSeverity enum. Defaults to severity=advisory (skill gaps are recoverable per spec §4b severity matrix — load continues without).\","]
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"required\": ["]
 #[doc = "        \"agent_id\","]
+#[doc = "        \"requested_via\","]
 #[doc = "        \"severity\","]
 #[doc = "        \"skill_name\","]
+#[doc = "        \"suggested_action\","]
 #[doc = "        \"type\""]
 #[doc = "      ],"]
 #[doc = "      \"properties\": {"]
 #[doc = "        \"agent_id\": {"]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
+#[doc = "        \"requested_via\": {"]
+#[doc = "          \"$ref\": \"#/$defs/GapSource\""]
+#[doc = "        },"]
 #[doc = "        \"severity\": {"]
-#[doc = "          \"type\": \"string\""]
+#[doc = "          \"$ref\": \"#/$defs/GapSeverity\""]
 #[doc = "        },"]
 #[doc = "        \"skill_name\": {"]
 #[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"suggested_action\": {"]
+#[doc = "          \"$ref\": \"#/$defs/SuggestedAction\""]
 #[doc = "        },"]
 #[doc = "        \"type\": {"]
 #[doc = "          \"const\": \"skill_missing\""]
@@ -779,10 +788,13 @@ pub mod error {
 #[doc = "    },"]
 #[doc = "    {"]
 #[doc = "      \"title\": \"ToolMissing\","]
+#[doc = "      \"description\": \"Spec §4b Layer 1 (loader) or Layer 2 (request_capability) gap event for an unresolved tool reference. M05.A added `suggested_action` + `requested_via`; severity tightened from free-string to GapSeverity enum. Tool gaps are blocking per spec §4b severity matrix — the owning agent cannot proceed.\","]
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"required\": ["]
 #[doc = "        \"agent_id\","]
+#[doc = "        \"requested_via\","]
 #[doc = "        \"severity\","]
+#[doc = "        \"suggested_action\","]
 #[doc = "        \"tool_name\","]
 #[doc = "        \"type\""]
 #[doc = "      ],"]
@@ -790,14 +802,88 @@ pub mod error {
 #[doc = "        \"agent_id\": {"]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
+#[doc = "        \"requested_via\": {"]
+#[doc = "          \"$ref\": \"#/$defs/GapSource\""]
+#[doc = "        },"]
 #[doc = "        \"severity\": {"]
-#[doc = "          \"type\": \"string\""]
+#[doc = "          \"$ref\": \"#/$defs/GapSeverity\""]
+#[doc = "        },"]
+#[doc = "        \"suggested_action\": {"]
+#[doc = "          \"$ref\": \"#/$defs/SuggestedAction\""]
 #[doc = "        },"]
 #[doc = "        \"tool_name\": {"]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
 #[doc = "        \"type\": {"]
 #[doc = "          \"const\": \"tool_missing\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"title\": \"McpMissing\","]
+#[doc = "      \"description\": \"Spec §4b + §5: gap event for an unresolved MCP server reference. v0.1 emits this only from Layer 2 request_capability (the v0.1 framework JSON has no MCP-server declaration field — server lifecycle is M06). M05.A authoring decision: variant + payload land now so the schema is forward-compatible with M06's loader-time emission.\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"agent_id\","]
+#[doc = "        \"requested_via\","]
+#[doc = "        \"server_name\","]
+#[doc = "        \"severity\","]
+#[doc = "        \"suggested_action\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"agent_id\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"requested_via\": {"]
+#[doc = "          \"$ref\": \"#/$defs/GapSource\""]
+#[doc = "        },"]
+#[doc = "        \"server_name\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"severity\": {"]
+#[doc = "          \"$ref\": \"#/$defs/GapSeverity\""]
+#[doc = "        },"]
+#[doc = "        \"suggested_action\": {"]
+#[doc = "          \"$ref\": \"#/$defs/SuggestedAction\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"mcp_missing\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"title\": \"AgentMissing\","]
+#[doc = "      \"description\": \"Spec §4b Layer 1 (loader) — `framework.agents[].spawns[]` references an agent id absent from `framework.agents[]`. Per spec §4b severity matrix this is a load-time block: the framework fails to load (severity=critical). Also emittable from Layer 2 request_capability when an agent asks for a sub-agent it cannot spawn.\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"agent_id\","]
+#[doc = "        \"missing_agent_id\","]
+#[doc = "        \"requested_via\","]
+#[doc = "        \"severity\","]
+#[doc = "        \"suggested_action\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"agent_id\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"missing_agent_id\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"requested_via\": {"]
+#[doc = "          \"$ref\": \"#/$defs/GapSource\""]
+#[doc = "        },"]
+#[doc = "        \"severity\": {"]
+#[doc = "          \"$ref\": \"#/$defs/GapSeverity\""]
+#[doc = "        },"]
+#[doc = "        \"suggested_action\": {"]
+#[doc = "          \"$ref\": \"#/$defs/SuggestedAction\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"agent_missing\""]
 #[doc = "        }"]
 #[doc = "      },"]
 #[doc = "      \"additionalProperties\": false"]
@@ -1417,19 +1503,41 @@ pub enum AgentEvent {
         policy: RailPolicy,
         rail_id: ::std::string::String,
     },
-    #[doc = "SkillMissing"]
+    #[doc = "SkillMissing\n\nSpec §4b Layer 1 (loader) or Layer 2 (request_capability) gap event for an unresolved skill reference. M05.A added `suggested_action` + `requested_via`; severity tightened from free-string to GapSeverity enum. Defaults to severity=advisory (skill gaps are recoverable per spec §4b severity matrix — load continues without)."]
     #[serde(rename = "skill_missing")]
     SkillMissing {
         agent_id: ::std::string::String,
-        severity: ::std::string::String,
+        requested_via: GapSource,
+        severity: GapSeverity,
         skill_name: ::std::string::String,
+        suggested_action: SuggestedAction,
     },
-    #[doc = "ToolMissing"]
+    #[doc = "ToolMissing\n\nSpec §4b Layer 1 (loader) or Layer 2 (request_capability) gap event for an unresolved tool reference. M05.A added `suggested_action` + `requested_via`; severity tightened from free-string to GapSeverity enum. Tool gaps are blocking per spec §4b severity matrix — the owning agent cannot proceed."]
     #[serde(rename = "tool_missing")]
     ToolMissing {
         agent_id: ::std::string::String,
-        severity: ::std::string::String,
+        requested_via: GapSource,
+        severity: GapSeverity,
+        suggested_action: SuggestedAction,
         tool_name: ::std::string::String,
+    },
+    #[doc = "McpMissing\n\nSpec §4b + §5: gap event for an unresolved MCP server reference. v0.1 emits this only from Layer 2 request_capability (the v0.1 framework JSON has no MCP-server declaration field — server lifecycle is M06). M05.A authoring decision: variant + payload land now so the schema is forward-compatible with M06's loader-time emission."]
+    #[serde(rename = "mcp_missing")]
+    McpMissing {
+        agent_id: ::std::string::String,
+        requested_via: GapSource,
+        server_name: ::std::string::String,
+        severity: GapSeverity,
+        suggested_action: SuggestedAction,
+    },
+    #[doc = "AgentMissing\n\nSpec §4b Layer 1 (loader) — `framework.agents[].spawns[]` references an agent id absent from `framework.agents[]`. Per spec §4b severity matrix this is a load-time block: the framework fails to load (severity=critical). Also emittable from Layer 2 request_capability when an agent asks for a sub-agent it cannot spawn."]
+    #[serde(rename = "agent_missing")]
+    AgentMissing {
+        agent_id: ::std::string::String,
+        missing_agent_id: ::std::string::String,
+        requested_via: GapSource,
+        severity: GapSeverity,
+        suggested_action: SuggestedAction,
     },
     #[doc = "GapResolved"]
     #[serde(rename = "gap_resolved")]
@@ -1612,6 +1720,164 @@ impl ::std::convert::TryFrom<&::std::string::String> for ApprovedBy {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for ApprovedBy {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Severity matrix per spec §4b. `critical` blocks the session (loader-detected tool gaps; agent_missing); `important` blocks the owning agent but lets the session continue (request_capability tool gaps); `advisory` warns and continues (skill gaps from any source); `requested` is the M05 marker for request_capability-emitted gaps so the renderer can distinguish loader vs meta-tool origin in the same severity tier."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"GapSeverity\","]
+#[doc = "  \"description\": \"Severity matrix per spec §4b. `critical` blocks the session (loader-detected tool gaps; agent_missing); `important` blocks the owning agent but lets the session continue (request_capability tool gaps); `advisory` warns and continues (skill gaps from any source); `requested` is the M05 marker for request_capability-emitted gaps so the renderer can distinguish loader vs meta-tool origin in the same severity tier.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"critical\","]
+#[doc = "    \"important\","]
+#[doc = "    \"advisory\","]
+#[doc = "    \"requested\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum GapSeverity {
+    #[serde(rename = "critical")]
+    Critical,
+    #[serde(rename = "important")]
+    Important,
+    #[serde(rename = "advisory")]
+    Advisory,
+    #[serde(rename = "requested")]
+    Requested,
+}
+impl ::std::fmt::Display for GapSeverity {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Critical => f.write_str("critical"),
+            Self::Important => f.write_str("important"),
+            Self::Advisory => f.write_str("advisory"),
+            Self::Requested => f.write_str("requested"),
+        }
+    }
+}
+impl ::std::str::FromStr for GapSeverity {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "critical" => Ok(Self::Critical),
+            "important" => Ok(Self::Important),
+            "advisory" => Ok(Self::Advisory),
+            "requested" => Ok(Self::Requested),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for GapSeverity {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for GapSeverity {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for GapSeverity {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "How this gap was discovered. `loader` = the framework_loader walked the framework JSON at session start and the reference did not resolve. `request_capability` = a running agent asked for the capability mid-session via the meta-tool. Drives renderer display + HITL prompt copy."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"GapSource\","]
+#[doc = "  \"description\": \"How this gap was discovered. `loader` = the framework_loader walked the framework JSON at session start and the reference did not resolve. `request_capability` = a running agent asked for the capability mid-session via the meta-tool. Drives renderer display + HITL prompt copy.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"loader\","]
+#[doc = "    \"request_capability\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum GapSource {
+    #[serde(rename = "loader")]
+    Loader,
+    #[serde(rename = "request_capability")]
+    RequestCapability,
+}
+impl ::std::fmt::Display for GapSource {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Loader => f.write_str("loader"),
+            Self::RequestCapability => f.write_str("request_capability"),
+        }
+    }
+}
+impl ::std::str::FromStr for GapSource {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "loader" => Ok(Self::Loader),
+            "request_capability" => Ok(Self::RequestCapability),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for GapSource {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for GapSource {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for GapSource {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -2047,6 +2313,76 @@ impl ::std::convert::TryFrom<::std::string::String> for RailPolicy {
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
+    }
+}
+#[doc = "Plain-English next-step text the renderer surfaces in the GapPanel + HITL prompt. Free-form; emitter composes per severity (e.g. \"Install tool 'fetch_prs' and click Resume\" for critical; \"Skill 'rag' continues without — install async or dismiss\" for advisory). minLength 1 — emitters MUST supply a non-empty action."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"SuggestedAction\","]
+#[doc = "  \"description\": \"Plain-English next-step text the renderer surfaces in the GapPanel + HITL prompt. Free-form; emitter composes per severity (e.g. \\\"Install tool 'fetch_prs' and click Resume\\\" for critical; \\\"Skill 'rag' continues without — install async or dismiss\\\" for advisory). minLength 1 — emitters MUST supply a non-empty action.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"minLength\": 1"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct SuggestedAction(::std::string::String);
+impl ::std::ops::Deref for SuggestedAction {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<SuggestedAction> for ::std::string::String {
+    fn from(value: SuggestedAction) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for SuggestedAction {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for SuggestedAction {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for SuggestedAction {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SuggestedAction {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for SuggestedAction {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
     }
 }
 #[doc = "Origin of a tool invocation. Spec §0b + §2."]
