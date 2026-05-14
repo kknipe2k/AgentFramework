@@ -6,7 +6,7 @@
 //! (the main process spawns a fresh one in a known-good state).
 //!
 //! The allowlist is conservative-but-pragmatic. A tokio multi-thread
-//! runtime + LinesCodec + Unix-socket IPC needs roughly 55 syscalls;
+//! runtime + `LinesCodec` + Unix-socket IPC needs roughly 55 syscalls;
 //! `execve`/`ptrace`/`mount`/`fork`/`clone3`/`kexec_load` and friends
 //! are implicitly denied via the default action.
 //!
@@ -31,7 +31,7 @@ use libseccomp::{ScmpAction, ScmpArch, ScmpFilterContext, ScmpSyscall};
 ///
 /// Adding a syscall here requires (a) inline justification on the entry
 /// AND (b) a retrospective entry naming what surfaced the need. The list
-/// covers tokio's multi-thread runtime + LinesCodec framed-JSON I/O over
+/// covers tokio's multi-thread runtime + `LinesCodec` framed-JSON I/O over
 /// Unix domain sockets + serde construction. Forbidden syscalls
 /// (`execve`, `ptrace`, `mount`, `fork`, `clone3`, etc.) are NOT in this
 /// list; the default `KillProcess` action terminates the subprocess on

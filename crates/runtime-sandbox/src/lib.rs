@@ -110,6 +110,10 @@ where
 /// The function is `#[allow(unused_variables)]`-tolerant on platforms
 /// that lack a particular fence; on macOS (not a v0.1 target) the
 /// function is a no-op pending a sandbox-exec wrapper.
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "Linux + Windows branches return Result via `?` on landlock / seccomp / job_objects install; the macOS fallthrough branch (cfg(not(any(target_os = \"linux\", windows)))) is the unfenced-warning path that only emits Ok(()) — the return type stays Result for cross-platform call-site uniformity."
+)]
 fn install_isolation(ipc_socket: &std::path::Path) -> Result<(), SandboxError> {
     #[cfg(target_os = "linux")]
     {
@@ -166,8 +170,15 @@ async fn shutdown_signal_future() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Duration + temp_socket_path are only used by the
+    // `run_inner_exits_on_shutdown_signal` test, which early-returns on
+    // Linux (install_isolation would poison the cargo test runner with
+    // seccomp + landlock). Cfg-gate both so Linux doesn't trip
+    // `unused_imports` + `dead_code` lints.
+    #[cfg(not(target_os = "linux"))]
     use std::time::Duration;
 
+    #[cfg(not(target_os = "linux"))]
     fn temp_socket_path() -> PathBuf {
         #[cfg(unix)]
         {
