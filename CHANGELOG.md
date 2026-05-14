@@ -6,6 +6,137 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M05 Stage G (Phase Closeout — gap analysis + parent-milestone summary)
+
+- **`docs/build-prompts/retrospectives/M05-summary.md`** *(new)* — parent-milestone
+  summary aggregating M05.A–F per-stage retros + M05.V verifier retro per
+  `SUMMARY-TEMPLATE.md` + the closeout prompt's special-log requirements:
+  - Stage trail through 7 work stages + V + (this) G.
+  - Aggregate scoring (Process 37.86/40 mean, Product 37.86/40 mean, Pattern
+    30.71/35 mean across the 7 work stages — V uses verification axes 14/15).
+  - Per-primitive coverage outcomes for the 3 new safety primitives + 1
+    observability surface (capability enforcer + L3 sandbox plumbing + L3 OS
+    isolation + L4 tier + L5 audit + tier::transition).
+  - V→closeout handoff observation: v1.5 in-band V validated cleanly;
+    `<scope_change>` slot proposal (M05.V Decision 3) is the deepest
+    protocol insight.
+  - Cross-stage trend analysis (phase-doc-vs-codebase drift recurred 7 stages;
+    clippy lint batches recurred 6 stages; rustdoc intra-doc-link recurred 5
+    stages; Windows-local `cargo llvm-cov` flake recurred 5 stages; typify
+    oneOf-non-Copy-Eq recurred 2 stages → graduates as gotcha #73; Zustand
+    v5 `useShallow` requirement; windows-sys feature-by-parameter-type;
+    tokio::io::duplex buffer-vs-payload).
+  - Time-box accuracy: ~21h actual vs ~33h estimated = 0.64× ratio.
+  - M06 calibration: keep 0.64× anchor; novel-protocol stages (MCP
+    transport) closer to 0.8–1×; ADR-0009 wire-up tightly scoped to 2–3h.
+  - 11 v1.6 protocol-iteration candidates carry forward.
+  - Decisions to apply before M06.A (CLAUDE.md updates, v1.6 protocol
+    candidates, ~28 phase-doc updates across the 7 stages, M06 stage
+    prompt constraints including the ADR-0009 hard deliverable).
+  - Verdict: **Pattern held across M05.** Proceed to M06.A after M05.6
+    protocol-iteration session lands.
+
+- **`docs/gap-analysis.md`** *(append-only update)* — M05 entry appended after
+  the M04 entry per CLAUDE.md §20:
+  - Codebase deep dive cumulative (M01 + M02 + M03 + M04 + M05 — adds the
+    capability/sandbox/tier/audit primitive set + Stage F renderer wire).
+  - Adherence to spec across §4b + §8.security L1+L2a+L3+L4+L5 + §13.5
+    with ⚠️ deviations for the v0.1 deferrals (L1+L2a SDK wire to M06 via
+    ADR-0009; Layer-1 `mcp_missing` emission to M06; L4 runtime-vs-install-time
+    interpretation; L5 v0.1-minimal-vs-richer shape interpretation; L3
+    install-order interaction; L2a cross-variant scope-containment) — all
+    bundled into post-M05 `docs(spec):` PR with ~18 entries.
+  - Spec review forward-looking: 16 missing items, 4 ambiguity items, 4 open
+    questions, all bundled.
+  - Fix backlog: 🔴 0 (Stage V's 2🔴 absorbed via ADR-0009 waiver per
+    ADR-0008 mechanism), 🟡 25 (post-M05 `docs(spec):` PR + v1.6 protocol
+    session + ADR-0009 M06.A wire-up + in-process seam ADR + 11
+    carry-forwards still open), 🟢 13 (graduation candidates + advisories).
+  - Carry-forward final disposition for every prior milestone's Important
+    items: ContextType reconcile **RESOLVED at M05.A**; capability/enforcer.rs
+    preserved-or-improved-baseline drop (100% → 94.24%) documented with
+    rationale; `runtime-main/src/drone_ipc/client.rs` 89.45–89.90% line
+    carry-forward continues from M04.
+  - M05.V findings carry-forward: 🔴 #1 + #2 RESOLVED via ADR-0009 waiver;
+    🟡 #3 (phase-doc-vs-implementation file drift on `crates/runtime-sandbox/src/ipc.rs`
+    + `crates/runtime-main/src/tier/transition.rs`) carries into Carry-forward.
+  - Gotchas graduation: 47 dispositions (30 resolved, 9 graduated, 8 kept,
+    0 expired) — graduates include typify oneOf-non-Copy-Eq #73, Zustand v5
+    useShallow, windows-sys feature-by-parameter-type, tokio::io::duplex
+    buffer-vs-payload, FFI-wrapper decomposition for coverage, refutable
+    bindings break on enum variant addition, clippy doc_lazy_continuation,
+    graphStore.clear() preserves user-preference slots, V coverage-recheck
+    convention. `docs/gotchas.md` ~66 → ~75.
+
+- **`docs/adr/0009-waiver-M05-l1-l2a-sdk-wire-deferral.md`** *(committed at
+  `a3f677f`)* — first invocation of ADR-0008's waiver-as-ADR mechanism.
+  Closes M05.V Findings #1 + #2 together (L1 enforcer + L2a narrow
+  production-call-site missing). Architectural rationale: v0.1 SDK is
+  streaming-only (Anthropic dispatches tools server-side; `ProviderEvent::ToolUse`
+  is a post-dispatch report, not a pre-dispatch request); there is no
+  synchronous dispatch surface to wrap. M06 Stage A carries the wire-up
+  (`enforcer.check` before `provider.invoke`; `narrow` before `AgentSpawned`
+  emission); M06.V Wire pass will trace and emit 🔴 if missing. Build agent's
+  ADR-0008 burden discharged: (a) prior surface = M05.B Decision D1,
+  (b) phase-doc warning = Stage B `<execution_warnings>` at line 924,
+  (c) next-milestone deliverable = M06 Stage A wire-up with the M05 smoke
+  test's assertions porting into real call-path integration tests.
+
+- **`CHANGELOG.md`** *(this entry)* — Stage G closeout entry summarizing
+  the gap-analysis update, M05 summary creation, and ADR-0009 waiver.
+
+### Added — M05.V In-band Verifier run (per ADR-0008)
+
+First in-band Stage V verifier run (M04.V was retroactive; M05.V was authored
+into M05 phase doc V.1–V.5 from the start). Fresh-context CLI session per
+`STAGE-PROMPT-PROTOCOL.md` §14 — deliberately did NOT read M05.A–F
+retrospectives, M05-summary.md, or `docs/gap-analysis.md`. Four-pass
+contract-fidelity check against M05.A–F deliverables in ~40 minutes:
+
+- **Inventory pass (~5 min):** 0🔴 / 1🟡 / 0🟢. Verified ~50 expected file
+  paths against `git ls-files`; surfaced two files in scope but NOT in their
+  phase doc X.2 tables (`crates/runtime-sandbox/src/ipc.rs` added at C1;
+  `crates/runtime-main/src/tier/transition.rs` added at E). Both intentional
+  + post-hoc documented in CLAUDE.md §5 — finding #3 carries to next
+  milestone's Carry-forward section.
+- **Wire pass (~20 min):** 2🔴 / 0🟡 / 0🟢. 5-step traces against spec §4b
+  + §8.security L1/L2a/L3/L4/L5 + §3. Findings #1 + #2 both surfaced at
+  step 4 (consumer): L1 `enforcer.check()` and L2a `narrow()` never invoked
+  from production SDK. 14 `.check(` matches all inside `capability/enforcer.rs::tests`;
+  zero production call sites. `ProviderEvent::ToolUse` → `AgentEvent::ToolInvoked`
+  at `sdk/event_pipeline.rs:57-66` skips enforcer check entirely.
+- **Behavior pass (~10 min):** 0/0/0. 32/32 Vitest, 424/424 runtime-main
+  lib, 26 integration tests, 36+4 runtime-sandbox, 3/3 Playwright — all green.
+- **Multi-call invariants pass (~5 min):** 0/0/0. All 7 surfaces have
+  twice-or-more-in-sequence tests (framework_loader, enforcer, sandbox_ipc
+  client, tier persistence, audit writer, respond_hitl regression,
+  query_session_db regression).
+
+Verification axes: 14/15 (coverage adequacy 4 — abbreviated llvm-cov re-run
+on grounds that CI green + CLAUDE.md §5 published baselines are recent;
+finding signal-to-noise 5; fresh-context discipline 5).
+
+Outcome: **Sound but rough** — 2🔴 findings present, both architectural
+deferrals. Per ADR-0008 §"Waiver path," build agent files ADR-0009 covering
+both findings together; maintainer adjudicates via the ADR review surface.
+No D.fix iter runs on the M05 branch; M06 Stage A carries the wire-up
+forward as structural assurance.
+
+Files committed:
+
+- `docs/build-prompts/retrospectives/M05.V-retrospective.md` *(new)* — full
+  verifier retrospective per `VERIFIER-RETROSPECTIVE-TEMPLATE.md` with the
+  three findings, verification-axes scoring, outcome rationale, and
+  `[END] Decisions for D.fix or next milestone` section. Includes
+  M05.V Decision 3's `<scope_change>` slot proposal for v1.6 protocol —
+  the deepest protocol insight from M05's V run.
+
+Stage V's role validated as designed: catch the M04-class "primitive ships
+with own tests; production call site missing" bug pattern via the 5-step
+Wire pass. Findings #1 + #2 are exactly that class; the waiver-as-ADR
+lane (ADR-0008 + ADR-0009) is the protocol-validated resolution path
+when the descope is architecturally correct for v0.1.
+
 ### Added — M05.F Renderer UI (GapPanel + CapabilityBadge + capability-violation modal wire)
 
 Renderer-only stage; no Rust changes. Three components/wires landed:
