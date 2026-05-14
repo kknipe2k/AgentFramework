@@ -177,6 +177,8 @@ retro entry.
 
 Before any commit lands, **all** of these must pass locally and on CI. No exceptions.
 
+**CI-parity is a hard rule.** Local gate `✓` requires running the **exact** command CI runs. No `--skip <test>`, no `--test-threads=N`, no env-var tweaks, no `--features` overrides, no `--target` substitutions unless those flags also appear in the corresponding `.github/workflows/ci.yml` job step. A surface claiming "✓ green" with flags CI does not use is **structurally untrusted** and the surface must be revised before approval. If a CI-divergent flag is genuinely necessary (e.g., the gotcha #56 Windows subprocess-test flake mitigation), it must (a) be cited inline in the surface with the gotcha reference, (b) prompt a `docs/gotchas.md` entry if not already present, and (c) trigger a CI workflow fix as the structural close — not a permanent local-only flag. Pattern bit: M05 hit this twice — gotcha #56 `--test-threads=1` Windows-local divergence (caught at every stage's retro and graduated to a v1.6 CI workflow change), and PR #70's cross-platform `cfg(target_os = "linux")` first-compile gap (gotcha #74 — local `cargo check` compiles the non-cfg-Linux branch so the Linux-only errors only surface on CI).
+
 ### Rust gates
 
 ```bash

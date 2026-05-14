@@ -164,6 +164,7 @@ Per `PROCESS-VALIDATION.md` threshold criteria.
 - [ ] **G3: no protocol drift events left unaddressed** — *evidence:* [protocol-drift-events table is empty OR every row has Claude-self-corrected = yes]
 - [ ] **G4: the milestone or stage actually completed** — *evidence:* [for stages: commit `<sha>` on the parent-milestone branch with all stage acceptance criteria checked; for non-staged milestones: PR #N opened, CI green, all acceptance criteria checked]
 - [ ] **G5: scores ≥3 in every individual row across all three axes** — *evidence:* [check each axis row above for any score <3; list any below-3 rows here for follow-up]
+- [ ] **G6: CI-parity confirmation** (per `CLAUDE.md` §6 CI-parity hard rule) — *evidence:* [paste the exact command(s) run locally for each gate, then confirm they match the corresponding job step in `.github/workflows/ci.yml`. If any flag differs (`--skip <test>`, `--test-threads=N`, `--features`, `--target`, env-var override), list every divergence and the reason it was necessary; if the divergence is a recurring pattern across stages, add it (or update the existing entry) in `docs/gotchas.md` so future stages encode the rationale up-front, and add a follow-up to the `[END] Decisions` section for the CI workflow change that closes the divergence structurally. A surface that asserts "all gates green locally" without this confirmation is structurally untrusted.]
 
 ### Soft gates
 
