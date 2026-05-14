@@ -77,9 +77,25 @@ fn rw_access(abi: ABI) -> BitFlags<AccessFs> {
 ///
 /// # Errors
 ///
-/// Returns [`SandboxError::Isolation`] if the kernel rejects the rule
-/// set, the access mask is invalid, or a supplied path cannot be opened.
+/// Returns [`SandboxError::Isolation`] if any supplied path does not
+/// exist, the kernel rejects the rule set, or the access mask is
+/// invalid. The pre-flight existence check matters because landlock's
+/// `BestEffort` compatibility mode otherwise treats path-open failures
+/// inside `path_beneath_rules` as soft no-ops on older kernels — an
+/// operator misconfiguring an allowed path would silently land an
+/// unfenced sandbox. Production at `lib.rs::install_isolation`
+/// pre-creates the socket's parent directory, so this check only fires
+/// on operator misuse or test fixtures that pass deliberately-bogus
+/// paths.
 pub fn build_ruleset(allowed_paths: &[&Path]) -> Result<RulesetCreated, SandboxError> {
+    for path in allowed_paths {
+        if !path.exists() {
+            return Err(SandboxError::Isolation(format!(
+                "landlock allowed path does not exist: {}",
+                path.display()
+            )));
+        }
+    }
     let abi = ABI_LEVEL;
     let access = rw_access(abi);
     let created = Ruleset::default()
