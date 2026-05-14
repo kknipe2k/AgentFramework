@@ -33,8 +33,8 @@
 use std::path::Path;
 
 use landlock::{
-    path_beneath_rules, Access, AccessFs, Ruleset, RulesetAttr, RulesetCreated, RulesetCreatedAttr,
-    RulesetStatus, ABI,
+    path_beneath_rules, Access, AccessFs, BitFlags, Ruleset, RulesetAttr, RulesetCreated,
+    RulesetCreatedAttr, RulesetStatus, ABI,
 };
 
 use crate::error::SandboxError;
@@ -48,7 +48,15 @@ const ABI_LEVEL: ABI = ABI::V3;
 /// regular files / dirs + remove. Wide enough for the IPC socket bind
 /// path (mkdir + unlink + create + open), narrow enough to deny
 /// `make_sock` for sockets in other directories or `execute` permission.
-fn rw_access(abi: ABI) -> AccessFs {
+///
+/// Returns [`BitFlags<AccessFs>`] rather than a single [`AccessFs`] variant
+/// because `landlock` represents access masks via `enumflags2::BitFlags`
+/// (re-exported as `landlock::BitFlags`). The `|` chain on `AccessFs`
+/// variants produces a `BitFlags<AccessFs>` per `enumflags2`'s `BitOr`
+/// impl; the function signature reflects that. Both `Ruleset::handle_access`
+/// and `path_beneath_rules` accept `Into<BitFlags<AccessFs>>`, so the
+/// type change at the source-of-truth call site does not cascade.
+fn rw_access(abi: ABI) -> BitFlags<AccessFs> {
     AccessFs::ReadFile
         | AccessFs::ReadDir
         | AccessFs::WriteFile
@@ -58,7 +66,7 @@ fn rw_access(abi: ABI) -> AccessFs {
         | AccessFs::RemoveDir
         | AccessFs::MakeSock
         | AccessFs::Refer
-        | AccessFs::from_all(abi).intersection(AccessFs::Truncate)
+        | AccessFs::from_all(abi).intersection_c(AccessFs::Truncate.into())
 }
 
 /// Build (but do not install) a landlock ruleset that grants read+write

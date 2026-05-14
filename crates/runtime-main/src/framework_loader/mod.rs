@@ -67,7 +67,6 @@ pub struct AuditContext {
     pub session_id: String,
 }
 
-
 async fn audit_log(audit_ctx: &AuditContext, entry: runtime_core::generated::audit::AuditEntry) {
     if let Some(writer) = &audit_ctx.writer {
         if let Err(e) = writer.log(&entry).await {

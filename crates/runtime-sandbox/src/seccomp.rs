@@ -160,8 +160,8 @@ pub const ALLOWED_SYSCALLS: &[&str] = &[
 /// Returns [`SandboxError::Isolation`] if the libseccomp library reports
 /// an error constructing the filter or resolving a syscall name.
 pub fn build_filter() -> Result<ScmpFilterContext, SandboxError> {
-    let mut filter = ScmpFilterContext::new(ScmpAction::KillProcess)
-        .map_err(|e| SandboxError::Isolation(format!("seccomp new: {e}")))?;
+    let mut filter = ScmpFilterContext::new_filter(ScmpAction::KillProcess)
+        .map_err(|e| SandboxError::Isolation(format!("seccomp new_filter: {e}")))?;
     filter
         .add_arch(ScmpArch::X8664)
         .map_err(|e| SandboxError::Isolation(format!("seccomp add_arch: {e}")))?;
