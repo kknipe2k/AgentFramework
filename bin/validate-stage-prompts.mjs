@@ -78,6 +78,26 @@ const REQUIRED_BY_ROOT = {
   ],
 };
 
+// Required tags that apply only when the phase doc's `**Protocol version:**`
+// banner is at or above the listed version. M05 and earlier closeouts predate
+// `<simplify_pass>`; v1.6 makes it required for M06+ closeouts only. See
+// STAGE-PROMPT-PROTOCOL.md §15 v1.6 changelog item #18.
+const VERSION_GATED_REQUIRED = {
+  closeout_stage_prompt: [{ tag: 'simplify_pass', minVersion: 1.6 }],
+};
+
+// Parses the phase doc's `**Protocol version:** vX.Y` banner into a numeric
+// value (e.g. 1.6) for comparison against `VERSION_GATED_REQUIRED.minVersion`.
+// Returns null if no banner is present — caller treats null as "unconstrained"
+// (no version-gated requirements apply).
+function detectProtocolVersion(content) {
+  const match = content.match(/\*\*Protocol version:\*\*\s*v(\d+)\.(\d+)/);
+  if (!match) return null;
+  const major = Number.parseInt(match[1], 10);
+  const minor = Number.parseInt(match[2], 10);
+  return major + minor / 10;
+}
+
 function extractBlocks(content) {
   const blocks = [];
   const lines = content.split('\n');
@@ -141,7 +161,7 @@ function checkVerifierBiasGuard(xml, idLabel) {
   return errors;
 }
 
-function validateBlock(block) {
+function validateBlock(block, protocolVersion) {
   const errors = [];
   const { tag, idAttr } = detectRoot(block.xml);
 
@@ -170,6 +190,17 @@ function validateBlock(block) {
     }
   }
 
+  const versionGated = VERSION_GATED_REQUIRED[tag] || [];
+  for (const { tag: requiredTag, minVersion } of versionGated) {
+    if (protocolVersion === null || protocolVersion < minVersion) continue;
+    if (!hasTag(block.xml, requiredTag)) {
+      errors.push(
+        `<${tag} ${idLabel}> missing required <${requiredTag}> ` +
+          `(phase doc Protocol version v${protocolVersion.toFixed(1)} ≥ v${minVersion.toFixed(1)})`,
+      );
+    }
+  }
+
   if (tag === 'verifier_stage_prompt') {
     errors.push(...checkVerifierBiasGuard(block.xml, idLabel));
   }
@@ -195,11 +226,12 @@ function main() {
   for (const filename of phaseDocs) {
     const path = join(PHASE_DOC_DIR, filename);
     const content = readFileSync(path, 'utf8');
+    const protocolVersion = detectProtocolVersion(content);
     const blocks = extractBlocks(content);
     totalBlocks += blocks.length;
 
     for (const block of blocks) {
-      const { errors, skip } = validateBlock(block);
+      const { errors, skip } = validateBlock(block, protocolVersion);
       if (skip) continue;
       stagePromptBlocks++;
 
