@@ -80,6 +80,90 @@ pub enum HitlUiVariantRef {
     Toast,
 }
 
+/// Severity matrix for gap events — spec §4b (M05 Stage A).
+///
+/// Drives session-state transitions:
+/// - `Critical` blocks the session (loader-detected tool / agent gaps).
+/// - `Important` blocks the owning agent but lets the session continue.
+/// - `Advisory` warns and continues (skill gaps).
+/// - `Requested` marks `request_capability`-emitted gaps so the renderer
+///   distinguishes loader vs meta-tool origin within the same tier.
+///
+/// Mirrors `runtime_core::generated::event::GapSeverity`; hand-rolled here
+/// because typify cross-schema `$ref` is unsupported, matching the
+/// [`HitlTriggerRef`] / `HookCategoryRef` precedent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GapSeverityRef {
+    /// Blocks the session.
+    Critical,
+    /// Blocks the owning agent; session continues.
+    Important,
+    /// Warning; load / agent continues without the missing primitive.
+    Advisory,
+    /// `request_capability`-emitted marker — severity is set by the HITL
+    /// resolution flow rather than predetermined.
+    Requested,
+}
+
+/// How a gap was discovered — spec §4b (M05 Stage A).
+///
+/// `Loader` = `framework_loader` walked the framework JSON at session start
+/// and the reference did not resolve. `RequestCapability` = a running agent
+/// asked for the capability mid-session via the meta-tool. Drives renderer
+/// display + HITL prompt copy.
+///
+/// Mirrors `runtime_core::generated::event::GapSource`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GapSourceRef {
+    /// Discovered at framework-load time by the loader walker.
+    Loader,
+    /// Requested mid-session by an agent via the meta-tool.
+    RequestCapability,
+}
+
+/// Capability-kind discriminator embedded in `CapabilityViolation` +
+/// `CapabilityGrant` events — spec §8.security L1 (M05 Stage B).
+///
+/// Mirrors `runtime_core::generated::capability::CapabilityKind` and the
+/// `CapabilityKindRef` enum in `event.v1.json` `$defs`. Five values
+/// covering the v0.1 enforcer surface; adding a kind requires a v2
+/// schema bump + ADR per the schema-versioning policy. Hand-rolled here
+/// because typify cross-schema `$ref` is unsupported, matching the
+/// [`HitlTriggerRef`] / [`GapSeverityRef`] / [`GapSourceRef`] precedent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityKindRef {
+    /// Read access to a file path / glob.
+    Read,
+    /// Write access to a file path / glob.
+    Write,
+    /// Invocation of a tool by name.
+    Exec,
+    /// Network egress to a hostname / domain.
+    Network,
+    /// Spawning a child process.
+    ProcessSpawn,
+}
+
+/// User tier discriminator embedded in `TierViolation` + `TierTransition`
+/// events — spec §8.security L4 (M05 Stage D).
+///
+/// Mirrors `runtime_core::generated::event::TierRef` and the `TierRef`
+/// enum in `event.v1.json` `$defs`. Two values for v0.1 per §0d release
+/// scope; Full tier post-v0.1 would require a v2 schema bump + ADR.
+/// Hand-rolled here because typify cross-schema `$ref` is unsupported,
+/// matching the [`HitlTriggerRef`] / [`CapabilityKindRef`] precedent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TierRef {
+    /// Default-safe tier — curated allowlist (read + HTTPS-only network).
+    Novice,
+    /// Full capability surface — L1 still narrows by declaration.
+    Promoted,
+}
+
 /// The canonical event union emitted by the runtime across all phases.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -380,23 +464,68 @@ pub enum AgentEvent {
     },
 
     // ── Gap detection (spec §4b) ──
-    /// A required skill is missing.
+    /// A required skill is missing. M05.A added `suggested_action` +
+    /// `requested_via` per spec §4b severity matrix; severity tightened
+    /// from free-string to [`GapSeverityRef`].
     SkillMissing {
         /// The agent that needs the skill.
         agent_id: String,
         /// Name of the missing skill.
         skill_name: String,
-        /// Severity of the gap.
-        severity: String,
+        /// Severity per spec §4b severity matrix.
+        severity: GapSeverityRef,
+        /// Plain-English next-step text the renderer surfaces. minLength 1
+        /// per schema; emitters compose non-empty per gap kind.
+        suggested_action: String,
+        /// Layer-1 (`loader`) or Layer-2 (`request_capability`) origin.
+        requested_via: GapSourceRef,
     },
-    /// A required tool is missing.
+    /// A required tool is missing. M05.A added `suggested_action` +
+    /// `requested_via` per spec §4b severity matrix; severity tightened
+    /// from free-string to [`GapSeverityRef`].
     ToolMissing {
         /// The agent that needs the tool.
         agent_id: String,
         /// Name of the missing tool.
         tool_name: String,
-        /// Severity of the gap.
-        severity: String,
+        /// Severity per spec §4b severity matrix.
+        severity: GapSeverityRef,
+        /// Plain-English next-step text the renderer surfaces. minLength 1
+        /// per schema; emitters compose non-empty per gap kind.
+        suggested_action: String,
+        /// Layer-1 (`loader`) or Layer-2 (`request_capability`) origin.
+        requested_via: GapSourceRef,
+    },
+    /// An MCP server reference is missing — spec §4b + §5. v0.1 emits this
+    /// only from Layer 2 `request_capability`; M06 adds Layer-1 emission
+    /// once the framework schema declares MCP servers explicitly.
+    McpMissing {
+        /// The agent that needs the MCP server.
+        agent_id: String,
+        /// Name of the missing MCP server.
+        server_name: String,
+        /// Severity per spec §4b severity matrix.
+        severity: GapSeverityRef,
+        /// Plain-English next-step text the renderer surfaces.
+        suggested_action: String,
+        /// Layer-1 (`loader`) or Layer-2 (`request_capability`) origin.
+        requested_via: GapSourceRef,
+    },
+    /// A `spawns[]` reference is unresolved — spec §4b Layer 1. Per spec
+    /// §4b severity matrix this is a load-time block: framework fails to
+    /// load. Also emittable from Layer 2 when an agent asks for a
+    /// sub-agent it cannot spawn.
+    AgentMissing {
+        /// The parent agent whose `spawns[]` references the missing id.
+        agent_id: String,
+        /// Id of the missing sub-agent.
+        missing_agent_id: String,
+        /// Severity per spec §4b severity matrix.
+        severity: GapSeverityRef,
+        /// Plain-English next-step text the renderer surfaces.
+        suggested_action: String,
+        /// Layer-1 (`loader`) or Layer-2 (`request_capability`) origin.
+        requested_via: GapSourceRef,
     },
     /// A previously detected gap was resolved.
     GapResolved {
@@ -404,7 +533,7 @@ pub enum AgentEvent {
         agent_id: String,
         /// The capability that was provided.
         capability: String,
-        /// Kind of capability (tool or skill).
+        /// Kind of capability (tool / skill / mcp / agent).
         kind: String,
     },
 
@@ -476,24 +605,79 @@ pub enum AgentEvent {
         error: String,
     },
 
-    // ── Capability enforcement (spec §8.security) ──
-    /// An agent attempted an action outside its declared capabilities.
+    // ── Capability enforcement (spec §8.security L1+L2a — M05 Stage B) ──
+    /// An agent's tool dispatch or sub-agent spawn was rejected by the
+    /// §8.security L2a enforcer.
+    ///
+    /// Emitted BEFORE the `on_capability_violation` HITL prompt fires so
+    /// the renderer surfaces state immediately (gotcha trap #4 — emission
+    /// ordering matters for renderer responsiveness).
     CapabilityViolation {
-        /// The violating agent.
+        /// Agent whose dispatch the enforcer rejected.
         agent_id: String,
-        /// What was declared.
-        declared: String,
-        /// What was attempted.
-        attempted: String,
+        /// Coarse category of access the attempted dispatch needed.
+        capability_kind: CapabilityKindRef,
+        /// Plain-English description of what the agent attempted; surfaced
+        /// in the HITL prompt + capability-violation modal so the user
+        /// understands the rejection.
+        requested_action: String,
+        /// Plain-English description of the scope the agent's grants
+        /// cover. Renderer pairs with `requested_action` to surface the
+        /// mismatch (e.g., grants cover `src/**` glob; request targeted
+        /// `~/.ssh/keys`).
+        declared_scope: String,
     },
-    /// A capability was granted to an agent.
+    /// A capability was granted to an agent — either at framework load
+    /// (root grant; `parent_agent_id` absent) or via L2a narrowing on a
+    /// sub-agent spawn (`parent_agent_id` present).
     CapabilityGrant {
-        /// The agent receiving the grant.
+        /// Optional — agent whose grants this grant narrows from. Absent
+        /// for framework-loader-issued root grants; present whenever an
+        /// agent spawns a sub-agent and narrows a subset of its grants
+        /// to the child.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_agent_id: Option<String>,
+        /// Agent receiving the grant.
+        granted_to: String,
+        /// Coarse category of access the grant covers.
+        capability_kind: CapabilityKindRef,
+        /// Resource name the grant covers — tool name, file glob,
+        /// hostname, or sub-agent id depending on `capability_kind`.
+        resource: String,
+        /// Optional — plain-English description of the parent's broader
+        /// scope. Renderer uses this in the inspector to show "narrowed
+        /// from ... to ..." attribution; absent for root grants.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        narrowed_from: Option<String>,
+    },
+
+    // ── Tier system (spec §8.security L4 — M05 Stage D) ──
+    /// The L4 tier gate rejected an agent's dispatch BEFORE the L1
+    /// enforcer ran. Distinct from `CapabilityViolation` (L1) — the
+    /// renderer routes this to a tier-violation modal in the Settings
+    /// panel.
+    TierViolation {
+        /// Agent whose dispatch the L4 evaluator rejected.
         agent_id: String,
-        /// The granted capability.
-        capability: String,
-        /// Scope of the grant.
-        scope: String,
+        /// The tier that rejected the request.
+        tier: TierRef,
+        /// The coarse kind the tier's allowlist excludes.
+        capability_kind: CapabilityKindRef,
+        /// Plain-English description of what the agent attempted.
+        attempted_action: String,
+    },
+    /// The user's tier changed. Emitted after the persistence layer
+    /// commits the new tier to `tier.json` so the renderer's graph
+    /// store can update `currentTier` and the Settings panel toggle
+    /// reflects the new state.
+    TierTransition {
+        /// The tier the user was on before the transition.
+        previous: TierRef,
+        /// The tier the user is now on.
+        current: TierRef,
+        /// Plain-English reason — confirmation copy / demote-on-uncertainty
+        /// trigger / etc.
+        reason: String,
     },
 
     // ── Budget (spec §2a) ──

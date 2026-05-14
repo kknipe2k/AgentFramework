@@ -22,6 +22,15 @@ coverage:
         threshold: 0.5%
         flags:     [runtime-main]
         informational: false
+      runtime-sandbox:
+        # New safety primitive — M05 Stage C1. Gate covers the plumbing
+        # files (validator + protocol + error). ipc.rs is excluded as a
+        # cfg-platform OS-call wrapper holdout; Stage C2 will lift the
+        # gate once OS-isolation files extend the test surface.
+        target:    95%
+        threshold: 0.5%
+        flags:     [runtime-sandbox]
+        informational: false
     patch:
       # Default patch gate — applies to everything EXCEPT src-tauri/** which
       # has its own gate below. The exclusion keeps Tauri-shell wrappers
@@ -62,3 +71,23 @@ ignore:
   - "**/src/main.rs"
   - "**/build.rs"
   - "src-tauri/gen/**"
+  # M05 Stage C2 runtime-sandbox holdouts: lib.rs (OS-signal
+  # orchestrator wrapping run_inner; parallel to drone's lib.rs).
+  # ipc.rs is now in the gate (Stage C1 carry-forward lifted at C2).
+  # PR #70 post-merge update: seccomp.rs + landlock.rs join the
+  # exclusion list. Their `install()` bodies install OS fences on
+  # the calling process (seccomp's KillProcess BPF filter; landlock's
+  # restrict_self thread restriction) — structurally untestable from
+  # in-process unit tests. Coverage attribution is via the subprocess
+  # integration tests in `tests/integration.rs` (verify isolation
+  # active via `/proc/$pid/status` on Linux + `IsProcessInJob` on
+  # Windows), which is a behavioral gate rather than a per-line one.
+  # Carry-forward: seam decomposition (install_with(load_fn) /
+  # install_with(restrict_fn)) would lift seccomp + landlock back
+  # into the gate; M06+ scope. job_objects.rs on Windows stays in
+  # the gate because its `install_restrictions` was decomposed into
+  # create_job / apply_limits / assign_process / win32_failure
+  # test-seams at M05.C2 (95.12% line on Windows-local).
+  - "crates/runtime-sandbox/src/lib.rs"
+  - "crates/runtime-sandbox/src/seccomp.rs"
+  - "crates/runtime-sandbox/src/landlock.rs"

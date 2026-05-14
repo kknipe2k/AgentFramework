@@ -33,6 +33,30 @@
       "title": "RailPolicy",
       "description": "Rail policy — spec §4a. Hard rails block; soft rails warn."
     },
+    "CapabilityKindRef": {
+      "type": "string",
+      "title": "CapabilityKindRef",
+      "description": "Capability-kind discriminator embedded in capability_violation + capability_grant events. Spec §8.security L1 — mirrors capability.v1.json CapabilityKind (5 values, locked). The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, GapSeverityRef).",
+      "enum": ["read", "write", "exec", "network", "process_spawn"]
+    },
+    "RequestedAction": {
+      "type": "string",
+      "title": "RequestedAction",
+      "description": "Plain-English description of what the agent attempted; surfaced in the HITL prompt + capability-violation modal so the user understands the rejection. Per gotcha #43 (typify-friendly extraction): validated inline strings inside oneOf variants are extracted to $defs with a title.",
+      "minLength": 1
+    },
+    "DeclaredScope": {
+      "type": "string",
+      "title": "DeclaredScope",
+      "description": "Plain-English description of the scope the agent's grants cover. Renderer pairs with `requested_action` to surface the mismatch (e.g., grants cover `src/**` glob; request targeted `~/.ssh/keys`). Per gotcha #43 (typify-friendly extraction).",
+      "minLength": 1
+    },
+    "GrantedResource": {
+      "type": "string",
+      "title": "GrantedResource",
+      "description": "Resource name the grant covers — tool name, file glob, network hostname, or sub-agent id depending on `capability_kind`. Per gotcha #43 (typify-friendly extraction).",
+      "minLength": 1
+    },
     "HitlTriggerRef": {
       "type": "string",
       "title": "HitlTriggerRef",
@@ -54,6 +78,42 @@
       "title": "HitlUiVariantRef",
       "description": "HITL UI variant discriminator embedded in `hitl_requested` events. Spec §6a — mirrors hitl.v1.json HitlUiVariant.",
       "enum": ["panel", "modal", "toast"]
+    },
+    "GapSeverity": {
+      "type": "string",
+      "title": "GapSeverity",
+      "description": "Severity matrix per spec §4b. `critical` blocks the session (loader-detected tool gaps; agent_missing); `important` blocks the owning agent but lets the session continue (request_capability tool gaps); `advisory` warns and continues (skill gaps from any source); `requested` is the M05 marker for request_capability-emitted gaps so the renderer can distinguish loader vs meta-tool origin in the same severity tier.",
+      "enum": ["critical", "important", "advisory", "requested"]
+    },
+    "GapSource": {
+      "type": "string",
+      "title": "GapSource",
+      "description": "How this gap was discovered. `loader` = the framework_loader walked the framework JSON at session start and the reference did not resolve. `request_capability` = a running agent asked for the capability mid-session via the meta-tool. Drives renderer display + HITL prompt copy.",
+      "enum": ["loader", "request_capability"]
+    },
+    "SuggestedAction": {
+      "type": "string",
+      "title": "SuggestedAction",
+      "description": "Plain-English next-step text the renderer surfaces in the GapPanel + HITL prompt. Free-form; emitter composes per severity (e.g. \"Install tool 'fetch_prs' and click Resume\" for critical; \"Skill 'rag' continues without — install async or dismiss\" for advisory). minLength 1 — emitters MUST supply a non-empty action.",
+      "minLength": 1
+    },
+    "TierRef": {
+      "type": "string",
+      "title": "TierRef",
+      "description": "User tier discriminator — spec §8.security L4 + §0d release scope (M05 Stage D). Two-tier system in v0.1: `novice` (curated allowlist — read + HTTPS-only network) is the first-run default; `promoted` (full capability surface; L1 still narrows) is the user-toggled tier. Full tier is post-v0.1. The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef).",
+      "enum": ["novice", "promoted"]
+    },
+    "TierForbiddenAction": {
+      "type": "string",
+      "title": "TierForbiddenAction",
+      "description": "Plain-English description of what the agent attempted; surfaced in the tier-violation modal so the user understands the rejection. Pairs with `capability_kind` (e.g., \"attempted to write to src/lib.rs while in Novice tier\"). Per gotcha #43 (typify-friendly extraction).",
+      "minLength": 1
+    },
+    "TierTransitionReason": {
+      "type": "string",
+      "title": "TierTransitionReason",
+      "description": "Plain-English reason for the tier transition. For promotions: user clicked confirm in the Settings panel. For demotions: user clicked demote OR a downgrade-on-uncertainty affordance fired. Per gotcha #43 (typify-friendly extraction).",
+      "minLength": 1
     }
   },
   "oneOf": [
@@ -378,25 +438,61 @@
     {
       "type": "object",
       "title": "SkillMissing",
+      "description": "Spec §4b Layer 1 (loader) or Layer 2 (request_capability) gap event for an unresolved skill reference. M05.A added `suggested_action` + `requested_via`; severity tightened from free-string to GapSeverity enum. Defaults to severity=advisory (skill gaps are recoverable per spec §4b severity matrix — load continues without).",
       "additionalProperties": false,
-      "required": ["type", "agent_id", "skill_name", "severity"],
+      "required": ["type", "agent_id", "skill_name", "severity", "suggested_action", "requested_via"],
       "properties": {
         "type": { "const": "skill_missing" },
         "agent_id": { "type": "string" },
         "skill_name": { "type": "string" },
-        "severity": { "type": "string" }
+        "severity": { "$ref": "#/$defs/GapSeverity" },
+        "suggested_action": { "$ref": "#/$defs/SuggestedAction" },
+        "requested_via": { "$ref": "#/$defs/GapSource" }
       }
     },
     {
       "type": "object",
       "title": "ToolMissing",
+      "description": "Spec §4b Layer 1 (loader) or Layer 2 (request_capability) gap event for an unresolved tool reference. M05.A added `suggested_action` + `requested_via`; severity tightened from free-string to GapSeverity enum. Tool gaps are blocking per spec §4b severity matrix — the owning agent cannot proceed.",
       "additionalProperties": false,
-      "required": ["type", "agent_id", "tool_name", "severity"],
+      "required": ["type", "agent_id", "tool_name", "severity", "suggested_action", "requested_via"],
       "properties": {
         "type": { "const": "tool_missing" },
         "agent_id": { "type": "string" },
         "tool_name": { "type": "string" },
-        "severity": { "type": "string" }
+        "severity": { "$ref": "#/$defs/GapSeverity" },
+        "suggested_action": { "$ref": "#/$defs/SuggestedAction" },
+        "requested_via": { "$ref": "#/$defs/GapSource" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "McpMissing",
+      "description": "Spec §4b + §5: gap event for an unresolved MCP server reference. v0.1 emits this only from Layer 2 request_capability (the v0.1 framework JSON has no MCP-server declaration field — server lifecycle is M06). M05.A authoring decision: variant + payload land now so the schema is forward-compatible with M06's loader-time emission.",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "server_name", "severity", "suggested_action", "requested_via"],
+      "properties": {
+        "type": { "const": "mcp_missing" },
+        "agent_id": { "type": "string" },
+        "server_name": { "type": "string" },
+        "severity": { "$ref": "#/$defs/GapSeverity" },
+        "suggested_action": { "$ref": "#/$defs/SuggestedAction" },
+        "requested_via": { "$ref": "#/$defs/GapSource" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "AgentMissing",
+      "description": "Spec §4b Layer 1 (loader) — `framework.agents[].spawns[]` references an agent id absent from `framework.agents[]`. Per spec §4b severity matrix this is a load-time block: the framework fails to load (severity=critical). Also emittable from Layer 2 request_capability when an agent asks for a sub-agent it cannot spawn.",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "missing_agent_id", "severity", "suggested_action", "requested_via"],
+      "properties": {
+        "type": { "const": "agent_missing" },
+        "agent_id": { "type": "string" },
+        "missing_agent_id": { "type": "string" },
+        "severity": { "$ref": "#/$defs/GapSeverity" },
+        "suggested_action": { "$ref": "#/$defs/SuggestedAction" },
+        "requested_via": { "$ref": "#/$defs/GapSource" }
       }
     },
     {
@@ -513,24 +609,44 @@
       "type": "object",
       "title": "CapabilityViolation",
       "additionalProperties": false,
-      "required": ["type", "agent_id", "declared", "attempted"],
+      "required": ["type", "agent_id", "capability_kind", "requested_action", "declared_scope"],
       "properties": {
         "type": { "const": "capability_violation" },
-        "agent_id": { "type": "string" },
-        "declared": { "type": "string" },
-        "attempted": { "type": "string" }
+        "agent_id": {
+          "type": "string",
+          "description": "Agent whose dispatch the §8.security L2a enforcer rejected."
+        },
+        "capability_kind": {
+          "$ref": "#/$defs/CapabilityKindRef",
+          "description": "Coarse category of access the attempted dispatch needed."
+        },
+        "requested_action": { "$ref": "#/$defs/RequestedAction" },
+        "declared_scope": { "$ref": "#/$defs/DeclaredScope" }
       }
     },
     {
       "type": "object",
       "title": "CapabilityGrant",
       "additionalProperties": false,
-      "required": ["type", "agent_id", "capability", "scope"],
+      "required": ["type", "granted_to", "capability_kind", "resource"],
       "properties": {
         "type": { "const": "capability_grant" },
-        "agent_id": { "type": "string" },
-        "capability": { "type": "string" },
-        "scope": { "type": "string" }
+        "parent_agent_id": {
+          "type": "string",
+          "description": "Optional — agent whose grants this grant narrows from. Absent for framework-loader-issued root grants; present whenever an agent spawns a sub-agent and narrows a subset of its grants to the child (§8.security L2a narrowing)."
+        },
+        "granted_to": {
+          "type": "string",
+          "description": "Agent receiving the grant."
+        },
+        "capability_kind": {
+          "$ref": "#/$defs/CapabilityKindRef"
+        },
+        "resource": { "$ref": "#/$defs/GrantedResource" },
+        "narrowed_from": {
+          "type": "string",
+          "description": "Optional — plain-English description of the parent's broader scope. Renderer uses this in the inspector to show 'narrowed from ... to ...' attribution; absent for root grants."
+        }
       }
     },
     {
@@ -601,6 +717,39 @@
         "decision": { "type": "string" },
         "rationale": { "type": "string" },
         "tool_used": { "type": ["string", "null"] }
+      }
+    },
+    {
+      "type": "object",
+      "title": "TierViolation",
+      "description": "M05 Stage D §8.security L4 — emitted when the L4 tier gate rejects a capability request before the L1 enforcer runs. Distinct from `capability_violation` (which fires on L1 rejection). Renderer routes to a tier-violation modal in the Settings panel: \"Your current tier (Novice) does not permit this action; promote to Promoted or modify the request.\" Carries the tier that rejected + the requested kind + a plain-English action.",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "tier", "capability_kind", "attempted_action"],
+      "properties": {
+        "type": { "const": "tier_violation" },
+        "agent_id": {
+          "type": "string",
+          "description": "Agent whose dispatch the §8.security L4 evaluator rejected."
+        },
+        "tier": { "$ref": "#/$defs/TierRef" },
+        "capability_kind": {
+          "$ref": "#/$defs/CapabilityKindRef",
+          "description": "The coarse kind the tier's allowlist excludes."
+        },
+        "attempted_action": { "$ref": "#/$defs/TierForbiddenAction" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "TierTransition",
+      "description": "M05 Stage D §8.security L4 — emitted on a successful tier change. `previous` is the tier before the change; `current` is the tier after. Includes a plain-English `reason`. Promotion is renderer-confirmed (Settings panel modal calls `request_tier_transition`); demotion is direct. Renderer applies the new tier to its current-tier state and surfaces a toast.",
+      "additionalProperties": false,
+      "required": ["type", "previous", "current", "reason"],
+      "properties": {
+        "type": { "const": "tier_transition" },
+        "previous": { "$ref": "#/$defs/TierRef" },
+        "current": { "$ref": "#/$defs/TierRef" },
+        "reason": { "$ref": "#/$defs/TierTransitionReason" }
       }
     },
     {

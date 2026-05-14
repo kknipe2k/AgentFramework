@@ -97,6 +97,19 @@ describe('AgentNode', () => {
     expect(handles.length).toBe(2);
   });
 
+  it('mounts_CapabilityBadge_as_child_with_matching_agent_id', () => {
+    // M05 Stage F: AgentNode hosts the per-node CapabilityBadge (tier +
+    // grant count). Spec §8.security L4 surface — the badge reads the
+    // store's currentTier + filtered capabilityGrants. AgentNode must
+    // pass its own agentId so the badge filters correctly (gotcha #68).
+    renderAgent(baseData);
+    const badge = screen.getByTestId(`capability-badge-${baseData.agentId}`);
+    expect(badge).toBeInTheDocument();
+    // The badge sits inside the AgentNode root, not at the top level.
+    const root = screen.getByTestId(`agent-node-${baseData.agentId}`);
+    expect(root.contains(badge)).toBe(true);
+  });
+
   it('reads_tokensTotal_for_visual_scale_not_tokensIn_plus_tokensOut', () => {
     // M04 IRL regression: AgentNode previously read
     // `tokensIn + tokensOut`, which only populate from `tool_result`

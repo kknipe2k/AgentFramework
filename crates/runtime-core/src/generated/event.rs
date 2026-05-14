@@ -754,22 +754,31 @@ pub mod error {
 #[doc = "    },"]
 #[doc = "    {"]
 #[doc = "      \"title\": \"SkillMissing\","]
+#[doc = "      \"description\": \"Spec §4b Layer 1 (loader) or Layer 2 (request_capability) gap event for an unresolved skill reference. M05.A added `suggested_action` + `requested_via`; severity tightened from free-string to GapSeverity enum. Defaults to severity=advisory (skill gaps are recoverable per spec §4b severity matrix — load continues without).\","]
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"required\": ["]
 #[doc = "        \"agent_id\","]
+#[doc = "        \"requested_via\","]
 #[doc = "        \"severity\","]
 #[doc = "        \"skill_name\","]
+#[doc = "        \"suggested_action\","]
 #[doc = "        \"type\""]
 #[doc = "      ],"]
 #[doc = "      \"properties\": {"]
 #[doc = "        \"agent_id\": {"]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
+#[doc = "        \"requested_via\": {"]
+#[doc = "          \"$ref\": \"#/$defs/GapSource\""]
+#[doc = "        },"]
 #[doc = "        \"severity\": {"]
-#[doc = "          \"type\": \"string\""]
+#[doc = "          \"$ref\": \"#/$defs/GapSeverity\""]
 #[doc = "        },"]
 #[doc = "        \"skill_name\": {"]
 #[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"suggested_action\": {"]
+#[doc = "          \"$ref\": \"#/$defs/SuggestedAction\""]
 #[doc = "        },"]
 #[doc = "        \"type\": {"]
 #[doc = "          \"const\": \"skill_missing\""]
@@ -779,10 +788,13 @@ pub mod error {
 #[doc = "    },"]
 #[doc = "    {"]
 #[doc = "      \"title\": \"ToolMissing\","]
+#[doc = "      \"description\": \"Spec §4b Layer 1 (loader) or Layer 2 (request_capability) gap event for an unresolved tool reference. M05.A added `suggested_action` + `requested_via`; severity tightened from free-string to GapSeverity enum. Tool gaps are blocking per spec §4b severity matrix — the owning agent cannot proceed.\","]
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"required\": ["]
 #[doc = "        \"agent_id\","]
+#[doc = "        \"requested_via\","]
 #[doc = "        \"severity\","]
+#[doc = "        \"suggested_action\","]
 #[doc = "        \"tool_name\","]
 #[doc = "        \"type\""]
 #[doc = "      ],"]
@@ -790,14 +802,88 @@ pub mod error {
 #[doc = "        \"agent_id\": {"]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
+#[doc = "        \"requested_via\": {"]
+#[doc = "          \"$ref\": \"#/$defs/GapSource\""]
+#[doc = "        },"]
 #[doc = "        \"severity\": {"]
-#[doc = "          \"type\": \"string\""]
+#[doc = "          \"$ref\": \"#/$defs/GapSeverity\""]
+#[doc = "        },"]
+#[doc = "        \"suggested_action\": {"]
+#[doc = "          \"$ref\": \"#/$defs/SuggestedAction\""]
 #[doc = "        },"]
 #[doc = "        \"tool_name\": {"]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
 #[doc = "        \"type\": {"]
 #[doc = "          \"const\": \"tool_missing\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"title\": \"McpMissing\","]
+#[doc = "      \"description\": \"Spec §4b + §5: gap event for an unresolved MCP server reference. v0.1 emits this only from Layer 2 request_capability (the v0.1 framework JSON has no MCP-server declaration field — server lifecycle is M06). M05.A authoring decision: variant + payload land now so the schema is forward-compatible with M06's loader-time emission.\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"agent_id\","]
+#[doc = "        \"requested_via\","]
+#[doc = "        \"server_name\","]
+#[doc = "        \"severity\","]
+#[doc = "        \"suggested_action\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"agent_id\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"requested_via\": {"]
+#[doc = "          \"$ref\": \"#/$defs/GapSource\""]
+#[doc = "        },"]
+#[doc = "        \"server_name\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"severity\": {"]
+#[doc = "          \"$ref\": \"#/$defs/GapSeverity\""]
+#[doc = "        },"]
+#[doc = "        \"suggested_action\": {"]
+#[doc = "          \"$ref\": \"#/$defs/SuggestedAction\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"mcp_missing\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"title\": \"AgentMissing\","]
+#[doc = "      \"description\": \"Spec §4b Layer 1 (loader) — `framework.agents[].spawns[]` references an agent id absent from `framework.agents[]`. Per spec §4b severity matrix this is a load-time block: the framework fails to load (severity=critical). Also emittable from Layer 2 request_capability when an agent asks for a sub-agent it cannot spawn.\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"agent_id\","]
+#[doc = "        \"missing_agent_id\","]
+#[doc = "        \"requested_via\","]
+#[doc = "        \"severity\","]
+#[doc = "        \"suggested_action\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"agent_id\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"missing_agent_id\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"requested_via\": {"]
+#[doc = "          \"$ref\": \"#/$defs/GapSource\""]
+#[doc = "        },"]
+#[doc = "        \"severity\": {"]
+#[doc = "          \"$ref\": \"#/$defs/GapSeverity\""]
+#[doc = "        },"]
+#[doc = "        \"suggested_action\": {"]
+#[doc = "          \"$ref\": \"#/$defs/SuggestedAction\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"agent_missing\""]
 #[doc = "        }"]
 #[doc = "      },"]
 #[doc = "      \"additionalProperties\": false"]
@@ -994,19 +1080,25 @@ pub mod error {
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"required\": ["]
 #[doc = "        \"agent_id\","]
-#[doc = "        \"attempted\","]
-#[doc = "        \"declared\","]
+#[doc = "        \"capability_kind\","]
+#[doc = "        \"declared_scope\","]
+#[doc = "        \"requested_action\","]
 #[doc = "        \"type\""]
 #[doc = "      ],"]
 #[doc = "      \"properties\": {"]
 #[doc = "        \"agent_id\": {"]
+#[doc = "          \"description\": \"Agent whose dispatch the §8.security L2a enforcer rejected.\","]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
-#[doc = "        \"attempted\": {"]
-#[doc = "          \"type\": \"string\""]
+#[doc = "        \"capability_kind\": {"]
+#[doc = "          \"description\": \"Coarse category of access the attempted dispatch needed.\","]
+#[doc = "          \"$ref\": \"#/$defs/CapabilityKindRef\""]
 #[doc = "        },"]
-#[doc = "        \"declared\": {"]
-#[doc = "          \"type\": \"string\""]
+#[doc = "        \"declared_scope\": {"]
+#[doc = "          \"$ref\": \"#/$defs/DeclaredScope\""]
+#[doc = "        },"]
+#[doc = "        \"requested_action\": {"]
+#[doc = "          \"$ref\": \"#/$defs/RequestedAction\""]
 #[doc = "        },"]
 #[doc = "        \"type\": {"]
 #[doc = "          \"const\": \"capability_violation\""]
@@ -1018,20 +1110,29 @@ pub mod error {
 #[doc = "      \"title\": \"CapabilityGrant\","]
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"required\": ["]
-#[doc = "        \"agent_id\","]
-#[doc = "        \"capability\","]
-#[doc = "        \"scope\","]
+#[doc = "        \"capability_kind\","]
+#[doc = "        \"granted_to\","]
+#[doc = "        \"resource\","]
 #[doc = "        \"type\""]
 #[doc = "      ],"]
 #[doc = "      \"properties\": {"]
-#[doc = "        \"agent_id\": {"]
+#[doc = "        \"capability_kind\": {"]
+#[doc = "          \"$ref\": \"#/$defs/CapabilityKindRef\""]
+#[doc = "        },"]
+#[doc = "        \"granted_to\": {"]
+#[doc = "          \"description\": \"Agent receiving the grant.\","]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
-#[doc = "        \"capability\": {"]
+#[doc = "        \"narrowed_from\": {"]
+#[doc = "          \"description\": \"Optional — plain-English description of the parent's broader scope. Renderer uses this in the inspector to show 'narrowed from ... to ...' attribution; absent for root grants.\","]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
-#[doc = "        \"scope\": {"]
+#[doc = "        \"parent_agent_id\": {"]
+#[doc = "          \"description\": \"Optional — agent whose grants this grant narrows from. Absent for framework-loader-issued root grants; present whenever an agent spawns a sub-agent and narrows a subset of its grants to the child (§8.security L2a narrowing).\","]
 #[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"resource\": {"]
+#[doc = "          \"$ref\": \"#/$defs/GrantedResource\""]
 #[doc = "        },"]
 #[doc = "        \"type\": {"]
 #[doc = "          \"const\": \"capability_grant\""]
@@ -1180,6 +1281,64 @@ pub mod error {
 #[doc = "        },"]
 #[doc = "        \"type\": {"]
 #[doc = "          \"const\": \"decision_record\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"title\": \"TierViolation\","]
+#[doc = "      \"description\": \"M05 Stage D §8.security L4 — emitted when the L4 tier gate rejects a capability request before the L1 enforcer runs. Distinct from `capability_violation` (which fires on L1 rejection). Renderer routes to a tier-violation modal in the Settings panel: \\\"Your current tier (Novice) does not permit this action; promote to Promoted or modify the request.\\\" Carries the tier that rejected + the requested kind + a plain-English action.\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"agent_id\","]
+#[doc = "        \"attempted_action\","]
+#[doc = "        \"capability_kind\","]
+#[doc = "        \"tier\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"agent_id\": {"]
+#[doc = "          \"description\": \"Agent whose dispatch the §8.security L4 evaluator rejected.\","]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"attempted_action\": {"]
+#[doc = "          \"$ref\": \"#/$defs/TierForbiddenAction\""]
+#[doc = "        },"]
+#[doc = "        \"capability_kind\": {"]
+#[doc = "          \"description\": \"The coarse kind the tier's allowlist excludes.\","]
+#[doc = "          \"$ref\": \"#/$defs/CapabilityKindRef\""]
+#[doc = "        },"]
+#[doc = "        \"tier\": {"]
+#[doc = "          \"$ref\": \"#/$defs/TierRef\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"tier_violation\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"title\": \"TierTransition\","]
+#[doc = "      \"description\": \"M05 Stage D §8.security L4 — emitted on a successful tier change. `previous` is the tier before the change; `current` is the tier after. Includes a plain-English `reason`. Promotion is renderer-confirmed (Settings panel modal calls `request_tier_transition`); demotion is direct. Renderer applies the new tier to its current-tier state and surfaces a toast.\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"current\","]
+#[doc = "        \"previous\","]
+#[doc = "        \"reason\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"current\": {"]
+#[doc = "          \"$ref\": \"#/$defs/TierRef\""]
+#[doc = "        },"]
+#[doc = "        \"previous\": {"]
+#[doc = "          \"$ref\": \"#/$defs/TierRef\""]
+#[doc = "        },"]
+#[doc = "        \"reason\": {"]
+#[doc = "          \"$ref\": \"#/$defs/TierTransitionReason\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"tier_transition\""]
 #[doc = "        }"]
 #[doc = "      },"]
 #[doc = "      \"additionalProperties\": false"]
@@ -1417,19 +1576,41 @@ pub enum AgentEvent {
         policy: RailPolicy,
         rail_id: ::std::string::String,
     },
-    #[doc = "SkillMissing"]
+    #[doc = "SkillMissing\n\nSpec §4b Layer 1 (loader) or Layer 2 (request_capability) gap event for an unresolved skill reference. M05.A added `suggested_action` + `requested_via`; severity tightened from free-string to GapSeverity enum. Defaults to severity=advisory (skill gaps are recoverable per spec §4b severity matrix — load continues without)."]
     #[serde(rename = "skill_missing")]
     SkillMissing {
         agent_id: ::std::string::String,
-        severity: ::std::string::String,
+        requested_via: GapSource,
+        severity: GapSeverity,
         skill_name: ::std::string::String,
+        suggested_action: SuggestedAction,
     },
-    #[doc = "ToolMissing"]
+    #[doc = "ToolMissing\n\nSpec §4b Layer 1 (loader) or Layer 2 (request_capability) gap event for an unresolved tool reference. M05.A added `suggested_action` + `requested_via`; severity tightened from free-string to GapSeverity enum. Tool gaps are blocking per spec §4b severity matrix — the owning agent cannot proceed."]
     #[serde(rename = "tool_missing")]
     ToolMissing {
         agent_id: ::std::string::String,
-        severity: ::std::string::String,
+        requested_via: GapSource,
+        severity: GapSeverity,
+        suggested_action: SuggestedAction,
         tool_name: ::std::string::String,
+    },
+    #[doc = "McpMissing\n\nSpec §4b + §5: gap event for an unresolved MCP server reference. v0.1 emits this only from Layer 2 request_capability (the v0.1 framework JSON has no MCP-server declaration field — server lifecycle is M06). M05.A authoring decision: variant + payload land now so the schema is forward-compatible with M06's loader-time emission."]
+    #[serde(rename = "mcp_missing")]
+    McpMissing {
+        agent_id: ::std::string::String,
+        requested_via: GapSource,
+        server_name: ::std::string::String,
+        severity: GapSeverity,
+        suggested_action: SuggestedAction,
+    },
+    #[doc = "AgentMissing\n\nSpec §4b Layer 1 (loader) — `framework.agents[].spawns[]` references an agent id absent from `framework.agents[]`. Per spec §4b severity matrix this is a load-time block: the framework fails to load (severity=critical). Also emittable from Layer 2 request_capability when an agent asks for a sub-agent it cannot spawn."]
+    #[serde(rename = "agent_missing")]
+    AgentMissing {
+        agent_id: ::std::string::String,
+        missing_agent_id: ::std::string::String,
+        requested_via: GapSource,
+        severity: GapSeverity,
+        suggested_action: SuggestedAction,
     },
     #[doc = "GapResolved"]
     #[serde(rename = "gap_resolved")]
@@ -1490,16 +1671,26 @@ pub enum AgentEvent {
     #[doc = "CapabilityViolation"]
     #[serde(rename = "capability_violation")]
     CapabilityViolation {
+        #[doc = "Agent whose dispatch the §8.security L2a enforcer rejected."]
         agent_id: ::std::string::String,
-        attempted: ::std::string::String,
-        declared: ::std::string::String,
+        #[doc = "Coarse category of access the attempted dispatch needed."]
+        capability_kind: CapabilityKindRef,
+        declared_scope: DeclaredScope,
+        requested_action: RequestedAction,
     },
     #[doc = "CapabilityGrant"]
     #[serde(rename = "capability_grant")]
     CapabilityGrant {
-        agent_id: ::std::string::String,
-        capability: ::std::string::String,
-        scope: ::std::string::String,
+        capability_kind: CapabilityKindRef,
+        #[doc = "Agent receiving the grant."]
+        granted_to: ::std::string::String,
+        #[doc = "Optional — plain-English description of the parent's broader scope. Renderer uses this in the inspector to show 'narrowed from ... to ...' attribution; absent for root grants."]
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        narrowed_from: ::std::option::Option<::std::string::String>,
+        #[doc = "Optional — agent whose grants this grant narrows from. Absent for framework-loader-issued root grants; present whenever an agent spawns a sub-agent and narrows a subset of its grants to the child (§8.security L2a narrowing)."]
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        parent_agent_id: ::std::option::Option<::std::string::String>,
+        resource: GrantedResource,
     },
     #[doc = "BudgetWarn"]
     #[serde(rename = "budget_warn")]
@@ -1535,6 +1726,23 @@ pub enum AgentEvent {
         rationale: ::std::string::String,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         tool_used: ::std::option::Option<::std::string::String>,
+    },
+    #[doc = "TierViolation\n\nM05 Stage D §8.security L4 — emitted when the L4 tier gate rejects a capability request before the L1 enforcer runs. Distinct from `capability_violation` (which fires on L1 rejection). Renderer routes to a tier-violation modal in the Settings panel: \"Your current tier (Novice) does not permit this action; promote to Promoted or modify the request.\" Carries the tier that rejected + the requested kind + a plain-English action."]
+    #[serde(rename = "tier_violation")]
+    TierViolation {
+        #[doc = "Agent whose dispatch the §8.security L4 evaluator rejected."]
+        agent_id: ::std::string::String,
+        attempted_action: TierForbiddenAction,
+        #[doc = "The coarse kind the tier's allowlist excludes."]
+        capability_kind: CapabilityKindRef,
+        tier: TierRef,
+    },
+    #[doc = "TierTransition\n\nM05 Stage D §8.security L4 — emitted on a successful tier change. `previous` is the tier before the change; `current` is the tier after. Includes a plain-English `reason`. Promotion is renderer-confirmed (Settings panel modal calls `request_tier_transition`); demotion is direct. Renderer applies the new tier to its current-tier state and surfaces a toast."]
+    #[serde(rename = "tier_transition")]
+    TierTransition {
+        current: TierRef,
+        previous: TierRef,
+        reason: TierTransitionReason,
     },
     #[doc = "TokenUsage"]
     #[serde(rename = "token_usage")]
@@ -1617,6 +1825,393 @@ impl ::std::convert::TryFrom<::std::string::String> for ApprovedBy {
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
+    }
+}
+#[doc = "Capability-kind discriminator embedded in capability_violation + capability_grant events. Spec §8.security L1 — mirrors capability.v1.json CapabilityKind (5 values, locked). The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, GapSeverityRef)."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"CapabilityKindRef\","]
+#[doc = "  \"description\": \"Capability-kind discriminator embedded in capability_violation + capability_grant events. Spec §8.security L1 — mirrors capability.v1.json CapabilityKind (5 values, locked). The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, GapSeverityRef).\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"read\","]
+#[doc = "    \"write\","]
+#[doc = "    \"exec\","]
+#[doc = "    \"network\","]
+#[doc = "    \"process_spawn\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CapabilityKindRef {
+    #[serde(rename = "read")]
+    Read,
+    #[serde(rename = "write")]
+    Write,
+    #[serde(rename = "exec")]
+    Exec,
+    #[serde(rename = "network")]
+    Network,
+    #[serde(rename = "process_spawn")]
+    ProcessSpawn,
+}
+impl ::std::fmt::Display for CapabilityKindRef {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Read => f.write_str("read"),
+            Self::Write => f.write_str("write"),
+            Self::Exec => f.write_str("exec"),
+            Self::Network => f.write_str("network"),
+            Self::ProcessSpawn => f.write_str("process_spawn"),
+        }
+    }
+}
+impl ::std::str::FromStr for CapabilityKindRef {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "read" => Ok(Self::Read),
+            "write" => Ok(Self::Write),
+            "exec" => Ok(Self::Exec),
+            "network" => Ok(Self::Network),
+            "process_spawn" => Ok(Self::ProcessSpawn),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CapabilityKindRef {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for CapabilityKindRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CapabilityKindRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Plain-English description of the scope the agent's grants cover. Renderer pairs with `requested_action` to surface the mismatch (e.g., grants cover `src/**` glob; request targeted `~/.ssh/keys`). Per gotcha #43 (typify-friendly extraction)."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"DeclaredScope\","]
+#[doc = "  \"description\": \"Plain-English description of the scope the agent's grants cover. Renderer pairs with `requested_action` to surface the mismatch (e.g., grants cover `src/**` glob; request targeted `~/.ssh/keys`). Per gotcha #43 (typify-friendly extraction).\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"minLength\": 1"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct DeclaredScope(::std::string::String);
+impl ::std::ops::Deref for DeclaredScope {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<DeclaredScope> for ::std::string::String {
+    fn from(value: DeclaredScope) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for DeclaredScope {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for DeclaredScope {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for DeclaredScope {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for DeclaredScope {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for DeclaredScope {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "Severity matrix per spec §4b. `critical` blocks the session (loader-detected tool gaps; agent_missing); `important` blocks the owning agent but lets the session continue (request_capability tool gaps); `advisory` warns and continues (skill gaps from any source); `requested` is the M05 marker for request_capability-emitted gaps so the renderer can distinguish loader vs meta-tool origin in the same severity tier."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"GapSeverity\","]
+#[doc = "  \"description\": \"Severity matrix per spec §4b. `critical` blocks the session (loader-detected tool gaps; agent_missing); `important` blocks the owning agent but lets the session continue (request_capability tool gaps); `advisory` warns and continues (skill gaps from any source); `requested` is the M05 marker for request_capability-emitted gaps so the renderer can distinguish loader vs meta-tool origin in the same severity tier.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"critical\","]
+#[doc = "    \"important\","]
+#[doc = "    \"advisory\","]
+#[doc = "    \"requested\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum GapSeverity {
+    #[serde(rename = "critical")]
+    Critical,
+    #[serde(rename = "important")]
+    Important,
+    #[serde(rename = "advisory")]
+    Advisory,
+    #[serde(rename = "requested")]
+    Requested,
+}
+impl ::std::fmt::Display for GapSeverity {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Critical => f.write_str("critical"),
+            Self::Important => f.write_str("important"),
+            Self::Advisory => f.write_str("advisory"),
+            Self::Requested => f.write_str("requested"),
+        }
+    }
+}
+impl ::std::str::FromStr for GapSeverity {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "critical" => Ok(Self::Critical),
+            "important" => Ok(Self::Important),
+            "advisory" => Ok(Self::Advisory),
+            "requested" => Ok(Self::Requested),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for GapSeverity {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for GapSeverity {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for GapSeverity {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "How this gap was discovered. `loader` = the framework_loader walked the framework JSON at session start and the reference did not resolve. `request_capability` = a running agent asked for the capability mid-session via the meta-tool. Drives renderer display + HITL prompt copy."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"GapSource\","]
+#[doc = "  \"description\": \"How this gap was discovered. `loader` = the framework_loader walked the framework JSON at session start and the reference did not resolve. `request_capability` = a running agent asked for the capability mid-session via the meta-tool. Drives renderer display + HITL prompt copy.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"loader\","]
+#[doc = "    \"request_capability\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum GapSource {
+    #[serde(rename = "loader")]
+    Loader,
+    #[serde(rename = "request_capability")]
+    RequestCapability,
+}
+impl ::std::fmt::Display for GapSource {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Loader => f.write_str("loader"),
+            Self::RequestCapability => f.write_str("request_capability"),
+        }
+    }
+}
+impl ::std::str::FromStr for GapSource {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "loader" => Ok(Self::Loader),
+            "request_capability" => Ok(Self::RequestCapability),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for GapSource {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for GapSource {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for GapSource {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Resource name the grant covers — tool name, file glob, network hostname, or sub-agent id depending on `capability_kind`. Per gotcha #43 (typify-friendly extraction)."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"GrantedResource\","]
+#[doc = "  \"description\": \"Resource name the grant covers — tool name, file glob, network hostname, or sub-agent id depending on `capability_kind`. Per gotcha #43 (typify-friendly extraction).\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"minLength\": 1"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct GrantedResource(::std::string::String);
+impl ::std::ops::Deref for GrantedResource {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<GrantedResource> for ::std::string::String {
+    fn from(value: GrantedResource) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for GrantedResource {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for GrantedResource {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for GrantedResource {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for GrantedResource {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for GrantedResource {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
     }
 }
 #[doc = "HITL trigger discriminator embedded in HITL + notifier events. Spec §6a — mirrors hitl.v1.json HitlTrigger (9 values, locked). The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy)."]
@@ -2047,6 +2642,360 @@ impl ::std::convert::TryFrom<::std::string::String> for RailPolicy {
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
+    }
+}
+#[doc = "Plain-English description of what the agent attempted; surfaced in the HITL prompt + capability-violation modal so the user understands the rejection. Per gotcha #43 (typify-friendly extraction): validated inline strings inside oneOf variants are extracted to $defs with a title."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"RequestedAction\","]
+#[doc = "  \"description\": \"Plain-English description of what the agent attempted; surfaced in the HITL prompt + capability-violation modal so the user understands the rejection. Per gotcha #43 (typify-friendly extraction): validated inline strings inside oneOf variants are extracted to $defs with a title.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"minLength\": 1"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct RequestedAction(::std::string::String);
+impl ::std::ops::Deref for RequestedAction {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<RequestedAction> for ::std::string::String {
+    fn from(value: RequestedAction) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for RequestedAction {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for RequestedAction {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for RequestedAction {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for RequestedAction {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for RequestedAction {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "Plain-English next-step text the renderer surfaces in the GapPanel + HITL prompt. Free-form; emitter composes per severity (e.g. \"Install tool 'fetch_prs' and click Resume\" for critical; \"Skill 'rag' continues without — install async or dismiss\" for advisory). minLength 1 — emitters MUST supply a non-empty action."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"SuggestedAction\","]
+#[doc = "  \"description\": \"Plain-English next-step text the renderer surfaces in the GapPanel + HITL prompt. Free-form; emitter composes per severity (e.g. \\\"Install tool 'fetch_prs' and click Resume\\\" for critical; \\\"Skill 'rag' continues without — install async or dismiss\\\" for advisory). minLength 1 — emitters MUST supply a non-empty action.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"minLength\": 1"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct SuggestedAction(::std::string::String);
+impl ::std::ops::Deref for SuggestedAction {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<SuggestedAction> for ::std::string::String {
+    fn from(value: SuggestedAction) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for SuggestedAction {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for SuggestedAction {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for SuggestedAction {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SuggestedAction {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for SuggestedAction {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "Plain-English description of what the agent attempted; surfaced in the tier-violation modal so the user understands the rejection. Pairs with `capability_kind` (e.g., \"attempted to write to src/lib.rs while in Novice tier\"). Per gotcha #43 (typify-friendly extraction)."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"TierForbiddenAction\","]
+#[doc = "  \"description\": \"Plain-English description of what the agent attempted; surfaced in the tier-violation modal so the user understands the rejection. Pairs with `capability_kind` (e.g., \\\"attempted to write to src/lib.rs while in Novice tier\\\"). Per gotcha #43 (typify-friendly extraction).\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"minLength\": 1"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct TierForbiddenAction(::std::string::String);
+impl ::std::ops::Deref for TierForbiddenAction {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<TierForbiddenAction> for ::std::string::String {
+    fn from(value: TierForbiddenAction) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for TierForbiddenAction {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for TierForbiddenAction {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for TierForbiddenAction {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for TierForbiddenAction {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for TierForbiddenAction {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "User tier discriminator — spec §8.security L4 + §0d release scope (M05 Stage D). Two-tier system in v0.1: `novice` (curated allowlist — read + HTTPS-only network) is the first-run default; `promoted` (full capability surface; L1 still narrows) is the user-toggled tier. Full tier is post-v0.1. The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef)."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"TierRef\","]
+#[doc = "  \"description\": \"User tier discriminator — spec §8.security L4 + §0d release scope (M05 Stage D). Two-tier system in v0.1: `novice` (curated allowlist — read + HTTPS-only network) is the first-run default; `promoted` (full capability surface; L1 still narrows) is the user-toggled tier. Full tier is post-v0.1. The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef).\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"novice\","]
+#[doc = "    \"promoted\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum TierRef {
+    #[serde(rename = "novice")]
+    Novice,
+    #[serde(rename = "promoted")]
+    Promoted,
+}
+impl ::std::fmt::Display for TierRef {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Novice => f.write_str("novice"),
+            Self::Promoted => f.write_str("promoted"),
+        }
+    }
+}
+impl ::std::str::FromStr for TierRef {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "novice" => Ok(Self::Novice),
+            "promoted" => Ok(Self::Promoted),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for TierRef {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for TierRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for TierRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Plain-English reason for the tier transition. For promotions: user clicked confirm in the Settings panel. For demotions: user clicked demote OR a downgrade-on-uncertainty affordance fired. Per gotcha #43 (typify-friendly extraction)."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"TierTransitionReason\","]
+#[doc = "  \"description\": \"Plain-English reason for the tier transition. For promotions: user clicked confirm in the Settings panel. For demotions: user clicked demote OR a downgrade-on-uncertainty affordance fired. Per gotcha #43 (typify-friendly extraction).\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"minLength\": 1"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct TierTransitionReason(::std::string::String);
+impl ::std::ops::Deref for TierTransitionReason {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<TierTransitionReason> for ::std::string::String {
+    fn from(value: TierTransitionReason) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for TierTransitionReason {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for TierTransitionReason {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for TierTransitionReason {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for TierTransitionReason {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for TierTransitionReason {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
     }
 }
 #[doc = "Origin of a tool invocation. Spec §0b + §2."]

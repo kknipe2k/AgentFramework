@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aria-runtime.dev/audit.v1.json",
+  "title": "AuditEntry",
+  "description": "One line of `skills.audit.jsonl` per spec §8.security L5 (M05 Stage E). The audit log is append-only, newline-delimited JSON written by the runtime's safety primitives (framework_loader, capability_enforcer, tier_evaluator) on every grant / denial / transition / gap event. v0.1 ships unbounded growth + no hash-chain + no per-event provenance block — those land post-v0.1. Phase doc M05-gap-capability.md §E is the merged contract. The `details` field is open-shape per-`kind`; consumers read `kind` and interpret `details` accordingly. Each entry carries `timestamp_unix_ms` + `session_id` so a streaming reader can correlate entries to a session even though v0.1 is single-session per §0d.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["timestamp_unix_ms", "session_id", "kind", "details"],
+  "properties": {
+    "timestamp_unix_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Unix millisecond timestamp when the entry was written. UTC; captured from system clock at write time."
+    },
+    "session_id": {
+      "$ref": "#/$defs/AuditSessionId"
+    },
+    "kind": {
+      "$ref": "#/$defs/AuditEntryKind"
+    },
+    "details": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Open-shape payload per `kind`. See `runtime_main::audit::entry` for the per-kind constructors that pin the per-kind shape at the call site; this schema intentionally leaves it open so v0.1 can extend `details` per kind without a schema major bump."
+    }
+  },
+  "$defs": {
+    "AuditEntryKind": {
+      "type": "string",
+      "title": "AuditEntryKind",
+      "description": "Discriminator for the `details` shape. v0.1 emits six kinds: `framework_loaded` (Stage A successful load), `gap_detected` (Stage A walker emitted a gap), `gap_resolved` (Stage A resolution event), `capability_granted` (Stage B enforcer accepted), `capability_denied` (Stage B enforcer rejected), `tier_transition` (Stage D evaluator-state flip). Per gotcha #43 (typify-friendly extraction): enum extracted to $defs with title.",
+      "enum": [
+        "framework_loaded",
+        "gap_detected",
+        "gap_resolved",
+        "capability_granted",
+        "capability_denied",
+        "tier_transition"
+      ]
+    },
+    "AuditSessionId": {
+      "type": "string",
+      "title": "AuditSessionId",
+      "description": "Session identifier carried per-entry so a v1.0+ multi-session streaming reader can correlate audit lines to a session. v0.1 single-session per §0d uses a synthetic id at session start. Per gotcha #43 (typify-friendly extraction): validated inline string extracted to $defs with title + minLength.",
+      "minLength": 1
+    }
+  }
+}

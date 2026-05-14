@@ -22,6 +22,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-notification",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -2243,6 +2244,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "landlock"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49fefd6652c57d68aaa32544a4c0e642929725bdc1fd929367cdeb673ab81088"
+dependencies = [
+ "enumflags2",
+ "libc",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2311,6 +2323,24 @@ checksum = "e02f3bb43d335493c96bf3fd3a321600bf6bd07ed34bc64118e9293bdffea46c"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "libseccomp"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21c57fd8981a80019807b7b68118618d29a87177c63d704fc96e6ecd003ae5b3"
+dependencies = [
+ "bitflags 1.3.2",
+ "libc",
+ "libseccomp-sys",
+ "pkg-config",
+]
+
+[[package]]
+name = "libseccomp-sys"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a7cbbd4ad467251987c6e5b47d53b11a5a05add08f2447a9e2d70aef1e0d138"
 
 [[package]]
 name = "libsqlite3-sys"
@@ -3449,6 +3479,7 @@ dependencies = [
  "reqwest",
  "runtime-core",
  "runtime-drone",
+ "runtime-sandbox",
  "rusqlite",
  "secrecy",
  "serde",
@@ -3465,6 +3496,23 @@ dependencies = [
 [[package]]
 name = "runtime-sandbox"
 version = "0.1.0"
+dependencies = [
+ "clap",
+ "futures",
+ "landlock",
+ "libseccomp",
+ "runtime-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "windows-sys 0.59.0",
+]
 
 [[package]]
 name = "rusqlite"

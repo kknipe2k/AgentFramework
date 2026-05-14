@@ -181,6 +181,293 @@ describe('graphStore.applyEvent', () => {
     expect(after.edges).toHaveLength(before.edges.length);
   });
 
+  // Spec §4b — M05 Stage A gap-event applyEvent branches.
+  describe('gap events (M05 Stage A)', () => {
+    const toolMissingLoader: AgentEvent = {
+      type: 'tool_missing',
+      agent_id: 'worker',
+      tool_name: 'fetch_prs',
+      severity: 'critical',
+      suggested_action: "Install tool 'fetch_prs' and click Resume.",
+      requested_via: 'loader',
+    };
+    const skillMissingMeta: AgentEvent = {
+      type: 'skill_missing',
+      agent_id: 'worker',
+      skill_name: 'rag',
+      severity: 'requested',
+      suggested_action: 'Agent worker requested skill rag: needs to look up repo context',
+      requested_via: 'request_capability',
+    };
+    const mcpMissing: AgentEvent = {
+      type: 'mcp_missing',
+      agent_id: 'worker',
+      server_name: 'pdf-mcp',
+      severity: 'requested',
+      suggested_action: 'Agent worker requested mcp server pdf-mcp: extract text from a PDF',
+      requested_via: 'request_capability',
+    };
+    const agentMissing: AgentEvent = {
+      type: 'agent_missing',
+      agent_id: 'orchestrator',
+      missing_agent_id: 'nonexistent-child',
+      severity: 'critical',
+      suggested_action:
+        "Sub-agent 'nonexistent-child' not declared in framework; fix framework JSON before reloading.",
+      requested_via: 'loader',
+    };
+
+    it('applies_tool_missing_event_mounts_gap_node', () => {
+      useGraphStore.getState().applyEvent(toolMissingLoader);
+      const gaps = useGraphStore.getState().nodes.filter((n) => n.type === 'gap');
+      expect(gaps).toHaveLength(1);
+      const gap = gaps[0]!;
+      expect(gap.data).toMatchObject({
+        gapId: 'gap:tool_missing:fetch_prs:worker',
+        kind: 'tool_missing',
+        missingName: 'fetch_prs',
+        agentId: 'worker',
+        severity: 'critical',
+        requestedVia: 'loader',
+        status: 'gap',
+      });
+      expect(gap.data.suggestedAction).toContain('Resume');
+    });
+
+    it('applies_skill_missing_with_requested_via_distinguishes_layer', () => {
+      useGraphStore.getState().applyEvent(skillMissingMeta);
+      const gap = useGraphStore.getState().nodes.find((n) => n.type === 'gap')!;
+      expect(gap.data).toMatchObject({
+        kind: 'skill_missing',
+        missingName: 'rag',
+        severity: 'requested',
+        requestedVia: 'request_capability',
+      });
+    });
+
+    it('applies_mcp_missing_and_agent_missing_variants', () => {
+      useGraphStore.getState().applyEvent(mcpMissing);
+      useGraphStore.getState().applyEvent(agentMissing);
+      const gaps = useGraphStore.getState().nodes.filter((n) => n.type === 'gap');
+      expect(gaps).toHaveLength(2);
+      const kinds = gaps.map((g) => g.data.kind);
+      expect(kinds).toContain('mcp_missing');
+      expect(kinds).toContain('agent_missing');
+    });
+
+    it('tool_missing_idempotent_on_re_emission', () => {
+      // Re-emission of the same gap (same kind + missing primitive +
+      // agent) must collapse to one node. Mirrors agent_spawned_idempotent
+      // semantics so loader replays + duplicate request_capability calls
+      // don't double-mount.
+      useGraphStore.getState().applyEvent(toolMissingLoader);
+      useGraphStore.getState().applyEvent(toolMissingLoader);
+      const gaps = useGraphStore.getState().nodes.filter((n) => n.type === 'gap');
+      expect(gaps).toHaveLength(1);
+    });
+
+    it('latest_event_wins_on_severity_when_same_gap_re_emitted', () => {
+      // request_capability emission for an already-loader-detected gap
+      // should update the visible severity to the more-recent emission.
+      useGraphStore.getState().applyEvent(toolMissingLoader);
+      useGraphStore.getState().applyEvent({
+        ...toolMissingLoader,
+        severity: 'requested',
+        requested_via: 'request_capability',
+      });
+      const gap = useGraphStore.getState().nodes.find((n) => n.type === 'gap')!;
+      expect(gap.data.severity).toBe('requested');
+      expect(gap.data.requestedVia).toBe('request_capability');
+    });
+
+    it('applies_gap_resolved_dismisses_gap_node', () => {
+      useGraphStore.getState().applyEvent(toolMissingLoader);
+      expect(useGraphStore.getState().nodes.filter((n) => n.type === 'gap')).toHaveLength(1);
+      useGraphStore.getState().applyEvent({
+        type: 'gap_resolved',
+        agent_id: 'worker',
+        capability: 'fetch_prs',
+        kind: 'tool',
+      });
+      expect(useGraphStore.getState().nodes.filter((n) => n.type === 'gap')).toHaveLength(0);
+    });
+
+    it('gap_resolved_with_unknown_kind_is_safe_noop', () => {
+      // Defensive — `kind` is free-text on the schema; an unknown value
+      // shouldn't crash applyEvent.
+      useGraphStore.getState().applyEvent(toolMissingLoader);
+      useGraphStore.getState().applyEvent({
+        type: 'gap_resolved',
+        agent_id: 'worker',
+        capability: 'fetch_prs',
+        kind: 'something-else',
+      });
+      expect(useGraphStore.getState().nodes.filter((n) => n.type === 'gap')).toHaveLength(1);
+    });
+  });
+
+  // Spec §8.security L2a — M05 Stage B capability-event applyEvent branches.
+  describe('capability events (M05 Stage B)', () => {
+    const violation: AgentEvent = {
+      type: 'capability_violation',
+      agent_id: 'worker',
+      capability_kind: 'exec',
+      requested_action: "invoke tool 'Bash'",
+      declared_scope: 'declared grants do not cover this request',
+    };
+    const rootGrant: AgentEvent = {
+      type: 'capability_grant',
+      granted_to: 'worker',
+      capability_kind: 'read',
+      resource: 'src/**',
+    };
+    const narrowedGrant: AgentEvent = {
+      type: 'capability_grant',
+      parent_agent_id: 'orchestrator',
+      granted_to: 'subagent',
+      capability_kind: 'network',
+      resource: 'api.example.com',
+      narrowed_from: 'any *.example.com host',
+    };
+
+    it('applies_capability_violation_records_state_keyed_by_agent', () => {
+      useGraphStore.getState().applyEvent(violation);
+      const record = useGraphStore.getState().capabilityViolations['worker'];
+      expect(record).toBeDefined();
+      expect(record!.capabilityKind).toBe('exec');
+      expect(record!.requestedAction).toBe("invoke tool 'Bash'");
+      expect(record!.declaredScope).toContain('declared grants');
+      expect(record!.timestamp).toBeGreaterThan(0);
+    });
+
+    it('capability_violation_last_write_wins_on_same_agent', () => {
+      useGraphStore.getState().applyEvent(violation);
+      const later: AgentEvent = {
+        ...violation,
+        requested_action: "invoke tool 'WebFetch'",
+      };
+      useGraphStore.getState().applyEvent(later);
+      const record = useGraphStore.getState().capabilityViolations['worker']!;
+      expect(record.requestedAction).toBe("invoke tool 'WebFetch'");
+      // Still only one entry for this agent — Map shape, not log.
+      expect(Object.keys(useGraphStore.getState().capabilityViolations)).toEqual(['worker']);
+    });
+
+    it('applies_capability_grant_appends_to_log_with_parent_absent', () => {
+      useGraphStore.getState().applyEvent(rootGrant);
+      const grants = useGraphStore.getState().capabilityGrants;
+      expect(grants).toHaveLength(1);
+      const grant = grants[0]!;
+      expect(grant.parentAgentId).toBeNull();
+      expect(grant.grantedTo).toBe('worker');
+      expect(grant.capabilityKind).toBe('read');
+      expect(grant.resource).toBe('src/**');
+      expect(grant.narrowedFrom).toBeNull();
+      expect(grant.timestamp).toBeGreaterThan(0);
+    });
+
+    it('applies_capability_grant_appends_to_log_with_narrowed_metadata', () => {
+      useGraphStore.getState().applyEvent(narrowedGrant);
+      const grant = useGraphStore.getState().capabilityGrants[0]!;
+      expect(grant.parentAgentId).toBe('orchestrator');
+      expect(grant.grantedTo).toBe('subagent');
+      expect(grant.narrowedFrom).toBe('any *.example.com host');
+    });
+
+    it('capability_grants_log_is_append_only_on_repeated_emission', () => {
+      // Gotcha #69 / multi-call invariant: two sequential grants both
+      // land. The log preserves order and doesn't dedupe (re-grant of
+      // the same capability is a legitimate event — re-narrowing on a
+      // re-spawn, for example).
+      useGraphStore.getState().applyEvent(rootGrant);
+      useGraphStore.getState().applyEvent(rootGrant);
+      useGraphStore.getState().applyEvent(narrowedGrant);
+      const grants = useGraphStore.getState().capabilityGrants;
+      expect(grants).toHaveLength(3);
+      expect(grants[2]!.parentAgentId).toBe('orchestrator');
+    });
+
+    it('clear_resets_capability_state_slots', () => {
+      useGraphStore.getState().applyEvent(violation);
+      useGraphStore.getState().applyEvent(rootGrant);
+      useGraphStore.getState().clear();
+      const { capabilityViolations, capabilityGrants } = useGraphStore.getState();
+      expect(capabilityViolations).toEqual({});
+      expect(capabilityGrants).toEqual([]);
+    });
+  });
+
+  // Spec §8.security L4 — M05 Stage D tier-event applyEvent branches.
+  describe('tier events (M05 Stage D)', () => {
+    const tierViolation: AgentEvent = {
+      type: 'tier_violation',
+      agent_id: 'worker',
+      tier: 'novice',
+      capability_kind: 'write',
+      attempted_action: "write 'src/lib.rs' under Novice tier",
+    };
+    const promoteTransition: AgentEvent = {
+      type: 'tier_transition',
+      previous: 'novice',
+      current: 'promoted',
+      reason: 'user confirmed in Settings panel',
+    };
+    const demoteTransition: AgentEvent = {
+      type: 'tier_transition',
+      previous: 'promoted',
+      current: 'novice',
+      reason: 'user demoted',
+    };
+
+    it('first_run_state_has_novice_tier_default', () => {
+      // The runtime's first-run default is Novice; the renderer's
+      // initial-state default must match.
+      expect(useGraphStore.getState().currentTier).toBe('novice');
+    });
+
+    it('applies_tier_violation_updates_state_keyed_by_agent', () => {
+      useGraphStore.getState().applyEvent(tierViolation);
+      const record = useGraphStore.getState().tierViolations['worker'];
+      expect(record).toBeDefined();
+      expect(record!.tier).toBe('novice');
+      expect(record!.capabilityKind).toBe('write');
+      expect(record!.attemptedAction).toContain('src/lib.rs');
+      expect(record!.timestamp).toBeGreaterThan(0);
+    });
+
+    it('applies_tier_transition_flips_current_tier', () => {
+      useGraphStore.getState().applyEvent(promoteTransition);
+      expect(useGraphStore.getState().currentTier).toBe('promoted');
+      useGraphStore.getState().applyEvent(demoteTransition);
+      expect(useGraphStore.getState().currentTier).toBe('novice');
+    });
+
+    it('tier_violation_last_write_wins_on_same_agent', () => {
+      useGraphStore.getState().applyEvent(tierViolation);
+      const later: AgentEvent = {
+        ...tierViolation,
+        attempted_action: 'spawn process under Novice tier',
+      };
+      useGraphStore.getState().applyEvent(later);
+      const record = useGraphStore.getState().tierViolations['worker']!;
+      expect(record.attemptedAction).toBe('spawn process under Novice tier');
+      expect(Object.keys(useGraphStore.getState().tierViolations)).toEqual(['worker']);
+    });
+
+    it('clear_preserves_current_tier_but_resets_tier_violations', () => {
+      // Tier is a per-installation user preference; clear() is for
+      // per-session graph state. The runtime persists tier across
+      // sessions via tier.json, so the renderer must NOT reset it on
+      // session clear.
+      useGraphStore.getState().applyEvent(promoteTransition);
+      useGraphStore.getState().applyEvent(tierViolation);
+      useGraphStore.getState().clear();
+      expect(useGraphStore.getState().currentTier).toBe('promoted');
+      // Per-session violations DO clear.
+      expect(useGraphStore.getState().tierViolations).toEqual({});
+    });
+  });
+
   it('clear_empties_nodes_edges_and_selectedNodeId', () => {
     useGraphStore.getState().applyEvent(spawnA);
     useGraphStore.getState().applyEvent(spawnB);
@@ -232,14 +519,15 @@ describe('graphStore.applyEvent', () => {
       // verify_started / verify_passed / verify_failed / rail_triggered
       // moved to dedicated tests below — M04 Stage D wires them to live
       // VerifyNode/HookNode + triggeredRails state.
-      { type: 'skill_missing', agent_id: 'a1', skill_name: 's', severity: 'warn' },
-      { type: 'tool_missing', agent_id: 'a1', tool_name: 't', severity: 'block' },
-      { type: 'gap_resolved', agent_id: 'a1', capability: 'c', kind: 'k' },
+      // M05 Stage A: skill_missing / tool_missing / mcp_missing / agent_missing /
+      // gap_resolved moved to the "gap events (M05 Stage A)" describe block above.
       // hitl_requested / hitl_resolved / hitl_timeout / notifier_dispatched /
       // notifier_failed moved to dedicated tests below — M04 Stage E wires
       // them to live pendingHitl + notifierRecords state.
-      { type: 'capability_violation', agent_id: 'a1', declared: 'd', attempted: 'a' },
-      { type: 'capability_grant', agent_id: 'a1', capability: 'c', scope: 's' },
+      // M05 Stage B: capability_violation / capability_grant moved to
+      // the "capability events (M05 Stage B)" describe block below —
+      // they now mutate dedicated state slots (`capabilityViolations`,
+      // `capabilityGrants`), no longer no-op.
       { type: 'budget_warn', spent_usd: 1, cap_usd: 10, percent: 0.1 },
       { type: 'budget_downshift', from_model: 'a', to_model: 'b', reason: 'r' },
       { type: 'budget_suspended', spent_usd: 9, cap_usd: 10 },

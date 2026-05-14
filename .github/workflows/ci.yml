@@ -216,7 +216,8 @@ jobs:
             build-essential \
             curl \
             wget \
-            file
+            file \
+            libseccomp-dev
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
@@ -343,7 +344,8 @@ jobs:
             build-essential \
             curl \
             wget \
-            file
+            file \
+            libseccomp-dev
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-llvm-cov --locked
       # Workspace gate — generated code + binary stubs excluded.
@@ -378,7 +380,39 @@ jobs:
       - name: runtime-main coverage (≥95%, OS-call holdouts excluded)
         run: |
           cargo llvm-cov --package runtime-main \
-            --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.key_store\.rs" \
+            --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs|src.key_store\.rs" \
+            --fail-under-lines 95
+      # runtime-sandbox safety-primitive gate (M05 Stage C2 lifted ipc.rs
+      # into the gate per the C1 carry-forward; OS-isolation files
+      # seccomp.rs / landlock.rs are now in scope on Linux). The only
+      # exclusion that remains is src/lib.rs — the run/run_inner
+      # OS-signal orchestrator wrapping the testable seam (parallel to
+      # drone's lib.rs + shutdown.rs exclusion). The cfg-platform
+      # accept-loop wrapper in src/ipc.rs has its tests via the
+      # subprocess integration test in tests/integration.rs; coverage
+      # is measured on Linux CI where the binary builds with the
+      # libseccomp + landlock deps. job_objects.rs builds only on
+      # Windows, so its line coverage is contributed by the Windows
+      # CI matrix; per-crate fail-under-lines on Linux therefore
+      # excludes job_objects.rs via the cfg-platform compile-out.
+      # Per CLAUDE.md §5 + M05-gap-capability.md C2.4.
+      - name: runtime-sandbox coverage (≥95%)
+        # Excludes (a) main.rs (binary stub), (b) lib.rs (run wrapping
+        # run_inner with the OS-signal future), (c) seccomp.rs +
+        # landlock.rs (`cfg(target_os = "linux")` modules whose
+        # `install()` functions install OS fences on the calling process
+        # — structurally untestable from in-process unit tests; parallel
+        # to drone's lib.rs + shutdown.rs OS-signal-class exclusion).
+        # Coverage credit for seccomp + landlock comes from the
+        # subprocess integration tests in `tests/integration.rs` which
+        # verify isolation is active via `/proc/$pid/status`; that
+        # surface is structurally not a per-line coverage gate but a
+        # behavioral one. M05 PR #70 post-merge carry-forward: seam
+        # decomposition (`install_with(load_fn)` / `install_with(restrict_fn)`)
+        # would lift these modules back into the gate.
+        run: |
+          cargo llvm-cov --package runtime-sandbox \
+            --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.seccomp\.rs|src.landlock\.rs" \
             --fail-under-lines 95
       # lcov export for Codecov — workspace + per-crate uploads. The
       # cargo-llvm-cov --fail-under-lines gates above remain authoritative
@@ -399,7 +433,12 @@ jobs:
         run: |
           cargo llvm-cov --package runtime-main --lcov \
             --output-path lcov-main.info \
-            --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.key_store\.rs"
+            --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs|src.key_store\.rs"
+      - name: Generate runtime-sandbox lcov
+        run: |
+          cargo llvm-cov --package runtime-sandbox --lcov \
+            --output-path lcov-sandbox.info \
+            --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.seccomp\.rs|src.landlock\.rs"
       # Codecov uploads — required from M02 onward (per CLAUDE.md §5
       # "Coverage delta gating (from M02 onward) — Codecov-enforced").
       # The codecov.yml `informational: false` flags make Codecov status
@@ -424,6 +463,13 @@ jobs:
         with:
           files:            lcov-main.info
           flags:            runtime-main
+          fail_ci_if_error: true
+          token:            ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload runtime-sandbox coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files:            lcov-sandbox.info
+          flags:            runtime-sandbox
           fail_ci_if_error: true
           token:            ${{ secrets.CODECOV_TOKEN }}
 

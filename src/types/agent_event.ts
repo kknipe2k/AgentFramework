@@ -45,6 +45,8 @@ export type AgentEvent =
   | RailTriggered
   | SkillMissing
   | ToolMissing
+  | McpMissing
+  | AgentMissing
   | GapResolved
   | HitlRequested
   | HitlResolved
@@ -59,6 +61,8 @@ export type AgentEvent =
   | BudgetExceeded
   | StreamText
   | DecisionRecord
+  | TierViolation
+  | TierTransition
   | TokenUsage;
 /**
  * Origin of a tool invocation. Spec §0b + §2.
@@ -81,6 +85,18 @@ export type OnFailureRef = "block" | "warn" | "rollback";
  */
 export type RailPolicy = "hard" | "soft";
 /**
+ * Severity matrix per spec §4b. `critical` blocks the session (loader-detected tool gaps; agent_missing); `important` blocks the owning agent but lets the session continue (request_capability tool gaps); `advisory` warns and continues (skill gaps from any source); `requested` is the M05 marker for request_capability-emitted gaps so the renderer can distinguish loader vs meta-tool origin in the same severity tier.
+ */
+export type GapSeverity = "critical" | "important" | "advisory" | "requested";
+/**
+ * Plain-English next-step text the renderer surfaces in the GapPanel + HITL prompt. Free-form; emitter composes per severity (e.g. "Install tool 'fetch_prs' and click Resume" for critical; "Skill 'rag' continues without — install async or dismiss" for advisory). minLength 1 — emitters MUST supply a non-empty action.
+ */
+export type SuggestedAction = string;
+/**
+ * How this gap was discovered. `loader` = the framework_loader walked the framework JSON at session start and the reference did not resolve. `request_capability` = a running agent asked for the capability mid-session via the meta-tool. Drives renderer display + HITL prompt copy.
+ */
+export type GapSource = "loader" | "request_capability";
+/**
  * HITL trigger discriminator embedded in HITL + notifier events. Spec §6a — mirrors hitl.v1.json HitlTrigger (9 values, locked). The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy).
  */
 export type HitlTriggerRef =
@@ -97,6 +113,42 @@ export type HitlTriggerRef =
  * HITL UI variant discriminator embedded in `hitl_requested` events. Spec §6a — mirrors hitl.v1.json HitlUiVariant.
  */
 export type HitlUiVariantRef = "panel" | "modal" | "toast";
+/**
+ * Coarse category of access the attempted dispatch needed.
+ */
+export type CapabilityKindRef = "read" | "write" | "exec" | "network" | "process_spawn";
+/**
+ * Plain-English description of what the agent attempted; surfaced in the HITL prompt + capability-violation modal so the user understands the rejection. Per gotcha #43 (typify-friendly extraction): validated inline strings inside oneOf variants are extracted to $defs with a title.
+ */
+export type RequestedAction = string;
+/**
+ * Plain-English description of the scope the agent's grants cover. Renderer pairs with `requested_action` to surface the mismatch (e.g., grants cover `src/**` glob; request targeted `~/.ssh/keys`). Per gotcha #43 (typify-friendly extraction).
+ */
+export type DeclaredScope = string;
+/**
+ * Capability-kind discriminator embedded in capability_violation + capability_grant events. Spec §8.security L1 — mirrors capability.v1.json CapabilityKind (5 values, locked). The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, GapSeverityRef).
+ */
+export type CapabilityKindRef1 = "read" | "write" | "exec" | "network" | "process_spawn";
+/**
+ * Resource name the grant covers — tool name, file glob, network hostname, or sub-agent id depending on `capability_kind`. Per gotcha #43 (typify-friendly extraction).
+ */
+export type GrantedResource = string;
+/**
+ * User tier discriminator — spec §8.security L4 + §0d release scope (M05 Stage D). Two-tier system in v0.1: `novice` (curated allowlist — read + HTTPS-only network) is the first-run default; `promoted` (full capability surface; L1 still narrows) is the user-toggled tier. Full tier is post-v0.1. The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef).
+ */
+export type TierRef = "novice" | "promoted";
+/**
+ * Capability-kind discriminator embedded in capability_violation + capability_grant events. Spec §8.security L1 — mirrors capability.v1.json CapabilityKind (5 values, locked). The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, GapSeverityRef).
+ */
+export type CapabilityKindRef2 = "read" | "write" | "exec" | "network" | "process_spawn";
+/**
+ * Plain-English description of what the agent attempted; surfaced in the tier-violation modal so the user understands the rejection. Pairs with `capability_kind` (e.g., "attempted to write to src/lib.rs while in Novice tier"). Per gotcha #43 (typify-friendly extraction).
+ */
+export type TierForbiddenAction = string;
+/**
+ * Plain-English reason for the tier transition. For promotions: user clicked confirm in the Settings panel. For demotions: user clicked demote OR a downgrade-on-uncertainty affordance fired. Per gotcha #43 (typify-friendly extraction).
+ */
+export type TierTransitionReason = string;
 
 export interface SessionStart {
   type: "session_start";
@@ -260,17 +312,49 @@ export interface RailTriggered {
   message: string;
   agent_id?: string | null;
 }
+/**
+ * Spec §4b Layer 1 (loader) or Layer 2 (request_capability) gap event for an unresolved skill reference. M05.A added `suggested_action` + `requested_via`; severity tightened from free-string to GapSeverity enum. Defaults to severity=advisory (skill gaps are recoverable per spec §4b severity matrix — load continues without).
+ */
 export interface SkillMissing {
   type: "skill_missing";
   agent_id: string;
   skill_name: string;
-  severity: string;
+  severity: GapSeverity;
+  suggested_action: SuggestedAction;
+  requested_via: GapSource;
 }
+/**
+ * Spec §4b Layer 1 (loader) or Layer 2 (request_capability) gap event for an unresolved tool reference. M05.A added `suggested_action` + `requested_via`; severity tightened from free-string to GapSeverity enum. Tool gaps are blocking per spec §4b severity matrix — the owning agent cannot proceed.
+ */
 export interface ToolMissing {
   type: "tool_missing";
   agent_id: string;
   tool_name: string;
-  severity: string;
+  severity: GapSeverity;
+  suggested_action: SuggestedAction;
+  requested_via: GapSource;
+}
+/**
+ * Spec §4b + §5: gap event for an unresolved MCP server reference. v0.1 emits this only from Layer 2 request_capability (the v0.1 framework JSON has no MCP-server declaration field — server lifecycle is M06). M05.A authoring decision: variant + payload land now so the schema is forward-compatible with M06's loader-time emission.
+ */
+export interface McpMissing {
+  type: "mcp_missing";
+  agent_id: string;
+  server_name: string;
+  severity: GapSeverity;
+  suggested_action: SuggestedAction;
+  requested_via: GapSource;
+}
+/**
+ * Spec §4b Layer 1 (loader) — `framework.agents[].spawns[]` references an agent id absent from `framework.agents[]`. Per spec §4b severity matrix this is a load-time block: the framework fails to load (severity=critical). Also emittable from Layer 2 request_capability when an agent asks for a sub-agent it cannot spawn.
+ */
+export interface AgentMissing {
+  type: "agent_missing";
+  agent_id: string;
+  missing_agent_id: string;
+  severity: GapSeverity;
+  suggested_action: SuggestedAction;
+  requested_via: GapSource;
 }
 export interface GapResolved {
   type: "gap_resolved";
@@ -356,15 +440,30 @@ export interface NotifierFailed {
 }
 export interface CapabilityViolation {
   type: "capability_violation";
+  /**
+   * Agent whose dispatch the §8.security L2a enforcer rejected.
+   */
   agent_id: string;
-  declared: string;
-  attempted: string;
+  capability_kind: CapabilityKindRef;
+  requested_action: RequestedAction;
+  declared_scope: DeclaredScope;
 }
 export interface CapabilityGrant {
   type: "capability_grant";
-  agent_id: string;
-  capability: string;
-  scope: string;
+  /**
+   * Optional — agent whose grants this grant narrows from. Absent for framework-loader-issued root grants; present whenever an agent spawns a sub-agent and narrows a subset of its grants to the child (§8.security L2a narrowing).
+   */
+  parent_agent_id?: string;
+  /**
+   * Agent receiving the grant.
+   */
+  granted_to: string;
+  capability_kind: CapabilityKindRef1;
+  resource: GrantedResource;
+  /**
+   * Optional — plain-English description of the parent's broader scope. Renderer uses this in the inspector to show 'narrowed from ... to ...' attribution; absent for root grants.
+   */
+  narrowed_from?: string;
 }
 export interface BudgetWarn {
   type: "budget_warn";
@@ -399,6 +498,28 @@ export interface DecisionRecord {
   decision: string;
   rationale: string;
   tool_used?: string | null;
+}
+/**
+ * M05 Stage D §8.security L4 — emitted when the L4 tier gate rejects a capability request before the L1 enforcer runs. Distinct from `capability_violation` (which fires on L1 rejection). Renderer routes to a tier-violation modal in the Settings panel: "Your current tier (Novice) does not permit this action; promote to Promoted or modify the request." Carries the tier that rejected + the requested kind + a plain-English action.
+ */
+export interface TierViolation {
+  type: "tier_violation";
+  /**
+   * Agent whose dispatch the §8.security L4 evaluator rejected.
+   */
+  agent_id: string;
+  tier: TierRef;
+  capability_kind: CapabilityKindRef2;
+  attempted_action: TierForbiddenAction;
+}
+/**
+ * M05 Stage D §8.security L4 — emitted on a successful tier change. `previous` is the tier before the change; `current` is the tier after. Includes a plain-English `reason`. Promotion is renderer-confirmed (Settings panel modal calls `request_tier_transition`); demotion is direct. Renderer applies the new tier to its current-tier state and surfaces a toast.
+ */
+export interface TierTransition {
+  type: "tier_transition";
+  previous: TierRef;
+  current: TierRef;
+  reason: TierTransitionReason;
 }
 export interface TokenUsage {
   type: "token_usage";

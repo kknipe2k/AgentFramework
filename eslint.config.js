@@ -28,6 +28,8 @@ export default tseslint.config(
       'src/types/plan.ts',
       'src/types/task.ts',
       'src/types/hitl.ts',
+      'src/types/budget.ts',
+      'src/types/capability.ts',
     ],
   },
   js.configs.recommended,

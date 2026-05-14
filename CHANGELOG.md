@@ -6,6 +6,802 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M05 Stage G (Phase Closeout — gap analysis + parent-milestone summary)
+
+- **`docs/build-prompts/retrospectives/M05-summary.md`** *(new)* — parent-milestone
+  summary aggregating M05.A–F per-stage retros + M05.V verifier retro per
+  `SUMMARY-TEMPLATE.md` + the closeout prompt's special-log requirements:
+  - Stage trail through 7 work stages + V + (this) G.
+  - Aggregate scoring (Process 37.86/40 mean, Product 37.86/40 mean, Pattern
+    30.71/35 mean across the 7 work stages — V uses verification axes 14/15).
+  - Per-primitive coverage outcomes for the 3 new safety primitives + 1
+    observability surface (capability enforcer + L3 sandbox plumbing + L3 OS
+    isolation + L4 tier + L5 audit + tier::transition).
+  - V→closeout handoff observation: v1.5 in-band V validated cleanly;
+    `<scope_change>` slot proposal (M05.V Decision 3) is the deepest
+    protocol insight.
+  - Cross-stage trend analysis (phase-doc-vs-codebase drift recurred 7 stages;
+    clippy lint batches recurred 6 stages; rustdoc intra-doc-link recurred 5
+    stages; Windows-local `cargo llvm-cov` flake recurred 5 stages; typify
+    oneOf-non-Copy-Eq recurred 2 stages → graduates as gotcha #73; Zustand
+    v5 `useShallow` requirement; windows-sys feature-by-parameter-type;
+    tokio::io::duplex buffer-vs-payload).
+  - Time-box accuracy: ~21h actual vs ~33h estimated = 0.64× ratio.
+  - M06 calibration: keep 0.64× anchor; novel-protocol stages (MCP
+    transport) closer to 0.8–1×; ADR-0009 wire-up tightly scoped to 2–3h.
+  - 11 v1.6 protocol-iteration candidates carry forward.
+  - Decisions to apply before M06.A (CLAUDE.md updates, v1.6 protocol
+    candidates, ~28 phase-doc updates across the 7 stages, M06 stage
+    prompt constraints including the ADR-0009 hard deliverable).
+  - Verdict: **Pattern held across M05.** Proceed to M06.A after M05.6
+    protocol-iteration session lands.
+
+- **`docs/gap-analysis.md`** *(append-only update)* — M05 entry appended after
+  the M04 entry per CLAUDE.md §20:
+  - Codebase deep dive cumulative (M01 + M02 + M03 + M04 + M05 — adds the
+    capability/sandbox/tier/audit primitive set + Stage F renderer wire).
+  - Adherence to spec across §4b + §8.security L1+L2a+L3+L4+L5 + §13.5
+    with ⚠️ deviations for the v0.1 deferrals (L1+L2a SDK wire to M06 via
+    ADR-0009; Layer-1 `mcp_missing` emission to M06; L4 runtime-vs-install-time
+    interpretation; L5 v0.1-minimal-vs-richer shape interpretation; L3
+    install-order interaction; L2a cross-variant scope-containment) — all
+    bundled into post-M05 `docs(spec):` PR with ~18 entries.
+  - Spec review forward-looking: 16 missing items, 4 ambiguity items, 4 open
+    questions, all bundled.
+  - Fix backlog: 🔴 0 (Stage V's 2🔴 absorbed via ADR-0009 waiver per
+    ADR-0008 mechanism), 🟡 25 (post-M05 `docs(spec):` PR + v1.6 protocol
+    session + ADR-0009 M06.A wire-up + in-process seam ADR + 11
+    carry-forwards still open), 🟢 13 (graduation candidates + advisories).
+  - Carry-forward final disposition for every prior milestone's Important
+    items: ContextType reconcile **RESOLVED at M05.A**; capability/enforcer.rs
+    preserved-or-improved-baseline drop (100% → 94.24%) documented with
+    rationale; `runtime-main/src/drone_ipc/client.rs` 89.45–89.90% line
+    carry-forward continues from M04.
+  - M05.V findings carry-forward: 🔴 #1 + #2 RESOLVED via ADR-0009 waiver;
+    🟡 #3 (phase-doc-vs-implementation file drift on `crates/runtime-sandbox/src/ipc.rs`
+    + `crates/runtime-main/src/tier/transition.rs`) carries into Carry-forward.
+  - Gotchas graduation: 47 dispositions (30 resolved, 9 graduated, 8 kept,
+    0 expired) — graduates include typify oneOf-non-Copy-Eq #73, Zustand v5
+    useShallow, windows-sys feature-by-parameter-type, tokio::io::duplex
+    buffer-vs-payload, FFI-wrapper decomposition for coverage, refutable
+    bindings break on enum variant addition, clippy doc_lazy_continuation,
+    graphStore.clear() preserves user-preference slots, V coverage-recheck
+    convention. `docs/gotchas.md` ~66 → ~75.
+
+- **`docs/adr/0009-waiver-M05-l1-l2a-sdk-wire-deferral.md`** *(committed at
+  `a3f677f`)* — first invocation of ADR-0008's waiver-as-ADR mechanism.
+  Closes M05.V Findings #1 + #2 together (L1 enforcer + L2a narrow
+  production-call-site missing). Architectural rationale: v0.1 SDK is
+  streaming-only (Anthropic dispatches tools server-side; `ProviderEvent::ToolUse`
+  is a post-dispatch report, not a pre-dispatch request); there is no
+  synchronous dispatch surface to wrap. M06 Stage A carries the wire-up
+  (`enforcer.check` before `provider.invoke`; `narrow` before `AgentSpawned`
+  emission); M06.V Wire pass will trace and emit 🔴 if missing. Build agent's
+  ADR-0008 burden discharged: (a) prior surface = M05.B Decision D1,
+  (b) phase-doc warning = Stage B `<execution_warnings>` at line 924,
+  (c) next-milestone deliverable = M06 Stage A wire-up with the M05 smoke
+  test's assertions porting into real call-path integration tests.
+
+- **`CHANGELOG.md`** *(this entry)* — Stage G closeout entry summarizing
+  the gap-analysis update, M05 summary creation, and ADR-0009 waiver.
+
+### Added — M05.V In-band Verifier run (per ADR-0008)
+
+First in-band Stage V verifier run (M04.V was retroactive; M05.V was authored
+into M05 phase doc V.1–V.5 from the start). Fresh-context CLI session per
+`STAGE-PROMPT-PROTOCOL.md` §14 — deliberately did NOT read M05.A–F
+retrospectives, M05-summary.md, or `docs/gap-analysis.md`. Four-pass
+contract-fidelity check against M05.A–F deliverables in ~40 minutes:
+
+- **Inventory pass (~5 min):** 0🔴 / 1🟡 / 0🟢. Verified ~50 expected file
+  paths against `git ls-files`; surfaced two files in scope but NOT in their
+  phase doc X.2 tables (`crates/runtime-sandbox/src/ipc.rs` added at C1;
+  `crates/runtime-main/src/tier/transition.rs` added at E). Both intentional
+  + post-hoc documented in CLAUDE.md §5 — finding #3 carries to next
+  milestone's Carry-forward section.
+- **Wire pass (~20 min):** 2🔴 / 0🟡 / 0🟢. 5-step traces against spec §4b
+  + §8.security L1/L2a/L3/L4/L5 + §3. Findings #1 + #2 both surfaced at
+  step 4 (consumer): L1 `enforcer.check()` and L2a `narrow()` never invoked
+  from production SDK. 14 `.check(` matches all inside `capability/enforcer.rs::tests`;
+  zero production call sites. `ProviderEvent::ToolUse` → `AgentEvent::ToolInvoked`
+  at `sdk/event_pipeline.rs:57-66` skips enforcer check entirely.
+- **Behavior pass (~10 min):** 0/0/0. 32/32 Vitest, 424/424 runtime-main
+  lib, 26 integration tests, 36+4 runtime-sandbox, 3/3 Playwright — all green.
+- **Multi-call invariants pass (~5 min):** 0/0/0. All 7 surfaces have
+  twice-or-more-in-sequence tests (framework_loader, enforcer, sandbox_ipc
+  client, tier persistence, audit writer, respond_hitl regression,
+  query_session_db regression).
+
+Verification axes: 14/15 (coverage adequacy 4 — abbreviated llvm-cov re-run
+on grounds that CI green + CLAUDE.md §5 published baselines are recent;
+finding signal-to-noise 5; fresh-context discipline 5).
+
+Outcome: **Sound but rough** — 2🔴 findings present, both architectural
+deferrals. Per ADR-0008 §"Waiver path," build agent files ADR-0009 covering
+both findings together; maintainer adjudicates via the ADR review surface.
+No D.fix iter runs on the M05 branch; M06 Stage A carries the wire-up
+forward as structural assurance.
+
+Files committed:
+
+- `docs/build-prompts/retrospectives/M05.V-retrospective.md` *(new)* — full
+  verifier retrospective per `VERIFIER-RETROSPECTIVE-TEMPLATE.md` with the
+  three findings, verification-axes scoring, outcome rationale, and
+  `[END] Decisions for D.fix or next milestone` section. Includes
+  M05.V Decision 3's `<scope_change>` slot proposal for v1.6 protocol —
+  the deepest protocol insight from M05's V run.
+
+Stage V's role validated as designed: catch the M04-class "primitive ships
+with own tests; production call site missing" bug pattern via the 5-step
+Wire pass. Findings #1 + #2 are exactly that class; the waiver-as-ADR
+lane (ADR-0008 + ADR-0009) is the protocol-validated resolution path
+when the descope is architecturally correct for v0.1.
+
+### Added — M05.F Renderer UI (GapPanel + CapabilityBadge + capability-violation modal wire)
+
+Renderer-only stage; no Rust changes. Three components/wires landed:
+
+- **`src/components/GapPanel.tsx`** *(new)* — right-rail list of
+  unresolved gaps. Subscribes to graphStore via selector
+  (`useGraphStore((s) => s.nodes.filter(n => n.type === 'gap'))`).
+  Auto-hides when zero gaps; auto-dismisses items on `gap_resolved`.
+  Severity drives the left-border accent color
+  (`.gap-panel__item--{critical,important,advisory,requested}`).
+- **`src/components/nodes/CapabilityBadge.tsx`** *(new)* — per-AgentNode
+  pill showing the user's current tier (`N` / `P`) + a count of
+  grants issued to this specific agent. Tier-color via
+  `.capability-badge--{novice,promoted}`.
+- **Capability-violation modal — reuses M04.E HITLModal per ADR-0007.**
+  No new modal component. The existing HITLModal already routes
+  `pendingHitl` entries with `ui_variant: 'modal'`; the runtime emits
+  `hitl_requested { trigger: 'on_capability_violation', ui_variant:
+  'modal', ... }` per spec §8.security L1 and the modal surfaces with
+  the request details + three action buttons (allow_once / deny /
+  abort).
+- **`src/components/nodes/AgentNode.tsx`** *(edit)* — mounts
+  `<CapabilityBadge agentId={agentId} />` as a child element.
+- **`src/App.tsx`** *(edit)* — mounts `<GapPanel />` inside the
+  graph-layout flex region alongside ApprovalPanel + HITLPanel.
+- **`src/styles.css`** *(edit)* — CSS rules for `.gap-panel*` and
+  `.capability-badge*` class families. Every class set by the React
+  components has a matching rule (gotcha #67); covered by the
+  `every_severity_class_has_a_corresponding_CSS_rule_in_styles_css`
+  + `every_tier_class_has_a_corresponding_CSS_rule_in_styles_css`
+  test assertions.
+
+#### Tests
+
+- `tests/unit/components/GapPanel.test.tsx` *(new)* — 7 Vitest cases:
+  empty-state hides, one item per gap, gotcha-#68 field-read assertion,
+  per-severity class application, `gap_resolved` dismissal, count in
+  title, gotcha-#67 CSS-rule existence, accessible-region role.
+- `tests/unit/nodes/CapabilityBadge.test.tsx` *(new)* — 7 Vitest cases:
+  novice glyph, promoted glyph after `tier_transition`, count hidden
+  at zero, count shown when nonzero, per-agent filter (gotcha #68),
+  gotcha-#67 CSS-rule existence, title attribute.
+- `tests/unit/nodes/AgentNode.test.tsx` *(edit)* — adds
+  `mounts_CapabilityBadge_as_child_with_matching_agent_id` to pin the
+  AgentNode → CapabilityBadge composition.
+- `tests/e2e/gap_panel.spec.ts` *(new)* — Playwright at the Vite-dev
+  layer per gotcha #54: injects `tool_missing` and asserts the panel
+  surfaces, dismisses on `gap_resolved`, and a `hitl_requested` with
+  `trigger: 'on_capability_violation'` + `ui_variant: 'modal'` mounts
+  the existing HITLModal end-to-end.
+
+### Added — M05.E §8.security L5 Provenance + skills.audit.jsonl audit log
+
+New module `crates/runtime-main/src/audit/` implements the L5
+append-only JSONL writer for the runtime's safety primitives. One line
+per security decision (framework load / gap detection / capability
+grant / capability denial / tier transition). Best-effort observability
+per phase doc E.3.4 + spec §13.5 — write failures `tracing::error!`
+and continue; audit availability is NOT a dispatch gate.
+
+- **`crates/runtime-main/src/audit/writer.rs`** *(new)*:
+  - `AuditWriter::open(path: &Path)` — async open in append mode.
+  - `AuditWriter::log(&entry: &AuditEntry)` — async write of one JSONL
+    line (`serde_json::to_string(entry) + write_all + b"\n" + flush`).
+  - `tokio::sync::Mutex<File>` around the handle so concurrent callers
+    serialize per the phase-doc gotcha-trap-#3.
+- **`crates/runtime-main/src/audit/entry.rs`** *(new)*:
+  - Per-kind constructors that pin the `details` shape at the call site
+    (`framework_loaded`, `gap_detected`, `gap_resolved`,
+    `capability_granted`, `capability_denied`, `tier_transition`). The
+    on-disk shape is the schema-generated
+    `runtime_core::generated::audit::AuditEntry`.
+  - `now_unix_ms()` helper — wall-clock unix milliseconds captured at
+    entry-construction (not at writer-mutex-acquisition).
+- **`crates/runtime-main/src/audit/file_path.rs`** *(new)*:
+  - `AUDIT_FILE_NAME = "skills.audit.jsonl"` constant.
+  - `audit_path(dir: &Path) -> PathBuf` — path-agnostic join. Mirrors
+    the M05.D `tier::persistence` archetype; Tauri layer owns the
+    directory side via `AppHandle::path().app_local_data_dir()`.
+- **`crates/runtime-main/src/audit/error.rs`** *(new)*:
+  - `AuditError::{Io, Json}` — surfaced to the call site so callers
+    can `tracing::error!` and continue. Never propagated into dispatch.
+- **`schemas/audit.v1.json`** *(new)* — `AuditEntry` shape + `kind`
+  enum + `AuditSessionId` validated newtype. Per gotcha #43, the
+  validated-string + enum get the `title` + local-`$defs` extraction
+  pattern.
+- **`crates/runtime-core/src/generated/audit.rs`** *(new, regenerated)*.
+
+Wiring:
+
+- **`crates/runtime-main/src/capability/enforcer.rs`** *(edited)*:
+  - Added `audit_writer: Option<Arc<AuditWriter>>` + `session_id`
+    field. Optional so existing default-constructible callers + unit
+    tests stay valid.
+  - `set_audit_writer(writer, session_id)` setter.
+  - `audit_grant(&self, agent, capability)` — async emit after a sync
+    `grant()`. The two are split so the historic synchronous `grant()`
+    surface stays available to unit tests; production chains
+    `enforcer.grant(...); enforcer.audit_grant(...).await;`.
+  - `audit_check_result(&self, agent, requested, result)` — async emit
+    for `Err(Denied)` + `Err(TierForbidden)` only; `Ok` is the hot path
+    and skips emission per phase doc E.1.
+- **`crates/runtime-main/src/tier/transition.rs`** *(new)*:
+  - `transition(writer, session_id, previous, current, reason)` — async
+    fn returning `TierTransitionRecord`. Records the audit line iff
+    `previous != current`; same-tier no-ops skip emission.
+- **`crates/runtime-main/src/framework_loader/mod.rs`** *(edited)*:
+  - `AuditContext { writer, session_id }` + `_with_audit` variants of
+    `load_and_validate` + `load_and_validate_str`. Audit emits
+    `framework_loaded` on success + `gap_detected` per Layer-1 gap.
+  - The historic `load_and_validate` / `load_and_validate_str` surfaces
+    stay valid — they delegate to the `_with_audit` variants with a
+    `AuditContext::default()` (no audit emission).
+- **`src-tauri/src/main.rs`** *(edited)*:
+  - Opens the audit writer at app startup via
+    `AppHandle::path().app_local_data_dir()` + `audit_path(dir)` +
+    `AuditWriter::open(path)`. Managed-state as `Arc<AuditWriter>` so
+    the M09+ wiring can consume it. Open failure `tracing::warn!`s
+    and continues without an audit trail (per the §13.5 + phase doc
+    E.3.4 best-effort posture).
+
+Tests:
+
+- **`crates/runtime-main/src/audit/writer.rs`** — 6 unit tests
+  (single, twice-sequential, three-sequential-preserve-order,
+  concurrent-10-mutex-serialized, append-preserves-pre-existing,
+  open-missing-dir-io-error).
+- **`crates/runtime-main/src/audit/entry.rs`** — 9 unit tests
+  (per-kind shapes, compact JSON, empty session_id sentinel,
+  now_unix_ms post-epoch).
+- **`crates/runtime-main/src/audit/file_path.rs`** — 3 unit tests.
+- **`crates/runtime-main/src/tier/transition.rs`** — 5 unit tests
+  (promotion + demotion write, same-tier no-op, no-writer silent
+  no-op, three-sequential-flips multi-call invariant per gotcha #69).
+- **`crates/runtime-main/tests/audit_smoke.rs`** *(new)* — 7
+  integration tests covering all five seams + the no-writer silent
+  no-op + the end-to-end multi-seam scenario.
+
+Coverage: workspace ≥80%; per-module ≥95% on `audit/writer.rs` +
+`audit/entry.rs` (pure-function logic). The runtime-main 95% per-crate
+gate's exclusion list adds no new entries — the audit module is fully
+testable with `tempfile`-backed paths + `tokio::test`.
+
+### Added — M05.D §8.security L4 Tier system (Novice + Promoted)
+
+New module `crates/runtime-main/src/tier/` implements the L4 tier gate
+between the SDK and the Stage B L1+L2a capability enforcer. Two tiers
+per §0d release scope (Full tier post-v0.1):
+
+- **Novice** — curated allowlist (`Read` any scope + `Network` Domain
+  scope only). The default-safe first-run posture; rejects `Write`,
+  `Exec`, `ProcessSpawn`, and glob-/path-scoped `Network` at L4 before
+  L1 ever runs.
+- **Promoted** — pass-through at L4. L1 still narrows by per-agent
+  grant declaration.
+
+The L4 evaluator sits BEFORE the L1+L2a enforcer in the dispatch chain:
+`tier check → enforcer check → dispatch`. A Novice user with a stale
+`Write` grant is rejected with `CapabilityError::TierForbidden` —
+distinct from `Denied` — so the renderer routes `tier_violation` events
+to a Settings-panel modal instead of the L1 `capability_violation`
+inspector. Demotion takes effect immediately on the next dispatch.
+
+- **`crates/runtime-main/src/tier/evaluator.rs`** *(new)*:
+  - `Tier` enum (`Novice` | `Promoted`) — serde `rename_all = "lowercase"`
+    pins the wire format for `tier.json`; `Default` returns `Novice`.
+  - `TierEvaluator::allows(tier, capability)` — stateless predicate.
+    Promoted → `Ok(())`; Novice → walks the matrix table; returns
+    `Err(TierError::ForbiddenInTier)` on rejection.
+- **`crates/runtime-main/src/tier/matrix.rs`** *(new)*:
+  - `NOVICE_ALLOWED: &[NoviceAllowance]` — 2-row const data table
+    (`(Read, Any)` + `(Network, DomainOnly)`). Adding a v1.0+ Full tier
+    means adding rows here, not nesting if/else in the evaluator.
+  - `ScopeShape::{Any, DomainOnly}` + `shape_matches` const fn — the
+    scope-shape constraint a row applies.
+  - `novice_table_permits(kind, scope)` — table lookup.
+- **`crates/runtime-main/src/tier/persistence.rs`** *(new)*:
+  - `load_tier(dir: &Path)` — reads `<dir>/tier.json`; returns
+    `Tier::Novice` (the `Default`) when absent (first-run safe).
+  - `save_tier(dir, tier)` — creates the parent dir if missing and
+    writes pretty JSON. Stores `since_unix_ms` for the renderer's
+    "Promoted since …" display (M10 first-run UX).
+  - Path-agnostic by design; the Tauri layer resolves
+    `AppHandle::path().app_local_data_dir()` (Windows: `%APPDATA%\<id>\`;
+    Linux: `$XDG_DATA_HOME/<id>/` or `~/.local/share/<id>/`) and passes
+    it in. Tests use `tempfile::TempDir`.
+- **`crates/runtime-main/src/tier/error.rs`** *(new)*:
+  - `TierError::ForbiddenInTier { tier, capability_kind }` — emitted by
+    the evaluator; the enforcer wraps it as
+    `CapabilityError::TierForbidden` with the agent id added.
+  - `TierPersistenceError::{Io, Json}` — load/save failures with full
+    error context via `#[from]` impls.
+- **`crates/runtime-main/src/capability/enforcer.rs`** *(edited)*:
+  - Added `current_tier: Tier` field (`Default::default()` = `Novice`)
+    + `set_tier(&mut self, tier)` + `current_tier(&self)` accessors.
+  - `check(agent, requested)` now runs `TierEvaluator::allows` BEFORE
+    the L1 grant lookup. `TierError::ForbiddenInTier` maps to
+    `CapabilityError::TierForbidden { agent_id, tier, capability_kind }`.
+  - 5 new unit tests pin layer ordering (TierForbidden before Denied),
+    default-tier semantics, set_tier flow, and demotion invalidation.
+- **`crates/runtime-main/src/capability/error.rs`** *(edited)*:
+  - New `CapabilityError::TierForbidden { agent_id, tier, capability_kind }`
+    struct-shape variant per gotcha #26. Stage B-era `let
+    CapabilityError::Denied { .. } = err` irrefutable bindings updated
+    to exhaustive `match` blocks.
+- **`schemas/event.v1.json`** *(edited)*: two new variants under the
+  AgentEvent `oneOf`:
+  - `tier_violation { agent_id, tier, capability_kind, attempted_action }`
+    — fired when L4 rejects before L1 runs. Distinct from
+    `capability_violation`; renderer routes differently.
+  - `tier_transition { previous, current, reason }` — fired after a
+    successful tier change. Renderer's `currentTier` slot updates from
+    `current`.
+  - New `$defs/TierRef` enum (`novice` | `promoted`) + validated string
+    `$defs` `TierForbiddenAction` + `TierTransitionReason` per gotcha
+    #43 (typify-friendly extraction).
+- **`crates/runtime-core/src/event.rs`** *(edited)*:
+  - Hand-rolled `TierRef` mirror enum (per `HitlTriggerRef` /
+    `CapabilityKindRef` precedent — typify cross-schema `$ref` not
+    supported).
+  - Two new AgentEvent variants `TierViolation` + `TierTransition`
+    aligned to the schema shapes.
+- **`crates/runtime-core/src/generated/event.rs`** + **`src/types/agent_event.ts`**
+  *(regenerated)*: typify + `json-schema-to-typescript` produce
+  `TierRef`, `TierViolation`, `TierTransition` per the schema.
+- **`crates/runtime-main/src/lib.rs`** *(edited)*: `pub mod tier`.
+- **`src/lib/graphStore.ts`** *(edited)*:
+  - New `currentTier: TierRef` slot (default `'novice'` — matches the
+    runtime's `Tier::default()`).
+  - New `tierViolations: Record<string, TierViolationRecord>` keyed by
+    `agent_id`, last-write-wins.
+  - Two new `applyEvent` cases for the schema-added variants.
+  - `clear()` clears `tierViolations` (per-session) but preserves
+    `currentTier` (per-installation preference loaded from `tier.json`).
+- **`src-tauri/src/commands.rs`** *(edited)*: two new Tauri commands +
+  testable `*_with` seams:
+  - `get_current_tier(state)` → returns the cached tier.
+  - `request_tier_transition(target_tier, reason)` → persists to disk,
+    updates the `CurrentTierState` cache, emits `tier_transition` via
+    `agent_event`. Idempotent on no-op (target == current). Promotion
+    is renderer-confirmed (Settings panel modal); demotion is direct,
+    no confirmation. No `HitlSeam` involvement — tier transitions are
+    an OS-level user preference, not a framework-JSON-driven trigger.
+  - New `CurrentTierState = Mutex<Tier>` type alias.
+- **`src-tauri/src/main.rs`** *(edited)*: load persisted tier from
+  `app_local_data_dir()/tier.json` at startup (falls back to Novice on
+  any error); register `CurrentTierState` as Tauri-managed; register
+  both new commands in `invoke_handler!`.
+- **`src-tauri/Cargo.toml`** *(edited)*: added `tempfile` dev-dep for
+  the tier-transition persistence tests.
+- **`crates/runtime-main/tests/tier_smoke.rs`** *(new)*: 10
+  integration tests pinning the end-to-end behavior (layer ordering,
+  default tier, scope-conditional Network, persistence round-trip,
+  Promoted bypass).
+- **`crates/runtime-main/tests/capability_enforcer_smoke.rs`** *(edited)*:
+  `dispatch_with_check` translator now handles both `CapabilityError`
+  variants, emitting `TierViolation` on L4 rejections.
+- **`tests/unit/graphStore.test.ts`** *(edited)*: 5 new tests pin
+  Stage D renderer behavior (first-run default Novice, tier-violation
+  keyed-by-agent recording, last-write-wins, tier-transition
+  current-tier flip, clear() preserves tier).
+- **Coverage**: per-module ≥95% on tier files —
+  `evaluator.rs` 100% line + region, `matrix.rs` 100% line + region,
+  `persistence.rs` 100% region / 97.45% line. Workspace 93.15% (gate
+  ≥80%); runtime-main 97.56% region / 96.58% line (gate ≥95%);
+  runtime-drone + runtime-sandbox preserved at baseline.
+
+### Added — M05.C2 §8.security L3 Cross-platform OS isolation (seccomp / landlock / Job Objects) (new safety primitive ≥95%)
+
+Code + CI gate updates. M05 Stage C2 layers kernel-level isolation on top of
+Stage C1's sandbox plumbing. Isolation installs ONCE at sandbox subprocess
+startup, BEFORE `ipc::serve` binds the socket — so even a maliciously-crafted
+artifact reaching the validator is bounded by the kernel-level fence.
+
+- **`crates/runtime-sandbox/src/seccomp.rs`** *(new; `cfg(target_os = "linux")`)*:
+  - `ALLOWED_SYSCALLS: &[&str]` — curated allowlist of ~55 syscalls covering
+    tokio multi-thread runtime + LinesCodec framed-JSON I/O + Unix domain
+    sockets + serde construction. Forbidden syscalls (`execve`, `ptrace`,
+    `mount`, `fork`, `clone3`, `kexec_load`, `reboot`, etc.) are NOT in the
+    list; the default `KillProcess` action terminates the subprocess on any
+    disallowed syscall.
+  - `build_filter()` — pure function constructing the `ScmpFilterContext`
+    with `KillProcess` default + the allowlist applied + `ScmpArch::X8664`.
+    Returns the filter without loading; testable without touching kernel state.
+  - `install()` — builds the filter and calls `load()`. `PR_SET_NO_NEW_PRIVS`
+    is set automatically by libseccomp.
+- **`crates/runtime-sandbox/src/landlock.rs`** *(new; `cfg(target_os = "linux")`)*:
+  - `build_ruleset(allowed_paths)` — constructs (without committing) a
+    landlock ruleset using ABI v3 (Linux 6.2+) with read+write+create+remove
+    access on the supplied paths. `BestEffort` compatibility mode degrades
+    gracefully on older kernels.
+  - `install(allowed_paths)` — commits the ruleset via `restrict_self`. Status
+    `NotEnforced` (kernel < 5.13) logs `warn` but does NOT error — seccomp
+    remains the primary safety net.
+- **`crates/runtime-sandbox/src/job_objects.rs`** *(new; `cfg(windows)`)*:
+  - `SANDBOX_JOB_FLAGS` — `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE |
+    JOB_OBJECT_LIMIT_BREAKAWAY_OK`. Closing the job kills the entire process
+    tree; the BREAKAWAY_OK flag controls children of the sandbox subprocess.
+  - `build_limit_info()` — pure constructor returning a configured
+    `JOBOBJECT_EXTENDED_LIMIT_INFORMATION`. Testable on any thread.
+  - `install_restrictions()` — `CreateJobObjectW` + `SetInformationJobObject`
+    + `AssignProcessToJobObject(job, GetCurrentProcess())`. Job handle is
+    intentionally leaked so `KILL_ON_JOB_CLOSE` fires on abnormal subprocess
+    exit (kernel reclaims the handle when the process dies). Every `unsafe`
+    block carries a `// SAFETY:` comment naming the invariant per CLAUDE.md
+    §4 Rule 7.
+- **`crates/runtime-sandbox/src/lib.rs`** *(edited)*:
+  - `install_isolation(ipc_socket)` — new private helper. On Linux installs
+    landlock (filesystem fence over the socket's parent dir) THEN seccomp
+    (syscall allowlist). On Windows installs the Job Object. Called from
+    `run_inner` BEFORE the `tokio::select!` that drives `ipc::serve`.
+  - `seccomp` / `landlock` / `job_objects` module declarations gated by
+    `cfg(target_os = ...)`.
+  - The C1 `run(session_id, ipc_socket)` entry point + `SandboxRequest` /
+    `SandboxResponse` wire format are unchanged. Isolation is transparent
+    to the IPC client (runtime-main's sandbox_ipc).
+- **`crates/runtime-sandbox/src/error.rs`** *(edited)*: added
+  `SandboxError::Isolation(String)` variant covering all platform isolation
+  errors with a platform-specific message body.
+- **`crates/runtime-sandbox/Cargo.toml`** *(edited)*:
+  - `[target.'cfg(target_os = "linux")'.dependencies]` adds `libseccomp` 0.3
+    + `landlock` 0.4.
+  - `[target.'cfg(windows)'.dependencies]` + dev-dependencies add
+    `windows-sys` 0.59 with the JobObjects + Threading + Foundation feature
+    flags.
+  - `[lints.rust] unsafe_code = "allow"` (was `"warn"`) for the FFI in
+    `job_objects.rs`. `warnings = "deny"` remains; workspace `forbid` stays
+    in effect for every other crate per CLAUDE.md §4 Rule 7.
+- **`crates/runtime-sandbox/tests/integration.rs`** *(edited)*:
+  - `isolation_active_under_real_subprocess` — spawns the binary; on Linux
+    reads `/proc/$pid/status` and asserts `Seccomp:\t2` (filter mode loaded);
+    on Windows queries `IsProcessInJob` against the child handle and asserts
+    membership.
+  - `isolation_persists_across_validate_calls` — three sequential
+    `ValidateArtifact` round trips, re-asserting the isolation state after
+    each. Proves isolation isn't reset per call.
+- **Workspace `Cargo.toml`** *(edited)*: pinned `libseccomp` 0.3, `landlock`
+  0.4, `windows-sys` 0.59 in `[workspace.dependencies]`. Member crates pull
+  via `[target.'cfg(...)'.dependencies]`.
+- **`.github/workflows/ci.yml`** *(edited)*:
+  - All three Linux apt-get sections add `libseccomp-dev` (required by the
+    `libseccomp` crate at compile time).
+  - Per-crate `runtime-sandbox` coverage gate's `--ignore-filename-regex`
+    drops `src.ipc\.rs` (lifted into the gate per the C1 carry-forward).
+    The lcov-generation step is updated to match.
+- **`codecov.yml`** *(edited)*: `ignore` list drops
+  `crates/runtime-sandbox/src/ipc.rs`; only `lib.rs` remains (OS-signal
+  orchestrator). Platform-cfg files contribute coverage per the platform
+  that compiles them.
+- **`CLAUDE.md`** *(edited)*: §5 + §6 reflect the lifted `ipc.rs` gate,
+  the new isolation modules, and per-platform coverage attribution.
+
+### Added — M05.C1 §8.security L3 Sandbox crate plumbing + main-side IPC + lifecycle (new safety primitive ≥95%)
+
+Code-only. M05 Stage C1 lights up `crates/runtime-sandbox/` from the M01
+scaffold WITHOUT OS-specific isolation (Stage C2 layers seccomp /
+landlock / Job Objects on top). The sandbox is a separate subprocess
+spawned by the Tauri main process at app startup; main + sandbox
+communicate via framed JSON over Unix domain socket (Linux/macOS) or
+Windows named pipe. The pure-function validator scans an artifact's
+source text for syscall-name tokens against the agent's
+`CapabilityDeclaration.kind`; mismatches surface in
+`ValidationResult::Reject { reasons }`.
+
+- **`crates/runtime-sandbox/`** *(lit up from M01 stub)*:
+  - `Cargo.toml` — minimal deps (tokio + serde + thiserror + tokio-util +
+    tracing + clap + runtime-core + futures + uuid). Stage C2 adds the
+    platform-specific isolation crates (libseccomp-rs / landlock /
+    winapi). `[[bin]]` target added.
+  - `src/main.rs` *(new)* — binary entry point. CLI:
+    `runtime-sandbox --session-id <id> --ipc-socket <path>`. Mirrors
+    `runtime-drone/src/main.rs` exactly.
+  - `src/lib.rs` — `run(session_id, ipc_socket)` + test-friendly
+    `run_inner(.., shutdown_source)` with injectable shutdown future.
+    cfg-platform OS-signal handler (SIGTERM/SIGINT on Unix;
+    Ctrl-Break/Ctrl-C on Windows).
+  - `src/protocol.rs` *(new)* — `SandboxRequest` (`validate_artifact` /
+    `shutdown`) + `SandboxResponse` (`validation_result` / `alert`) +
+    `AlertLevel`. `#[serde(tag = "type", rename_all = "snake_case")]`
+    wire shape, parallel to `runtime_core::DroneCommand`. The
+    `CapabilityDeclaration` payload travels by-value across IPC and is
+    consumed from `runtime_core::generated::capability` (schema-derived,
+    M05.B-locked).
+  - `src/validator.rs` *(new)* — `Artifact { code }` + `scan_syscalls`
+    (13-token allow-list keyed off the five `CapabilityKind` variants) +
+    `validate(artifact, declaration) → ValidationResult`. C1
+    intentionally enforces `kind`-only matching; scope containment is
+    the L2a enforcer's job (`runtime_main::capability::declaration`)
+    cleared before the L3 check.
+  - `src/ipc.rs` *(new)* — framed-JSON request/response IPC server.
+    `serve(socket_path)` binds a Unix socket / Windows named pipe and
+    loops on the testable `handle_connection` seam. `Shutdown` request
+    exits the accept loop; malformed JSON surfaces as a `Warn` alert
+    rather than killing the server (parallel to drone IPC convention).
+  - `src/error.rs` *(new)* — `SandboxError` + `IpcError` thiserror
+    enums (parallel to `DroneError`). Stage C2 will add `Isolation` /
+    `JobObject` variants when seccomp / Job Objects land.
+  - `tests/integration.rs` *(new)* — spawns the real
+    `runtime-sandbox` binary, connects via the IPC client, sends a
+    `validate_artifact` request, asserts the `ValidationResult`
+    response. Plus a `kill-and-restart-resumes` test mirroring the
+    drone loopback's resilience check.
+
+- **`crates/runtime-main/src/sandbox_ipc/`** *(new)*:
+  - `mod.rs` — module root; re-exports `SandboxClient` + `SandboxIpcError`.
+  - `connection.rs` — `Connection` state machine + `MAX_RETRIES = 5` /
+    `BASE_BACKOFF = 200ms` reconnect policy. **Critical:** the
+    `next_response` borrow-not-move pattern is implemented from day 1
+    (NOT retrofitted) — per gotcha #72 codified in PR #64 for drone.
+    The reader stays installed across calls so multi-call
+    request-response paths work. Test seam `Connection::from_streams`
+    accepts arbitrary `AsyncRead` + `AsyncWrite` halves; unit tests
+    inject `tokio::io::duplex` pairs. cfg-platform `open()` is the
+    OS-call wrapper (excluded from coverage gate per CLAUDE.md §5).
+  - `client.rs` — `SandboxClient` wrapping `Mutex<Connection>`.
+    `validate(artifact_code, declaration) → ValidationResult` + `shutdown()`.
+    Noop affordance for tests/paths that don't exercise a real sandbox.
+    The `validate_succeeds_twice_in_sequence` test ships **FIRST**
+    (gotcha #69 first-class application — the multi-call invariant
+    that prevents the M04 IRL drone bug from recurring in sandbox).
+  - Tests: noop validate/shutdown; single round-trip; **twice-in-sequence
+    multi-call**; alert-as-codec-error; stream-close-not-hang;
+    timeout-when-peer-silent. All unit-tested via `tokio::io::duplex`
+    pairs.
+
+- **`src-tauri/src/sandbox_lifecycle.rs`** *(new)* — `SandboxLifecycle`
+  owning the spawned `runtime-sandbox` subprocess. Production `spawn()`
+  composes `spawn_with` (test seam) with the real `tokio::process::
+  Command` + `SandboxClient::connect`. Connect retry: 5 attempts × 200ms
+  exponential backoff. Cross-platform IPC addressing via
+  `compute_ipc_addr(session_id)` (Unix: `<temp>/runtime-sandbox-<id>.sock`;
+  Windows: `\\.\pipe\runtime-sandbox-<id>`). `kill_on_drop(true)`
+  failsafe. Graceful shutdown via `SandboxClient::shutdown` then
+  `Child::wait` (3s timeout) then `start_kill` fallback. 7 unit tests
+  parallel to `drone_lifecycle::tests`.
+
+- **`src-tauri/src/main.rs`** — sandbox subprocess spawned at the Tauri
+  setup hook alongside the drone. `Arc<SandboxClient>` registered as
+  Tauri-managed state; `ManagedSandbox` (`Mutex<Option<SandboxLifecycle>>`)
+  shutdown on `RunEvent::ExitRequested`. v0.1 has no production caller
+  for the sandbox client (M09 wires the first one); the boundary stays
+  callable-but-unwired per the phase doc `<execution_warnings>`.
+
+- **`Cargo.toml`** — workspace dep `runtime-sandbox = { path =
+  "crates/runtime-sandbox", version = "0.1.0" }`. `runtime-main` pulls
+  it as a regular dep (sandbox_ipc consumes the protocol + validator
+  types in production code, not just tests).
+
+- **Coverage gates** *(new + extended)*:
+  - **CLAUDE.md §5** + **§6** documented: runtime-sandbox per-crate
+    gate at ≥95% with `main.rs|lib.rs|ipc.rs` excluded (cfg-platform
+    accept-loop + OS-signal orchestrator holdouts — Stage C2 lifts the
+    gate to include ipc.rs when seccomp / landlock / job_objects files
+    land); runtime-main exclusion extended to add
+    `sandbox_ipc/connection.rs` (parallel to existing
+    `drone_ipc/connection.rs` OS-call wrapper exclusion).
+  - **`.github/workflows/ci.yml`** — new `runtime-sandbox coverage`
+    step + lcov generation + Codecov upload. runtime-main exclusion
+    regex extended.
+  - **`codecov.yml`** — new `runtime-sandbox` flag at 95% target;
+    `ignore` extended for `crates/runtime-sandbox/src/ipc.rs` +
+    `lib.rs`.
+
+- **Coverage actuals (M05.C1 measured on Windows):**
+  - Workspace: **93.06%** lines (≥80% gate).
+  - runtime-drone: **95.79%** lines (unchanged from M05.B).
+  - runtime-main: **97.04%** lines (≥95% gate with
+    sandbox_ipc/connection.rs added to exclusion list).
+  - runtime-sandbox: **97.40%** lines on plumbing files
+    (validator + protocol + error; ipc.rs excluded per above).
+    Per-module: `validator.rs` 96.30% line / 100% region;
+    `protocol.rs` 100%; `ipc.rs` 92.58% line / 94.01% region
+    (Stage C1 holdout).
+  - `sandbox_ipc/client.rs`: 94.09% lines (within ≥95% region gate);
+    `sandbox_ipc/connection.rs`: 88.89% lines / 91.39% regions
+    (excluded — cfg-platform OS-call wrapper).
+
+- **Tests:** 3 validator + 4 protocol round-trip + 7 ipc server +
+  2 lib.rs orchestrator + 11 sandbox_ipc::connection +
+  7 sandbox_ipc::client + 7 sandbox_lifecycle + 2 integration
+  (subprocess round-trip + kill-and-restart). Plus the multi-call
+  invariant tests applied **from day 1** per gotcha #69 + #72.
+
+### Added — M05.B §8.security L1 + L2a Capability Enforcer (new safety primitive ≥95%)
+
+Code + schema. M05 Stage B ships the in-process capability enforcer + L2a
+narrowing evaluator as a new safety primitive at 100% per-module coverage.
+Default-deny semantics: an agent with no declared grants is rejected; the
+asymmetric `parent.subsumes(child)` predicate is the load-bearing
+invariant proptest-verified. Renderer applyEvent branches lit up for
+`capability_violation` + `capability_grant` (previously no-op).
+
+- **`schemas/capability.v1.json`** *(new)* — `CapabilityDeclaration`
+  shape: `kind` (`CapabilityKind` enum: `read | write | exec | network |
+  process_spawn`), `resource` (newtype `ResourceName`, minLength 1),
+  `scope` (`CapabilityScope` oneOf: `GlobScope { glob }` / `DomainScope
+  { domain }` / `PathScope { path }`), `side_effect_class`
+  (`SideEffectClass` enum: `pure | filesystem_mutate | network_egress |
+  process_spawn | irreversible`). Per gotcha #43 every validated inline
+  string is extracted to a titled `$def` so typify generates clean
+  newtypes (`GlobPattern`, `DomainPattern`, `PathPattern`,
+  `ResourceName`).
+- **`schemas/event.v1.json`** — `capability_violation` enriched with
+  `agent_id` + `capability_kind` + `requested_action` + `declared_scope`
+  (was: `declared` + `attempted`). `capability_grant` enriched with
+  optional `parent_agent_id` + `granted_to` + `capability_kind` +
+  `resource` + optional `narrowed_from` (was: `agent_id` +
+  `capability` + `scope`). New `$defs`: `CapabilityKindRef`,
+  `RequestedAction`, `DeclaredScope`, `GrantedResource`.
+- **`crates/runtime-core/src/generated/{capability,event}.rs` +
+  `src/types/{capability,agent_event}.ts`** — regenerated via
+  `cargo xtask regenerate-types`.
+- **`crates/runtime-core/src/event.rs`** — hand-rolled canonical
+  `AgentEvent` mirrors the schema enrichment. `CapabilityViolation` +
+  `CapabilityGrant` variants replaced with the enriched payload. Added
+  `CapabilityKindRef` enum (5 values; follows the
+  `HitlTriggerRef` / `GapSeverityRef` cross-schema mirror pattern).
+- **`crates/runtime-main/src/capability/`** *(new module)* —
+  - `mod.rs` — module root + re-exports.
+  - `declaration.rs` — pure-function `subsumes(parent, requested)` +
+    `scope_contains(outer, inner)` per-variant containment (glob via
+    `globset::Glob`; domain with leading-`.` subdomain support; path
+    prefix-with-separator). 15 unit tests; 100% line coverage.
+  - `enforcer.rs` — `CapabilityEnforcer` struct + `check` /
+    `grant` / `grants_for` / `grant_count` API. Default-deny: agent
+    with no entries gets `Err(Denied { reason: NoDeclarations })`.
+    `DenyReason` discriminates `NoDeclarations` vs `NoMatchingGrant`
+    for renderer copy. 11 unit tests; 100% line coverage.
+  - `narrowing.rs` — `narrow(parent, proposed)` evaluator enforces
+    "child grants ⊆ parent grants" on sub-agent spawn. Short-circuits
+    on first uncovered proposed declaration. 7 unit tests + 2 proptest
+    properties (`property_narrowing_preserves_invariant` +
+    `property_widening_always_denied`); 100% line coverage.
+  - `error.rs` — `CapabilityError::Denied { agent_id, reason }` +
+    `NarrowingError::CapabilityNotHeldByParent { proposed }`.
+- **`crates/runtime-main/tests/capability_enforcer_smoke.rs`** *(new)*
+  — 6 integration tests stand in for the SDK's eventual `dispatch_tool`
+  wrap (D1 in M05.B retrospective — no production dispatch path in v0.1
+  yet). Covers: grant→success+capability_grant emission;
+  no-grants→denial+capability_violation emission BEFORE err returns
+  (gotcha trap #4 ordering); declarations-exist-but-no-match path;
+  L2a narrowing emits per-narrowed-grant; widening denied; multi-call
+  invariant.
+- **`crates/runtime-core/tests/round_trip.rs`** — extended
+  `agent_event_capability_violation_round_trip` for the new shape +
+  added `agent_event_capability_grant_{root,narrowed}_round_trip`.
+- **`src/lib/graphStore.ts`** — replaced the M04-era no-op cases for
+  `capability_violation` + `capability_grant` with real `applyEvent`
+  branches. New state slots: `capabilityViolations:
+  Record<agentId, CapabilityViolationRecord>` (last-write-wins per
+  agent) + `capabilityGrants: CapabilityGrantRecord[]` (append-only
+  log). `clear()` resets both.
+- **`tests/unit/graphStore.test.ts`** — new "capability events (M05
+  Stage B)" describe block: 6 tests covering violation state recording,
+  grant log append, narrowed-grant metadata, multi-call append-only
+  invariant, and clear reset.
+- **`.prettierignore` + `eslint.config.js`** — added
+  `src/types/capability.ts` to both ignore lists per gotcha #44.
+- **`crates/xtask/src/main.rs`** — wired `capability` into the
+  schemas list + the TS-targets list so `cargo xtask regenerate-types`
+  produces the new Rust + TS bindings.
+
+D1 (SDK wire-up): the production SDK has no `dispatch_tool` /
+`spawn_sub_agent` path to wrap yet (M02-shipped single-turn streaming
+only); the smoke test stands in as the canonical wrapping shape so
+the enforcer's check + grant + narrow contract is exercised end-to-end.
+The phase doc's `<execution_warnings>` explicitly authorizes this
+scoping. M06+ wires the enforcer to the live dispatch path when
+multi-turn tool loops land.
+
+Not in this stage: sandbox subprocess (Stage C1+C2), tier system
+(Stage D), audit log (Stage E), capability-violation modal +
+CapabilityBadge UI (Stage F).
+
+Coverage: workspace 94.29% line; runtime-drone 95.79% line;
+runtime-main 97.16% line; `capability/declaration.rs` 100%;
+`capability/enforcer.rs` 100%; `capability/narrowing.rs` 100%.
+All ≥ gates.
+
+### Added — M05.A §4b Gap Detection (framework_loader + request_capability meta-tool + schema enrichment + M04.V carry-forwards)
+
+Code + schema. M05 Stage A wires spec §4b Layer 1 (framework_loader) +
+Layer 2 (request_capability meta-tool) gap detection end-to-end. Enriched
+gap-event payload per spec §4b severity matrix; new `mcp_missing` +
+`agent_missing` variants; `ContextType` reconciled with spec §2b
+(M02/M03/M04 carry-forward closed); M04.V Decision 1 absorbed via
+TaskNode regression test.
+
+- **`schemas/event.v1.json`** — added `mcp_missing` + `agent_missing`
+  event variants; enriched the four `*_missing` variants with `severity`
+  (`GapSeverity` enum: `critical | important | advisory | requested`),
+  `suggested_action` (validated minLength 1), and `requested_via`
+  (`GapSource` enum: `loader | request_capability`). New `$defs`:
+  `GapSeverity`, `GapSource`, `SuggestedAction`. Per gotcha #43 the
+  validated string extracts to `$defs/SuggestedAction` so typify generates
+  a clean newtype.
+- **`crates/runtime-core/src/generated/event.rs` + `src/types/agent_event.ts`**
+  — regenerated via `cargo xtask regenerate-types`.
+- **`crates/runtime-core/src/event.rs`** — hand-rolled canonical
+  `AgentEvent` union mirrors the schema enrichment. Added
+  `GapSeverityRef` + `GapSourceRef` enums (following the existing
+  `HitlTriggerRef` cross-schema mirror pattern). The four `*_missing`
+  variants gain the enriched payload.
+- **`crates/runtime-main/src/framework_loader/`** *(new module)* —
+  - `mod.rs` — `Emitter` trait (in-process event seam) +
+    `load_and_validate` async wrapper + `load_and_validate_str` test seam.
+  - `walker.rs` — pure-function walker over `Framework`: checks every
+    inline `Agent`'s `allowed_tools[]` / `allowed_skills[]` / `spawns[]`
+    against the framework's declared primitive sets, returns `Vec<Gap>`
+    with per-kind severity per spec §4b severity matrix. `mcp_missing`
+    is Layer-2-only in v0.1 (v0.1 framework schema declares no MCP
+    servers; M06 adds Layer-1 emission). 9 unit tests; 100% line on
+    `to_event` mapping.
+  - `error.rs` — `FrameworkLoadError { Io, Json, GapsFound }`.
+- **`crates/runtime-main/src/sdk/request_capability.rs`** *(new module)*
+  — spec §4b Layer 2 meta-tool. `CapabilityKind { Tool, Skill, Mcp, Agent }`
+  + `RequestCapabilityInvocation` + `handle_request_capability` emits the
+  matching `*_missing` event with `severity: Requested` +
+  `requested_via: RequestCapability` and returns `Pending`. M05.A
+  authoring decision: meta-tool accepts 4 kinds (spec §4b text says 2 —
+  surfaced in retro for reconciliation). 6 unit tests.
+- **`crates/runtime-main/tests/framework_loader_smoke.rs`** *(new)* —
+  integration test against `examples/aria/framework.json`: valid framework
+  loads with zero gaps + multi-call invariant (gotcha #69).
+- **`crates/runtime-core/src/signal.rs::ContextType`** — reconciled with
+  spec §2b. Old variants (`AgentLoop / SkillLoad / ToolInvoke /
+  HookExecute / PlanCreate / HitlPrompt / SessionLifecycle`) replaced by
+  spec set (`Skill / Framework / Code / Search / Verify / Commit /
+  Subagent`). M02 + M03 + M04 carry-forward CLOSED.
+- **`src/lib/graphStore.ts`** — lit up `applyEvent` branches for all
+  four `*_missing` + `gap_resolved`. GapNodes mount keyed by
+  `${kind}:${missingName}:${agentId}` (idempotent re-emission;
+  loader-vs-meta-tool re-emission of same gap collapses with latest
+  severity). `GapNodeData` extended with `agentId`, `severity`,
+  `suggestedAction`, `requestedVia`; `kind` widened to the 4-variant
+  union.
+- **`src/components/nodes/GapNode.tsx`** — renders severity-tier CSS
+  modifier class + `suggestedAction` text + DOM-readable
+  `data-kind` / `data-severity` / `data-requested-via` discriminators so
+  e2e + unit tests pin the wire-path contract (gotcha #66 / #68).
+- **`tests/unit/nodes/TaskNode.test.tsx`** — added M04.V Decision 1
+  regression test `renders_task_id_prefix_fallback_when_title_is_empty`
+  pinning the LG-02 IRL fix at `TaskNode.tsx:27`.
+- **`tests/unit/nodes/GapNode.test.tsx`** — 7 tests for enriched payload
+  rendering + 4-kind visual differentiation + accessibility.
+- **`tests/unit/graphStore.test.ts`** — 7 tests for the new gap-event
+  applyEvent branches (per-kind mount + idempotence + latest-wins on
+  re-emit + `gap_resolved` dismissal + safe-noop on unknown kind).
+- **`.prettierignore` + `eslint.config.js`** — added `src/types/budget.ts`
+  to ignore lists (M04.F oversight surfaced by M05.A regeneration; per
+  gotcha #44 every generated TS file goes in both ignore lists).
+
+M04.V Decision 2 (§4a `hook_*` vs `verify_*` spec/code naming) surfaced
+in `docs/build-prompts/retrospectives/M05.A-retrospective.md` for
+maintainer adjudication — no code change in this stage.
+
+Not in this stage: capability enforcer (Stage B), sandbox subprocess
+(Stage C1+C2), tier system (Stage D), audit log (Stage E), GapPanel UI +
+CapabilityBadge (Stage F).
+
+Coverage: workspace 94.06% line; runtime-drone 95.79% line;
+runtime-main 96.94% line; `framework_loader/walker.rs` 98.18% line;
+`framework_loader/mod.rs` 99.17% line; `sdk/request_capability.rs`
+98.33% line. All ≥ gates.
+
 ### Added — M04.6 protocol iteration (Stage V Verifier introduced, validator extended, M04 IRL bug patterns graduated to gotchas)
 
 Documentation + protocol. Adds the Stage V (Verifier) ceremony between work

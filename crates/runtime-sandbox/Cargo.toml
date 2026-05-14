@@ -6,12 +6,65 @@ license      = { workspace = true }
 repository   = { workspace = true }
 rust-version = { workspace = true }
 
+[[bin]]
+name = "runtime-sandbox"
+path = "src/main.rs"
+
 [lints.rust]
-# Sandbox needs unsafe for seccomp / landlock / Job Objects in M5+.
-# v0.1 has no unsafe blocks yet; warn-only keeps the door open.
-unsafe_code = "warn"
+# Sandbox needs unsafe for Job Objects FFI in Stage C2 (job_objects.rs).
+# seccomp + landlock crates expose safe Rust APIs so their modules have
+# zero unsafe blocks. Per CLAUDE.md §4 Rule 7 every `unsafe` block in
+# job_objects.rs carries a // SAFETY: comment naming the invariant.
+unsafe_code = "allow"
 warnings    = "deny"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 nursery  = { level = "warn", priority = -1 }
+
+[dependencies]
+runtime-core       = { workspace = true }
+serde              = { workspace = true, features = ["derive"] }
+serde_json         = { workspace = true }
+thiserror          = { workspace = true }
+tokio              = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net", "io-util", "fs"] }
+tokio-util         = { workspace = true, features = ["codec"] }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "json"] }
+clap               = { workspace = true, features = ["derive", "std", "help"] }
+futures            = { workspace = true }
+uuid               = { workspace = true, features = ["v4"] }
+
+# Linux-only OS isolation deps. Both crates pull in zero transitive
+# Cargo dependencies of their own beyond what they already need
+# (libseccomp links to the system libseccomp shared library; landlock
+# is pure Rust). Verified license-compatible (MIT / Apache-2.0 / LGPL-
+# 2.1+ for libseccomp via system library) in `cargo deny check`.
+[target.'cfg(target_os = "linux")'.dependencies]
+libseccomp = { workspace = true }
+landlock   = { workspace = true }
+
+# Windows-only Job Objects FFI. `windows-sys` is already present in the
+# Cargo.lock (transitively via tokio + tauri); we add only the
+# JobObjects + Threading + Foundation feature flags needed.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio    = { workspace = true, features = ["test-util", "rt-multi-thread", "macros", "sync", "time", "signal", "net", "io-util", "fs", "process"] }
+
+# Windows-only test deps — used by tests/integration.rs to query
+# IsProcessInJob on the spawned sandbox subprocess.
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }

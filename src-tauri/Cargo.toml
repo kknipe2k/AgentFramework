@@ -32,6 +32,10 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 # `set_api_key_with` error-path tests (mirrors the dev-dep choice in
 # crates/runtime-main/Cargo.toml).
 keyring            = { workspace = true }
+# M05 Stage D — tempdir for the tier-transition persistence tests
+# (`request_tier_transition_with_*`). Same workspace dep as the other
+# crates use for filesystem-isolation tests.
+tempfile           = { workspace = true }
 
 [lints]
 workspace = true

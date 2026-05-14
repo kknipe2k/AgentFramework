@@ -2,15 +2,20 @@
 
 mod commands;
 mod drone_lifecycle;
+mod sandbox_lifecycle;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use commands::GlobalBudgetState;
+use commands::{CurrentTierState, GlobalBudgetState};
 use drone_lifecycle::DroneLifecycle;
+use runtime_main::audit::{audit_path, AuditWriter};
 use runtime_main::drone_ipc::DroneClient;
 use runtime_main::hitl::HitlSeam;
+use runtime_main::sandbox_ipc::SandboxClient;
 use runtime_main::sdk::ApprovalSeam;
+use runtime_main::tier::{load_tier, Tier};
+use sandbox_lifecycle::SandboxLifecycle;
 use tauri::{Manager, RunEvent};
 use tokio::sync::Mutex;
 
@@ -18,7 +23,15 @@ use tokio::sync::Mutex;
 /// `RunEvent::ExitRequested` handler can `.take()` and call
 /// [`DroneLifecycle::shutdown`] before propagating exit.
 type ManagedLifecycle = Mutex<Option<DroneLifecycle>>;
+/// Tauri-managed type alias for the sandbox subprocess handle (M05 C1).
+/// Same `Mutex<Option<_>>` shape as `ManagedLifecycle` so the exit
+/// handler can drain + shutdown identically.
+type ManagedSandbox = Mutex<Option<SandboxLifecycle>>;
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "Tauri shell startup is a linear sequence of registrations + spawns; splitting hides the order-of-events that's load-bearing for diagnosis."
+)]
 fn main() {
     init_tracing();
     tracing::info!(
@@ -46,6 +59,8 @@ fn main() {
             commands::request_resume,
             commands::respond_uncertainty,
             commands::set_global_budget,
+            commands::get_current_tier,
+            commands::request_tier_transition,
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();
@@ -69,6 +84,28 @@ fn main() {
             // round-trips without a new dependency.
             let global_budget: GlobalBudgetState = Mutex::new(None);
             app_handle.manage(global_budget);
+            // M05 Stage D §8.security L4: load the persisted tier from
+            // `<app_data_dir>/tier.json` (first-run default is Novice).
+            // The CurrentTierState seam is the single source of truth
+            // for the get_current_tier + request_tier_transition
+            // commands; tier_transition events drive the renderer's
+            // currentTier state.
+            let tier_from_disk = match app_handle.path().app_local_data_dir() {
+                Ok(dir) => load_tier(&dir).unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, "tier load failed; defaulting to Novice");
+                    Tier::default()
+                }),
+                Err(e) => {
+                    tracing::warn!(error = %e, "app_local_data_dir unavailable; defaulting to Novice");
+                    Tier::default()
+                }
+            };
+            let tier_state: CurrentTierState = Mutex::new(tier_from_disk);
+            app_handle.manage(tier_state);
+            // M05 Stage E §8.security L5: best-effort audit log open.
+            if let Some(w) = open_audit_writer(&app_handle) {
+                app_handle.manage(w);
+            }
             // The setup hook runs on the Tauri main thread; we need an
             // async block for the drone spawn + connect. block_on uses
             // the Tauri runtime that's already configured.
@@ -81,7 +118,6 @@ fn main() {
                         app_handle.manage(client);
                         let managed: ManagedLifecycle = Mutex::new(Some(lifecycle));
                         app_handle.manage(managed);
-                        Ok::<(), Box<dyn std::error::Error>>(())
                     }
                     Err(e) => {
                         tracing::error!(error = %e, "drone spawn failed at setup");
@@ -89,6 +125,29 @@ fn main() {
                         // would fail at every invocation. Propagating the
                         // setup error here aborts startup with a visible
                         // error rather than producing a half-broken app.
+                        return Err(Box::<dyn std::error::Error>::from(e.to_string()));
+                    }
+                }
+                // M05 Stage C1: spawn the sandbox subprocess alongside the
+                // drone. v0.1 has no production caller for the sandbox
+                // (M09 generators wires the first one); the boundary
+                // stays callable-but-unwired here so the L3 surface is
+                // ready when M09 lands. Failure to spawn the sandbox at
+                // app startup currently aborts the app — same policy as
+                // the drone — because the L3 boundary is part of the
+                // §8.security contract and a half-broken sandbox is
+                // worse than no app at all.
+                tracing::info!("spawning runtime-sandbox");
+                match SandboxLifecycle::spawn().await {
+                    Ok(lifecycle) => {
+                        let client: Arc<SandboxClient> = Arc::clone(&lifecycle.client);
+                        app_handle.manage(client);
+                        let managed: ManagedSandbox = Mutex::new(Some(lifecycle));
+                        app_handle.manage(managed);
+                        Ok::<(), Box<dyn std::error::Error>>(())
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "sandbox spawn failed at setup");
                         Err(Box::<dyn std::error::Error>::from(e.to_string()))
                     }
                 }
@@ -112,8 +171,51 @@ fn main() {
                     }
                 });
             }
+            // Sandbox shutdown mirrors drone's: drain managed-state +
+            // graceful-then-kill.
+            let managed_sb = app_handle.state::<ManagedSandbox>();
+            let sandbox = tauri::async_runtime::block_on(async { managed_sb.lock().await.take() });
+            if let Some(lc) = sandbox {
+                tauri::async_runtime::block_on(async move {
+                    if let Err(e) = lc.shutdown().await {
+                        tracing::warn!(error = %e, "sandbox shutdown failed at exit");
+                    }
+                });
+            }
         }
     });
+}
+
+/// Open the M05 Stage E §8.security L5 audit log at app startup.
+///
+/// Returns `Some(Arc<AuditWriter>)` when the file opens; `None` (with a
+/// `tracing::warn!`) when the data-directory resolve / `create_dir_all`
+/// / `AuditWriter::open` fails. Per phase doc E.3.4 + spec §13.5, audit
+/// availability is best-effort observability — the runtime continues
+/// without an audit trail rather than abort startup.
+fn open_audit_writer<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<Arc<AuditWriter>> {
+    let dir = match app.path().app_local_data_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!(error = %e, "app_local_data_dir unavailable; audit disabled");
+            return None;
+        }
+    };
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::warn!(error = %e, "audit log dir create failed");
+    }
+    let path = audit_path(&dir);
+    match tauri::async_runtime::block_on(AuditWriter::open(&path)) {
+        Ok(w) => Some(Arc::new(w)),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                path = %path.display(),
+                "audit log open failed; continuing without audit"
+            );
+            None
+        }
+    }
 }
 
 /// Resolve the `SQLite` database path for v0.1.
@@ -147,8 +249,7 @@ fn resolve_db_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Resul
 fn init_tracing() {
     use tracing_subscriber::{fmt, EnvFilter};
 
-    let default =
-        "info,runtime_core=debug,runtime_main=debug,runtime_drone=debug,agent_runtime=debug";
+    let default = "info,runtime_core=debug,runtime_main=debug,runtime_drone=debug,runtime_sandbox=debug,agent_runtime=debug";
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default));
 
     fmt()

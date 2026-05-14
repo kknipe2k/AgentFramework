@@ -2,11 +2,15 @@ import type { Edge, Node } from '@xyflow/react';
 import { create } from 'zustand';
 import type {
   AgentEvent,
+  CapabilityKindRef2,
+  GapSeverity,
+  GapSource,
   HitlTriggerRef,
   HitlUiVariantRef,
   HookCategoryRef,
   OnFailureRef,
   RailPolicy,
+  TierRef,
 } from '../types/agent_event';
 
 /**
@@ -109,14 +113,21 @@ export interface MCPNodeData extends Record<string, unknown> {
 }
 
 /**
- * GapNode — spec §3 + §4b. v0.1 schema does not yet emit `gap_added`
- * events; M5 wires them. Stage C ships the component so the M5 wiring
- * lands without renderer churn.
+ * GapNode — spec §3 + §4b. M05.A wires gap events end-to-end: the four
+ * `*_missing` event variants mount a GapNode; `gap_resolved` dismisses it
+ * by `gapId`. `severity` drives the visual tier (critical/important/advisory/
+ * requested → red/orange/amber/blue pulse); `suggestedAction` surfaces in
+ * the GapPanel; `requestedVia` distinguishes loader-driven (Layer 1) from
+ * `request_capability`-driven (Layer 2) gaps for renderer copy.
  */
 export interface GapNodeData extends Record<string, unknown> {
   gapId: string;
-  kind: 'tool_missing' | 'skill_missing';
+  kind: 'tool_missing' | 'skill_missing' | 'mcp_missing' | 'agent_missing';
   missingName: string;
+  agentId: string;
+  severity: GapSeverity;
+  suggestedAction: string;
+  requestedVia: GapSource;
   status: 'gap';
 }
 
@@ -326,6 +337,52 @@ export interface UncertainInvocation {
   agentId?: string;
 }
 
+/**
+ * Spec §8.security L2a (M05 Stage B): per-agent record of the most-recent
+ * `capability_violation` event. Map shape (keyed by `agent_id`) so the
+ * inspector + capability-violation modal can look up the violation that
+ * is currently blocking a given agent without scanning a log.
+ * Last-write-wins on repeat violations from the same agent — the renderer
+ * surfaces the most recent rejection state.
+ */
+export interface CapabilityViolationRecord {
+  capabilityKind: string;
+  requestedAction: string;
+  declaredScope: string;
+  timestamp: number;
+}
+
+/**
+ * Spec §8.security L2a (M05 Stage B): one row of the capability-grant
+ * log. Append-only. Driven by `capability_grant` events emitted by the
+ * framework loader (root grants; `parentAgentId` absent) and by the
+ * SDK's L2a narrowing path (sub-agent spawns; `parentAgentId` present).
+ * The inspector renders the log so the user can audit "what was granted
+ * to whom, from where."
+ */
+export interface CapabilityGrantRecord {
+  parentAgentId: string | null;
+  grantedTo: string;
+  capabilityKind: string;
+  resource: string;
+  narrowedFrom: string | null;
+  timestamp: number;
+}
+
+/**
+ * Spec §8.security L4 (M05 Stage D): per-agent record of the most-recent
+ * `tier_violation` event. Distinct from `capabilityViolations` because
+ * the L4 gate fires BEFORE L1 — same event-store shape but different
+ * routing (tier-violation modal in Settings vs. capability-violation
+ * inspector). Last-write-wins per agent.
+ */
+export interface TierViolationRecord {
+  tier: TierRef;
+  capabilityKind: CapabilityKindRef2;
+  attemptedAction: string;
+  timestamp: number;
+}
+
 interface GraphState {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -362,6 +419,35 @@ interface GraphState {
    * invocations are removed in-place by `respond_uncertainty`.
    */
   uncertainInvocations: UncertainInvocation[];
+  /**
+   * Spec §8.security L2a (M05 Stage B): per-agent most-recent
+   * capability-violation state, keyed by `agent_id`. Inspector +
+   * capability-violation modal read this to surface what's blocking
+   * an agent's dispatch. Last-write-wins on repeat violations.
+   */
+  capabilityViolations: Record<string, CapabilityViolationRecord>;
+  /**
+   * Spec §8.security L2a (M05 Stage B): append-only log of every
+   * granted capability — root grants from the framework loader +
+   * narrowed grants from sub-agent spawns. Inspector renders the log
+   * for audit-visibility.
+   */
+  capabilityGrants: CapabilityGrantRecord[];
+  /**
+   * Spec §8.security L4 (M05 Stage D): current user tier. First-run
+   * default is `'novice'` (matches the runtime's `Tier::default()`).
+   * Updated by `tier_transition` events; the renderer's Settings panel
+   * reads this to display the current tier + render the promote/demote
+   * affordance correctly.
+   */
+  currentTier: TierRef;
+  /**
+   * Spec §8.security L4 (M05 Stage D): per-agent most-recent
+   * `tier_violation` state, keyed by `agent_id`. Renderer's
+   * tier-violation modal reads this. Last-write-wins on repeat
+   * violations from the same agent.
+   */
+  tierViolations: Record<string, TierViolationRecord>;
 
   /**
    * Single entry point for translating AgentEvent into node + edge
@@ -509,6 +595,42 @@ function updateHookData(
   };
 }
 
+/**
+ * Mount a GapNode keyed by `${kind}:${missingName}:${agentId}` so that
+ * re-emissions of the same gap (same kind + same missing primitive + same
+ * agent) are idempotent. Multi-source emissions (Layer 1 loader vs Layer 2
+ * request_capability) for the same primitive collapse to one node — the
+ * latest event wins on severity / suggestedAction / requestedVia.
+ */
+function gapNodeId(kind: GapNodeData['kind'], missingName: string, agentId: string): string {
+  return `gap:${kind}:${missingName}:${agentId}`;
+}
+
+function nextGapPosition(existing: GraphNode[]): { x: number; y: number } {
+  // GapNodes sit in the right margin so the agent-tool-skill layout stays
+  // unobstructed. Stagger vertically by gap count.
+  const gapCount = existing.filter((n) => n.type === 'gap').length;
+  return { x: 600, y: gapCount * 100 };
+}
+
+function mountOrUpdateGap(state: GraphState, data: GapNodeData): GraphState {
+  const id = gapNodeId(data.kind, data.missingName, data.agentId);
+  const existing = state.nodes.find((n) => n.id === id);
+  if (existing) {
+    return {
+      ...state,
+      nodes: state.nodes.map((n) => (n.id === id && n.type === 'gap' ? { ...n, data } : n)),
+    };
+  }
+  const newNode: GapReactFlowNode = {
+    id,
+    type: 'gap',
+    position: nextGapPosition(state.nodes),
+    data,
+  };
+  return { ...state, nodes: [...state.nodes, newNode] };
+}
+
 export const useGraphStore = create<GraphState>((set) => ({
   nodes: [],
   edges: [],
@@ -518,6 +640,10 @@ export const useGraphStore = create<GraphState>((set) => ({
   notifierRecords: {},
   budget: null,
   uncertainInvocations: [],
+  capabilityViolations: {},
+  capabilityGrants: [],
+  currentTier: 'novice',
+  tierViolations: {},
 
   applyEvent: (event) =>
     set((state) => {
@@ -1149,18 +1275,152 @@ export const useGraphStore = create<GraphState>((set) => ({
             },
           };
 
-        // No-op variants — light up at M5 (gap/capability), future
-        // stages. The exhaustive default below is the forcing function:
-        // any new variant added to the schema breaks the compile until
-        // handled here.
+        // Spec §4b M05 Stage A — light up the four `*_missing` variants
+        // and `gap_resolved`. Idempotent on `${kind}:${missingName}:${agentId}`.
+        // capability_violation + capability_grant remain no-op (Stage B
+        // lights up after the L1+L2a enforcer lands per phase doc).
+        case 'tool_missing':
+          return mountOrUpdateGap(state, {
+            gapId: gapNodeId('tool_missing', event.tool_name, event.agent_id),
+            kind: 'tool_missing',
+            missingName: event.tool_name,
+            agentId: event.agent_id,
+            severity: event.severity,
+            suggestedAction: event.suggested_action,
+            requestedVia: event.requested_via,
+            status: 'gap',
+          });
+
+        case 'skill_missing':
+          return mountOrUpdateGap(state, {
+            gapId: gapNodeId('skill_missing', event.skill_name, event.agent_id),
+            kind: 'skill_missing',
+            missingName: event.skill_name,
+            agentId: event.agent_id,
+            severity: event.severity,
+            suggestedAction: event.suggested_action,
+            requestedVia: event.requested_via,
+            status: 'gap',
+          });
+
+        case 'mcp_missing':
+          return mountOrUpdateGap(state, {
+            gapId: gapNodeId('mcp_missing', event.server_name, event.agent_id),
+            kind: 'mcp_missing',
+            missingName: event.server_name,
+            agentId: event.agent_id,
+            severity: event.severity,
+            suggestedAction: event.suggested_action,
+            requestedVia: event.requested_via,
+            status: 'gap',
+          });
+
+        case 'agent_missing':
+          return mountOrUpdateGap(state, {
+            gapId: gapNodeId('agent_missing', event.missing_agent_id, event.agent_id),
+            kind: 'agent_missing',
+            missingName: event.missing_agent_id,
+            agentId: event.agent_id,
+            severity: event.severity,
+            suggestedAction: event.suggested_action,
+            requestedVia: event.requested_via,
+            status: 'gap',
+          });
+
+        case 'gap_resolved': {
+          // Match by (kind, capability, agent_id). The `kind` field on
+          // gap_resolved is "tool" / "skill" / "mcp" / "agent" (singular);
+          // map to the `*_missing` discriminator we stored at mount.
+          const kindMap: Record<string, GapNodeData['kind']> = {
+            tool: 'tool_missing',
+            skill: 'skill_missing',
+            mcp: 'mcp_missing',
+            agent: 'agent_missing',
+          };
+          const targetKind = kindMap[event.kind];
+          if (!targetKind) {
+            return state;
+          }
+          const targetId = gapNodeId(targetKind, event.capability, event.agent_id);
+          return {
+            ...state,
+            nodes: state.nodes.filter((n) => n.id !== targetId),
+          };
+        }
+
+        case 'capability_violation': {
+          // Spec §8.security L2a (M05 Stage B): record the rejection
+          // keyed by agent. Last-write-wins on repeat violations from
+          // the same agent — the inspector + capability-violation modal
+          // read this to surface the current blocking state.
+          return {
+            ...state,
+            capabilityViolations: {
+              ...state.capabilityViolations,
+              [event.agent_id]: {
+                capabilityKind: event.capability_kind,
+                requestedAction: event.requested_action,
+                declaredScope: event.declared_scope,
+                timestamp: Date.now(),
+              },
+            },
+          };
+        }
+
+        case 'capability_grant': {
+          // Spec §8.security L2a (M05 Stage B): append the grant to the
+          // audit log. parent_agent_id present → narrowed sub-agent grant;
+          // absent → root grant from the framework loader.
+          return {
+            ...state,
+            capabilityGrants: [
+              ...state.capabilityGrants,
+              {
+                parentAgentId: event.parent_agent_id ?? null,
+                grantedTo: event.granted_to,
+                capabilityKind: event.capability_kind,
+                resource: event.resource,
+                narrowedFrom: event.narrowed_from ?? null,
+                timestamp: Date.now(),
+              },
+            ],
+          };
+        }
+
+        case 'tier_violation': {
+          // Spec §8.security L4 (M05 Stage D): the L4 tier gate rejected
+          // this dispatch before L1 ran. Record keyed by agent so the
+          // tier-violation modal can surface the current blocking state.
+          // Last-write-wins on repeat violations.
+          return {
+            ...state,
+            tierViolations: {
+              ...state.tierViolations,
+              [event.agent_id]: {
+                tier: event.tier,
+                capabilityKind: event.capability_kind,
+                attemptedAction: event.attempted_action,
+                timestamp: Date.now(),
+              },
+            },
+          };
+        }
+
+        case 'tier_transition': {
+          // Spec §8.security L4 (M05 Stage D): the user's tier changed.
+          // Settings panel reads `currentTier` to render the toggle's
+          // current state; toast surfaces the transition.
+          return { ...state, currentTier: event.current };
+        }
+
+        // No-op variants — stream_text + decision_record + token_usage
+        // feed the inspector, not the graph; session_end + tool_error +
+        // mode_changed are graph-no-op by design. The exhaustive default
+        // below is the forcing function: any new variant added to the
+        // schema breaks the compile until handled.
         case 'session_end':
         case 'tool_error':
         case 'mode_changed':
-        case 'skill_missing':
-        case 'tool_missing':
-        case 'gap_resolved':
-        case 'capability_violation':
-        case 'capability_grant':
         case 'stream_text':
         case 'decision_record':
         case 'token_usage':
@@ -1173,8 +1433,8 @@ export const useGraphStore = create<GraphState>((set) => ({
       }
     }),
 
-  clear: () =>
-    set({
+  clear: (): void =>
+    set((state) => ({
       nodes: [],
       edges: [],
       selectedNodeId: null,
@@ -1183,7 +1443,15 @@ export const useGraphStore = create<GraphState>((set) => ({
       notifierRecords: {},
       budget: null,
       uncertainInvocations: [],
-    }),
+      capabilityViolations: {},
+      capabilityGrants: [],
+      // tierViolations are per-session — clear them. currentTier is a
+      // per-installation user preference loaded from tier.json at app
+      // start + mutated by tier_transition events; preserved across
+      // session clears so the Settings toggle keeps its state.
+      tierViolations: {},
+      currentTier: state.currentTier,
+    })),
 
   selectNode: (id) => set({ selectedNodeId: id }),
 

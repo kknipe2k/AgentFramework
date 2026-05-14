@@ -19,24 +19,45 @@ pub struct ParentSignalId(pub String);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetryOfSignalId(pub String);
 
-/// What kind of context this signal was produced in.
+/// What kind of context this signal was produced in. Spec §2b artifact-source
+/// taxonomy — reconciled with spec at M05.A (M02/M03/M04 carry-forward).
+///
+/// Variants name the artifact source of the signal (what the signal was
+/// forensically about) rather than the runtime call context (where in the
+/// SDK the signal was emitted). The latter is recoverable from
+/// `signal.kind`, `parent_signal_id`, and `payload_json`; the former is
+/// the cross-cutting classifier that drives VDR projection and dashboard
+/// filtering.
+///
+/// M05.A reconciliation: spec §2b L1134 + L1178 lists the canonical 7-value
+/// set `{skill, framework, code, search, verify, commit, subagent}`. The M02
+/// scaffold defined operational-context variants (`AgentLoop / SkillLoad /
+/// ToolInvoke / HookExecute / PlanCreate / HitlPrompt / SessionLifecycle`)
+/// with no consumers; M02 + M03 + M04 retrospectives deferred the
+/// reconciliation pending signal-emission integration evidence (none
+/// materialized — `Signal` writers at `WriteSignal` + decision-record +
+/// uncertainty paths take `context_type` as a parameter from the caller).
+/// M05.A adopts the spec set per CLAUDE.md §10 (spec wins absent maintainer
+/// override) + gotcha trap "`ContextType` reconcile: spec §2b is source of
+/// truth".
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextType {
-    /// Inside an agent's main loop.
-    AgentLoop,
-    /// During skill load / discovery.
-    SkillLoad,
-    /// During a tool invocation.
-    ToolInvoke,
-    /// During hook execution.
-    HookExecute,
-    /// During plan creation.
-    PlanCreate,
-    /// During a HITL prompt cycle.
-    HitlPrompt,
-    /// During session start / resume / end.
-    SessionLifecycle,
+    /// Signal about a skill operation (load / discovery / execute).
+    Skill,
+    /// Signal about framework-level operation (session lifecycle, plan,
+    /// HITL, mode change).
+    Framework,
+    /// Signal about code modification (Write / Edit tools, file ops).
+    Code,
+    /// Signal about search / discovery (Glob / Grep / `WebFetch` tools).
+    Search,
+    /// Signal about a verification operation (hook execute, rail check).
+    Verify,
+    /// Signal about a git commit operation.
+    Commit,
+    /// Signal about a sub-agent operation (spawn / complete / error).
+    Subagent,
 }
 
 /// Forensic event — 8 kinds per spec §2b.
@@ -208,7 +229,7 @@ mod tests {
             pre_signal_id: Some(PreSignalId("sig-prev".into())),
             parent_signal_id: Some(ParentSignalId("sig-parent".into())),
             retry_of: None,
-            context_type: ContextType::ToolInvoke,
+            context_type: ContextType::Code,
         });
     }
 
@@ -221,7 +242,7 @@ mod tests {
             skill_version: "1.0.0".into(),
             payload_json: payload(),
             parent_signal_id: None,
-            context_type: ContextType::SkillLoad,
+            context_type: ContextType::Skill,
         });
     }
 
@@ -233,7 +254,7 @@ mod tests {
             event: "spawned".into(),
             payload_json: payload(),
             parent_signal_id: None,
-            context_type: ContextType::AgentLoop,
+            context_type: ContextType::Subagent,
         });
     }
 
@@ -247,7 +268,7 @@ mod tests {
             tool_used: Some("estimate_cost".into()),
             payload_json: payload(),
             parent_signal_id: None,
-            context_type: ContextType::AgentLoop,
+            context_type: ContextType::Subagent,
         });
     }
 
@@ -260,7 +281,7 @@ mod tests {
             passed: true,
             payload_json: payload(),
             parent_signal_id: None,
-            context_type: ContextType::HookExecute,
+            context_type: ContextType::Verify,
         });
     }
 
@@ -274,7 +295,7 @@ mod tests {
             payload_json: payload(),
             parent_signal_id: None,
             retry_of: Some(RetryOfSignalId("sig-orig".into())),
-            context_type: ContextType::ToolInvoke,
+            context_type: ContextType::Code,
         });
     }
 
@@ -287,7 +308,7 @@ mod tests {
             response: Some("yes".into()),
             payload_json: payload(),
             parent_signal_id: None,
-            context_type: ContextType::HitlPrompt,
+            context_type: ContextType::Framework,
         });
     }
 
@@ -297,7 +318,7 @@ mod tests {
             signal_id: "sig-8".into(),
             event: "start".into(),
             payload_json: payload(),
-            context_type: ContextType::SessionLifecycle,
+            context_type: ContextType::Framework,
         });
     }
 
@@ -311,7 +332,7 @@ mod tests {
             pre_signal_id: None,
             parent_signal_id: None,
             retry_of: None,
-            context_type: ContextType::ToolInvoke,
+            context_type: ContextType::Code,
         };
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains("\"kind\":\"tool\""), "got: {json}");
@@ -327,7 +348,7 @@ mod tests {
             tool_used: Some("estimate_cost".into()),
             payload_json: serde_json::json!({"attempts": 3}),
             parent_signal_id: Some(ParentSignalId("sig-parent".into())),
-            context_type: ContextType::AgentLoop,
+            context_type: ContextType::Subagent,
         };
         let json = serde_json::to_string(&s).expect("encode");
         let back: Signal = serde_json::from_str(&json).expect("decode");

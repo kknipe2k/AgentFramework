@@ -18,6 +18,14 @@ pub mod replay;
 
 /// Approval-gate seam — spec §3a (M04 Stage B).
 pub mod approval;
+/// `request_capability` meta-tool — spec §4b Layer 2 (M05 Stage A).
+///
+/// Inline-dispatched (not LLM-routed) meta-tool an agent invokes when it
+/// realizes mid-task that it needs a tool / skill / MCP server / sub-agent
+/// it doesn't have. Emits the appropriate `*_missing` event via the
+/// `framework_loader::Emitter` and returns `Pending`; HITL `on_gap`
+/// trigger drives the user-facing resolution flow.
+pub mod request_capability;
 /// Delimited-block emitter parser — spec §2 + §3a (M04 Stage B).
 pub mod structured_emitter;
 
@@ -25,4 +33,8 @@ pub use agent_sdk::{AgentSdk, SdkError, SessionId};
 pub use approval::{ApprovalDecision, ApprovalError, ApprovalSeam};
 pub use event_pipeline::EventPipeline;
 pub use replay::replay_signals_to_events;
+pub use request_capability::{
+    handle_request_capability, CapabilityKind, RequestCapabilityError, RequestCapabilityInvocation,
+    RequestCapabilityResult,
+};
 pub use structured_emitter::{parse_structured, EmitterError, EmitterOutput};

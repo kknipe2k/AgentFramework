@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aria-runtime.dev/capability.v1.json",
+  "title": "CapabilityDeclaration",
+  "description": "Spec §8.security L1 — declarative shape every tool, skill, and agent attaches to itself describing what it needs (or has been granted) to do its job. The §8.security L2a enforcer compares the calling agent's grants against the requested action's declaration at every tool dispatch + sub-agent spawn; mismatches surface as `capability_violation` events that route through the M04.E `on_capability_violation` HITL trigger. Locked at M05 Stage B. Per CLAUDE.md §14 schema-as-source-of-truth: Rust types in `crates/runtime-core/src/generated/capability.rs` + TS types in `src/types/capability.ts` regenerate from this file.",
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "resource", "scope", "side_effect_class"],
+
+  "properties": {
+    "kind": {
+      "$ref": "#/$defs/CapabilityKind"
+    },
+    "resource": {
+      "$ref": "#/$defs/ResourceName"
+    },
+    "scope": {
+      "$ref": "#/$defs/CapabilityScope"
+    },
+    "side_effect_class": {
+      "$ref": "#/$defs/SideEffectClass"
+    }
+  },
+
+  "$defs": {
+    "CapabilityKind": {
+      "type": "string",
+      "title": "CapabilityKind",
+      "description": "Coarse category of access the declaration covers. Five values cover the §8.security primitive surface for v0.1: file reads (`read`), file writes (`write`), tool invocations (`exec`), network egress (`network`), and child-process spawning (`process_spawn`). Adding a kind requires a v2 schema bump + ADR.",
+      "enum": ["read", "write", "exec", "network", "process_spawn"]
+    },
+    "ResourceName": {
+      "type": "string",
+      "title": "ResourceName",
+      "description": "Identifier of the resource the capability applies to — tool name, file glob pattern, network hostname, or sub-agent id depending on `kind`. Free-form per kind; the enforcer's per-kind matching logic interprets it. minLength 1 — declarations may not name empty resources.",
+      "minLength": 1
+    },
+    "GlobPattern": {
+      "type": "string",
+      "title": "GlobPattern",
+      "description": "Gitignore-syntax glob pattern matched against the requested resource at enforcement time. Recursive (`**/*.md`) patterns supported. Per gotcha #43 (typify-friendly extraction): validated inline strings inside oneOf variants are extracted to $defs with a title so typify can name the newtype.",
+      "minLength": 1
+    },
+    "DomainPattern": {
+      "type": "string",
+      "title": "DomainPattern",
+      "description": "Hostname the declaration restricts network egress to. Bare host matches exactly; leading `.` (`.example.com`) matches the host and any subdomain. Per gotcha #43 (typify-friendly extraction).",
+      "minLength": 1
+    },
+    "PathPattern": {
+      "type": "string",
+      "title": "PathPattern",
+      "description": "Filesystem path prefix the declaration restricts read/write access to. Exact match or prefix-with-separator: `src` matches `src` and `src/anything`, but not `src-other`. Per gotcha #43 (typify-friendly extraction).",
+      "minLength": 1
+    },
+    "CapabilityScope": {
+      "title": "CapabilityScope",
+      "description": "How the declaration's `resource` is matched at enforcement time. Three variants with mutually-exclusive shapes — glob-pattern matching, hostname (DNS-domain) matching, and path-prefix matching. The enforcer's containment logic is per-variant; cross-variant containment (e.g., a glob scope satisfying a path request) requires the path to match the glob.",
+      "oneOf": [
+        {
+          "type": "object",
+          "title": "GlobScope",
+          "additionalProperties": false,
+          "required": ["glob"],
+          "properties": {
+            "glob": { "$ref": "#/$defs/GlobPattern" }
+          }
+        },
+        {
+          "type": "object",
+          "title": "DomainScope",
+          "additionalProperties": false,
+          "required": ["domain"],
+          "properties": {
+            "domain": { "$ref": "#/$defs/DomainPattern" }
+          }
+        },
+        {
+          "type": "object",
+          "title": "PathScope",
+          "additionalProperties": false,
+          "required": ["path"],
+          "properties": {
+            "path": { "$ref": "#/$defs/PathPattern" }
+          }
+        }
+      ]
+    },
+    "SideEffectClass": {
+      "type": "string",
+      "title": "SideEffectClass",
+      "description": "Severity classifier independent of `kind`. `pure` is read-only and idempotent; `filesystem_mutate` writes to disk; `network_egress` issues outbound requests; `process_spawn` creates a child process; `irreversible` covers operations the runtime cannot undo (e.g., `git push`, external API calls with side effects). Drives HITL severity + audit-log weighting at L5.",
+      "enum": ["pure", "filesystem_mutate", "network_egress", "process_spawn", "irreversible"]
+    }
+  }
+}
