@@ -65,6 +65,34 @@ The `_with` form is preferred when callers may legitimately want to inject non-O
 
 When excluding the production wrapper from coverage (because it can only be exercised by firing real OS signals cross-platform), document it inline with a one-line rationale per excluded function — see M01.C codification commit `1dec4ba`.
 
+### Path-agnostic persistence + Tauri-shell-resolves-directory archetype
+
+Persistence modules — file-backed config, state, audit logs, caches — accept `path: &Path` parameters at their public API. The Tauri shell layer resolves the OS-specific app-local-data directory via `AppHandle::path().app_local_data_dir()` and passes the resolved path into the module. No workspace dep on `dirs` (already transitive via Tauri), no platform-specific path code inside the persistence module, full unit-test coverage with `tempfile`-backed paths.
+
+The pattern lifted M05.D `tier::persistence` coverage to 97.45% on its first complete pass and made M05.E `audit::file_path` adopt the same shape without thought (the win at E was the 4-line edit on the Tauri side). Cite `crates/runtime-main/src/tier/persistence.rs::{load_tier, save_tier}` and `crates/runtime-main/src/audit/{file_path,writer}.rs` as the archetype.
+
+```rust
+// Persistence module — path-agnostic; takes &Path; no OS resolution.
+pub async fn save_tier(path: &Path, tier: Tier) -> Result<()> {
+    let bytes = serde_json::to_vec_pretty(&PersistedTier::from(tier))?;
+    tokio::fs::write(path, bytes).await?;
+    Ok(())
+}
+
+// In tests: pass `tempfile::NamedTempFile::new()?.path()` — no OS dirs needed.
+
+// Tauri shell — resolves the app-local-data path and delegates.
+#[tauri::command]
+pub async fn save_tier_cmd(app: tauri::AppHandle, tier: Tier) -> Result<(), CmdError> {
+    let dir = app.path().app_local_data_dir().map_err(...)?;
+    let path = dir.join("tier.json");
+    tokio::fs::create_dir_all(&dir).await.map_err(...)?;
+    save_tier(&path, tier).await.map_err(...)
+}
+```
+
+The `&Path` form is preferred over `impl AsRef<Path>` for two reasons: (a) the API is concrete and reads cleanly in tests; (b) the conversion happens once at the shell boundary, where the path is already a concrete `PathBuf` from Tauri's resolver. The form is forward-applicable to any new persistence module — keep the OS-resolution in the shell and the persistence logic path-agnostic.
+
 ## Errors
 
 - **Rust:** `Result<T, E>` everywhere it can fail. Use `thiserror` for library error types; `anyhow` for application error types at the boundary; `?` for propagation. No `panic!` in library code; `panic!` is for "this is impossible and represents a bug." Use `unwrap_or` / `unwrap_or_else` / `expect("...")` with a real error message when needed.

@@ -213,7 +213,7 @@ For work stages, default order: diff stat → gate results → retrospective →
 ## 7. Work-stage-only tags
 These tags are valid only inside `<work_stage_prompt>`.
 
-v1.3 adds five additive optional tags — `<pre_flight_check>`, `<schema_drift_check>`, `<fan_out_grep>`, `<dependency_audit_check>`, `<runtime_environment>` — informed by M01–M03 friction. v1.4 adds four more — `<architecture_check>`, `<schema_audit>`, `<schema_root_check>`, `<phase_doc_inventory_audit>` — informed by M04 friction. See sections below.
+v1.3 adds five additive optional tags — `<pre_flight_check>`, `<schema_drift_check>`, `<fan_out_grep>`, `<dependency_audit_check>`, `<runtime_environment>` — informed by M01–M03 friction. v1.4 adds four more — `<architecture_check>`, `<schema_audit>`, `<schema_root_check>`, `<phase_doc_inventory_audit>` — informed by M04 friction. v1.6 adds nine more — `<coverage_gate>`, `<schema_ref_audit>`, `<api_breaking_change_audit>`, `<existing_pattern_audit>`, `<interpretation_declarations>`, `<scope_change>`, `<zustand_selector_audit>`, `<playwright_warmup_recipe>`, `<test_isolation_audit>` — plus extensions to `<phase_doc_inventory_audit>` (method/struct/read-first claims) and `<dependency_audit_check>` (feature-flag interdependencies), informed by M05 friction. See sections below.
 ### `<deliverable>`
 Required. What this stage produces. Concrete: files, modules, capabilities. Not aspirational. If you can't enumerate it, the stage isn't ready to start.
 Inline form (use only when no Phase doc section enumerates the deliverable — e.g., a stage with a one-or-two-item produce-list that doesn't warrant a Phase doc section):
@@ -502,6 +502,244 @@ Example:
 
 Different from `<pre_flight_check>` (which runs environmental checks like branch state, commit presence, env vars): `<phase_doc_inventory_audit>` checks the phase doc's own truth claims against the codebase before the stage starts authoring against them.
 
+#### v1.6 extension — method / struct-field / read-first claim audit
+
+v1.5's `<phase_doc_inventory_audit>` accepts `<claim type="file">` children only ("file path exists" check). v1.6 extends the slot to accept three additional `type` values, each verified at pre-flight time:
+
+- `type="method"` — verify a function / method symbol exists at a specified `path`. Bit M05.B (phase doc B.3.4 claimed `sdk/mod.rs::dispatch_tool` exists; it doesn't — the structural seed for ADR-0009).
+- `type="struct_field"` — verify a struct field exists with a specified name at `path`. Bit M05.F (phase doc F.3.1 sample referenced `gap.title` when the actual field name was `missingName` / `agentTitle`).
+- `type="read_first_target"` — verify a file referenced from another stage's `<read_first>` block exists at the literal path written. Bit M05.D (D's `<read_first>` referenced `M05.C-retrospective.md`; the actual files are `M05.C1-retrospective.md` + `M05.C2-retrospective.md` after the C-stage split).
+
+Backward-compatible: existing `<claim type="file">` shape continues to work. The validator (v1.6 lean) does not enforce these new type values structurally — it accepts any string in `type=` and warns on unrecognized values; promote to enum-rejection in v1.7+ once usage stabilizes.
+
+Example (M05.B + D shape — would have surfaced D1 + the C-retrospective filename drift at authoring time):
+
+```xml
+<phase_doc_inventory_audit>
+  <claim type="file" path="crates/runtime-main/src/sdk/mod.rs" verified="true"/>
+  <claim type="method" path="crates/runtime-main/src/sdk/agent_sdk.rs" symbol="dispatch_tool" verified="false" note="phase doc B.3.4 claimed exists; does not; surface as descope via <scope_change>"/>
+  <claim type="struct_field" path="crates/runtime-main/src/budget/cost.rs" symbol="BudgetEntry.session_id" verified="true"/>
+  <claim type="read_first_target" path="docs/build-prompts/retrospectives/M05.C1-retrospective.md" verified="true"/>
+  <claim type="read_first_target" path="docs/build-prompts/retrospectives/M05.C2-retrospective.md" verified="true"/>
+</phase_doc_inventory_audit>
+```
+
+Pairs naturally with v1.6's new `<scope_change>` slot — when an authoring-time claim verifies false, the resolution is often to descope and surface via `<scope_change>` so the next stage and Stage V's bias-guarded read can see the intentional carry-forward.
+
+### `<coverage_gate>` (v1.6)
+
+Optional. Names the exact `--ignore-filename-regex` argument the stage's `cargo llvm-cov` invocation will use, replacing prose enumeration of "plumbing files" / "OS-signal holdouts" / "the new module". The slot eliminates the prose-vs-regex translation step that recurred at 7 stages of M05 (A/B/C1/C2/D/E/F) — M05.C1's "plumbing files" phrase took 4 attempts to land the correct argument; M05.C2 hit the same when lifting `ipc.rs` into the gate.
+
+Children: `<gate>` elements with `scope="workspace" | "package"`, optional `name="..."` for the package, `target_lines="<N>"`, and `ignore_filename_regex="<regex>"`. The regex string is the literal argument value (escape `.` as `\\.` per llvm-cov conventions).
+
+Validator behavior (v1.6 lean): structural — error if the tag appears outside a work-stage prompt; warning if `<gate>` children lack `scope` or `target_lines`.
+
+Schema: work-stage only.
+
+Example (M05.C2 final state):
+
+```xml
+<coverage_gate>
+  <gate scope="workspace" target_lines="80" ignore_filename_regex="src.main\.rs|generated"/>
+  <gate scope="package" name="runtime-drone" target_lines="95" ignore_filename_regex="src.main\.rs|generated|src.lib\.rs|src.shutdown\.rs"/>
+  <gate scope="package" name="runtime-main" target_lines="95" ignore_filename_regex="src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs"/>
+  <gate scope="package" name="runtime-sandbox" target_lines="95" ignore_filename_regex="src.main\.rs|generated|src.lib\.rs|src.seccomp\.rs|src.landlock\.rs"/>
+</coverage_gate>
+```
+
+The agent uses the regex strings verbatim in its `cargo llvm-cov` invocation at the `verify_gates` step. Stage-end retrospective records the exclusion list in the `[END] Coverage holdouts` section; CLAUDE.md §5 carries the long-form rationale.
+
+### `<schema_ref_audit>` (v1.6)
+
+Optional. Verifies that every `$defs/<Name>` reference the phase doc names actually exists in the sibling schema file. Authoring-time check. Bit M05.A (phase doc A.3 sample referenced `mcp_missing` as one of "three existing variants" when only two existed) and M05.E (phase doc E.3.1 referenced `common.v1.json#/$defs/NonEmptyString` — a `$def` that doesn't exist in `common.v1.json`).
+
+Children: `<ref>` elements with `schema="<path>"`, `path="#/$defs/<Name>"`, and `verified="true|false"` (honor-system attestation by the phase-doc author).
+
+Validator behavior (v1.6 lean): structural — error if the tag appears outside a work-stage prompt; warning if `<ref>` children lack `schema` or `path`. The `verified` attribute is honor-system; promote to validator cross-check at v1.7 if the pattern repeats.
+
+Schema: work-stage only.
+
+Example:
+
+```xml
+<schema_ref_audit>
+  <ref schema="schemas/event.v1.json" path="#/$defs/GapSeverity" verified="true"/>
+  <ref schema="schemas/capability.v1.json" path="#/$defs/ResourceName" verified="true"/>
+  <ref schema="schemas/common.v1.json" path="#/$defs/NonEmptyString" verified="false" note="bit M05.E — $def does not exist; use local $defs/AuditSessionId instead"/>
+</schema_ref_audit>
+```
+
+Different from `<schema_audit>` (v1.4: surveys neighboring schemas for collision before authoring a NEW schema) and `<schema_drift_check>` (v1.3: runs `cargo xtask regenerate-types --check` to ensure generated code matches schemas). `<schema_ref_audit>` verifies that *cross-schema `$ref` strings* point at real `$defs` — different failure mode than collision or drift.
+
+### `<api_breaking_change_audit>` (v1.6)
+
+Optional. Surfaces the migration cost (call-site count + test count) of a sync→async (or other signature-breaking) change BEFORE implementation starts. Bit M05.E — phase doc implied making `CapabilityEnforcer::grant` async, which would have required `.await` at every call site; the eventual solution was a sync `grant()` + async `audit_grant()` split, settled after ~10 minutes of design iteration.
+
+Children: `<change>` elements with `api="<fq-path>"`, `before_signature="..."`, `after_signature="..."`, `call_sites="<N>"`, `test_sites="<M>"`, and `recommendation="<one-line guidance>"`.
+
+Validator behavior (v1.6 lean): structural — error if the tag appears outside a work-stage prompt; warning if `<change>` children lack `api`, `before_signature`, or `after_signature`.
+
+Schema: work-stage only.
+
+Example:
+
+```xml
+<api_breaking_change_audit>
+  <change api="CapabilityEnforcer::grant" before_signature="fn grant(&mut self, agent_id: &str, caps: Vec&lt;CapabilityDeclaration&gt;)" after_signature="async fn grant(&amp;mut self, agent_id: &amp;str, caps: Vec&lt;CapabilityDeclaration&gt;)" call_sites="6" test_sites="14" recommendation="split into sync grant() + async audit_grant(); production callers chain grant(); audit_grant().await;"/>
+</api_breaking_change_audit>
+```
+
+When this tag appears, the agent surfaces the audit content during `<execution_steps>::implement` pre-flight before any signature change. If the proposed change has >0 call sites and the recommendation is "split", the agent applies the split rather than the breaking change.
+
+### `<existing_pattern_audit>` (v1.6)
+
+Optional. Greps for existing irrefutable bindings of an enum variant or struct field that an in-progress change is about to break. Bit M05.D — adding `TierForbidden` to `CapabilityError` immediately broke 4 call sites using `let CapabilityError::Denied { .. } = err;` patterns (irrefutable bindings of the now-multi-variant enum). Recurred conceptually at M05.E + M05.F (3 stages total).
+
+Children: `<pattern>` elements with `grep_for="<literal pattern>"`, `rationale="<why this matters>"`, `affected_files="<N>"`, and `remediation="<one-line fix guidance>"`.
+
+Validator behavior (v1.6 lean): structural — error if the tag appears outside a work-stage prompt; warning if `<pattern>` children lack `grep_for` or `rationale`.
+
+Schema: work-stage only.
+
+Example (M05.D shape):
+
+```xml
+<existing_pattern_audit>
+  <pattern grep_for="let CapabilityError::Denied" rationale="adding TierForbidden variant breaks irrefutable bindings of the existing single-variant pattern" affected_files="4" remediation="convert to refutable match arms covering both Denied and TierForbidden"/>
+</existing_pattern_audit>
+```
+
+Different from `<fan_out_grep>` (v1.3: finds CONSUMERS of a name about to be renamed). `<existing_pattern_audit>` finds CODE SHAPES that an enum-variant addition (or analogous breaking change) will break — not call sites of the type itself, but uses that exhaustiveness-check would have flagged before the change landed.
+
+### `<interpretation_declarations>` (v1.6)
+
+Optional. Surfaces the phase-doc-author's adopted interpretation of an ambiguous spec section, distinguishing it from a plausible alternative. Bit M05.D — the runtime-vs-install-time interpretation of §8.security L4 (tier filter): phase doc / spec / MVP-v0.1.md gave three different framings; the implementer had to diagnose the discrepancy at runtime. Authoring-time declaration eliminates the diagnostic cost.
+
+Children: `<adopt>` elements with `spec_section="<§N.M>"`, `interpretation="<what the phase doc adopts>"`, `alternative_interpretation="<what was rejected>"`, and `rationale="<why this one>"`.
+
+Validator behavior (v1.6 lean): structural — error if the tag appears outside a work-stage prompt; warning if `<adopt>` children lack `spec_section` or `interpretation`.
+
+Schema: work-stage only.
+
+Example (M05.D shape):
+
+```xml
+<interpretation_declarations>
+  <adopt spec_section="§8.security L4" interpretation="runtime gate filtering every dispatch" alternative_interpretation="install-time capability filter that strips disallowed entries from the loaded framework" rationale="v0.1 has no install flow distinct from runtime load; runtime gate is strictly stronger than install-time filter"/>
+</interpretation_declarations>
+```
+
+Different from `<architecture_check>` (v1.4: verifies HOW-claims about codebase structure via grep). `<interpretation_declarations>` declares the spec interpretation the stage adopts, BEFORE writing code — no verify command, just a phase-doc-author commitment.
+
+### `<scope_change>` (v1.6 — highest priority)
+
+Optional. Surfaces intentional in-stage descopes (or scope expansions) of phase-doc deliverables so they are visible to (a) the next stage's `<read_prior_stages>` reads AND (b) Stage V's bias-guarded `<read_first>` — without requiring V to read the per-stage retrospective where descopes were previously documented. Bit M05.V Decision 3, surfaced via Findings #1 + #2 + ADR-0009: Stage B's authorized SDK wire-up descope was documented only in M05.B-retrospective.md — exactly the file V is forbidden to read.
+
+The waiver-as-ADR machinery (ADR-0008/ADR-0009) absorbed the M05 finding correctly, but `<scope_change>` is the structural fix that lets V's read-list pick up the descope without weakening the fresh-context bias guard.
+
+Children: `<descope>` (intentional removal of a phase-doc deliverable) or `<expand>` (intentional addition not in the phase-doc X.2 table — e.g., M05.C1's `crates/runtime-sandbox/src/ipc.rs` and M05.E's `crates/runtime-main/src/tier/transition.rs`). Each child has:
+
+- `deliverable="<one-line description>"`
+- `reason="<why scoped this way>"`
+- `carry_forward_to="<next-stage / next-milestone target>"` (descope only)
+- `authorized_by="<phase doc section that authorized the change>"` (descope only)
+- `documented_in="<commit-message / retro section>"` (expand only — points to where the expansion was recorded)
+
+Validator behavior (v1.6 lean): structural — error if the tag appears outside a work-stage prompt; warning if `<descope>` lacks `deliverable` or `reason`. **V protocol implication:** Stage V's `<read_first>` is expected to consume the phase doc's `<scope_change>` block when present (the verifier prompt template at `docs/build-prompts/STAGE-V-VERIFIER-PROMPT-TEMPLATE.md` carries the inline note).
+
+Schema: work-stage only.
+
+Example (M05.B + C1 + E shape — would have prevented M05.V's two 🔴 findings from triggering ADR-0009 if authored at phase-doc time):
+
+```xml
+<scope_change>
+  <descope deliverable="L1 enforcer.check SDK wire-up in run_agent_with_provider_stream" reason="v0.1 SDK is streaming-only; no synchronous dispatch surface exists to wrap (Anthropic API dispatches tools server-side)" carry_forward_to="M06 Stage A (multi-turn tool loops)" authorized_by="M05 Stage B execution_warnings"/>
+  <descope deliverable="L2a narrow() SDK spawn-path wire-up" reason="v0.1 has no sub-agent spawn loop" carry_forward_to="M06 Stage A" authorized_by="M05 Stage B execution_warnings"/>
+  <expand deliverable="crates/runtime-sandbox/src/ipc.rs (sandbox-side IPC server)" reason="C1 plumbing requires a server half not enumerated in C1.2; sibling to C2's main-side sandbox_ipc client" documented_in="M05.C1 commit body + M05.C1-retrospective.md surface log"/>
+</scope_change>
+```
+
+Pairs naturally with `<phase_doc_inventory_audit>` extensions (v1.6) — when an authoring-time `<claim>` verifies false, the typical resolution is to surface the underlying descope via `<scope_change>`. Pairs with — does not replace — the ADR-0008 waiver-as-ADR lane: `<scope_change>` is for descopes known at phase-doc authoring time; waiver-as-ADR is for descopes discovered at Stage V verification time when the build agent disputes a 🔴 finding on interpretation grounds.
+
+### `<zustand_selector_audit>` (v1.6)
+
+Optional. Renderer-stage-only. Surfaces the Zustand v5 `useShallow` requirement for derived-array selectors (`filter` / `map` / `find` over a slice of store state). Bit M05.F — phase doc F.3.1 sample didn't name `useShallow`; the naive selector triggered `Maximum update depth exceeded` infinite-loops in CapabilityBadge tests.
+
+Children: `<selector>` elements with `pattern="<which operations>"`, `requires_use_shallow="true|false"`, `import_path="<module path>"`.
+
+Validator behavior (v1.6 lean): structural — error if the tag appears outside a work-stage prompt.
+
+Schema: work-stage only (renderer-stage convention; the validator does not yet distinguish renderer from backend stages).
+
+Example:
+
+```xml
+<zustand_selector_audit>
+  <selector pattern="filter|map|find" requires_use_shallow="true" import_path="zustand/react/shallow"/>
+</zustand_selector_audit>
+```
+
+When this tag appears, the agent applies `useShallow` to every derived-array selector it writes in the stage's deliverable, and confirms via grep at `verify_gates` that no naked `.filter` / `.map` / `.find` exists in the new renderer code at a `useStore(...)` call site.
+
+### `<playwright_warmup_recipe>` (v1.6)
+
+Optional. Renderer-stage-only. Names the curl warmup probe to run before the first Playwright spec invocation against a cold Vite dev server. Bit M04.C ApprovalPanel + M05.F GapPanel (2 stages now) — Vite cold-start dep-optimizer pass on top of the smoke baseline (~30–60s) exceeds Playwright's default per-spec timeout.
+
+Self-closing form with `url`, `timeout_seconds`, and `before_first_spec` attributes.
+
+Validator behavior (v1.6 lean): structural — error if the tag appears outside a work-stage prompt.
+
+Schema: work-stage only.
+
+Example:
+
+```xml
+<playwright_warmup_recipe url="http://localhost:1420" timeout_seconds="16" before_first_spec="true"/>
+```
+
+When this tag appears, the agent runs the warmup probe (e.g., `curl -fs http://localhost:1420 -o /dev/null --max-time 16`) before invoking Playwright on the first new spec file in the stage. Pairs with gotcha #53 (Vite cold-start dep-optimizer pass).
+
+### `<test_isolation_audit>` (v1.6)
+
+Optional. Renderer-stage-only. Names persistent store slots (Zustand slices preserved across `clear()` calls) that test files mutating those slots must reset via explicit `beforeEach`. Bit M05.F — CapabilityBadge tests inherited the `currentTier` slot Stage D added to `useGraphStore`; Stage D's contract preserves user-preference slots across `clear()`, so test files need explicit reset to avoid cross-test bleed.
+
+Children: `<persistent_slot>` elements with `store="<store name>"`, `field="<field name>"`, `preserved_across_clear="true|false"`, `required_reset="<reset shape>"`.
+
+Validator behavior (v1.6 lean): structural — error if the tag appears outside a work-stage prompt.
+
+Schema: work-stage only.
+
+Example:
+
+```xml
+<test_isolation_audit>
+  <persistent_slot store="useGraphStore" field="currentTier" preserved_across_clear="true" required_reset="beforeEach(() => useGraphStore.setState({ currentTier: 'novice' }))"/>
+</test_isolation_audit>
+```
+
+### `<dependency_audit_check>` (v1.6 extension)
+
+v1.3's `<dependency_audit_check>` accepts `<dep>` children for crate / npm-package version + feature-list verification. v1.6 extends the slot to accept an additional child kind plus new attributes on `<dep>`:
+
+- `<feature_interdependency>` — declare that one FFI function binding requires features beyond its home module. Bit M05.C2: `CreateJobObjectW` lives in `Win32_System_JobObjects` but its `SECURITY_ATTRIBUTES` parameter type drags in `Win32_Security` — `windows-sys` feature-gates function bindings by ALL parameter type modules, not just the function's home module. Forward-applicable to any future Windows FFI.
+- `<dep>` (existing) with new optional `prefer_crates_io_name="true"` + `source_authority="<reference>"` attributes — distinguish crates.io canonical names from GitHub-org names (`libseccomp` on crates.io vs `libseccomp-rs` as GitHub org). Bit M05.C2 (`windows-sys 0.59` vs `winapi 0.3` choice took web research to settle).
+
+Backward-compatible: existing `<dep>` shape continues to work without the new attributes.
+
+Validator behavior (v1.6 lean): structural — warning if `<feature_interdependency>` children lack `crate`, `function`, `home_feature`, or `requires_features`.
+
+Example (M05.C2 final form):
+
+```xml
+<dependency_audit_check>
+  <dep name="windows-sys" version="0.59" prefer_crates_io_name="true" source_authority="WEBCHECK Microsoft Rust-for-Windows guide" required_features="Win32_Foundation,Win32_Security,Win32_System_JobObjects,Win32_System_Threading"/>
+  <feature_interdependency crate="windows-sys" function="CreateJobObjectW" home_feature="Win32_System_JobObjects" requires_features="Win32_Security" reason="SECURITY_ATTRIBUTES parameter type lives in Win32_Security"/>
+  <dep name="libseccomp" version="0.3" prefer_crates_io_name="true" source_authority="docs.rs/libseccomp/0.3"/>
+</dependency_audit_check>
+```
+
+When this tag appears, the agent runs `cargo tree -p windows-sys -e features` and confirms the listed `<feature_interdependency>` rows are satisfied before invoking the FFI function.
+
 ## 8. Closeout-only tags
 These tags are valid only inside `<closeout_stage_prompt>`.
 ### `<cumulative_reads>`
@@ -516,14 +754,57 @@ Required. Enumerates what must be read before drafting the closeout artifacts. D
 </cumulative_reads>
 ```
 ### `<deliverables>`
-Required. The closeout produces three artifacts. Plural form distinguishes from work-stage `<deliverable>`.
+Required. The closeout produces three artifacts (four from v1.6 onward — the `<simplify_pass>` child below is now a required child of `<deliverables>`). Plural form distinguishes from work-stage `<deliverable>`.
 ```xml
 <deliverables>
   <milestone_summary>retrospectives/M01-summary.md (aggregates per-stage retrospectives, scores axes across stages, marks verdict)</milestone_summary>
   <gap_analysis_entry>docs/gap-analysis.md (append new entry; six required sections, none optional)</gap_analysis_entry>
+  <simplify_pass>...</simplify_pass>
   <pr_description>draft only; do not open PR until explicitly asked</pr_description>
 </deliverables>
 ```
+
+### `<simplify_pass>` (v1.6, required child of closeout `<deliverables>`)
+
+Required child of `<deliverables>` in `<closeout_stage_prompt>` from v1.6 onward. Recurring structural refactor checkpoint at every Stage G closeout, addressing maintainer feedback that `simplify`-class consolidations (duplicated patterns across stages, modules that grew organically across the milestone, parallel API surfaces, dead code, premature abstractions) have historically been requested out-of-band per milestone.
+
+The pass runs AFTER the milestone summary + gap-analysis entry have been drafted and BEFORE the PR opens — so refactor proposals consume the cumulative diff of the milestone and the maintainer reviews them as part of three-artifact review.
+
+Required children:
+
+- `<invoke>` — name the skill and the diff scope. Self-closing with `skill="simplify"` and `against="<diff-spec>"` (typically `milestone cumulative diff (M[NN].A..HEAD)`).
+- `<surface>` — name the kinds of refactor proposals the pass produces. Self-closing with `kind="refactor_proposals"` and `examples="<categories>"`.
+- `<approval_required>` — `true` (a hard contract — applied refactors require explicit maintainer approval before they land on the milestone branch).
+- `<commit_on_approval>` — text describing the commit shape (typically "focused refactor commit on same branch before PR opens").
+- `<defer_unapproved_to>` — name the destination for non-approved proposals (typically `docs/tech-debt.md` — the ADR-0008 🟢 ledger).
+
+Validator behavior (v1.6): the `<simplify_pass>` child is required to be present somewhere in the closeout prompt's XML; child elements within it are structurally checked but the bodies (e.g., the `<invoke skill="simplify"...>` attributes) are honor-system at v1.6 — promote to attribute-level enforcement in v1.7 once usage stabilizes.
+
+Schema: closeout-only.
+
+Example:
+
+```xml
+<simplify_pass>
+  <invoke skill="simplify" against="milestone cumulative diff (M[NN].A..HEAD)"/>
+  <surface kind="refactor_proposals" examples="duplication / dead code / parallel API surfaces / modules grown across stages / premature abstractions"/>
+  <approval_required>true</approval_required>
+  <commit_on_approval>focused refactor commit on same branch before PR opens</commit_on_approval>
+  <defer_unapproved_to>docs/tech-debt.md (per ADR-0008 🟢 ledger)</defer_unapproved_to>
+</simplify_pass>
+```
+
+Workflow at Stage G:
+1. Closeout agent drafts the milestone summary + gap-analysis entry first (the work that informs the simplify pass — knowing what shipped, knowing what's already on the carry-forward).
+2. Agent runs the `simplify` skill against the cumulative diff.
+3. Agent surfaces refactor proposals as part of the approval surface (alongside summary + gap-analysis).
+4. Maintainer approves a subset.
+5. Agent applies the approved subset as a focused refactor commit ON THE SAME MILESTONE BRANCH, BEFORE the PR opens.
+6. Agent logs non-approved items to `docs/tech-debt.md` (per ADR-0008 🟢 severity convention).
+7. PR opens with the simplify-commit included.
+
+The pass is intentionally tied to the closeout, not to a separate cadence, because (a) cumulative diff is the natural surface for finding stage-spanning duplication; (b) maintainer review at the milestone PR is the natural surface for approving refactors; (c) embedding it in closeout makes it a structural ceremony rather than an ad-hoc maintainer ask.
+
 ### `<gap_analysis_requirements>`
 Required. Reference to the playbook section that defines the six-section structure, plus a required `<gotchas_graduation>` subsection that audits per-stage `<gotchas>` entries across the milestone (v1.2 enforcement; see Authoring Rules §10 graduation rule).
 ```xml
@@ -614,10 +895,10 @@ One stage per fenced block. Don't combine stages. The Phase doc may have many fe
 No foreign tags. Every tag inside a stage prompt must be in this protocol. Adding a new tag means updating this doc first (and bumping the protocol version per Part 13). Drift is a bug.
 No HTML escaping inside `<context>` or prose tags unless required. XML inside fenced markdown blocks parses cleanly with literal angle brackets in attribute values via `&lt;` and `&gt;`. Use them only when the text contains XML-meaningful characters (e.g., "<30 min").
 Self-closing for reference tags. When a tag points at an external file with no inline body, use the self-closing form: `<gates milestone="M01"/>` not `<gates milestone="M01"></gates>`.
-Stable child element names. Within `<deliverable>`, every child is `<item>`. Within `<scope_locks>`, every child is `<lock>`. Within `<acceptance_criteria>`, every child is `<criterion>`. Within `<execution_steps>`, every child is `<step>`. Within `<read_reference>`, every child is `<file>`. Within `<execution_warnings>`, every child is `<warning>`. Within `<gotchas_graduation>`, every child is `<stage_review>`. This consistency makes validation and aggregation simple.
+Stable child element names. Within `<deliverable>`, every child is `<item>`. Within `<scope_locks>`, every child is `<lock>`. Within `<acceptance_criteria>`, every child is `<criterion>`. Within `<execution_steps>`, every child is `<step>`. Within `<read_reference>`, every child is `<file>`. Within `<execution_warnings>`, every child is `<warning>`. Within `<gotchas_graduation>`, every child is `<stage_review>`. Within v1.6 additions: `<coverage_gate>` children are `<gate>`; `<schema_ref_audit>` children are `<ref>`; `<api_breaking_change_audit>` children are `<change>`; `<existing_pattern_audit>` children are `<pattern>`; `<interpretation_declarations>` children are `<adopt>`; `<scope_change>` children are `<descope>` or `<expand>`; `<zustand_selector_audit>` children are `<selector>`; `<test_isolation_audit>` children are `<persistent_slot>`; `<phase_doc_inventory_audit>` v1.6 extensions stay `<claim>` (new `type=` values); `<dependency_audit_check>` v1.6 extension adds a `<feature_interdependency>` sibling to the existing `<dep>` children. This consistency makes validation and aggregation simple.
 Order tags consistently across milestones. The recommended order:
-For work stages: `<context>` → `<read_first>` → `<read_reference>` (opt) → `<read_prior_milestones>` (Stage A only when applicable) → `<read_prior_stages>` (B+) → `<deliverable>` → `<test_plan_required>` → `<execution_steps>` → `<acceptance_criteria>` → `<scope_locks>` → `<gates>` → `<self_correction_budget>` → `<adr_triggers>` (opt) → `<gotchas>` (opt) → `<execution_warnings>` (opt) → `<time_box>` (opt) → `<dependencies>` (opt) → `<retrospective_requirements>` → `<commit_protocol>` → `<commit_message>` → `<approval_surface>`.
-For closeout stages: `<context>` → `<read_first>` → `<read_reference>` (opt) → `<read_prior_milestones>` (rare for closeout; included only if absorbing additional carry-forward) → `<cumulative_reads>` → `<deliverables>` → `<gap_analysis_requirements>` (with required `<gotchas_graduation>`) → `<append_only_verification>` → `<three_artifact_review>` → `<scope_locks>` → `<gates>` → `<self_correction_budget>` → `<adr_triggers>` (opt) → `<gotchas>` (opt) → `<execution_warnings>` (opt) → `<time_box>` (opt) → `<retrospective_requirements>` → `<commit_protocol>` → `<commit_message>` → `<approval_surface>`.
+For work stages: `<context>` → `<read_first>` → `<read_reference>` (opt) → `<read_prior_milestones>` (Stage A only when applicable) → `<read_prior_stages>` (B+) → `<interpretation_declarations>` (opt, v1.6) → `<deliverable>` → `<test_plan_required>` → `<execution_steps>` → `<acceptance_criteria>` → `<scope_locks>` → `<scope_change>` (opt, v1.6) → `<gates>` → `<coverage_gate>` (opt, v1.6) → `<self_correction_budget>` → `<adr_triggers>` (opt) → `<gotchas>` (opt) → `<execution_warnings>` (opt) → `<pre_flight_check>` / `<schema_drift_check>` / `<fan_out_grep>` / `<dependency_audit_check>` / `<runtime_environment>` / `<architecture_check>` / `<schema_audit>` / `<schema_root_check>` / `<phase_doc_inventory_audit>` (opt; cluster these v1.3 + v1.4 + v1.6 authoring-time audit tags together) → `<schema_ref_audit>` / `<api_breaking_change_audit>` / `<existing_pattern_audit>` / `<zustand_selector_audit>` / `<playwright_warmup_recipe>` / `<test_isolation_audit>` (opt, v1.6 authoring-time audit cluster) → `<time_box>` (opt) → `<dependencies>` (opt) → `<retrospective_requirements>` → `<commit_protocol>` → `<commit_message>` → `<approval_surface>`.
+For closeout stages: `<context>` → `<read_first>` → `<read_reference>` (opt) → `<read_prior_milestones>` (rare for closeout; included only if absorbing additional carry-forward) → `<cumulative_reads>` → `<deliverables>` (now includes required `<simplify_pass>` child from v1.6) → `<gap_analysis_requirements>` (with required `<gotchas_graduation>`) → `<append_only_verification>` → `<three_artifact_review>` → `<scope_locks>` → `<gates>` → `<self_correction_budget>` → `<adr_triggers>` (opt) → `<gotchas>` (opt) → `<execution_warnings>` (opt) → `<time_box>` (opt) → `<retrospective_requirements>` → `<commit_protocol>` → `<commit_message>` → `<approval_surface>`.
 Consistent ordering makes diffs across milestones immediately scannable.
 Reference-first **strict** for content-heavy tags (v1.2 hardening). Tags that support both inline and reference forms — currently `<deliverable>`, `<acceptance_criteria>`, `<scope_locks>`, `<commit_message>`, `<gap_analysis_requirements>` — **must use the reference form when the corresponding Phase doc section exists**. The Phase doc's `X.2 Files to Change`, `X.3 Detailed Changes`, `X.4 Tests`, `X.6 Commit Message`, and milestone-level `Key constraints` sections are the canonical locations for content; the prompt references rather than restates them.
 Validator behavior:
@@ -632,6 +913,8 @@ Gotchas graduation rule (v1.2 enforcement). Stage-specific `<gotchas>` are **per
 **v1.3 hardening — pre-flight + drift + fan-out + dep + environment slots are additive and lean.** The five new optional tags introduced in v1.3 are structural-only at the validator level (lean validator pattern continued from v1.2). Authors use them where the corresponding failure mode applies; absence is not flagged. Promotion to required-on-conditions (e.g., "schema_drift_check required if the stage edits `schemas/*.v1.json` or `crates/runtime-core/src/`") is a v1.4+ decision after observing v1.3 in 2+ milestones.
 
 **Phase doc claims about codebase reality must be grep-verified at authoring time (v1.3 hardening).** When a milestone Phase doc names file paths in X.2 "Files to Change" tables OR symbol/function/struct/IPC variant/integration-point claims in X.3 "Detailed Changes" narrative, every claim must be verified via `grep` / `Test-Path` / file inspection at authoring time — BEFORE the Phase doc ships. Trusting `agent-runtime-spec.md` text or `docs/gap-analysis.md` carry-forward chains as proxies for codebase state is a named failure mode: spec describes intent (not necessarily reality); gap-analysis is append-only and items "carry forward" but don't auto-close when work happens incidentally; both can drift from current code reality between milestones. Bit M04 (Phase doc claimed `event_translation.rs`, `prompt_template.rs`, `WriteSignal` IPC variant, `vdr.rs` in `runtime-main`, `RevertToSnapshot` as new — none matched reality; 8 of 11 plan/task events already existed; structurally misaligned across Stages B/D/F; build agent halted at execution time per CLAUDE.md §12). Different discriminator from the cross-stack rule above: that rule is about *third-party* examples; this rule is about claims about *your own* codebase. Mitigation: at authoring time, for every X.2 file path and every X.3 symbol claim, run the verification command and confirm reality before shipping. The "Pre-existing legacy file inventory" section in `TEMPLATE.md` is **verified**, not **descriptive** — see `TEMPLATE.md` addition + `docs/gotchas.md` #41 for the discipline rule. Validator does not enforce this rule mechanically (impractical to detect "this claim is about codebase reality"); it's an authoring discipline backed by the gotcha entry + TEMPLATE.md verification rule.
+
+**Quality-gate execution ordering is canonical at every `<execution_steps>::implement` step (v1.6 hardening).** Run gates in this order at every work stage: (1) `cargo fmt --all`; (2) `cargo clippy --fix --allow-dirty -p <touched-crate>` (mechanical first-pass autofix); (3) `cargo clippy --workspace --all-targets -- -D warnings` (final verification); (4) remaining gates (test, doc, audit, deny, llvm-cov). The autofix step eliminates 6–15 mechanical lints per stage (`too_long_first_doc_paragraph`, `doc_markdown` unbackticked, `missing_const_for_fn`, `manual_let_else`, `items_after_statements`, `option_if_let_else → unnecessary_map_or` cascade). M03 graduated gotcha #34; M05 confirmed at 6 stages of recurrence (B + C1 + C2 + D + E + light at A). v1.6 makes the ordering canonical via a CLAUDE.md §6 paragraph; this protocol rule is the surface in stage prompts. Validator does not enforce mechanically (impractical to detect "gate ordering in implement step"); authoring discipline backed by CLAUDE.md §6.
 
 **Build-machine state must be confirmed before phase-doc edits (v1.4 hardening).** When an orchestration session edits a Phase doc that may affect stages whose execution status is uncertain, the session MUST surface a request for cross-machine state and the user MUST paste output of `git log --oneline main..HEAD` from the build machine on the active milestone branch. The pasted output is authoritative; `origin` is not. Origin is a partial view when §8 forbids per-stage pushes (CLAUDE.md §8 "DO NOT push between stages"); a build machine that has shipped Stages A1 + A2 locally without pushing leaves origin silent on those stages. Inferring "stage X unexecuted" from origin's silence is a banned failure mode. Companion to v1.3 grep-verify rule: that rule covers WHAT codebase claims need verification; this rule covers WHICH codebase to verify against when origin and build-machine diverge. Stronger backstop: every stage end surface includes git log + retrospective file listing as a standard item (CLAUDE.md §19 rule 7) — when the user pastes the surface to any downstream orchestration session, that session sees actual project state, not origin's partial view. Bit M04 (PR #53 rewrote the M04 phase doc against "A1+A2 unexecuted per origin" while the build machine had `c5fe035` + `2b0e8d2` with full retros; 4+ hours of work merged on a false premise; reverted via PR #54). Validator does not enforce this rule mechanically (impractical to detect "this Phase doc edit changes stage status"); it's an authoring discipline backed by `docs/gotchas.md` #42 + the §19 rule-7 surface requirement.
 
@@ -651,12 +934,15 @@ A validation script lives at `scripts/validate-stage-prompts.py` (or your prefer
 - Every prior stage in the milestone must have a `<stage_review id="...">` entry inside the closeout's `<gotchas_graduation>` (counted by parsing the milestone's Phase doc for stage headings)
 - For `expired` disposition, `<target>` must include rationale beyond bare `n/a` (a single line minimum; validator checks length > "n/a" alone)
 - v1.3 tags `<pre_flight_check>`, `<schema_drift_check>`, `<fan_out_grep>`, `<dependency_audit_check>`, `<runtime_environment>` must appear inside a work-stage prompt only — appearing in a closeout-stage prompt is a structural error
+- v1.6: `<simplify_pass>` must appear inside a closeout-stage prompt (the validator's `REQUIRED_BY_ROOT.closeout_stage_prompt` list includes `simplify_pass` from v1.6 onward; phase docs landing under v1.6 must include it)
+- v1.6 tags `<coverage_gate>`, `<schema_ref_audit>`, `<api_breaking_change_audit>`, `<existing_pattern_audit>`, `<interpretation_declarations>`, `<scope_change>`, `<zustand_selector_audit>`, `<playwright_warmup_recipe>`, `<test_isolation_audit>` must appear inside a work-stage prompt only — appearing in a closeout-stage prompt is a structural error
 **Warnings (surface in PR output, don't block):**
 - Confirms ordering matches the recommended order
 - Cross-checks: every retrospective referenced in `<read_prior_stages>` exists; every milestone in `<read_prior_milestones>` has the named gap-analysis section + summary section; every file in `<read_first>` and `<read_reference>` exists; every `section="..."` value on a reference tag resolves to a real Phase doc heading via markdown-AST lookup; the milestone in `<gates milestone="...">` matches the Phase doc's milestone
 - `<read_reference>` entries without a `purpose` attribute (warning in v1.2; promotes to error in v1.3)
 - Recognized `<execution_steps>` step names (`write_failing_tests`, `implement`, `verify_gates`, `fill_retrospective`, `surface`); custom step names emit a warning encouraging Phase doc documentation
 - v1.3 tags' child elements with required-but-missing attributes (`<check>` without `name`, `<grep>` without `pattern`/`purpose`, `<dep>` without `name`, `<runtime_environment>` without `os`) emit warnings; promote to errors in v1.4 once the cross-check logic has 2+ milestones of clean signal
+- v1.6 tags' child elements with required-but-missing attributes (`<gate>` without `scope`/`target_lines`, `<ref>` without `schema`/`path`, `<change>` without `api`/`before_signature`/`after_signature`, `<pattern>` without `grep_for`/`rationale`, `<adopt>` without `spec_section`/`interpretation`, `<descope>` without `deliverable`/`reason`, `<feature_interdependency>` without `crate`/`function`/`home_feature`/`requires_features`) emit warnings; promote to errors in v1.8+ once the cross-check logic has 2+ milestones of clean signal
 **Section-name resolution (replaces URI-fragment lookup — v1.2 anchor-stability fix).** The validator parses the referenced markdown file's AST, finds the heading whose text matches the `section="..."` attribute (case-sensitive, exact match), and confirms the heading exists. Renderer-agnostic. The fragment notation (e.g., `ref="...md#A.6"`) is no longer recognized; v1.2 prompts must use `ref="...md" section="A.6 Commit Message"`. v1.0-grandfathered prompts (M01-M02) skip this check via the version banner in the Phase doc header (see Authoring Rules §10 grandfathering).
 CI fails on any error; warnings are surfaced in the PR check output.
 ## 12. Worked examples
@@ -709,7 +995,15 @@ A non-first milestone, Stage A — absorbs M02 carry-forward and references the 
 
   <scope_locks ref="docs/build-prompts/M03-live-graph.md" section="Key constraints"/>
 
+  <scope_change>
+    <descope deliverable="ApprovalPanel renderer wiring" reason="M02 Important items consume Stage A's budget; ApprovalPanel is Stage C scope per phase doc" carry_forward_to="M03 Stage C" authorized_by="phase doc Stage A scope_locks"/>
+  </scope_change>
+
   <gates milestone="M03"/>
+
+  <coverage_gate>
+    <gate scope="workspace" target_lines="80" ignore_filename_regex="src.main\.rs|generated"/>
+  </coverage_gate>
 
   <self_correction_budget>3</self_correction_budget>
 
@@ -771,6 +1065,13 @@ Demonstrates the v1.2 closeout shape, including the required `<gotchas_graduatio
   <deliverables>
     <milestone_summary>retrospectives/M03-summary.md (aggregates per-stage retrospectives; scores axes across stages; marks verdict)</milestone_summary>
     <gap_analysis_entry>docs/gap-analysis.md (append third entry; six required sections, none optional; Carry-forward section addresses M01+M02 open items by status)</gap_analysis_entry>
+    <simplify_pass>
+      <invoke skill="simplify" against="milestone cumulative diff (M03.A..HEAD)"/>
+      <surface kind="refactor_proposals" examples="duplication / dead code / parallel API surfaces / modules grown across stages / premature abstractions"/>
+      <approval_required>true</approval_required>
+      <commit_on_approval>focused refactor commit on same branch before PR opens</commit_on_approval>
+      <defer_unapproved_to>docs/tech-debt.md (per ADR-0008 🟢 ledger)</defer_unapproved_to>
+    </simplify_pass>
     <pr_description>draft only; PR opens only on explicit human ask after approval</pr_description>
   </deliverables>
 
@@ -892,6 +1193,20 @@ Inline cross-stack integration example without upstream-verification guard (v1.2
 `<schema_root_check>` skipped for "obviously concrete" schemas. The check is cheap (one `jq` invocation per new schema) and the failure mode (top-level `$ref` breaks `json-schema-to-typescript`) is opaque when it bites. Include the slot for every new `schemas/*.v1.json` authoring stage — there's no upside to skipping.
 
 `<phase_doc_inventory_audit>` treating `status="exists"` as informational. The whole point of the audit is to fail the stage if a file claimed as "exists" doesn't, or a file claimed as "new" already does. If your stage runs without the validator asserting on `git ls-files` mismatches, the audit slot is decoration. The `status` enum is load-bearing: `exists` MUST verify file presence, `new` MUST verify file absence (the file is created during the stage), `deleted` MUST verify file presence (the file is removed during the stage), `renamed` MUST verify both old-path absence and new-path presence at stage end.
+
+**v1.6 anti-patterns (new):**
+
+`<scope_change>` used as the only descope-disclosure mechanism (without `<execution_warnings>` or commit-message disclosure). `<scope_change>` exists so Stage V's bias-guarded read-list can pick up the descope without crossing the V protocol's fresh-context line. It is NOT a replacement for noting the descope in the stage's commit message + retrospective + (for waiver-dispute cases) ADR-0008 waiver-as-ADR artifact. The slot is the artifact-level structural fix; the build-agent discipline of noting descopes in commit + retro is still required. Authors who treat `<scope_change>` as "the only place I need to write this" are reintroducing the discoverability gap V's bias guard was designed to expose.
+
+`<coverage_gate>` content drifting from `.github/workflows/ci.yml`. The slot names the exact `--ignore-filename-regex` argument; CI ALSO names the same argument. Authors who update the prompt without updating the workflow (or vice versa) reintroduce the prose-vs-regex translation drift the slot was added to eliminate. Stage-end retrospective's `[END] Coverage holdouts` section's "CI workflow drift check" subsection is the forcing function — confirm both sources agree at every stage commit.
+
+`<interpretation_declarations>` used to declare an interpretation that's actually unambiguous. The slot exists for spec sections with two plausible readings (M05.D §8.security L4 runtime-vs-install-time). If the spec is clear, you don't need the slot — using it anyway pads the prompt and reduces the slot's discriminator value. Reserve for genuinely ambiguous sections; otherwise apply the obvious reading without declaration.
+
+`<existing_pattern_audit>` used to grep for callers of a name (`<fan_out_grep>`'s job). Enum-variant additions break SHAPES that mention an existing variant in an irrefutable position — that's what `<existing_pattern_audit>` finds. Renames break CONSUMERS of the renamed item — that's what `<fan_out_grep>` finds. Conflating them produces grep results that miss the actual breakage class. Watch for: a `<pattern grep_for="<TypeName>">` is a `<fan_out_grep>` not an `<existing_pattern_audit>`.
+
+`<simplify_pass>` skipped on the milestone branch with "no refactoring needed this milestone". The pass is the recurring structural refactor checkpoint; it runs every milestone whether refactor proposals surface or not. Empty pass output ("no proposals surfaced") is a valid outcome — but the pass must run and the outcome must be recorded. Skipping the pass entirely is the anti-pattern; running it and producing zero proposals is fine.
+
+`<simplify_pass>` proposals applied without maintainer approval. The `<approval_required>true</approval_required>` child is a hard contract. Refactors that change observable behavior at all (renames in public APIs, removed dead code that was actually still referenced, premature-abstraction collapses that break dependents) are exactly the class that require human review. Applying without approval before PR open defeats the pass's purpose.
 
 ## 14. Verifier-only tags (v1.5+)
 
@@ -1069,6 +1384,45 @@ Validation rules change (e.g., a previously-warning becomes an error)
 Substantive changes get clear `docs(stage-prompt-protocol): ...` commit messages and a CHANGELOG entry. The commit history of this file is itself an audit of how stage prompts evolved.
 If this protocol disagrees with `BUILD-PLAYBOOK.md`, the playbook wins. This protocol is the schema; the playbook is the authority on what stages are and how they run.
 ### Changelog
+
+v1.6 — Eleven additive optional tags / extensions in `<work_stage_prompt>` + one new required child of `<closeout_stage_prompt>` `<deliverables>` + CLAUDE.md §6 quality-gate ordering paragraph + four graduated gotchas, informed by M05 friction (seven work stages of phase-doc-vs-codebase drift recurrence; first in-band Stage V verifier run; first waiver-as-ADR cycle per ADR-0009). Lean-validator pattern continued from v1.3/v1.4/v1.5 (structural checks only; cross-checks deferred to v1.7+):
+
+1. **New optional slot `<coverage_gate>`** in work stages. Children: `<gate scope="..." target_lines="..." ignore_filename_regex="..." />` elements. Names the exact `--ignore-filename-regex` argument the stage's `cargo llvm-cov` invocation will use, replacing prose enumeration. Addresses M05.C1 + C2 "plumbing files" prose-vs-regex 4-attempt friction; recurred at 7 stages of M05 (A/B/C1/C2/D/E/F).
+
+2. **New optional slot `<schema_ref_audit>`** in work stages. Children: `<ref schema="..." path="#/$defs/<Name>" verified="..." />` elements. Verifies that `$defs/<Name>` references the phase doc names exist in the sibling schema file. Addresses M05.A `mcp_missing` factual error + M05.E `common.v1.json#/$defs/NonEmptyString` non-existent reference.
+
+3. **New optional slot `<api_breaking_change_audit>`** in work stages. Children: `<change api="..." before_signature="..." after_signature="..." call_sites="..." test_sites="..." recommendation="..." />` elements. Surfaces sync→async migration cost (call-sites + test-sites) BEFORE implementation starts. Addresses M05.E's implied-async-grant ~10-minute design-iteration cost.
+
+4. **New optional slot `<existing_pattern_audit>`** in work stages. Children: `<pattern grep_for="..." rationale="..." affected_files="..." remediation="..." />` elements. Greps for existing irrefutable bindings of an enum variant about to be broken by a new variant addition. Addresses M05.D `TierForbidden` 4-site immediate breakage.
+
+5. **New optional slot `<interpretation_declarations>`** in work stages. Children: `<adopt spec_section="..." interpretation="..." alternative_interpretation="..." rationale="..." />` elements. Declares the phase doc's adopted interpretation of an ambiguous spec section. Addresses M05.D runtime-vs-install-time L4 interpretation gap across phase doc / spec / MVP-v0.1.
+
+6. **New optional slot `<scope_change>` (highest priority)** in work stages. Children: `<descope deliverable="..." reason="..." carry_forward_to="..." authorized_by="..." />` or `<expand deliverable="..." reason="..." documented_in="..." />` elements. Surfaces intentional in-stage descopes (and undocumented expansions) so Stage V's bias-guarded `<read_first>` can pick them up without crossing the fresh-context discipline line. Pairs with — does not replace — the v1.5 waiver-as-ADR lane (ADR-0008/ADR-0009). Addresses M05.V Decision 3 + the canonical M05.V Findings #1 + #2 case study (Stage B's authorized SDK wire-up descope was documented only in M05.B-retrospective.md — the file V is forbidden to read; ADR-0009 absorbed the finding correctly but `<scope_change>` is the structural fix).
+
+7. **New optional slot `<zustand_selector_audit>`** in work stages (renderer-stage convention). Children: `<selector pattern="..." requires_use_shallow="..." import_path="..." />` elements. Surfaces the Zustand v5 `useShallow` requirement for derived-array selectors. Addresses M05.F `Maximum update depth exceeded` infinite-loop friction.
+
+8. **New optional slot `<playwright_warmup_recipe>`** in work stages (renderer-stage convention). Self-closing with `url`, `timeout_seconds`, `before_first_spec` attributes. Names the curl warmup probe to run before the first Playwright spec invocation against a cold Vite dev server. Addresses M04.C ApprovalPanel + M05.F GapPanel (2 stages) recurrence; pairs with gotcha #53.
+
+9. **New optional slot `<test_isolation_audit>`** in work stages (renderer-stage convention). Children: `<persistent_slot store="..." field="..." preserved_across_clear="..." required_reset="..." />` elements. Surfaces persistent store slots (Zustand slices preserved across `clear()`) that test files mutating those slots must reset via `beforeEach`. Addresses M05.F `currentTier` cross-test bleed pattern.
+
+10. **Extension to existing `<phase_doc_inventory_audit>`** (v1.4 tag). v1.6 adds three new `type=` values for `<claim>` children: `method` (verify function/method symbol exists at path; bit M05.B `dispatch_tool`), `struct_field` (verify struct field exists at path; bit M05.F field-name divergence), `read_first_target` (verify a file referenced from another stage's `<read_first>` block exists; bit M05.D `M05.C-retrospective.md` reference when the C stage split into C1 + C2). Backward-compatible — existing `<claim type="file">` shape continues to work.
+
+11. **Extension to existing `<dependency_audit_check>`** (v1.3 tag). v1.6 adds (a) `<feature_interdependency crate="..." function="..." home_feature="..." requires_features="..." reason="..." />` sibling child to declare that one FFI function binding requires features beyond its home module (M05.C2 `CreateJobObjectW` needing `Win32_Security` for `SECURITY_ATTRIBUTES`); (b) new optional `prefer_crates_io_name="true"` + `source_authority="..."` attributes on `<dep>` to distinguish crates.io canonical names from GitHub-org names (M05.C2 `windows-sys 0.59` vs `winapi 0.3` web-research). Backward-compatible.
+
+12. **New required child of `<closeout_stage_prompt>` `<deliverables>`: `<simplify_pass>`.** Recurring structural refactor checkpoint at every Stage G closeout. Children: `<invoke skill="simplify" against="..."/>`, `<surface kind="refactor_proposals" examples="..."/>`, `<approval_required>true</approval_required>`, `<commit_on_approval>...</commit_on_approval>`, `<defer_unapproved_to>docs/tech-debt.md (per ADR-0008 🟢 ledger)</defer_unapproved_to>`. Runs AFTER summary + gap-analysis drafted, BEFORE PR opens. Maintainer request: `simplify`-class consolidations (duplicated patterns, dead code, parallel API surfaces, modules grown across stages) should be a standing ceremony, not an out-of-band per-milestone ask.
+
+13. **Validator extension.** The only required-tag change in v1.6: `bin/validate-stage-prompts.mjs`'s `REQUIRED_BY_ROOT.closeout_stage_prompt` list gains `simplify_pass`. All other v1.6 tags are optional — the validator's regex parser passes them through structurally without explicit allowlisting.
+
+14. **Authoring rule: quality-gate execution ordering is canonical** (§10 hardening). Every work stage's `<execution_steps>::implement` step runs `cargo fmt --all` → `cargo clippy --fix --allow-dirty -p <crate>` → `cargo clippy --workspace -- -D warnings` → remaining gates. Graduates gotcha #34 + gotcha #64 from per-stage citation to per-stage execution discipline. Recurring 6 stages of M05 (B + C1 + C2 + D + E + light at A). CLAUDE.md §6 carries the long-form paragraph.
+
+15. **Lean validator continued.** All ten new optional tags + two extensions are structural-only at the v1.6 validator level. Cross-checks (e.g., "schema_ref_audit is required if stage's `<deliverable>` mentions a sibling schema's `$defs`") deferred to v1.7+ once v1.6 has 2+ milestones of clean signal.
+
+16. **Six new anti-patterns** in §13 covering the v1.6-introduced failure shapes (scope_change as the only descope-disclosure mechanism; coverage_gate content drifting from CI workflow; interpretation_declarations over-use for unambiguous spec sections; existing_pattern_audit confused with fan_out_grep; simplify_pass skipped with "no refactoring needed"; simplify_pass proposals applied without maintainer approval).
+
+17. **Four graduated gotchas** in `docs/gotchas.md` (the canonical project-wide trap ledger): typify oneOf-enums with non-`Copy` variant payloads don't derive `PartialEq`/`Eq` (M05.B + C1; gotcha #73 graduates from "reserved"); Zustand v5 derived-array selectors require `useShallow` (M05.F; gotcha #75); windows-sys feature flags gate function bindings by ALL parameter type modules, not just function's home module (M05.C2; gotcha #76); `tokio::io::duplex` buffer must be smaller than payload to surface write-failure branches (M05.C2; gotcha #77).
+
+18. **M01–M05 grandfathered as v1.0/v1.2/v1.3/v1.4/v1.5 per their existing banners.** M05 was authored on v1.5; M06+ are the first milestones authored on v1.6. M05's Stage G closeout prompt is v1.5 — the `<simplify_pass>` required-child requirement applies forward from M06 only. (The validator's enforcement of `simplify_pass` in closeout prompts is exempt for any phase doc carrying a `**Protocol version:** v1.5 (grandfathered).` banner.)
+
 v1.5 — New third schema variant `<verifier_stage_prompt>` for Stage V (Milestone Verifier), informed by M04 IRL bug-finding (five contract-fidelity failures the existing protocol missed). Companion ADR-0008 documents the design rationale:
 1. **New schema variant `<verifier_stage_prompt>`** parallel to `<work_stage_prompt>` and `<closeout_stage_prompt>`. Used for the verifier stage (V) between the last work stage and closeout. Documented in new §14 (Verifier-only tags).
 2. **Five new required tags** for the verifier schema: `<scope_to_verify>` (replaces `<deliverable>` for V's role), `<verification_passes>` (wraps the four pass declarations), `<findings_format>` (declares the structured output shape), `<merge_gate>` (severity model + D.fix iteration cap + waiver path), and the standard common tags adapted for V. Three tags are forbidden in V: `<read_prior_stages>` (bias guard), `<deliverable>` (V produces findings not artifacts), `<test_plan_required>` (V is the test plan).

@@ -51,7 +51,7 @@ This is the load-bearing discipline. The build agent + per-stage retro agent + c
   <read_first>
     <file>STAGE-PROMPT-PROTOCOL.md §14 (the verifier schema you are running under)</file>
     <file>docs/adr/0008-milestone-stage-v-verifier.md (design rationale + the four passes + the bias guard)</file>
-    <file>docs/build-prompts/{{MNN}}-{{milestone-short-title}}.md (the phase doc — Background, every X.1 problem statement, every X.2 files-to-change table, every X.3 detailed changes, every X.4 tests, section V (this stage's parameters))</file>
+    <file>docs/build-prompts/{{MNN}}-{{milestone-short-title}}.md (the phase doc — Background, every X.1 problem statement, every X.2 files-to-change table, every X.3 detailed changes, every X.4 tests, section V (this stage's parameters), AND every per-stage `<scope_change>` block in the embedded `<work_stage_prompt>` XML — `<descope>` and `<expand>` children declare authorized in-stage carry-forwards visible to V's bias-guarded read but not to the per-stage retros V is forbidden to read; treat them as source-of-truth for "what V should NOT flag as missing")</file>
     <file>agent-runtime-spec.md ({{spec-sections}})</file>
     <file>docs/MVP-v0.1.md §{{MNN}} (the milestone's scope + acceptance criteria)</file>
     <file>docs/style.md (project conventions — apply when interpreting code shape)</file>
@@ -166,6 +166,20 @@ For M05+ phase docs (which include the Stage V section per `docs/build-prompts/T
 The V.2 table itself is authored at phase-doc-writing time by aggregating every X.2 row across stages A → last-work-stage. **Do not add files that aren't in any X.2 table.** If a spec section seems to imply a file the phase doc didn't claim shipped, that's spec/code drift — flag it during V's Wire pass as a 🟡 finding (the analogous M04.V finding #2 surfaced exactly this pattern: spec §4a names `hook_*` events; code ships `verify_*`). Do NOT add the imagined file to `<scope_to_verify>`.
 
 For grandfathered milestones (M04 only, per ADR-0008) where no V.2 section exists, the V prompt uses inline form with explicit `<files>` and `<spec_sections>` children — and the inline list is still derived from the milestone's X.2 tables, not from spec pattern-matching. `docs/build-prompts/M04-V-prompt.md` shows the inline shape; M04.V finding #6 documents the calibration data from that first real-world run.
+
+### Reading `<scope_change>` blocks (v1.6+)
+
+`STAGE-PROMPT-PROTOCOL.md` v1.6 adds the `<scope_change>` optional slot to `<work_stage_prompt>` — children `<descope>` and `<expand>` declare authorized in-stage carry-forwards. V's `<read_first>` explicitly consumes these blocks (the line above flags them) because they are the structural fix for the M05.V findings #1 + #2 class of bug: descopes documented only in per-stage retros V is forbidden to read.
+
+When V's Inventory pass observes a file or symbol the phase doc X.2 / X.3 named as a deliverable but the codebase doesn't have, check the milestone's `<scope_change>` blocks before flagging 🔴. If a `<descope>` child covers the missing deliverable with a concrete `carry_forward_to=` target, V's correct action is:
+
+- Treat the missing deliverable as **not a 🔴 finding** for the current milestone.
+- Log a 🟡 finding referencing the `carry_forward_to=` target so the next milestone's Stage A absorbs the wire-up.
+- Note in the verifier retro that the `<scope_change>` block was load-bearing — preserves the bias-guard while documenting the authorized deferral.
+
+Conversely, `<expand>` children declare files / symbols / capabilities that landed without being in the phase doc X.2 / X.3 tables. V's Inventory pass should NOT flag these as drift; the expand block is the authoritative record that the addition was intentional and documented at stage time.
+
+If the milestone has NO `<scope_change>` block and a deliverable is missing, V proceeds as in M05.V — 🔴 finding; build agent must address via D.fix iter 1 OR file an ADR-class waiver per ADR-0008's interpretation-dispute lane.
 
 ### Choosing `{{behavior-targets}}` — the Pass 3 inputs
 

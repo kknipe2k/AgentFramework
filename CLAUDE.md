@@ -179,6 +179,15 @@ Before any commit lands, **all** of these must pass locally and on CI. No except
 
 **CI-parity is a hard rule.** Local gate `✓` requires running the **exact** command CI runs. No `--skip <test>`, no `--test-threads=N`, no env-var tweaks, no `--features` overrides, no `--target` substitutions unless those flags also appear in the corresponding `.github/workflows/ci.yml` job step. A surface claiming "✓ green" with flags CI does not use is **structurally untrusted** and the surface must be revised before approval. If a CI-divergent flag is genuinely necessary (e.g., the gotcha #56 Windows subprocess-test flake mitigation), it must (a) be cited inline in the surface with the gotcha reference, (b) prompt a `docs/gotchas.md` entry if not already present, and (c) trigger a CI workflow fix as the structural close — not a permanent local-only flag. Pattern bit: M05 hit this twice — gotcha #56 `--test-threads=1` Windows-local divergence (caught at every stage's retro and graduated to a v1.6 CI workflow change), and PR #70's cross-platform `cfg(target_os = "linux")` first-compile gap (gotcha #74 — local `cargo check` compiles the non-cfg-Linux branch so the Linux-only errors only surface on CI).
 
+**Quality-gate execution ordering (canonical from v1.6 onward).** Run gates in this order at every work stage's `<execution_steps>::implement` step:
+
+1. `cargo fmt --all` — fix formatting drift first; downstream lints on formatting-mangled code are noise.
+2. `cargo clippy --fix --allow-dirty -p <touched-crate>` — mechanical first-pass autofix. Resolves the `redundant_pub_crate` / `default_trait_access` / `missing_const_for_fn` / `manual_let_else` / `items_after_statements` / `option_if_let_else → unnecessary_map_or` cascade from gotcha #21's cluster without manual edits. Use `-p <touched-crate>` to scope; `--workspace` is slower and overwrites unrelated crates' editor state.
+3. `cargo clippy --workspace --all-targets -- -D warnings` — final verification. The remaining findings after steps 1+2 are real lint debt requiring judgment.
+4. Remaining gates (test, doc, audit, deny, llvm-cov, frontend gates per the lists below).
+
+The autofix step (2) before final verification (3) eliminates 6–15 mechanical lints per stage. Pattern bit M03 graduated gotcha #34 (fmt first); M04 graduated gotcha #64 (clippy `--fix` second); M05 confirmed at 6 stages of recurrence (B + C1 + C2 + D + E + light at A) that the ordering should be canonical execution discipline, not per-stage gotcha citation. STAGE-PROMPT-PROTOCOL.md §10 v1.6 hardening encodes the same rule at the protocol layer.
+
 ### Rust gates
 
 ```bash
@@ -460,6 +469,7 @@ Full conventions live in **`docs/style.md`** — read that file for comments, na
 - **Naming is conventional per language** (snake_case in Rust, camelCase in TS, kebab-case for `.md` artifacts). Names describe what, not how.
 - **Functions do one thing**, ≤50 lines, ≤3 params. Pure preferred; effects at the edges.
 - **Errors:** Rust `Result<T, E>` (thiserror in libs, anyhow at boundaries); TS throw `Error` subclasses or return discriminated unions. Capture root cause.
+- **Path-agnostic persistence + Tauri-shell-resolves-directory archetype.** Any new persistence module (file-backed config / state / audit / cache) accepts `path: &Path` parameters at its public API; the Tauri shell layer resolves `AppHandle::path().app_local_data_dir().join("<file>")` and passes the resolved path in. The persistence module carries no workspace dep on `dirs` (already transitive via Tauri) and stays testable with `tempfile`-backed paths in unit tests. Demonstrated at M05.D `tier::persistence` (the archetype) and adopted at M05.E `audit::file_path` without thought. Forward-applicable to any future persistence module (M06 MCP server registry, M07+ skill / framework caches). See `docs/style.md` for the full pattern + archetype links.
 - **Anti-patterns to avoid:** hidden AI usage, magic numbers, stringly-typed APIs, `any`, ad-hoc `#[allow(...)]` / `// @ts-ignore`, implementation-detail tests, generic names (`helper`, `util`, `process`), silent error drops, one-line dep adds, premature abstraction (wait for the fourth).
 
 ---
