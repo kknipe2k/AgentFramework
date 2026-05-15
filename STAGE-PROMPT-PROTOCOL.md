@@ -213,7 +213,7 @@ For work stages, default order: diff stat → gate results → retrospective →
 ## 7. Work-stage-only tags
 These tags are valid only inside `<work_stage_prompt>`.
 
-v1.3 adds five additive optional tags — `<pre_flight_check>`, `<schema_drift_check>`, `<fan_out_grep>`, `<dependency_audit_check>`, `<runtime_environment>` — informed by M01–M03 friction. v1.4 adds four more — `<architecture_check>`, `<schema_audit>`, `<schema_root_check>`, `<phase_doc_inventory_audit>` — informed by M04 friction. v1.6 adds nine more — `<coverage_gate>`, `<schema_ref_audit>`, `<api_breaking_change_audit>`, `<existing_pattern_audit>`, `<interpretation_declarations>`, `<scope_change>`, `<zustand_selector_audit>`, `<playwright_warmup_recipe>`, `<test_isolation_audit>` — plus extensions to `<phase_doc_inventory_audit>` (method/struct/read-first claims) and `<dependency_audit_check>` (feature-flag interdependencies), informed by M05 friction. See sections below.
+v1.3 adds five additive optional tags — `<pre_flight_check>`, `<schema_drift_check>`, `<fan_out_grep>`, `<dependency_audit_check>`, `<runtime_environment>` — informed by M01–M03 friction. v1.4 adds four more — `<architecture_check>`, `<schema_audit>`, `<schema_root_check>`, `<phase_doc_inventory_audit>` — informed by M04 friction. v1.6 adds nine more — `<coverage_gate>`, `<schema_ref_audit>`, `<api_breaking_change_audit>`, `<existing_pattern_audit>`, `<interpretation_declarations>`, `<scope_change>`, `<zustand_selector_audit>`, `<playwright_warmup_recipe>`, `<test_isolation_audit>` — plus extensions to `<phase_doc_inventory_audit>` (method/struct/read-first claims) and `<dependency_audit_check>` (feature-flag interdependencies), informed by M05 friction. v1.7 adds one more — `<tdd_discipline>` — making the strict red-phase/green-phase two-commit pattern a first-class protocol element, informed by M06.A's TDD-discipline lapse (hard-gate G5 failure, maintainer override) + M06.C's empirical validation of the strict pattern + web evidence (Nagappan et al. 2009 industrial TDD 60–90% defect reduction; TDAD arXiv:2603.17973 showing TDD prompting WITHOUT structural enforcement INCREASES regressions 9.94%; Anthropic Claude Code TDD docs explicitly recommending "commit tests before impl"). See sections below.
 ### `<deliverable>`
 Required. What this stage produces. Concrete: files, modules, capabilities. Not aspirational. If you can't enumerate it, the stage isn't ready to start.
 Inline form (use only when no Phase doc section enumerates the deliverable — e.g., a stage with a one-or-two-item produce-list that doesn't warrant a Phase doc section):
@@ -243,7 +243,7 @@ Required. Procedural anchor: the named sequence the agent walks during the stage
   <step name="surface"/>
 </execution_steps>
 ```
-Standard step names (validator warns on unrecognized names): `write_failing_tests`, `implement`, `verify_gates`, `fill_retrospective`, `surface`. Stages with non-standard cycles (e.g., a debugging stage where iteration is the deliverable) may add custom steps with explicit `name` attributes; document them in the Phase doc's stage section.
+Standard step names (validator warns on unrecognized names): `write_failing_tests`, `implement`, `verify_gates`, `fill_retrospective`, `surface`. v1.7 adds four more recognized names for the strict two-commit TDD shape governed by `<tdd_discipline>`: `red_phase_commit`, `surface_for_red_approval`, `green_phase_commit`, `surface_for_final_approval` (see the `<tdd_discipline>` slot in this section for the canonical two-commit sequence). Stages with non-standard cycles (e.g., a debugging stage where iteration is the deliverable) may add custom steps with explicit `name` attributes; document them in the Phase doc's stage section.
 The `budget` / `budget_iterations` attributes are advisory — if a stage budgets `verify_gates` at 3 iterations and the agent hits 4, the agent surfaces per `BUILD-PLAYBOOK.md` §4.3 escalation rule rather than silently continuing.
 Why this slot exists: in v1.0/v1.1, the procedural sequence lived in inline STEP 1–5 prose inside each prompt. That worked but duplicated playbook content into every prompt and risked drift. The slot replaces the prose with named anchors that resolve to playbook sections.
 ### `<test_plan_required>`
@@ -740,6 +740,73 @@ Example (M05.C2 final form):
 
 When this tag appears, the agent runs `cargo tree -p windows-sys -e features` and confirms the listed `<feature_interdependency>` rows are satisfied before invoking the FFI function.
 
+### `<tdd_discipline>` (v1.7)
+
+Optional. Makes the strict red-phase/green-phase two-commit TDD pattern a first-class, structurally-auditable protocol element. When present with `strict="true"`, the stage's `<execution_steps>` MUST be the two-commit shape (below) and the agent commits failing tests as a standalone commit BEFORE any implementation, surfaces for red-phase approval, then implements without modifying the test files.
+
+**Evidence basis (why this is a slot, not a per-stage user override):**
+
+- Industrial TDD: 60–90% defect-rate reduction (Microsoft + IBM case studies, Nagappan et al. 2009).
+- LLM-specific: TDAD paper (arXiv:2603.17973) found TDD *prompting* WITHOUT structural enforcement INCREASES regressions 9.94%; structural enforcement drops regressions 70%. The discriminator is structural enforcement, not exhortation — which is exactly why a `<tdd_discipline>` slot (structural) beats a `<gotchas>` note (exhortation).
+- Anthropic Claude Code docs: "TDD is the single strongest pattern for working with agentic coding tools"; explicitly warns "Claude naturally writes implementation first, then tests — TDD requires the inverse"; explicitly recommends "commit tests before impl" as the safety net against the agent silently modifying tests to make them pass.
+- M06.A empirical: TDD-discipline lapse (implementation before tests) failed hard-gate G5; required a documented maintainer override. M06.C empirical: the strict two-commit pattern worked as designed at ~10% time overhead and provided STRUCTURAL defense against gotcha #66 ("tests-pass-but-contract-fails") — the green-phase commit's diff against the red-phase commit is the load-bearing audit surface, verifiable in one command.
+
+Children: `<red_phase>` and `<green_phase>` (prose bodies; honor-system at the v1.7 lean validator level).
+
+Validator behavior (v1.7 lean): structural — the tag is optional and passes through the regex parser without allowlisting (same lean treatment as all v1.6 optional slots per the v1.6 changelog item #13). The `<tdd_discipline>` → two-commit `<execution_steps>` coupling is an authoring-discipline rule documented in §11, NOT code-enforced at v1.7; promote to a validator cross-check at v1.8+ once the pattern has 2+ milestones of clean signal (lean-validator pattern continued from v1.3/v1.4/v1.5/v1.6).
+
+Schema: work-stage only.
+
+The two-commit `<execution_steps>` shape this slot governs (the v1.7 recommended default for any work stage that ships testable code):
+
+```xml
+<execution_steps>
+  <step name="write_failing_tests" budget="1"/>
+  <step name="red_phase_commit" budget="1"/>
+  <step name="surface_for_red_approval"/>
+  <step name="implement" budget="1"/>
+  <step name="verify_gates" budget_iterations="3"/>
+  <step name="green_phase_commit" budget="1"/>
+  <step name="surface_for_final_approval"/>
+  <step name="fill_retrospective"/>
+</execution_steps>
+```
+
+The four new step names (`red_phase_commit`, `surface_for_red_approval`, `green_phase_commit`, `surface_for_final_approval`) join the recognized set from v1.7 onward (the validator does not enforce step names; they are documented here so future stages don't re-derive them).
+
+Example (M06.C final form — the empirical reference implementation):
+
+```xml
+<tdd_discipline strict="true">
+  <red_phase>
+    Write all failing tests across the test plan's buckets. Stub the
+    production code surfaces just enough to make the test files
+    compile (todo!() / unimplemented!() bodies are fine; the goal is
+    link-time test discovery, not behavior). Confirm tests fail with
+    right-reason errors per CLAUDE.md §5 (assertion failed / cannot
+    find function / unresolved import / not-yet-implemented panic —
+    NOT a test-file compile error and NOT a tautological pass).
+    Commit as a STANDALONE `test(M0X.Y): failing tests for ...`
+    commit on the active branch BEFORE green-phase impl; the commit
+    body pastes the first ~40 lines of cargo test output proving the
+    expected-failure class. Surface the red-phase commit to the user;
+    user approves before green phase begins.
+  </red_phase>
+  <green_phase>
+    Implement until ALL failing tests pass. Do NOT modify the test
+    files during implementation — if a test is wrong, fix it in a
+    SEPARATE follow-up commit with explanation, never silently in the
+    impl commit. The impl commit body MUST state the verifiable
+    audit-surface invariant: `git diff <red-sha>..<impl-sha> --
+    '**/tests/**'` is EMPTY. Net-new additive tests + mechanical
+    rustfmt/clippy fixes to test files go in the separate follow-up
+    commit, keeping the impl↔red diff a pure implementation delta.
+  </green_phase>
+</tdd_discipline>
+```
+
+The audit-surface invariant is the load-bearing property: any reviewer can run one `git diff` command and confirm the implementation did not tamper with the contract the red phase pinned. This is the structural defense the TDAD research identifies as the difference between TDD-that-works and TDD-prompting-that-backfires. Different from `<execution_steps>` alone (which names the sequence): `<tdd_discipline>` declares the *contract* the sequence must satisfy + the verifiable invariant the green-phase commit must state.
+
 ## 8. Closeout-only tags
 These tags are valid only inside `<closeout_stage_prompt>`.
 ### `<cumulative_reads>`
@@ -895,9 +962,9 @@ One stage per fenced block. Don't combine stages. The Phase doc may have many fe
 No foreign tags. Every tag inside a stage prompt must be in this protocol. Adding a new tag means updating this doc first (and bumping the protocol version per Part 13). Drift is a bug.
 No HTML escaping inside `<context>` or prose tags unless required. XML inside fenced markdown blocks parses cleanly with literal angle brackets in attribute values via `&lt;` and `&gt;`. Use them only when the text contains XML-meaningful characters (e.g., "<30 min").
 Self-closing for reference tags. When a tag points at an external file with no inline body, use the self-closing form: `<gates milestone="M01"/>` not `<gates milestone="M01"></gates>`.
-Stable child element names. Within `<deliverable>`, every child is `<item>`. Within `<scope_locks>`, every child is `<lock>`. Within `<acceptance_criteria>`, every child is `<criterion>`. Within `<execution_steps>`, every child is `<step>`. Within `<read_reference>`, every child is `<file>`. Within `<execution_warnings>`, every child is `<warning>`. Within `<gotchas_graduation>`, every child is `<stage_review>`. Within v1.6 additions: `<coverage_gate>` children are `<gate>`; `<schema_ref_audit>` children are `<ref>`; `<api_breaking_change_audit>` children are `<change>`; `<existing_pattern_audit>` children are `<pattern>`; `<interpretation_declarations>` children are `<adopt>`; `<scope_change>` children are `<descope>` or `<expand>`; `<zustand_selector_audit>` children are `<selector>`; `<test_isolation_audit>` children are `<persistent_slot>`; `<phase_doc_inventory_audit>` v1.6 extensions stay `<claim>` (new `type=` values); `<dependency_audit_check>` v1.6 extension adds a `<feature_interdependency>` sibling to the existing `<dep>` children. This consistency makes validation and aggregation simple.
+Stable child element names. Within `<deliverable>`, every child is `<item>`. Within `<scope_locks>`, every child is `<lock>`. Within `<acceptance_criteria>`, every child is `<criterion>`. Within `<execution_steps>`, every child is `<step>`. Within `<read_reference>`, every child is `<file>`. Within `<execution_warnings>`, every child is `<warning>`. Within `<gotchas_graduation>`, every child is `<stage_review>`. Within v1.6 additions: `<coverage_gate>` children are `<gate>`; `<schema_ref_audit>` children are `<ref>`; `<api_breaking_change_audit>` children are `<change>`; `<existing_pattern_audit>` children are `<pattern>`; `<interpretation_declarations>` children are `<adopt>`; `<scope_change>` children are `<descope>` or `<expand>`; `<zustand_selector_audit>` children are `<selector>`; `<test_isolation_audit>` children are `<persistent_slot>`; `<phase_doc_inventory_audit>` v1.6 extensions stay `<claim>` (new `type=` values); `<dependency_audit_check>` v1.6 extension adds a `<feature_interdependency>` sibling to the existing `<dep>` children. Within v1.7 additions: `<tdd_discipline>` children are `<red_phase>` and `<green_phase>`. This consistency makes validation and aggregation simple.
 Order tags consistently across milestones. The recommended order:
-For work stages: `<context>` → `<read_first>` → `<read_reference>` (opt) → `<read_prior_milestones>` (Stage A only when applicable) → `<read_prior_stages>` (B+) → `<interpretation_declarations>` (opt, v1.6) → `<deliverable>` → `<test_plan_required>` → `<execution_steps>` → `<acceptance_criteria>` → `<scope_locks>` → `<scope_change>` (opt, v1.6) → `<gates>` → `<coverage_gate>` (opt, v1.6) → `<self_correction_budget>` → `<adr_triggers>` (opt) → `<gotchas>` (opt) → `<execution_warnings>` (opt) → `<pre_flight_check>` / `<schema_drift_check>` / `<fan_out_grep>` / `<dependency_audit_check>` / `<runtime_environment>` / `<architecture_check>` / `<schema_audit>` / `<schema_root_check>` / `<phase_doc_inventory_audit>` (opt; cluster these v1.3 + v1.4 + v1.6 authoring-time audit tags together) → `<schema_ref_audit>` / `<api_breaking_change_audit>` / `<existing_pattern_audit>` / `<zustand_selector_audit>` / `<playwright_warmup_recipe>` / `<test_isolation_audit>` (opt, v1.6 authoring-time audit cluster) → `<time_box>` (opt) → `<dependencies>` (opt) → `<retrospective_requirements>` → `<commit_protocol>` → `<commit_message>` → `<approval_surface>`.
+For work stages: `<context>` → `<read_first>` → `<read_reference>` (opt) → `<read_prior_milestones>` (Stage A only when applicable) → `<read_prior_stages>` (B+) → `<interpretation_declarations>` (opt, v1.6) → `<deliverable>` → `<test_plan_required>` → `<tdd_discipline>` (opt, v1.7; immediately before `<execution_steps>` because it governs the execution shape) → `<execution_steps>` → `<acceptance_criteria>` → `<scope_locks>` → `<scope_change>` (opt, v1.6) → `<gates>` → `<coverage_gate>` (opt, v1.6) → `<self_correction_budget>` → `<adr_triggers>` (opt) → `<gotchas>` (opt) → `<execution_warnings>` (opt) → `<pre_flight_check>` / `<schema_drift_check>` / `<fan_out_grep>` / `<dependency_audit_check>` / `<runtime_environment>` / `<architecture_check>` / `<schema_audit>` / `<schema_root_check>` / `<phase_doc_inventory_audit>` (opt; cluster these v1.3 + v1.4 + v1.6 authoring-time audit tags together) → `<schema_ref_audit>` / `<api_breaking_change_audit>` / `<existing_pattern_audit>` / `<zustand_selector_audit>` / `<playwright_warmup_recipe>` / `<test_isolation_audit>` (opt, v1.6 authoring-time audit cluster) → `<time_box>` (opt) → `<dependencies>` (opt) → `<retrospective_requirements>` → `<commit_protocol>` → `<commit_message>` → `<approval_surface>`.
 For closeout stages: `<context>` → `<read_first>` → `<read_reference>` (opt) → `<read_prior_milestones>` (rare for closeout; included only if absorbing additional carry-forward) → `<cumulative_reads>` → `<deliverables>` (now includes required `<simplify_pass>` child from v1.6) → `<gap_analysis_requirements>` (with required `<gotchas_graduation>`) → `<append_only_verification>` → `<three_artifact_review>` → `<scope_locks>` → `<gates>` → `<self_correction_budget>` → `<adr_triggers>` (opt) → `<gotchas>` (opt) → `<execution_warnings>` (opt) → `<time_box>` (opt) → `<retrospective_requirements>` → `<commit_protocol>` → `<commit_message>` → `<approval_surface>`.
 Consistent ordering makes diffs across milestones immediately scannable.
 Reference-first **strict** for content-heavy tags (v1.2 hardening). Tags that support both inline and reference forms — currently `<deliverable>`, `<acceptance_criteria>`, `<scope_locks>`, `<commit_message>`, `<gap_analysis_requirements>` — **must use the reference form when the corresponding Phase doc section exists**. The Phase doc's `X.2 Files to Change`, `X.3 Detailed Changes`, `X.4 Tests`, `X.6 Commit Message`, and milestone-level `Key constraints` sections are the canonical locations for content; the prompt references rather than restates them.
@@ -936,6 +1003,7 @@ A validation script lives at `scripts/validate-stage-prompts.py` (or your prefer
 - v1.3 tags `<pre_flight_check>`, `<schema_drift_check>`, `<fan_out_grep>`, `<dependency_audit_check>`, `<runtime_environment>` must appear inside a work-stage prompt only — appearing in a closeout-stage prompt is a structural error
 - v1.6: `<simplify_pass>` must appear inside a closeout-stage prompt (the validator's `REQUIRED_BY_ROOT.closeout_stage_prompt` list includes `simplify_pass` from v1.6 onward; phase docs landing under v1.6 must include it)
 - v1.6 tags `<coverage_gate>`, `<schema_ref_audit>`, `<api_breaking_change_audit>`, `<existing_pattern_audit>`, `<interpretation_declarations>`, `<scope_change>`, `<zustand_selector_audit>`, `<playwright_warmup_recipe>`, `<test_isolation_audit>` must appear inside a work-stage prompt only — appearing in a closeout-stage prompt is a structural error
+- v1.7 tag `<tdd_discipline>` must appear inside a work-stage prompt only — appearing in a closeout- or verifier-stage prompt is a structural error. The `<tdd_discipline strict="true">` → two-commit `<execution_steps>` coupling (the stage's `<execution_steps>` must contain `red_phase_commit` + `surface_for_red_approval` + `green_phase_commit` + `surface_for_final_approval` steps when `<tdd_discipline strict="true">` is present) is an authoring-discipline rule, NOT code-enforced at the v1.7 lean validator level — promote to a validator cross-check at v1.8+ once 2+ milestones show clean signal (lean-validator pattern continued from v1.3/v1.4/v1.5/v1.6; the validator passes the optional tag through structurally without allowlisting, exactly as it does for the nine v1.6 optional slots)
 **Warnings (surface in PR output, don't block):**
 - Confirms ordering matches the recommended order
 - Cross-checks: every retrospective referenced in `<read_prior_stages>` exists; every milestone in `<read_prior_milestones>` has the named gap-analysis section + summary section; every file in `<read_first>` and `<read_reference>` exists; every `section="..."` value on a reference tag resolves to a real Phase doc heading via markdown-AST lookup; the milestone in `<gates milestone="...">` matches the Phase doc's milestone
@@ -1162,6 +1230,8 @@ Foreign tags introduced silently. Adding `<priority>` or `<owner>` or `<estimate
 `<approval_surface>` reordered without reason. Order matters because the human reads top-down. The recommended order has diff first (because that's what the human cares about most) and the "I will not commit" statement last (because it's the verbal anchor of the do-not-commit rule). Reorder only with a stated reason.
 Missing `<commit_message>`. Every stage prompt requires a `<commit_message>` slot — almost always referencing the pre-authored commit in the Phase doc's `X.6 Commit Message` section. Omitting it means the agent drafts a commit ad-hoc, which produces inconsistent commit-message style across milestones and forces the human to evaluate each one as a separate review item.
 `<read_prior_milestones>` on Stage B+ within the same milestone. Stage B+ uses `<read_prior_stages>` for within-milestone retrospective reads. `<read_prior_milestones>` is for absorbing prior milestone carry-forward — overwhelmingly Stage A of a non-first milestone. Putting it on Stage B+ is a sign of confusing the two read patterns; the validator catches this.
+`<tdd_discipline strict="true">` with single-commit `<execution_steps>` (v1.7). The slot declares the strict two-commit contract; if the `<execution_steps>` still reads `write_failing_tests → implement → verify_gates → surface` (single commit), the slot is decorative and the audit-surface invariant cannot hold. When `<tdd_discipline strict="true">` is present, `<execution_steps>` MUST contain `red_phase_commit` + `surface_for_red_approval` + `green_phase_commit` + `surface_for_final_approval`. The whole point of the slot (per TDAD arXiv:2603.17973) is that *structural* enforcement — not exhortation — is what makes TDD work for LLM agents; a slot without the matching execution shape is exhortation wearing a slot's clothes.
+Green-phase commit that modifies the red-phase test files (v1.7). The load-bearing audit property is `git diff <red-sha>..<impl-sha> -- '**/tests/**'` being EMPTY. A green-phase commit that "tidies" or "fixes" the red-phase tests destroys the property — and is precisely the failure mode Anthropic's TDD docs warn about ("Claude will sometimes change tests to make them pass rather than fixing the implementation"). Net-new additive tests + mechanical formatting belong in a SEPARATE labelled follow-up commit; the impl commit touches zero existing test files. An impl commit body that omits the explicit empty-diff invariant statement is a softer instance of the same anti-pattern (the invariant is unverifiable-by-inspection without the stated command).
 `<read_prior_milestones>` on Stage A of the first milestone. M01.A has no prior milestone to absorb. The tag is omitted entirely; not "empty" but absent. (Same rule as `<read_prior_stages>` being absent on Stage A.)
 Mixing inline and reference forms in the same tag. `<deliverable ref="...md" section="..."><item>...</item></deliverable>` is a schema violation. Pick one form. The validator rejects the mix because the precedence rule (which wins?) is genuinely ambiguous and the right answer is to make the choice explicit at authoring time.
 **v1.2 anti-patterns (new):**
@@ -1384,6 +1454,24 @@ Validation rules change (e.g., a previously-warning becomes an error)
 Substantive changes get clear `docs(stage-prompt-protocol): ...` commit messages and a CHANGELOG entry. The commit history of this file is itself an audit of how stage prompts evolved.
 If this protocol disagrees with `BUILD-PLAYBOOK.md`, the playbook wins. This protocol is the schema; the playbook is the authority on what stages are and how they run.
 ### Changelog
+
+v1.7 — One additive optional tag in `<work_stage_prompt>` (`<tdd_discipline>`) + four new recognized `<execution_steps>` step names + CLAUDE.md §6 `cargo llvm-cov clean` note + the two-commit pattern documented as the v1.7 recommended default + three graduated gotchas, informed by M06 friction (M06.A's TDD-discipline lapse failing hard-gate G5 + maintainer override; M06.C's empirical validation of the strict pattern) + web evidence (Nagappan et al. 2009; TDAD arXiv:2603.17973; Anthropic Claude Code TDD docs). Lean-validator pattern continued from v1.3/v1.4/v1.5/v1.6 (structural-only; the optional tag passes through without allowlisting; cross-checks deferred to v1.8+):
+
+1. **New optional slot `<tdd_discipline>`** in work stages. `strict="true"` attribute + `<red_phase>` / `<green_phase>` children. Makes the strict red-phase/green-phase two-commit TDD pattern a first-class, structurally-auditable protocol element. Addresses M06.A's TDD-discipline lapse (implementation before tests → hard-gate G5 failure → documented maintainer override) by giving the discipline a structural home rather than a per-stage user override. Evidence basis in the §7 slot definition: Nagappan et al. 2009 (industrial TDD 60–90% defect reduction); TDAD arXiv:2603.17973 (TDD *prompting* WITHOUT structural enforcement INCREASES regressions 9.94%; structural enforcement drops them 70% — the discriminator is structure, not exhortation); Anthropic Claude Code TDD docs (commit-tests-before-impl as the safety net). M06.C is the empirical reference implementation (~10% time overhead; structural defense against gotcha #66).
+
+2. **Four new recognized `<execution_steps>` step names:** `red_phase_commit`, `surface_for_red_approval`, `green_phase_commit`, `surface_for_final_approval`. The two-commit `<execution_steps>` shape (`write_failing_tests → red_phase_commit → surface_for_red_approval → implement → verify_gates → green_phase_commit → surface_for_final_approval → fill_retrospective`) is the v1.7 recommended default for any work stage that ships testable code. The validator does not enforce step names (lean); these are documented in §7 so future stages don't re-derive them.
+
+3. **Load-bearing audit-surface invariant.** When `<tdd_discipline strict="true">` is present, the green-phase commit body MUST state the verifiable invariant `git diff <red-sha>..<impl-sha> -- '**/tests/**'` is EMPTY. Net-new additive tests + mechanical rustfmt/clippy fixes to test files go in a SEPARATE labelled follow-up commit, keeping the impl↔red diff a pure implementation delta. This is the structural property the TDAD research identifies as the difference between TDD-that-works and TDD-prompting-that-backfires.
+
+4. **Validator extension: none (lean continued).** `<tdd_discipline>` is optional; the validator's regex parser passes it through structurally without allowlisting — identical lean treatment to the nine v1.6 optional slots (v1.6 changelog item #13). The `<tdd_discipline strict="true">` → two-commit `<execution_steps>` coupling is an authoring-discipline rule documented in §11, NOT code-enforced at v1.7; promote to a validator cross-check at v1.8+ once 2+ milestones show clean signal.
+
+5. **Two new anti-patterns** in §13: (a) `<tdd_discipline strict="true">` with single-commit `<execution_steps>` (slot decorative; audit invariant unholdable); (b) green-phase commit that modifies the red-phase test files (destroys the empty-diff property; the exact failure mode Anthropic's TDD docs warn about).
+
+6. **Three graduated gotchas** in `docs/gotchas.md`: self-deactivating `#[expect(clippy::unused_async)]` for TDD-stub async methods (M06.C; #79 — prefer `expect` over `allow` so green-phase impl naturally removes it via `cargo clippy --fix`); non-idempotent migrations (ALTER/RENAME/DROP) make `init_idempotent` tests meaningful for the first time (M06.C; #80 — verify the migration runner's version-skip is the sole idempotency guarantor before landing a non-idempotent migration); `cargo llvm-cov` merges `.profraw` across runs — run `cargo llvm-cov clean` before a gate measurement if a prior (especially failing) run happened in the same session (M06.C; #81 — wasted ~10 min chasing a phantom coverage drop).
+
+7. **CLAUDE.md §6 update.** The canonical gate-ordering paragraph gains a `cargo llvm-cov clean` note (gotcha #81) + a reference to the v1.7 two-commit `<tdd_discipline>` pattern.
+
+8. **M01–M06 grandfathered per their existing banners.** M06 was authored on v1.6; the v1.7 `<tdd_discipline>` slot applies forward from M06.D (the next unexecuted stage) — M06's remaining stages (D, E) adopt the two-commit pattern via a focused phase-doc edit on the milestone branch; M07+ author it natively. The slot is optional, so no grandfathered phase doc breaks.
 
 v1.6 — Eleven additive optional tags / extensions in `<work_stage_prompt>` + one new required child of `<closeout_stage_prompt>` `<deliverables>` + CLAUDE.md §6 quality-gate ordering paragraph + four graduated gotchas, informed by M05 friction (seven work stages of phase-doc-vs-codebase drift recurrence; first in-band Stage V verifier run; first waiver-as-ADR cycle per ADR-0009). Lean-validator pattern continued from v1.3/v1.4/v1.5 (structural checks only; cross-checks deferred to v1.7+):
 
