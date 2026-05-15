@@ -58,11 +58,25 @@ fn translate_agent(payload: &Value) -> Option<AgentEvent> {
                 .get("parent_id")
                 .and_then(Value::as_str)
                 .map(String::from);
+            // Replay reconstructs events from saved signal logs that
+            // pre-date the M06.A L2a wire-up. The signal log captures
+            // the live emission's `narrowed_from` field when present;
+            // legacy logs have no such field and round-trip as empty.
+            let narrowed_from: Vec<String> = payload
+                .get("narrowed_from")
+                .and_then(Value::as_array)
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
             Some(AgentEvent::AgentSpawned {
                 agent_id,
                 agent_name,
                 parent_id,
                 session_id,
+                narrowed_from,
             })
         }
         "complete" => {

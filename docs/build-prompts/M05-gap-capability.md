@@ -1023,6 +1023,7 @@ Concrete C1 deliverables (plumbing only — no OS isolation):
 | `crates/runtime-sandbox/src/lib.rs` | exists (M01 stub) | Edit: real module tree |
 | `crates/runtime-sandbox/src/main.rs` | **new** | Binary entry point |
 | `crates/runtime-sandbox/src/protocol.rs` | **new** | IPC protocol — framed JSON |
+| `crates/runtime-sandbox/src/ipc.rs` | **new** | IPC server half on sandbox side; sibling to main-side `sandbox_ipc/client.rs`. Lifted into the C2 ≥95% gate post-C1; baseline 92.58% line / 94.01% region at C1-end / ≥95% at C2-end. (M06.A truth-up per M05.V Finding #3 — added to inventory after the original C1.2 table closed.) |
 | `crates/runtime-sandbox/src/validator.rs` | **new** | Pure-function validator |
 | `crates/runtime-sandbox/src/error.rs` | **new** | SandboxError enum |
 | `crates/runtime-sandbox/tests/integration.rs` | **new** | Round-trip integration test WITHOUT isolation (Stage C2 extends with isolation-on tests) |
@@ -1847,6 +1848,7 @@ Concrete deliverables:
 | `crates/runtime-main/src/audit/entry.rs` | **new** | AuditEntry type — discriminated union over GrantedCapability / DeniedCapability / TierTransition / GapDetected / GapResolved |
 | `crates/runtime-main/src/audit/file_path.rs` | **new** | Resolve audit file path per platform |
 | `crates/runtime-main/src/audit/error.rs` | **new** | AuditError enum |
+| `crates/runtime-main/src/tier/transition.rs` | **new** | Tier-transition primitive paired with audit emission; 99.24% line coverage at E-end (the 1 uncovered line is the `tracing::error!` branch on underlying audit-write failure). (M06.A truth-up per M05.V Finding #3 — added to inventory after the original E.2 table closed.) |
 | `schemas/audit.v1.json` | **new** | AuditEntry schema |
 | `crates/runtime-core/src/generated/audit.rs` | **new** | Regenerated |
 | `crates/runtime-main/src/capability/enforcer.rs` | exists | Edit: call `audit::log_grant()` / `audit::log_denial()` |

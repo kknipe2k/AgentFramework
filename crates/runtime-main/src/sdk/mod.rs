@@ -29,9 +29,9 @@ pub mod request_capability;
 /// Delimited-block emitter parser — spec §2 + §3a (M04 Stage B).
 pub mod structured_emitter;
 
-pub use agent_sdk::{AgentSdk, SdkError, SessionId};
+pub use agent_sdk::{AgentSdk, CapabilityWiring, SdkError, SessionId};
 pub use approval::{ApprovalDecision, ApprovalError, ApprovalSeam};
-pub use event_pipeline::EventPipeline;
+pub use event_pipeline::{EnforcementContext, EventPipeline};
 pub use replay::replay_signals_to_events;
 pub use request_capability::{
     handle_request_capability, CapabilityKind, RequestCapabilityError, RequestCapabilityInvocation,

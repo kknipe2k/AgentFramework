@@ -118,6 +118,13 @@ pub mod error {
 #[doc = "        \"agent_name\": {"]
 #[doc = "          \"type\": \"string\""]
 #[doc = "        },"]
+#[doc = "        \"narrowed_from\": {"]
+#[doc = "          \"description\": \"Optional — when this spawn passed L2a narrowing (M06 Stage A wire-up of the M05.B `narrow` primitive at the framework-loader walk site), carries one short human-readable description per proposed (pre-narrow) child capability so the renderer's AgentNode debug inspector can surface 'spawned with narrowed scope' attribution per §8.security L2a. Absent for top-level agents (no parent grants to narrow against) or for spawns that did not flow through the narrowing seam (e.g., the M02 smoke session that pre-dates the wire-up). Present (even as an empty array) signals 'this spawn was gated by L2a'. Per the M04.D mirror-not-cross-schema-ref pattern (CapabilityKindRef etc.) — Vec<String> over Vec<CapabilityDeclaration> avoids cross-schema $ref friction in the json-schema-to-typescript pipeline; the underlying CapabilityDeclaration data is serialized to its `kind:resource:scope:side_effect_class` string form at emit time.\","]
+#[doc = "          \"type\": \"array\","]
+#[doc = "          \"items\": {"]
+#[doc = "            \"$ref\": \"#/$defs/NarrowedFromGrantDescription\""]
+#[doc = "          }"]
+#[doc = "        },"]
 #[doc = "        \"parent_id\": {"]
 #[doc = "          \"type\": ["]
 #[doc = "            \"string\","]
@@ -1400,6 +1407,9 @@ pub enum AgentEvent {
     AgentSpawned {
         agent_id: ::std::string::String,
         agent_name: ::std::string::String,
+        #[doc = "Optional — when this spawn passed L2a narrowing (M06 Stage A wire-up of the M05.B `narrow` primitive at the framework-loader walk site), carries one short human-readable description per proposed (pre-narrow) child capability so the renderer's AgentNode debug inspector can surface 'spawned with narrowed scope' attribution per §8.security L2a. Absent for top-level agents (no parent grants to narrow against) or for spawns that did not flow through the narrowing seam (e.g., the M02 smoke session that pre-dates the wire-up). Present (even as an empty array) signals 'this spawn was gated by L2a'. Per the M04.D mirror-not-cross-schema-ref pattern (CapabilityKindRef etc.) — Vec<String> over Vec<CapabilityDeclaration> avoids cross-schema $ref friction in the json-schema-to-typescript pipeline; the underlying CapabilityDeclaration data is serialized to its `kind:resource:scope:side_effect_class` string form at emit time."]
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        narrowed_from: ::std::vec::Vec<NarrowedFromGrantDescription>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         parent_id: ::std::option::Option<::std::string::String>,
         session_id: ::std::string::String,
@@ -2489,6 +2499,76 @@ impl ::std::convert::TryFrom<::std::string::String> for HookCategoryRef {
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
+    }
+}
+#[doc = "One short, human-readable description of a parent capability that the L2a narrowing seam considered when computing a child's narrowed grants. Format is emitter-defined (e.g., `read:src:glob:src/**`); renderer surfaces verbatim. Per gotcha #43 (typify-friendly extraction): inline-validated strings inside oneOf variants must be extracted to $defs with a title or typify panics."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"NarrowedFromGrantDescription\","]
+#[doc = "  \"description\": \"One short, human-readable description of a parent capability that the L2a narrowing seam considered when computing a child's narrowed grants. Format is emitter-defined (e.g., `read:src:glob:src/**`); renderer surfaces verbatim. Per gotcha #43 (typify-friendly extraction): inline-validated strings inside oneOf variants must be extracted to $defs with a title or typify panics.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"minLength\": 1"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct NarrowedFromGrantDescription(::std::string::String);
+impl ::std::ops::Deref for NarrowedFromGrantDescription {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<NarrowedFromGrantDescription> for ::std::string::String {
+    fn from(value: NarrowedFromGrantDescription) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for NarrowedFromGrantDescription {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for NarrowedFromGrantDescription {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for NarrowedFromGrantDescription {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for NarrowedFromGrantDescription {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for NarrowedFromGrantDescription {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
     }
 }
 #[doc = "Hook on_failure policy — spec §4a. Mirrors common.v1.json HookOnFailure; embedded in verify_failed events."]

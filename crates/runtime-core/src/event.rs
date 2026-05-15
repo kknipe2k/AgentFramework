@@ -199,6 +199,15 @@ pub enum AgentEvent {
         parent_id: Option<String>,
         /// The session this agent belongs to.
         session_id: String,
+        /// Optional pre-narrow proposed grants when this spawn flowed
+        /// through the L2a narrowing seam (M06 Stage A wire-up of the
+        /// M05.B `narrow` primitive). Each entry is one short
+        /// `kind:resource:scope:side_effect_class` description of a
+        /// proposed child capability. Empty / absent for top-level
+        /// agents (no parent grants to narrow against) or for spawns
+        /// that pre-date the wire-up (e.g., M02 smoke session).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        narrowed_from: Vec<String>,
     },
     /// An agent completed successfully.
     AgentComplete {
@@ -800,6 +809,11 @@ mod proptest_round_trip {
                     agent_name,
                     parent_id,
                     session_id,
+                    // Proptest spawns are exclusively serialization
+                    // round-trip fixtures; they do not exercise the
+                    // L2a narrowing path. Empty Vec round-trips as
+                    // "absent" via skip_serializing_if.
+                    narrowed_from: Vec::new(),
                 }
             })
     }

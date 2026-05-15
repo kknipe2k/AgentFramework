@@ -6,6 +6,76 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M06 Stage A (ADR-0009 closure — L1 + L2a SDK wire-up + M05.V #3 X.2 truth-up)
+
+- **`crates/runtime-main/src/sdk/event_pipeline.rs`** — L1 wire-up: when
+  constructed via `EventPipeline::with_enforcement`, the pipeline runs
+  `enforcer.check(agent_id, &needed)` before translating
+  `ProviderEvent::ToolUse` to `AgentEvent::ToolInvoked`. On `Ok` emits
+  `CapabilityGrant` + `ToolInvoked`. On `Err(Denied)` emits
+  `CapabilityViolation` and omits `ToolInvoked`. On `Err(TierForbidden)`
+  emits `TierViolation` and omits `ToolInvoked`. Closes ADR-0009
+  Finding #1 (M05.V trace #2 endpoint).
+- **`crates/runtime-main/src/sdk/agent_sdk.rs`** — L2a wire-up + new
+  `AgentSdk::with_capability_wiring` constructor that takes the new
+  `CapabilityWiring { enforcer, framework, hitl_seam }` triple. At
+  session start the SDK now uses `framework.session_root_agent` as the
+  runtime agent_id (so enforcer grants are knowable from the framework
+  declaration) and walks `framework.agents[]` for inline sub-agents,
+  running `narrow(parent_grants, proposed)` per child. On Ok emits
+  `AgentSpawned` with `narrowed_from` populated; on Err emits
+  `CapabilityViolation` and skips the spawn. Routes
+  `CapabilityViolation` / `TierViolation` events through the
+  `HitlSeam.on_capability_violation` trigger (existing M04.E surface).
+  Closes ADR-0009 Finding #2 (M05.V trace #3 endpoint).
+- **`crates/runtime-main/src/framework_loader/capability_map.rs`**
+  *(new)* — wire-up support module. Exposes
+  `capabilities_for_tool(framework, tool_name) -> Result<Vec<CapabilityDeclaration>, CapabilityLookupError>`
+  for L1 and `parent_grants_for_agent(framework, agent_id) -> Option<Vec<CapabilityDeclaration>>`
+  for L2a, plus `capabilities_to_declarations` (translator from coarse
+  `Capabilities` to per-action `Vec<CapabilityDeclaration>`),
+  `declaration_to_narrowed_from_str` (serializer for the new
+  `AgentSpawned.narrowed_from` field), `inline_agents` (filter that
+  skips registry-form `FrameworkAgentsItem::Object`), and the
+  `FrameworkRef = Arc<Framework>` type alias.
+- **`schemas/event.v1.json`** — `agent_spawned` variant gains an
+  optional `narrowed_from` field (`Vec<NarrowedFromGrantDescription>`).
+  Per the M04.D mirror-not-cross-schema-ref pattern, the items are
+  short string descriptions of pre-narrow proposed grants
+  (`kind:resource:scope-variant:side_effect_class`); avoids the
+  cross-schema-$ref friction that would have hit
+  `json-schema-to-typescript`. Per gotcha #43 the inline-validated
+  string is extracted to a $def with a title.
+- **`crates/runtime-core/src/event.rs`** + **`crates/runtime-core/src/generated/event.rs`** +
+  **`src/types/agent_event.ts`** — regenerated types pick up the new
+  `narrowed_from: Vec<String>` field on `AgentSpawned` (default empty,
+  `skip_serializing_if` empty so legacy emit sites round-trip
+  losslessly).
+- **`crates/runtime-main/tests/sdk_capability_integration.rs`** *(new)*
+  — 4 integration tests exercising the L1 wire-up: valid grant emits
+  CapabilityGrant + ToolInvoked; missing grant emits CapabilityViolation
+  with no ToolInvoked; unknown-tool dispatch surfaces
+  CapabilityViolation; multi-call invariant (gotcha #69).
+- **`crates/runtime-main/tests/sdk_narrowing_integration.rs`** *(new)*
+  — 4 integration tests exercising the L2a wire-up: narrowed spawn
+  emits AgentSpawned with narrowed_from; widening attempt emits
+  CapabilityViolation and blocks AgentSpawned; empty proposed succeeds
+  with empty narrowed_from; multi-call invariant.
+- **`crates/runtime-main/tests/capability_enforcer_smoke.rs`** — header
+  comment updated to point at the new `sdk_*_integration.rs` files as
+  the canonical wire surfaces; smoke retained as the per-method unit
+  fixture for the enforcer + narrowing primitives.
+
+### Changed — M05.V Finding #3 X.2 truth-up (focused docs correction)
+
+- **`docs/build-prompts/M05-gap-capability.md`** — C1.2 "Files to
+  Change" gains a row for `crates/runtime-sandbox/src/ipc.rs` (lifted
+  into the C2 ≥95% gate); E.2 "Files to Change" gains a row for
+  `crates/runtime-main/src/tier/transition.rs`. Closes the M05.V 🟡
+  Finding #3 phase-doc-vs-implementation drift carry-forward. No
+  other M05 content modified; `docs/gap-analysis.md` append-only
+  invariant preserved.
+
 ### Added — M05 Stage G (Phase Closeout — gap analysis + parent-milestone summary)
 
 - **`docs/build-prompts/retrospectives/M05-summary.md`** *(new)* — parent-milestone

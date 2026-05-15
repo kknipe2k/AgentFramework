@@ -65,6 +65,10 @@ export type AgentEvent =
   | TierTransition
   | TokenUsage;
 /**
+ * One short, human-readable description of a parent capability that the L2a narrowing seam considered when computing a child's narrowed grants. Format is emitter-defined (e.g., `read:src:glob:src/**`); renderer surfaces verbatim. Per gotcha #43 (typify-friendly extraction): inline-validated strings inside oneOf variants must be extracted to $defs with a title or typify panics.
+ */
+export type NarrowedFromGrantDescription = string;
+/**
  * Origin of a tool invocation. Spec §0b + §2.
  */
 export type ToolSource = "builtin" | "mcp" | "generated";
@@ -168,6 +172,10 @@ export interface AgentSpawned {
   agent_name: string;
   parent_id?: string | null;
   session_id: string;
+  /**
+   * Optional — when this spawn passed L2a narrowing (M06 Stage A wire-up of the M05.B `narrow` primitive at the framework-loader walk site), carries one short human-readable description per proposed (pre-narrow) child capability so the renderer's AgentNode debug inspector can surface 'spawned with narrowed scope' attribution per §8.security L2a. Absent for top-level agents (no parent grants to narrow against) or for spawns that did not flow through the narrowing seam (e.g., the M02 smoke session that pre-dates the wire-up). Present (even as an empty array) signals 'this spawn was gated by L2a'. Per the M04.D mirror-not-cross-schema-ref pattern (CapabilityKindRef etc.) — Vec<String> over Vec<CapabilityDeclaration> avoids cross-schema $ref friction in the json-schema-to-typescript pipeline; the underlying CapabilityDeclaration data is serialized to its `kind:resource:scope:side_effect_class` string form at emit time.
+   */
+  narrowed_from?: NarrowedFromGrantDescription[];
 }
 export interface AgentComplete {
   type: "agent_complete";

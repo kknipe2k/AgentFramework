@@ -1,18 +1,27 @@
-//! End-to-end smoke test for the §8.security L1 + L2a enforcer.
+//! Per-method unit fixture for the §8.security L1 + L2a enforcer.
 //!
 //! Exercises the enforcer + narrowing primitives + the in-process
-//! emitter contract that the SDK will wire when multi-turn tool loops
-//! land. v0.1 has no `dispatch_tool` path in the production SDK
-//! (M02-shipped single-turn streaming only — see M05.B retrospective
-//! Decision D1); this test stands in as the canonical "what the SDK
-//! will call" surface so the enforcer's check + grant + narrow flow is
-//! exercised against a real `runtime_main::framework_loader::Emitter`
-//! impl from start to finish.
+//! emitter contract through a stand-in `dispatch_with_check` wrapper.
+//! Pre-M06.A this file ALSO claimed to be the "what the SDK will call"
+//! surface; M06 Stage A (ADR-0009 closure) ports those scenarios to
+//! real call-path integration tests in
+//! `crates/runtime-main/tests/sdk_capability_integration.rs` (L1 wire-up)
+//! and `crates/runtime-main/tests/sdk_narrowing_integration.rs` (L2a
+//! wire-up). Those are now the canonical wire-trace surfaces; this
+//! file remains as the per-method unit fixture for the enforcer +
+//! narrowing primitives — i.e., the fixture that exercises the
+//! emitter contract independently of the production SDK loop.
 //!
 //! Gotcha trap #4 from M05.B stage prompt: `capability_violation`
 //! events MUST emit BEFORE the HITL flow returns control. This test
 //! pins the ordering: the emitter records the event, the wrapping
 //! routine returns Err, and the test asserts both observations.
+//!
+//! Gotcha #66 contract-fidelity: the M06.A integration tests in
+//! `sdk_*_integration.rs` are the load-bearing gate against the
+//! M05.V-class "primitive ships green; production path missing" bug.
+//! This smoke remains as a lower-level guard against per-method
+//! regressions; it intentionally does NOT exercise the SDK loop.
 
 use runtime_core::event::{AgentEvent, CapabilityKindRef};
 use runtime_core::generated::capability::{

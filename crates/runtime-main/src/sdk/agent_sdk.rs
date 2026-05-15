@@ -13,8 +13,25 @@
 //! sequences without touching reqwest. Production wrapper
 //! [`AgentSdk::run_agent`] constructs the real provider stream via
 //! [`LLMProvider::stream`].
+//!
+//! M06.A wire-up (ADR-0009 closure):
+//! - L1 enforcement at the dispatch boundary lives inside
+//!   [`super::EventPipeline::with_enforcement`]; [`AgentSdk::with_capability_wiring`]
+//!   constructs the wired pipeline. The SDK observes the emitted event
+//!   sequence and routes `capability_violation` / `tier_violation` events
+//!   through the [`HitlSeam::on_capability_violation`] M04.E trigger
+//!   before resuming.
+//! - L2a narrowing at the spawn boundary runs at session start in
+//!   [`Self::spawn_framework_subagents`] — for every inline sub-agent
+//!   declared in the framework whose `parent` matches the session
+//!   root, the loader translates the parent's `Capabilities` block
+//!   to grants, the child's `Capabilities` block to proposed grants,
+//!   calls `narrow(parent, proposed)`, and emits `AgentSpawned` with
+//!   the proposed-set serialized to `narrowed_from`. Widening attempts
+//!   emit `CapabilityViolation` and skip the spawn.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures::stream::{Stream, StreamExt};
 use runtime_core::event::AgentEvent;
@@ -22,9 +39,22 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use super::event_pipeline::EventPipeline;
+use super::event_pipeline::{EnforcementContext, EventPipeline};
+use crate::capability::{narrow, CapabilityEnforcer};
 use crate::drone_ipc::{DroneClient, DroneIpcError};
+use crate::framework_loader::{
+    capabilities_to_declarations, declaration_to_narrowed_from_str, inline_agents,
+    parent_grants_for_agent, FrameworkRef,
+};
+use crate::hitl::HitlSeam;
 use crate::providers::{AgentConfig, LLMProvider, ProviderError, ProviderEvent};
+
+/// Default wait for HITL responses on capability / tier violations
+/// surfaced by the L1 wire-up. Long enough that a user can read the
+/// modal + decide; short enough that a forgotten prompt does not hang
+/// the SDK loop indefinitely. Matches the M04.E `HitlSeam` default
+/// budgets used elsewhere.
+const HITL_DEFAULT_WAIT: Duration = Duration::from_secs(3600);
 
 /// Newtype wrapping a session UUID. Cheap to clone; serializes as a
 /// hyphenated UUID string.
@@ -66,6 +96,36 @@ pub enum SdkError {
     EventChannelClosed,
 }
 
+/// Optional capability + spawn-narrowing wiring (M06.A).
+#[derive(Clone)]
+pub struct CapabilityWiring {
+    /// L1 enforcer the `EventPipeline` gates `ToolUse` through.
+    pub enforcer: Arc<CapabilityEnforcer>,
+    /// Framework reference the loader walk + tool-capability lookup
+    /// consumes.
+    pub framework: FrameworkRef,
+    /// HITL seam the SDK loop awaits on for `capability_violation` /
+    /// `tier_violation` routing per M04.E `on_capability_violation`.
+    pub hitl_seam: Arc<HitlSeam>,
+}
+
+impl CapabilityWiring {
+    /// Construct from the three Arc references the Tauri shell layer
+    /// already holds at session start.
+    #[must_use]
+    pub const fn new(
+        enforcer: Arc<CapabilityEnforcer>,
+        framework: FrameworkRef,
+        hitl_seam: Arc<HitlSeam>,
+    ) -> Self {
+        Self {
+            enforcer,
+            framework,
+            hitl_seam,
+        }
+    }
+}
+
 /// Agent SDK. Generic over the LLM provider so v1.0+ providers slot in
 /// behind the same trait.
 pub struct AgentSdk<P: LLMProvider> {
@@ -73,11 +133,12 @@ pub struct AgentSdk<P: LLMProvider> {
     event_tx: mpsc::Sender<AgentEvent>,
     drone_client: Arc<DroneClient>,
     session_id: SessionId,
+    capability_wiring: Option<CapabilityWiring>,
 }
 
 impl<P: LLMProvider + 'static> AgentSdk<P> {
-    /// Construct with explicit collaborators. Tests inject a no-op
-    /// drone via [`DroneClient::noop`].
+    /// Construct without M06.A capability wiring. Smoke / streaming-only
+    /// sessions (M02 production path; existing tests) consume this.
     #[must_use]
     pub const fn new(
         provider: Arc<P>,
@@ -90,6 +151,31 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
             event_tx,
             drone_client,
             session_id,
+            capability_wiring: None,
+        }
+    }
+
+    /// Construct with the M06.A L1 + L2a wire-up active.
+    ///
+    /// At session start the SDK walks `framework.agents[]` and emits
+    /// `AgentSpawned` per inline sub-agent of the session root,
+    /// running `narrow(parent_grants, proposed)` to gate widening.
+    /// During streaming, every `ProviderEvent::ToolUse` flows through
+    /// `enforcer.check(agent_id, &needed)` and routes per outcome.
+    #[must_use]
+    pub const fn with_capability_wiring(
+        provider: Arc<P>,
+        event_tx: mpsc::Sender<AgentEvent>,
+        drone_client: Arc<DroneClient>,
+        session_id: SessionId,
+        wiring: CapabilityWiring,
+    ) -> Self {
+        Self {
+            provider,
+            event_tx,
+            drone_client,
+            session_id,
+            capability_wiring: Some(wiring),
         }
     }
 
@@ -112,6 +198,10 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
     /// stream ends, flushes any buffered text, and returns. The drone
     /// receives one `SnapshotNow` at the start.
     ///
+    /// When constructed via [`Self::with_capability_wiring`], also walks
+    /// the framework's inline sub-agents at session start (per the
+    /// M06.A L2a wire-up) before the streaming loop begins.
+    ///
     /// # Errors
     ///
     /// Returns [`SdkError::EventChannelClosed`] if the receiver was
@@ -120,12 +210,26 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
     where
         S: Stream<Item = ProviderEvent> + Unpin,
     {
-        let agent_id = format!("agent_{}", Uuid::new_v4());
+        // M06.A wire-up: when the framework is present, the runtime
+        // agent_id IS the framework's `session_root_agent` id so the
+        // enforcer's grants (keyed by framework agent id) match the
+        // dispatch path's runtime id. The pre-M06 UUID seed remains
+        // for un-wired smoke sessions (no framework available).
+        let agent_id = self.capability_wiring.as_ref().map_or_else(
+            || format!("agent_{}", Uuid::new_v4()),
+            |w| w.framework.session_root_agent.clone(),
+        );
+        // The smoke / streaming-only spawn site predates the L2a wire-up
+        // (M06 Stage A); top-level agents have no parent grants to narrow
+        // against, so `narrowed_from` is empty here. The framework-walk
+        // spawn site below (`spawn_framework_subagents`) populates it for
+        // every sub-agent that flowed through `narrow()`.
         self.emit(AgentEvent::AgentSpawned {
             agent_id: agent_id.clone(),
             agent_name: "smoke".to_string(),
             parent_id: None,
             session_id: self.session_id.as_string(),
+            narrowed_from: Vec::new(),
         })
         .await?;
 
@@ -138,10 +242,37 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
             })
             .await?;
 
-        let mut pipeline = EventPipeline::new(agent_id);
+        // L2a wire-up — walk declared sub-agents and emit AgentSpawned
+        // per child after running `narrow()`. Runs after the top-level
+        // spawn so the child events appear after the root in the
+        // event stream (renderer paints root then children).
+        if let Some(wiring) = self.capability_wiring.as_ref() {
+            self.spawn_framework_subagents(wiring, &agent_id).await?;
+        }
+
+        let mut pipeline = match self.capability_wiring.as_ref() {
+            Some(wiring) => EventPipeline::with_enforcement(
+                agent_id,
+                EnforcementContext::new(
+                    Arc::clone(&wiring.enforcer),
+                    Arc::clone(&wiring.framework),
+                ),
+            ),
+            None => EventPipeline::new(agent_id),
+        };
         while let Some(provider_event) = stream.next().await {
             for agent_event in pipeline.next_event(provider_event) {
+                let needs_hitl = matches!(
+                    &agent_event,
+                    AgentEvent::CapabilityViolation { .. } | AgentEvent::TierViolation { .. }
+                );
                 self.emit(agent_event).await?;
+                if needs_hitl {
+                    if let Some(wiring) = self.capability_wiring.as_ref() {
+                        self.await_capability_violation_hitl(&wiring.hitl_seam)
+                            .await;
+                    }
+                }
             }
         }
         for agent_event in pipeline.flush() {
@@ -150,11 +281,120 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
         Ok(())
     }
 
+    /// Walk every inline sub-agent declared in the framework (sessions
+    /// with no children produce no events). For each child, run
+    /// `narrow(parent_grants, proposed)`; on Ok emit `AgentSpawned`
+    /// with `narrowed_from` populated; on Err emit
+    /// `CapabilityViolation` and skip the spawn.
+    ///
+    /// v0.1 walks every inline agent except the session-root one (the
+    /// root spawned at the smoke emission above). The full per-parent
+    /// child-only walk lands at M07 (registered agents + spawn driver).
+    async fn spawn_framework_subagents(
+        &self,
+        wiring: &CapabilityWiring,
+        parent_runtime_id: &str,
+    ) -> Result<(), SdkError> {
+        let session_root_id = wiring.framework.session_root_agent.as_str();
+        let parent_grants =
+            parent_grants_for_agent(&wiring.framework, session_root_id).unwrap_or_default();
+        for child in inline_agents(&wiring.framework) {
+            // Skip the session root — it spawned at the smoke emission
+            // above; the L2a walk handles its descendants.
+            if child.id.as_str() == session_root_id {
+                continue;
+            }
+            let proposed = capabilities_to_declarations(&child.capabilities);
+            let narrowed_from_strs: Vec<String> = proposed
+                .iter()
+                .map(declaration_to_narrowed_from_str)
+                .collect();
+            match narrow(&parent_grants, &proposed) {
+                Ok(_narrowed_grants) => {
+                    self.emit(AgentEvent::AgentSpawned {
+                        agent_id: child.id.to_string(),
+                        agent_name: child.role.to_string(),
+                        parent_id: Some(parent_runtime_id.to_string()),
+                        session_id: self.session_id.as_string(),
+                        narrowed_from: narrowed_from_strs,
+                    })
+                    .await?;
+                }
+                Err(err) => {
+                    let bad_decl = match &err {
+                        crate::capability::NarrowingError::CapabilityNotHeldByParent {
+                            proposed: bad,
+                        } => bad,
+                    };
+                    self.emit(AgentEvent::CapabilityViolation {
+                        agent_id: child.id.to_string(),
+                        capability_kind: kind_to_ref(bad_decl.kind),
+                        requested_action: format!(
+                            "spawn sub-agent '{}' with capability '{}' on '{}'",
+                            child.id.as_str(),
+                            format!("{:?}", bad_decl.kind).to_lowercase(),
+                            *bad_decl.resource,
+                        ),
+                        declared_scope: format!(
+                            "parent '{session_root_id}' grants do not subsume the proposed child capability"
+                        ),
+                    })
+                    .await?;
+                    self.await_capability_violation_hitl(&wiring.hitl_seam)
+                        .await;
+                    // Sub-agent is NOT spawned. Loop continues to the
+                    // next declared child so a single widening attempt
+                    // does not block the rest of the framework load.
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Await the HITL response for a `capability_violation` / `tier_violation`
+    /// event. Per ADR-0007 in-process seam: the renderer's modal
+    /// resolves the seam via `respond_hitl(prompt_id, choice)`. The
+    /// `prompt_id` used here is the runtime agent id concatenated with
+    /// the session id — sufficient for v0.1 single-session correlation;
+    /// M07+ may introduce per-violation UUIDs.
+    ///
+    /// On `Err` (`NotFound` / `TimedOut` / Cancelled), the SDK loop logs
+    /// and continues — the violation event has already been emitted to
+    /// the renderer; the missing HITL resolution is non-fatal at the
+    /// SDK level (renderer surfaces the event regardless).
+    async fn await_capability_violation_hitl(&self, hitl_seam: &Arc<HitlSeam>) {
+        let prompt_id = format!("capability_violation:{}", self.session_id.as_string());
+        if let Err(e) = hitl_seam
+            .await_response(&prompt_id, HITL_DEFAULT_WAIT)
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                prompt_id = %prompt_id,
+                "capability_violation HITL await did not resolve cleanly; continuing"
+            );
+        }
+    }
+
     async fn emit(&self, event: AgentEvent) -> Result<(), SdkError> {
         self.event_tx
             .send(event)
             .await
             .map_err(|_| SdkError::EventChannelClosed)
+    }
+}
+
+const fn kind_to_ref(
+    k: runtime_core::generated::capability::CapabilityKind,
+) -> runtime_core::event::CapabilityKindRef {
+    use runtime_core::event::CapabilityKindRef;
+    use runtime_core::generated::capability::CapabilityKind;
+    match k {
+        CapabilityKind::Read => CapabilityKindRef::Read,
+        CapabilityKind::Write => CapabilityKindRef::Write,
+        CapabilityKind::Exec => CapabilityKindRef::Exec,
+        CapabilityKind::Network => CapabilityKindRef::Network,
+        CapabilityKind::ProcessSpawn => CapabilityKindRef::ProcessSpawn,
     }
 }
 

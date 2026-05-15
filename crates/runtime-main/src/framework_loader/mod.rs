@@ -19,11 +19,18 @@
 //!   `serde_json::from_str` → `walker::walk` → emit per gap → return
 //!   `Ok(Framework)` if zero gaps, else `Err(FrameworkLoadError::GapsFound)`.
 
+/// M06.A wire-up support — `capabilities_for_tool` + `parent_grants_for_agent`
+/// + `Capabilities → Vec<CapabilityDeclaration>` translation.
+pub mod capability_map;
 /// Failure types raised by [`load_and_validate`].
 pub mod error;
 /// Pure-function walker + Gap/GapKind types. Spec §4b Layer 1.
 pub mod walker;
 
+pub use capability_map::{
+    capabilities_for_tool, capabilities_to_declarations, declaration_to_narrowed_from_str,
+    inline_agents, parent_grants_for_agent, CapabilityLookupError, FrameworkRef,
+};
 pub use error::FrameworkLoadError;
 pub use walker::{walk, Gap, GapKind};
 
