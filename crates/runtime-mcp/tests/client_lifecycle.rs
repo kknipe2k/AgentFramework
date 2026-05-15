@@ -408,6 +408,43 @@ async fn add_server_twice_in_sequence_with_distinct_names_both_succeed() {
 }
 
 #[tokio::test]
+async fn health_pass_with_healthy_connection_does_not_emit_mcp_missing() {
+    // Counterpart to the failed-ping test: a connection whose ping()
+    // succeeds must NOT be reported via the emit_missing callback. The
+    // observer-callback contract is: emit only on failure.
+    let dir = tempfile::tempdir().unwrap();
+    let registry = open_registry(&dir);
+    let secret_store: Arc<dyn SecretStore> = Arc::new(InMemorySecretStore::new());
+    let audit = open_audit(&dir).await;
+    let client = McpClient::new_with_audit(
+        Arc::clone(&registry),
+        Arc::clone(&secret_store),
+        Arc::clone(&audit),
+        SESSION_ID,
+    );
+    let healthy: Arc<dyn Transport> = Arc::new(MockTransport::new());
+    client
+        .add_server(stdio_config("steady"), None, Arc::clone(&healthy))
+        .await
+        .expect("add");
+    let _ = client
+        .get_connection("steady", Arc::clone(&healthy))
+        .await
+        .expect("prime cache");
+
+    let observed = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let observed_clone = std::sync::Arc::clone(&observed);
+    client
+        .run_health_pass(move |name| observed_clone.lock().unwrap().push(name.to_string()))
+        .await;
+    let names_snapshot: Vec<String> = observed.lock().unwrap().clone();
+    assert!(
+        names_snapshot.is_empty(),
+        "healthy connection must not be reported via emit_missing; got {names_snapshot:?}"
+    );
+}
+
+#[tokio::test]
 async fn health_pass_emits_mcp_missing_for_failed_ping_and_drops_cache() {
     // Health-pass routes failed pings through the supplied event sink
     // (`emit_missing` callback) which the production wiring binds to
