@@ -28,8 +28,13 @@
 //! Resolution) for the architectural role; see `docs/build-prompts/
 //! M06-mcp-basic.md` Stage B for the staging plan.
 
+pub mod client;
 pub mod error;
 pub mod transport;
 
+pub use client::{
+    InMemorySecretStore, KeyringSecretStore, LifecycleError, McpClient, McpServerRecord,
+    McpServerSummary, Registry, SecretStore, MCP_KEYRING_SERVICE,
+};
 pub use error::McpError;
 pub use transport::{Connection, McpTool, Transport};

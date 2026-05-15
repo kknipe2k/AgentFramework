@@ -862,6 +862,69 @@ pub mod error {
 #[doc = "      \"additionalProperties\": false"]
 #[doc = "    },"]
 #[doc = "    {"]
+#[doc = "      \"title\": \"McpInstalled\","]
+#[doc = "      \"description\": \"Spec §5 + §13.5: M06.C McpClient::add_server succeeded. Records server name + transport discriminant + presence-of-auth so the renderer + audit consumer can show installation history without exposing secrets. Emitted alongside the audit `mcp_installed` line.\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"has_auth\","]
+#[doc = "        \"name\","]
+#[doc = "        \"transport_kind\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"has_auth\": {"]
+#[doc = "          \"description\": \"True iff a per-server auth secret was stored alongside the install. Indicates the renderer should show the credential indicator on the MCPNode (Stage E).\","]
+#[doc = "          \"type\": \"boolean\""]
+#[doc = "        },"]
+#[doc = "        \"name\": {"]
+#[doc = "          \"$ref\": \"#/$defs/McpServerNameRef\""]
+#[doc = "        },"]
+#[doc = "        \"transport_kind\": {"]
+#[doc = "          \"$ref\": \"#/$defs/McpTransportKind\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"mcp_installed\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"title\": \"McpUninstalled\","]
+#[doc = "      \"description\": \"Spec §5 + §13.5: M06.C McpClient::remove_server succeeded. Records server name only — transport / auth-state are stripped on removal so the audit trail reflects the post-state.\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"name\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"name\": {"]
+#[doc = "          \"$ref\": \"#/$defs/McpServerNameRef\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"mcp_uninstalled\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"title\": \"McpAuthGranted\","]
+#[doc = "      \"description\": \"Spec §5 + §13.5 + §8.security L5: M06.C secret stored for an MCP server's auth_secret_ref. The secret value is NEVER logged — only the server name + the keychain-key reference. Emitted alongside the audit `mcp_auth_granted` line.\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"name\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"name\": {"]
+#[doc = "          \"$ref\": \"#/$defs/McpServerNameRef\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"mcp_auth_granted\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
 #[doc = "      \"title\": \"AgentMissing\","]
 #[doc = "      \"description\": \"Spec §4b Layer 1 (loader) — `framework.agents[].spawns[]` references an agent id absent from `framework.agents[]`. Per spec §4b severity matrix this is a load-time block: the framework fails to load (severity=critical). Also emittable from Layer 2 request_capability when an agent asks for a sub-agent it cannot spawn.\","]
 #[doc = "      \"type\": \"object\","]
@@ -1613,6 +1676,20 @@ pub enum AgentEvent {
         severity: GapSeverity,
         suggested_action: SuggestedAction,
     },
+    #[doc = "McpInstalled\n\nSpec §5 + §13.5: M06.C McpClient::add_server succeeded. Records server name + transport discriminant + presence-of-auth so the renderer + audit consumer can show installation history without exposing secrets. Emitted alongside the audit `mcp_installed` line."]
+    #[serde(rename = "mcp_installed")]
+    McpInstalled {
+        #[doc = "True iff a per-server auth secret was stored alongside the install. Indicates the renderer should show the credential indicator on the MCPNode (Stage E)."]
+        has_auth: bool,
+        name: McpServerNameRef,
+        transport_kind: McpTransportKind,
+    },
+    #[doc = "McpUninstalled\n\nSpec §5 + §13.5: M06.C McpClient::remove_server succeeded. Records server name only — transport / auth-state are stripped on removal so the audit trail reflects the post-state."]
+    #[serde(rename = "mcp_uninstalled")]
+    McpUninstalled { name: McpServerNameRef },
+    #[doc = "McpAuthGranted\n\nSpec §5 + §13.5 + §8.security L5: M06.C secret stored for an MCP server's auth_secret_ref. The secret value is NEVER logged — only the server name + the keychain-key reference. Emitted alongside the audit `mcp_auth_granted` line."]
+    #[serde(rename = "mcp_auth_granted")]
+    McpAuthGranted { name: McpServerNameRef },
     #[doc = "AgentMissing\n\nSpec §4b Layer 1 (loader) — `framework.agents[].spawns[]` references an agent id absent from `framework.agents[]`. Per spec §4b severity matrix this is a load-time block: the framework fails to load (severity=critical). Also emittable from Layer 2 request_capability when an agent asks for a sub-agent it cannot spawn."]
     #[serde(rename = "agent_missing")]
     AgentMissing {
@@ -2494,6 +2571,160 @@ impl ::std::convert::TryFrom<&::std::string::String> for HookCategoryRef {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for HookCategoryRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "MCP server identifier embedded in M06.C lifecycle events (mcp_installed / mcp_uninstalled / mcp_auth_granted). Mirrors mcp.v1.json#/$defs/McpServerName (DNS-label pattern, 1–64 chars). The mirror exists because typify does not support cross-schema $ref to validated string newtypes; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef, TierRef)."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"McpServerNameRef\","]
+#[doc = "  \"description\": \"MCP server identifier embedded in M06.C lifecycle events (mcp_installed / mcp_uninstalled / mcp_auth_granted). Mirrors mcp.v1.json#/$defs/McpServerName (DNS-label pattern, 1–64 chars). The mirror exists because typify does not support cross-schema $ref to validated string newtypes; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef, TierRef).\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"maxLength\": 64,"]
+#[doc = "  \"minLength\": 1,"]
+#[doc = "  \"pattern\": \"^[a-z0-9][a-z0-9-]*$\""]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct McpServerNameRef(::std::string::String);
+impl ::std::ops::Deref for McpServerNameRef {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<McpServerNameRef> for ::std::string::String {
+    fn from(value: McpServerNameRef) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for McpServerNameRef {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 64usize {
+            return Err("longer than 64 characters".into());
+        }
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        static PATTERN: ::std::sync::LazyLock<::regress::Regex> =
+            ::std::sync::LazyLock::new(|| ::regress::Regex::new("^[a-z0-9][a-z0-9-]*$").unwrap());
+        if PATTERN.find(value).is_none() {
+            return Err("doesn't match pattern \"^[a-z0-9][a-z0-9-]*$\"".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for McpServerNameRef {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for McpServerNameRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for McpServerNameRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for McpServerNameRef {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "Transport discriminant — mirrors the McpTransport oneOf type tag from mcp.v1.json. Embedded inline rather than via cross-schema $ref because typify cross-schema enum refs require per-schema $defs duplication (pattern: HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef)."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"McpTransportKind\","]
+#[doc = "  \"description\": \"Transport discriminant — mirrors the McpTransport oneOf type tag from mcp.v1.json. Embedded inline rather than via cross-schema $ref because typify cross-schema enum refs require per-schema $defs duplication (pattern: HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef).\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"stdio\","]
+#[doc = "    \"http\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum McpTransportKind {
+    #[serde(rename = "stdio")]
+    Stdio,
+    #[serde(rename = "http")]
+    Http,
+}
+impl ::std::fmt::Display for McpTransportKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Stdio => f.write_str("stdio"),
+            Self::Http => f.write_str("http"),
+        }
+    }
+}
+impl ::std::str::FromStr for McpTransportKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "stdio" => Ok(Self::Stdio),
+            "http" => Ok(Self::Http),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for McpTransportKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for McpTransportKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for McpTransportKind {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,

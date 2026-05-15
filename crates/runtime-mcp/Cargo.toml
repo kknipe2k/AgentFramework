@@ -10,14 +10,17 @@ rust-version = { workspace = true }
 workspace = true
 
 [dependencies]
-rmcp        = { workspace = true }
+rmcp         = { workspace = true }
 runtime-core = { workspace = true }
-tokio       = { workspace = true, features = ["rt-multi-thread", "macros", "process", "sync", "time", "io-util"] }
-serde       = { workspace = true, features = ["derive"] }
-serde_json  = { workspace = true }
-thiserror   = { workspace = true }
-tracing     = { workspace = true }
-async-trait = { workspace = true }
+runtime-main = { workspace = true }
+keyring      = { workspace = true }
+rusqlite     = { workspace = true, features = ["bundled"] }
+tokio        = { workspace = true, features = ["rt-multi-thread", "macros", "process", "sync", "time", "io-util"] }
+serde        = { workspace = true, features = ["derive"] }
+serde_json   = { workspace = true }
+thiserror    = { workspace = true }
+tracing      = { workspace = true }
+async-trait  = { workspace = true }
 
 [dev-dependencies]
 tokio       = { workspace = true, features = ["test-util"] }

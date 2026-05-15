@@ -115,6 +115,20 @@
       "description": "Plain-English reason for the tier transition. For promotions: user clicked confirm in the Settings panel. For demotions: user clicked demote OR a downgrade-on-uncertainty affordance fired. Per gotcha #43 (typify-friendly extraction).",
       "minLength": 1
     },
+    "McpServerNameRef": {
+      "type": "string",
+      "title": "McpServerNameRef",
+      "description": "MCP server identifier embedded in M06.C lifecycle events (mcp_installed / mcp_uninstalled / mcp_auth_granted). Mirrors mcp.v1.json#/$defs/McpServerName (DNS-label pattern, 1–64 chars). The mirror exists because typify does not support cross-schema $ref to validated string newtypes; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef, TierRef).",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "McpTransportKind": {
+      "type": "string",
+      "title": "McpTransportKind",
+      "description": "Transport discriminant — mirrors the McpTransport oneOf type tag from mcp.v1.json. Embedded inline rather than via cross-schema $ref because typify cross-schema enum refs require per-schema $defs duplication (pattern: HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef).",
+      "enum": ["stdio", "http"]
+    },
     "NarrowedFromGrantDescription": {
       "type": "string",
       "title": "NarrowedFromGrantDescription",
@@ -489,6 +503,44 @@
         "severity": { "$ref": "#/$defs/GapSeverity" },
         "suggested_action": { "$ref": "#/$defs/SuggestedAction" },
         "requested_via": { "$ref": "#/$defs/GapSource" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "McpInstalled",
+      "description": "Spec §5 + §13.5: M06.C McpClient::add_server succeeded. Records server name + transport discriminant + presence-of-auth so the renderer + audit consumer can show installation history without exposing secrets. Emitted alongside the audit `mcp_installed` line.",
+      "additionalProperties": false,
+      "required": ["type", "name", "transport_kind", "has_auth"],
+      "properties": {
+        "type": { "const": "mcp_installed" },
+        "name": { "$ref": "#/$defs/McpServerNameRef" },
+        "transport_kind": { "$ref": "#/$defs/McpTransportKind" },
+        "has_auth": {
+          "type": "boolean",
+          "description": "True iff a per-server auth secret was stored alongside the install. Indicates the renderer should show the credential indicator on the MCPNode (Stage E)."
+        }
+      }
+    },
+    {
+      "type": "object",
+      "title": "McpUninstalled",
+      "description": "Spec §5 + §13.5: M06.C McpClient::remove_server succeeded. Records server name only — transport / auth-state are stripped on removal so the audit trail reflects the post-state.",
+      "additionalProperties": false,
+      "required": ["type", "name"],
+      "properties": {
+        "type": { "const": "mcp_uninstalled" },
+        "name": { "$ref": "#/$defs/McpServerNameRef" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "McpAuthGranted",
+      "description": "Spec §5 + §13.5 + §8.security L5: M06.C secret stored for an MCP server's auth_secret_ref. The secret value is NEVER logged — only the server name + the keychain-key reference. Emitted alongside the audit `mcp_auth_granted` line.",
+      "additionalProperties": false,
+      "required": ["type", "name"],
+      "properties": {
+        "type": { "const": "mcp_auth_granted" },
+        "name": { "$ref": "#/$defs/McpServerNameRef" }
       }
     },
     {

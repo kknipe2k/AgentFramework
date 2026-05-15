@@ -169,6 +169,39 @@ pub fn capability_denied(
     )
 }
 
+/// `mcp_installed` — emitted by M06.C `McpClient::add_server` on success.
+///
+/// Records server name + transport discriminant + presence-of-auth so the
+/// audit consumer can show installation history without exposing secret
+/// values. Per gotcha #66 correlation: `add_server` with auth emits BOTH
+/// `mcp_installed` AND `mcp_auth_granted` in order.
+#[must_use]
+pub fn mcp_installed(
+    _session: &str,
+    _name: &str,
+    _transport_kind: &str,
+    _has_auth: bool,
+) -> AuditEntry {
+    todo!("M06.C green phase")
+}
+
+/// `mcp_uninstalled` — emitted by M06.C `McpClient::remove_server` on success.
+///
+/// Records server name only — transport / auth-state are stripped on
+/// removal so the audit trail reflects the post-state.
+#[must_use]
+pub fn mcp_uninstalled(_session: &str, _name: &str) -> AuditEntry {
+    todo!("M06.C green phase")
+}
+
+/// `mcp_auth_granted` — emitted by M06.C when a per-server secret is
+/// stored. The secret value is NEVER logged; only the server name lands
+/// in the audit details. Spec §13.5 zero-secret-logging discipline.
+#[must_use]
+pub fn mcp_auth_granted(_session: &str, _name: &str) -> AuditEntry {
+    todo!("M06.C green phase")
+}
+
 /// `tier_transition` — emitted when the user's tier changes.
 ///
 /// Records both sides of the flip + the human-readable reason so the

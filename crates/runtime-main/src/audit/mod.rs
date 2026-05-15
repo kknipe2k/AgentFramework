@@ -41,7 +41,7 @@ pub mod writer;
 
 pub use entry::{
     capability_denied, capability_granted, framework_loaded, gap_detected, gap_resolved,
-    tier_transition,
+    mcp_auth_granted, mcp_installed, mcp_uninstalled, tier_transition,
 };
 pub use error::AuditError;
 pub use file_path::{audit_path, AUDIT_FILE_NAME};

@@ -3546,8 +3546,11 @@ name = "runtime-mcp"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "keyring",
  "rmcp",
  "runtime-core",
+ "runtime-main",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

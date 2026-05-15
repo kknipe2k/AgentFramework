@@ -46,6 +46,9 @@ export type AgentEvent =
   | SkillMissing
   | ToolMissing
   | McpMissing
+  | McpInstalled
+  | McpUninstalled
+  | McpAuthGranted
   | AgentMissing
   | GapResolved
   | HitlRequested
@@ -100,6 +103,14 @@ export type SuggestedAction = string;
  * How this gap was discovered. `loader` = the framework_loader walked the framework JSON at session start and the reference did not resolve. `request_capability` = a running agent asked for the capability mid-session via the meta-tool. Drives renderer display + HITL prompt copy.
  */
 export type GapSource = "loader" | "request_capability";
+/**
+ * MCP server identifier embedded in M06.C lifecycle events (mcp_installed / mcp_uninstalled / mcp_auth_granted). Mirrors mcp.v1.json#/$defs/McpServerName (DNS-label pattern, 1–64 chars). The mirror exists because typify does not support cross-schema $ref to validated string newtypes; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef, TierRef).
+ */
+export type McpServerNameRef = string;
+/**
+ * Transport discriminant — mirrors the McpTransport oneOf type tag from mcp.v1.json. Embedded inline rather than via cross-schema $ref because typify cross-schema enum refs require per-schema $defs duplication (pattern: HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef).
+ */
+export type McpTransportKind = "stdio" | "http";
 /**
  * HITL trigger discriminator embedded in HITL + notifier events. Spec §6a — mirrors hitl.v1.json HitlTrigger (9 values, locked). The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy).
  */
@@ -352,6 +363,32 @@ export interface McpMissing {
   severity: GapSeverity;
   suggested_action: SuggestedAction;
   requested_via: GapSource;
+}
+/**
+ * Spec §5 + §13.5: M06.C McpClient::add_server succeeded. Records server name + transport discriminant + presence-of-auth so the renderer + audit consumer can show installation history without exposing secrets. Emitted alongside the audit `mcp_installed` line.
+ */
+export interface McpInstalled {
+  type: "mcp_installed";
+  name: McpServerNameRef;
+  transport_kind: McpTransportKind;
+  /**
+   * True iff a per-server auth secret was stored alongside the install. Indicates the renderer should show the credential indicator on the MCPNode (Stage E).
+   */
+  has_auth: boolean;
+}
+/**
+ * Spec §5 + §13.5: M06.C McpClient::remove_server succeeded. Records server name only — transport / auth-state are stripped on removal so the audit trail reflects the post-state.
+ */
+export interface McpUninstalled {
+  type: "mcp_uninstalled";
+  name: McpServerNameRef;
+}
+/**
+ * Spec §5 + §13.5 + §8.security L5: M06.C secret stored for an MCP server's auth_secret_ref. The secret value is NEVER logged — only the server name + the keychain-key reference. Emitted alongside the audit `mcp_auth_granted` line.
+ */
+export interface McpAuthGranted {
+  type: "mcp_auth_granted";
+  name: McpServerNameRef;
 }
 /**
  * Spec §4b Layer 1 (loader) — `framework.agents[].spawns[]` references an agent id absent from `framework.agents[]`. Per spec §4b severity matrix this is a load-time block: the framework fails to load (severity=critical). Also emittable from Layer 2 request_capability when an agent asks for a sub-agent it cannot spawn.

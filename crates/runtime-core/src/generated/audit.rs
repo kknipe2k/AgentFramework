@@ -94,14 +94,14 @@ impl AuditEntry {
         Default::default()
     }
 }
-#[doc = "Discriminator for the `details` shape. v0.1 emits six kinds: `framework_loaded` (Stage A successful load), `gap_detected` (Stage A walker emitted a gap), `gap_resolved` (Stage A resolution event), `capability_granted` (Stage B enforcer accepted), `capability_denied` (Stage B enforcer rejected), `tier_transition` (Stage D evaluator-state flip). Per gotcha #43 (typify-friendly extraction): enum extracted to $defs with title."]
+#[doc = "Discriminator for the `details` shape. v0.1 emits nine kinds: `framework_loaded` (Stage A successful load), `gap_detected` (Stage A walker emitted a gap), `gap_resolved` (Stage A resolution event), `capability_granted` (Stage B enforcer accepted), `capability_denied` (Stage B enforcer rejected), `tier_transition` (Stage D evaluator-state flip), `mcp_installed` (M06.C McpClient::add_server succeeded), `mcp_uninstalled` (M06.C McpClient::remove_server succeeded), `mcp_auth_granted` (M06.C secret stored for an MCP server; secret value never logged). Per gotcha #43 (typify-friendly extraction): enum extracted to $defs with title."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
 #[doc = r" ```json"]
 #[doc = "{"]
 #[doc = "  \"title\": \"AuditEntryKind\","]
-#[doc = "  \"description\": \"Discriminator for the `details` shape. v0.1 emits six kinds: `framework_loaded` (Stage A successful load), `gap_detected` (Stage A walker emitted a gap), `gap_resolved` (Stage A resolution event), `capability_granted` (Stage B enforcer accepted), `capability_denied` (Stage B enforcer rejected), `tier_transition` (Stage D evaluator-state flip). Per gotcha #43 (typify-friendly extraction): enum extracted to $defs with title.\","]
+#[doc = "  \"description\": \"Discriminator for the `details` shape. v0.1 emits nine kinds: `framework_loaded` (Stage A successful load), `gap_detected` (Stage A walker emitted a gap), `gap_resolved` (Stage A resolution event), `capability_granted` (Stage B enforcer accepted), `capability_denied` (Stage B enforcer rejected), `tier_transition` (Stage D evaluator-state flip), `mcp_installed` (M06.C McpClient::add_server succeeded), `mcp_uninstalled` (M06.C McpClient::remove_server succeeded), `mcp_auth_granted` (M06.C secret stored for an MCP server; secret value never logged). Per gotcha #43 (typify-friendly extraction): enum extracted to $defs with title.\","]
 #[doc = "  \"type\": \"string\","]
 #[doc = "  \"enum\": ["]
 #[doc = "    \"framework_loaded\","]
@@ -109,7 +109,10 @@ impl AuditEntry {
 #[doc = "    \"gap_resolved\","]
 #[doc = "    \"capability_granted\","]
 #[doc = "    \"capability_denied\","]
-#[doc = "    \"tier_transition\""]
+#[doc = "    \"tier_transition\","]
+#[doc = "    \"mcp_installed\","]
+#[doc = "    \"mcp_uninstalled\","]
+#[doc = "    \"mcp_auth_granted\""]
 #[doc = "  ]"]
 #[doc = "}"]
 #[doc = r" ```"]
@@ -139,6 +142,12 @@ pub enum AuditEntryKind {
     CapabilityDenied,
     #[serde(rename = "tier_transition")]
     TierTransition,
+    #[serde(rename = "mcp_installed")]
+    McpInstalled,
+    #[serde(rename = "mcp_uninstalled")]
+    McpUninstalled,
+    #[serde(rename = "mcp_auth_granted")]
+    McpAuthGranted,
 }
 impl ::std::fmt::Display for AuditEntryKind {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -149,6 +158,9 @@ impl ::std::fmt::Display for AuditEntryKind {
             Self::CapabilityGranted => f.write_str("capability_granted"),
             Self::CapabilityDenied => f.write_str("capability_denied"),
             Self::TierTransition => f.write_str("tier_transition"),
+            Self::McpInstalled => f.write_str("mcp_installed"),
+            Self::McpUninstalled => f.write_str("mcp_uninstalled"),
+            Self::McpAuthGranted => f.write_str("mcp_auth_granted"),
         }
     }
 }
@@ -162,6 +174,9 @@ impl ::std::str::FromStr for AuditEntryKind {
             "capability_granted" => Ok(Self::CapabilityGranted),
             "capability_denied" => Ok(Self::CapabilityDenied),
             "tier_transition" => Ok(Self::TierTransition),
+            "mcp_installed" => Ok(Self::McpInstalled),
+            "mcp_uninstalled" => Ok(Self::McpUninstalled),
+            "mcp_auth_granted" => Ok(Self::McpAuthGranted),
             _ => Err("invalid value".into()),
         }
     }

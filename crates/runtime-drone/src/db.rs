@@ -25,8 +25,10 @@
 //! The `mcp_servers` table stores **references to OS keychain entries**,
 //! never literal secrets:
 //!
-//! - `auth_token_ref` — keychain entry name (e.g., `agent-runtime/mcp/
-//!   github/token`).
+//! - `auth_secret_ref` — keychain entry name (e.g., `agent-runtime/mcp/
+//!   github/token`). Renamed from `auth_token_ref` at migration 002 to
+//!   align with `mcp.v1.json::McpServerConfig.auth_secret_ref` per
+//!   CLAUDE.md §14 schema-as-source-of-truth.
 //! - `env_json` map values — either non-secret literals (e.g.,
 //!   `RUST_LOG=info`) or keychain refs prefixed with `keychain://`.
 //! - `oauth_state_json` — `{access_token_ref, refresh_token_ref,
@@ -249,6 +251,61 @@ mod tests {
         let (_dir, path) = temp_db_path();
         let _conn1 = init(&path).expect("first init");
         let _conn2 = init(&path).expect("second init must not error");
+    }
+
+    // ── M06.C Stage C — migration 002 schema-alignment tests ──
+
+    #[test]
+    fn migration_002_renames_auth_token_ref_to_auth_secret_ref() {
+        // Per CLAUDE.md §14 schema-as-source-of-truth: the SQL column
+        // name must match `mcp.v1.json::McpServerConfig.auth_secret_ref`.
+        // The pre-002 column was `auth_token_ref`; migration 002 renames.
+        let (_dir, path) = temp_db_path();
+        let conn = init(&path).expect("init");
+        let columns: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('mcp_servers') ORDER BY cid")
+            .expect("prepare")
+            .query_map([], |r| r.get::<_, String>(0))
+            .expect("query")
+            .map(Result::unwrap)
+            .collect();
+        assert!(
+            columns.iter().any(|c| c == "auth_secret_ref"),
+            "expected renamed column auth_secret_ref; got {columns:?}"
+        );
+        assert!(
+            !columns.iter().any(|c| c == "auth_token_ref"),
+            "old column auth_token_ref must be gone post-002; got {columns:?}"
+        );
+    }
+
+    #[test]
+    fn migration_002_adds_cwd_column() {
+        // Migration 002 adds `cwd TEXT` to round-trip the McpTransport
+        // stdio variant's optional working directory.
+        let (_dir, path) = temp_db_path();
+        let conn = init(&path).expect("init");
+        let columns: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('mcp_servers') ORDER BY cid")
+            .expect("prepare")
+            .query_map([], |r| r.get::<_, String>(0))
+            .expect("query")
+            .map(Result::unwrap)
+            .collect();
+        assert!(
+            columns.iter().any(|c| c == "cwd"),
+            "expected new column cwd; got {columns:?}"
+        );
+    }
+
+    #[test]
+    fn migration_002_idempotent_via_runner() {
+        // The migration runner's `_migrations` table tracks applied
+        // versions; second init must NOT re-run 002 (would error on
+        // duplicate-column / no-such-column).
+        let (_dir, path) = temp_db_path();
+        let _c1 = init(&path).expect("first");
+        let _c2 = init(&path).expect("second must skip already-applied migrations");
     }
 
     #[test]
