@@ -6,6 +6,88 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M06 Stage C (`runtime-mcp::client` lifecycle — install + auth + connection mgmt + audit)
+
+- **`crates/runtime-mcp/src/client/`** *(new module)* — server lifecycle
+  management wrapping the Stage B transport primitive:
+  - `McpClient` — `add_server` / `remove_server` / `test_connection` /
+    `list_servers` / `get_connection`. Holds the SQLite registry, the
+    secret store, the M05.E `AuditWriter`, and a cache of live
+    connections keyed by server name. Per ADR-0007: lives in the main
+    process; the drone is audit + projection, not orchestrator.
+  - `Registry` — SQLite-backed `mcp_servers` persistence;
+    path-agnostic `Registry::open(path: &Path)` per the CLAUDE.md §9
+    archetype; wires through `runtime_drone::db::init` for the WAL
+    pragmas + migration runner.
+  - `SecretStore` trait + `InMemorySecretStore` (tests) +
+    `KeyringSecretStore` (production; MCP-namespaced
+    `agent-runtime/mcp` keychain service, distinct from the M02
+    Anthropic API-key entry).
+  - `lifecycle::spawn_health_pinger` — 30s default health-ping loop;
+    failed pings route through the existing `mcp_missing` event variant
+    (M05.A) + the existing `on_gap` HITL trigger (M04.E). **No new
+    event variant and no new HITL trigger** for the offline case.
+  - `LifecycleError` — aggregates Mcp / Registry / Auth / NotFound /
+    AlreadyExists / Json variants via `thiserror`.
+- **`schemas/event.v1.json`** — adds `mcp_installed`, `mcp_uninstalled`,
+  `mcp_auth_granted` event variants. `McpServerName` is mirrored as the
+  `McpServerNameRef` $def (+ `McpTransportKind`) per the M04.D
+  cross-schema-ref-avoidance pattern (typify can't $ref validated
+  string newtypes across schemas — gotcha #43 family).
+- **`schemas/audit.v1.json`** — `AuditEntryKind` gains `mcp_installed`,
+  `mcp_uninstalled`, `mcp_auth_granted`.
+- **`crates/runtime-main/src/audit/entry.rs`** — `mcp_installed` /
+  `mcp_uninstalled` / `mcp_auth_granted` entry constructors (per the
+  M05.E builder pattern; `AuditWriter` trait surface unchanged). Per
+  gotcha #66 correlation: `add_server` with auth emits BOTH
+  `mcp_installed` AND `mcp_auth_granted` in order. Per spec §13.5:
+  the secret value is never logged — only the server name.
+- **`crates/runtime-drone/migrations/002_mcp_servers.sql`** — two-line
+  schema alignment per CLAUDE.md §14 schema-as-source-of-truth:
+  `RENAME COLUMN auth_token_ref TO auth_secret_ref` (matches
+  `mcp.v1.json::McpServerConfig.auth_secret_ref`) + `ADD COLUMN cwd
+  TEXT` (round-trips the `McpTransport` stdio cwd). The M02-scaffolded
+  `mcp_servers` table already had the other 24 columns; the phase
+  doc's larger proposed migration was redundant (caught via the
+  `<phase_doc_inventory_audit>` WEBCHECK slot).
+- **`src-tauri/src/commands.rs`** — `mcp_add_server` /
+  `mcp_remove_server` / `mcp_test_connection` / `mcp_list_servers`
+  Tauri commands (+ `*_with` test seams). Renderer wires in Stage E.
+- **`src-tauri/src/main.rs`** — `McpClient` constructed at app startup
+  with `<app_local_data_dir>/mcp.sqlite` registry +
+  `KeyringSecretStore` + the shared `AuditWriter` (when present).
+
+### Changed — M06 Stage C
+
+- **`crates/runtime-drone/migrations/000_initial.sql` effective schema**
+  — `mcp_servers.auth_token_ref` renamed to `auth_secret_ref` via
+  migration 002. Existing `db.rs` + `migration_runner.rs` tests
+  updated for the rename + the new third migration.
+- **Workspace deps** — `runtime-mcp` gains `runtime-main` +
+  `runtime-drone` + `keyring` + `rusqlite` (path-deps via the
+  workspace pin). The `runtime-main → runtime-mcp` edge stays absent
+  (forward-only per the ADR-0007 architecture; Tauri shell bridges).
+- **`.github/workflows/ci.yml`** — `cargo test --workspace` now passes
+  `--features runtime-mcp/test-helpers` so the MCP client lifecycle
+  contract tests run in the main test step (not just coverage). The
+  runtime-mcp coverage gate adds `client/auth_keyring.rs` +
+  `client/lifecycle.rs` to the OS-call-holdout exclusion regex.
+
+### Coverage — M06 Stage C
+
+- `runtime-mcp` in-gate: **96.64% line** (≥95% gate). New OS-call
+  holdouts excluded: `client/auth_keyring.rs` (KeyringSecretStore —
+  real OS keychain; parallel to runtime-main `key_store.rs`) +
+  `client/lifecycle.rs` (`spawn_health_pinger` tokio-spawn'd loop;
+  parallel to drone `lib.rs`). Workspace 92.94%; runtime-drone 95.86%;
+  runtime-main 97.15%; runtime-sandbox 96.11% — all gates hold.
+- Built under the strict TDD red-phase + green-phase two-commit
+  pattern (per the M06.C user override + Anthropic Claude Code TDD
+  docs + TDAD arXiv:2603.17973). Red-phase commit `2ff18ca` is the
+  contract; the green-phase commit satisfies it without modifying
+  tests. Rationale + v1.7 graduation recommendation in
+  `M06.C-retrospective.md`.
+
 ### Added — M06 Stage B (`runtime-mcp` crate + rmcp 1.7.0 transport layer)
 
 - **`crates/runtime-mcp/`** *(new workspace crate)* — protocol-layer

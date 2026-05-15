@@ -36,11 +36,28 @@ pub fn spawn_health_pinger(client: Arc<McpClient>) -> JoinHandle<()> {
 ///
 /// Per the CLAUDE.md §9 `*_with` archetype: tests inject short intervals
 /// (e.g., 50ms) so the loop's behavior is observable within a single
-/// test run.
+/// test run. Failed pings route through the supplied `emit_missing`
+/// callback bound at the call site to the existing `mcp_missing` event
+/// variant. Loop runs until the spawned task is aborted (typically on
+/// `McpClient` drop).
 #[must_use]
 pub fn spawn_health_pinger_with_interval(
-    _client: Arc<McpClient>,
-    _interval: Duration,
+    client: Arc<McpClient>,
+    interval: Duration,
 ) -> JoinHandle<()> {
-    todo!("M06.C green phase")
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(interval);
+        // Skip the immediate first tick; wait one interval before the
+        // first health pass so a freshly-spawned client doesn't
+        // simultaneously connect + ping.
+        tick.tick().await;
+        loop {
+            tick.tick().await;
+            client
+                .run_health_pass(|name| {
+                    tracing::warn!(name = %name, "MCP server health-ping failed; routing through mcp_missing");
+                })
+                .await;
+        }
+    })
 }

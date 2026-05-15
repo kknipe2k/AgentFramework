@@ -23,7 +23,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use rusqlite::Connection;
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::client::error::LifecycleError;
 
@@ -31,8 +31,22 @@ use crate::client::error::LifecycleError;
 /// because rusqlite's Connection is `Send` but not `Sync`.
 #[derive(Debug)]
 pub struct Registry {
-    #[allow(dead_code, reason = "M06.C green phase will use this field")]
     conn: Mutex<Connection>,
+}
+
+fn now_unix_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
+fn map_unique_violation(name: &str, e: rusqlite::Error) -> LifecycleError {
+    if let rusqlite::Error::SqliteFailure(ref err, _) = e {
+        if err.code == rusqlite::ErrorCode::ConstraintViolation {
+            return LifecycleError::AlreadyExists(name.to_string());
+        }
+    }
+    LifecycleError::Registry(e)
 }
 
 /// Snapshot of one registered MCP server, as the Registry exposes it.
@@ -76,8 +90,13 @@ impl Registry {
     ///
     /// - [`LifecycleError::Registry`] when the `SQLite` open / pragma /
     ///   migration step fails.
-    pub fn open(_path: &Path) -> Result<Self, LifecycleError> {
-        todo!("M06.C green phase")
+    pub fn open(path: &Path) -> Result<Self, LifecycleError> {
+        let conn = runtime_drone::db::init(path).map_err(|e| match e {
+            runtime_drone::db::DbError::Sqlite(s) => LifecycleError::Registry(s),
+        })?;
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     /// Insert one server config into the registry.
@@ -87,8 +106,38 @@ impl Registry {
     /// - [`LifecycleError::AlreadyExists`] when a server with the same
     ///   name already exists.
     /// - [`LifecycleError::Registry`] for other `SQLite` failures.
-    pub fn insert(&self, _record: &McpServerRecord) -> Result<(), LifecycleError> {
-        todo!("M06.C green phase")
+    ///
+    /// # Panics
+    ///
+    /// Panics if the inner connection mutex is poisoned (a prior holder
+    /// panicked while the lock was held). This is unrecoverable and
+    /// indicates a bug elsewhere in the runtime.
+    pub fn insert(&self, record: &McpServerRecord) -> Result<(), LifecycleError> {
+        let now = now_unix_ms();
+        let conn = self.conn.lock().expect("registry conn mutex poisoned");
+        let result = conn
+            .execute(
+                "INSERT INTO mcp_servers (\
+                name, transport, command, args_json, env_json, cwd, url, \
+                auth_secret_ref, status, added_at, updated_at\
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+                params![
+                    record.name,
+                    record.transport,
+                    record.command,
+                    record.args_json,
+                    record.env_json,
+                    record.cwd,
+                    record.url,
+                    record.auth_secret_ref,
+                    record.status,
+                    now,
+                ],
+            )
+            .map_err(|e| map_unique_violation(&record.name, e));
+        drop(conn);
+        result?;
+        Ok(())
     }
 
     /// Fetch one server by name.
@@ -97,8 +146,23 @@ impl Registry {
     ///
     /// - [`LifecycleError::NotFound`] when no row matches the name.
     /// - [`LifecycleError::Registry`] for other `SQLite` failures.
-    pub fn get(&self, _name: &str) -> Result<McpServerRecord, LifecycleError> {
-        todo!("M06.C green phase")
+    ///
+    /// # Panics
+    ///
+    /// Panics if the inner connection mutex is poisoned.
+    pub fn get(&self, name: &str) -> Result<McpServerRecord, LifecycleError> {
+        let conn = self.conn.lock().expect("registry conn mutex poisoned");
+        let result = conn
+            .query_row(
+                "SELECT name, transport, command, args_json, env_json, cwd, url, \
+                    auth_secret_ref, status \
+             FROM mcp_servers WHERE name = ?1",
+                params![name],
+                row_to_record,
+            )
+            .optional();
+        drop(conn);
+        result?.ok_or_else(|| LifecycleError::NotFound(name.to_string()))
     }
 
     /// List all registered servers.
@@ -106,8 +170,25 @@ impl Registry {
     /// # Errors
     ///
     /// - [`LifecycleError::Registry`] for `SQLite` failures.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the inner connection mutex is poisoned.
     pub fn list(&self) -> Result<Vec<McpServerRecord>, LifecycleError> {
-        todo!("M06.C green phase")
+        let conn = self.conn.lock().expect("registry conn mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT name, transport, command, args_json, env_json, cwd, url, \
+                    auth_secret_ref, status \
+             FROM mcp_servers ORDER BY name",
+        )?;
+        let rows = stmt.query_map([], row_to_record)?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        drop(stmt);
+        drop(conn);
+        Ok(out)
     }
 
     /// Remove the server row matching `name`. Idempotent — removing a
@@ -116,8 +197,16 @@ impl Registry {
     /// # Errors
     ///
     /// - [`LifecycleError::Registry`] for `SQLite` failures.
-    pub fn remove(&self, _name: &str) -> Result<(), LifecycleError> {
-        todo!("M06.C green phase")
+    ///
+    /// # Panics
+    ///
+    /// Panics if the inner connection mutex is poisoned.
+    pub fn remove(&self, name: &str) -> Result<(), LifecycleError> {
+        let conn = self.conn.lock().expect("registry conn mutex poisoned");
+        let result = conn.execute("DELETE FROM mcp_servers WHERE name = ?1", params![name]);
+        drop(conn);
+        result?;
+        Ok(())
     }
 
     /// Update `last_connected_at` to the supplied unix-ms timestamp.
@@ -127,7 +216,53 @@ impl Registry {
     /// # Errors
     ///
     /// - [`LifecycleError::Registry`] for `SQLite` failures.
-    pub fn update_last_alive(&self, _name: &str, _ts_unix_ms: i64) -> Result<(), LifecycleError> {
-        todo!("M06.C green phase")
+    ///
+    /// # Panics
+    ///
+    /// Panics if the inner connection mutex is poisoned.
+    pub fn update_last_alive(&self, name: &str, ts_unix_ms: i64) -> Result<(), LifecycleError> {
+        let conn = self.conn.lock().expect("registry conn mutex poisoned");
+        let result = conn.execute(
+            "UPDATE mcp_servers SET last_connected_at = ?1, updated_at = ?1 WHERE name = ?2",
+            params![ts_unix_ms, name],
+        );
+        drop(conn);
+        result?;
+        Ok(())
+    }
+}
+
+fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<McpServerRecord> {
+    Ok(McpServerRecord {
+        name: row.get(0)?,
+        transport: row.get(1)?,
+        command: row.get(2)?,
+        args_json: row.get(3)?,
+        env_json: row.get(4)?,
+        cwd: row.get(5)?,
+        url: row.get(6)?,
+        auth_secret_ref: row.get(7)?,
+        status: row.get(8)?,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn map_unique_violation_passes_through_non_constraint_errors() {
+        // Non-constraint SQLite errors (e.g., InvalidColumnIndex) must
+        // surface as Registry, not AlreadyExists, so the caller can tell
+        // the difference between "schema mismatch" and "duplicate name."
+        let raw = rusqlite::Error::InvalidColumnIndex(99);
+        let mapped = map_unique_violation("name-doesnt-matter", raw);
+        assert!(matches!(mapped, LifecycleError::Registry(_)));
+    }
+
+    #[test]
+    fn now_unix_ms_returns_post_epoch() {
+        let t = now_unix_ms();
+        assert!(t > 1_700_000_000_000, "got {t}");
     }
 }

@@ -15,6 +15,9 @@ use runtime_main::hitl::HitlSeam;
 use runtime_main::sandbox_ipc::SandboxClient;
 use runtime_main::sdk::ApprovalSeam;
 use runtime_main::tier::{load_tier, Tier};
+use runtime_mcp::client::{
+    InMemorySecretStore, KeyringSecretStore, McpClient, Registry, SecretStore,
+};
 use sandbox_lifecycle::SandboxLifecycle;
 use tauri::{Manager, RunEvent};
 use tokio::sync::Mutex;
@@ -61,6 +64,11 @@ fn main() {
             commands::set_global_budget,
             commands::get_current_tier,
             commands::request_tier_transition,
+            // M06.C — MCP server lifecycle commands
+            commands::mcp_add_server,
+            commands::mcp_remove_server,
+            commands::mcp_test_connection,
+            commands::mcp_list_servers,
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();
@@ -103,8 +111,17 @@ fn main() {
             let tier_state: CurrentTierState = Mutex::new(tier_from_disk);
             app_handle.manage(tier_state);
             // M05 Stage E §8.security L5: best-effort audit log open.
-            if let Some(w) = open_audit_writer(&app_handle) {
-                app_handle.manage(w);
+            let audit_writer_opt = open_audit_writer(&app_handle);
+            if let Some(ref w) = audit_writer_opt {
+                app_handle.manage(Arc::clone(w));
+            }
+            // M06.C — McpClient: SQLite-backed registry + KeyringSecretStore +
+            // shared AuditWriter (when present). v0.1 single-session uses a
+            // synthetic session id at app startup; multi-session per §0d
+            // post-v0.1 will derive from the active SessionId surface.
+            let mcp_client_opt = open_mcp_client(&app_handle, audit_writer_opt.as_ref());
+            if let Some(c) = mcp_client_opt {
+                app_handle.manage(c);
             }
             // The setup hook runs on the Tauri main thread; we need an
             // async block for the drone spawn + connect. block_on uses
@@ -216,6 +233,55 @@ fn open_audit_writer<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<Arc
             None
         }
     }
+}
+
+/// Open the M06.C `McpClient` at app startup.
+///
+/// Resolves `<app_local_data_dir>/mcp.sqlite` for the registry, opens a
+/// [`KeyringSecretStore`] for per-server auth secrets, and (optionally)
+/// wires the existing M05.E `AuditWriter` so MCP install/uninstall/auth
+/// events land in the same `skills.audit.jsonl` as capability + tier
+/// audit lines. Returns `Some(Arc<McpClient>)` on success; `None` (with
+/// `tracing::warn!`) on failure — same best-effort posture as the audit
+/// log open per spec §13.5. The renderer's MCP commands will fail with
+/// "internal: `McpClient` not initialized" when this returns `None`.
+fn open_mcp_client<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    audit: Option<&Arc<AuditWriter>>,
+) -> Option<Arc<McpClient>> {
+    let dir = match app.path().app_local_data_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!(error = %e, "app_local_data_dir unavailable; MCP disabled");
+            return None;
+        }
+    };
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::warn!(error = %e, "MCP registry dir create failed");
+    }
+    let path = dir.join("mcp.sqlite");
+    let registry = match Registry::open(&path) {
+        Ok(r) => Arc::new(r),
+        Err(e) => {
+            tracing::warn!(error = %e, path = %path.display(), "MCP registry open failed; MCP disabled");
+            return None;
+        }
+    };
+    let secret_store: Arc<dyn SecretStore> = if std::env::var("AGENT_RUNTIME_MCP_IN_MEMORY").is_ok()
+    {
+        // Test-only override — never set in production. Lets headless
+        // CI / smoke runs avoid touching the OS keychain.
+        Arc::new(InMemorySecretStore::new())
+    } else {
+        Arc::new(KeyringSecretStore::new())
+    };
+    let session_id = format!("session-{}", uuid::Uuid::new_v4());
+    let client = if let Some(w) = audit {
+        McpClient::new_with_audit(registry, secret_store, Arc::clone(w), session_id)
+    } else {
+        McpClient::new(registry, secret_store, session_id)
+    };
+    Some(Arc::new(client))
 }
 
 /// Resolve the `SQLite` database path for v0.1.

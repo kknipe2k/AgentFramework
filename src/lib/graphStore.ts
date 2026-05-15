@@ -1418,12 +1418,22 @@ export const useGraphStore = create<GraphState>((set) => ({
         // mode_changed are graph-no-op by design. The exhaustive default
         // below is the forcing function: any new variant added to the
         // schema breaks the compile until handled.
+        //
+        // M06.C: mcp_installed / mcp_uninstalled / mcp_auth_granted are
+        // graph-no-op at this stage — the M06.C deliverable is the
+        // lifecycle + audit surface, not the MCPNode rendering. Stage E
+        // adds the MCPNode + the Settings-panel server list that
+        // consume these. Handled here as explicit no-ops so the
+        // exhaustiveness check passes without pre-building Stage E.
         case 'session_end':
         case 'tool_error':
         case 'mode_changed':
         case 'stream_text':
         case 'decision_record':
         case 'token_usage':
+        case 'mcp_installed':
+        case 'mcp_uninstalled':
+        case 'mcp_auth_granted':
           return state;
 
         default: {

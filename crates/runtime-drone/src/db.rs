@@ -68,6 +68,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "plans_tasks",
         sql: include_str!("../migrations/001_plans_tasks.sql"),
     },
+    Migration {
+        version: 2,
+        name: "mcp_servers",
+        sql: include_str!("../migrations/002_mcp_servers.sql"),
+    },
 ];
 
 /// Open or create the drone's `SQLite` database at `path`, configure
@@ -338,7 +343,10 @@ mod tests {
             "url",
             "headers_json",
             "auth_kind",
-            "auth_token_ref",
+            // Renamed from `auth_token_ref` at migration 002 to align
+            // with mcp.v1.json::McpServerConfig.auth_secret_ref
+            // (CLAUDE.md §14 schema-as-source-of-truth).
+            "auth_secret_ref",
             "oauth_state_json",
             "status",
             "last_error",
@@ -353,6 +361,9 @@ mod tests {
             "last_capabilities_refresh",
             "added_at",
             "updated_at",
+            // Added at migration 002 to round-trip the McpTransport
+            // stdio variant's optional working directory.
+            "cwd",
         ] {
             assert!(
                 columns.iter().any(|c| c == expected),

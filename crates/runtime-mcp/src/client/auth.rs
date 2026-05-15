@@ -48,7 +48,6 @@ pub trait SecretStore: Send + Sync {
 /// In-memory secret store for tests + the v0.1 pre-keychain path.
 #[derive(Debug, Default)]
 pub struct InMemorySecretStore {
-    #[allow(dead_code, reason = "M06.C green phase will use this field")]
     inner: Mutex<HashMap<String, String>>,
 }
 
@@ -62,52 +61,37 @@ impl InMemorySecretStore {
 
 #[async_trait]
 impl SecretStore for InMemorySecretStore {
-    async fn store_secret(&self, _ref_: &str, _secret: &str) -> Result<(), LifecycleError> {
-        todo!("M06.C green phase")
+    async fn store_secret(&self, ref_: &str, secret: &str) -> Result<(), LifecycleError> {
+        self.inner
+            .lock()
+            .await
+            .insert(ref_.to_string(), secret.to_string());
+        Ok(())
     }
 
-    async fn fetch_secret(&self, _ref_: &str) -> Result<String, LifecycleError> {
-        todo!("M06.C green phase")
+    async fn fetch_secret(&self, ref_: &str) -> Result<String, LifecycleError> {
+        self.inner
+            .lock()
+            .await
+            .get(ref_)
+            .cloned()
+            .ok_or_else(|| LifecycleError::NotFound(ref_.to_string()))
     }
 
-    async fn remove_secret(&self, _ref_: &str) -> Result<(), LifecycleError> {
-        todo!("M06.C green phase")
-    }
-}
-
-/// Production keychain-backed secret store. Wraps `keyring::Entry` with
-/// the MCP-namespaced [`MCP_KEYRING_SERVICE`].
-#[derive(Debug)]
-pub struct KeyringSecretStore;
-
-impl KeyringSecretStore {
-    /// New keyring-backed store. Per gotcha #29, the platform backend
-    /// is selected via the workspace `keyring` feature flags
-    /// (`apple-native`, `windows-native`, `sync-secret-service`) — no
-    /// runtime selection required here.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self
+    async fn remove_secret(&self, ref_: &str) -> Result<(), LifecycleError> {
+        self.inner.lock().await.remove(ref_);
+        Ok(())
     }
 }
 
-impl Default for KeyringSecretStore {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[async_trait]
-impl SecretStore for KeyringSecretStore {
-    async fn store_secret(&self, _ref_: &str, _secret: &str) -> Result<(), LifecycleError> {
-        todo!("M06.C green phase")
-    }
-
-    async fn fetch_secret(&self, _ref_: &str) -> Result<String, LifecycleError> {
-        todo!("M06.C green phase")
-    }
-
-    async fn remove_secret(&self, _ref_: &str) -> Result<(), LifecycleError> {
-        todo!("M06.C green phase")
+    #[tokio::test]
+    async fn in_memory_store_default_construction_returns_empty_store() {
+        let store = InMemorySecretStore::default();
+        let err = store.fetch_secret("never").await.unwrap_err();
+        assert!(matches!(err, LifecycleError::NotFound(_)));
     }
 }

@@ -177,12 +177,20 @@ pub fn capability_denied(
 /// `mcp_installed` AND `mcp_auth_granted` in order.
 #[must_use]
 pub fn mcp_installed(
-    _session: &str,
-    _name: &str,
-    _transport_kind: &str,
-    _has_auth: bool,
+    session: &str,
+    name: &str,
+    transport_kind: &str,
+    has_auth: bool,
 ) -> AuditEntry {
-    todo!("M06.C green phase")
+    entry(
+        session,
+        AuditEntryKind::McpInstalled,
+        details(json!({
+            "name": name,
+            "transport_kind": transport_kind,
+            "has_auth": has_auth,
+        })),
+    )
 }
 
 /// `mcp_uninstalled` — emitted by M06.C `McpClient::remove_server` on success.
@@ -190,16 +198,24 @@ pub fn mcp_installed(
 /// Records server name only — transport / auth-state are stripped on
 /// removal so the audit trail reflects the post-state.
 #[must_use]
-pub fn mcp_uninstalled(_session: &str, _name: &str) -> AuditEntry {
-    todo!("M06.C green phase")
+pub fn mcp_uninstalled(session: &str, name: &str) -> AuditEntry {
+    entry(
+        session,
+        AuditEntryKind::McpUninstalled,
+        details(json!({ "name": name })),
+    )
 }
 
 /// `mcp_auth_granted` — emitted by M06.C when a per-server secret is
 /// stored. The secret value is NEVER logged; only the server name lands
 /// in the audit details. Spec §13.5 zero-secret-logging discipline.
 #[must_use]
-pub fn mcp_auth_granted(_session: &str, _name: &str) -> AuditEntry {
-    todo!("M06.C green phase")
+pub fn mcp_auth_granted(session: &str, name: &str) -> AuditEntry {
+    entry(
+        session,
+        AuditEntryKind::McpAuthGranted,
+        details(json!({ "name": name })),
+    )
 }
 
 /// `tier_transition` — emitted when the user's tier changes.

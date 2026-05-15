@@ -51,6 +51,8 @@ use runtime_main::sdk::{
     replay_signals_to_events, AgentSdk, ApprovalDecision, ApprovalError, ApprovalSeam, SessionId,
 };
 use runtime_main::tier::{save_tier, Tier, TierPersistenceError};
+use runtime_mcp::client::{McpClient, McpServerSummary};
+use runtime_mcp::transport::McpTool;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
@@ -736,6 +738,137 @@ pub async fn respond_hitl_with(
             Err(CmdError::internal(e.to_string()))
         }
     }
+}
+
+// ── M06 Stage C — MCP server lifecycle commands ──────────────
+
+/// Add a new MCP server. Persists to the registry, optionally stores the
+/// per-server auth secret in the OS keychain (under the
+/// `agent-runtime/mcp` namespace), runs a one-shot test connection, and
+/// emits the audit lines (`mcp_installed` + `mcp_auth_granted` when
+/// applicable). Renderer wires from the Settings panel "Add Server" form.
+///
+/// # Errors
+///
+/// - [`CmdError::Internal`] for any lifecycle error (registry / transport /
+///   auth / connect failure). The error body carries the underlying detail.
+#[tauri::command]
+pub async fn mcp_add_server(
+    config: serde_json::Value,
+    auth: Option<String>,
+    client: tauri::State<'_, Arc<McpClient>>,
+) -> Result<(), CmdError> {
+    mcp_add_server_with(config, auth, client.inner().as_ref()).await
+}
+
+/// Test-seam for [`mcp_add_server`]. Accepts a borrowed `McpClient` so
+/// unit tests construct one with `tempfile`-backed registry + audit and
+/// drive the lifecycle without Tauri state plumbing.
+///
+/// # Errors
+///
+/// See [`mcp_add_server`].
+pub async fn mcp_add_server_with(
+    config: serde_json::Value,
+    auth: Option<String>,
+    client: &McpClient,
+) -> Result<(), CmdError> {
+    let parsed: runtime_core::generated::mcp::McpServerConfig = serde_json::from_value(config)
+        .map_err(|e| CmdError::internal(format!("mcp_add_server: invalid config JSON: {e}")))?;
+    let transport = McpClient::transport_from_config(&parsed);
+    tracing::info!(name = %parsed.name.to_string(), has_auth = auth.is_some(), "mcp_add_server invoked");
+    client
+        .add_server(parsed, auth, transport)
+        .await
+        .map_err(|e| CmdError::internal(format!("mcp_add_server: {e}")))
+}
+
+/// Remove a registered MCP server. Disconnects, removes registry row,
+/// drops the auth secret if present, emits `mcp_uninstalled` audit line.
+///
+/// # Errors
+///
+/// - [`CmdError::Internal`] for any lifecycle error. `NotFound` surfaces as
+///   `Internal` with the underlying detail body — the renderer interprets.
+#[tauri::command]
+pub async fn mcp_remove_server(
+    name: String,
+    client: tauri::State<'_, Arc<McpClient>>,
+) -> Result<(), CmdError> {
+    mcp_remove_server_with(name, client.inner().as_ref()).await
+}
+
+/// Test-seam for [`mcp_remove_server`].
+///
+/// # Errors
+///
+/// See [`mcp_remove_server`].
+pub async fn mcp_remove_server_with(name: String, client: &McpClient) -> Result<(), CmdError> {
+    tracing::info!(name = %name, "mcp_remove_server invoked");
+    client
+        .remove_server(&name)
+        .await
+        .map_err(|e| CmdError::internal(format!("mcp_remove_server: {e}")))
+}
+
+/// Test a server connection without persisting (Settings panel "Test"
+/// button). Connect + `list_tools` + disconnect.
+///
+/// # Errors
+///
+/// - [`CmdError::Internal`] for any lifecycle error.
+#[tauri::command]
+pub async fn mcp_test_connection(
+    config: serde_json::Value,
+    client: tauri::State<'_, Arc<McpClient>>,
+) -> Result<Vec<McpTool>, CmdError> {
+    mcp_test_connection_with(config, client.inner().as_ref()).await
+}
+
+/// Test-seam for [`mcp_test_connection`].
+///
+/// # Errors
+///
+/// See [`mcp_test_connection`].
+pub async fn mcp_test_connection_with(
+    config: serde_json::Value,
+    client: &McpClient,
+) -> Result<Vec<McpTool>, CmdError> {
+    let parsed: runtime_core::generated::mcp::McpServerConfig = serde_json::from_value(config)
+        .map_err(|e| {
+            CmdError::internal(format!("mcp_test_connection: invalid config JSON: {e}"))
+        })?;
+    let transport = McpClient::transport_from_config(&parsed);
+    tracing::info!(name = %parsed.name.to_string(), "mcp_test_connection invoked");
+    client
+        .test_connection(transport)
+        .await
+        .map_err(|e| CmdError::internal(format!("mcp_test_connection: {e}")))
+}
+
+/// List registered MCP servers + their current state.
+///
+/// # Errors
+///
+/// - [`CmdError::Internal`] for registry failures.
+#[tauri::command]
+pub async fn mcp_list_servers(
+    client: tauri::State<'_, Arc<McpClient>>,
+) -> Result<Vec<McpServerSummary>, CmdError> {
+    mcp_list_servers_with(client.inner().as_ref()).await
+}
+
+/// Test-seam for [`mcp_list_servers`].
+///
+/// # Errors
+///
+/// See [`mcp_list_servers`].
+pub async fn mcp_list_servers_with(client: &McpClient) -> Result<Vec<McpServerSummary>, CmdError> {
+    tracing::info!("mcp_list_servers invoked");
+    client
+        .list_servers()
+        .await
+        .map_err(|e| CmdError::internal(format!("mcp_list_servers: {e}")))
 }
 
 /// Shared resolve-and-log helper for the three approval-flow commands.

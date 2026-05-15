@@ -44,3 +44,39 @@ impl LifecycleError {
         Self::Auth(cause.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_constructor_carries_display_body() {
+        let e = LifecycleError::auth("kc backend offline");
+        assert_eq!(e.to_string(), "auth: kc backend offline");
+    }
+
+    #[test]
+    fn not_found_display_includes_name() {
+        let e = LifecycleError::NotFound("github".to_string());
+        assert_eq!(e.to_string(), "MCP server not found: github");
+    }
+
+    #[test]
+    fn already_exists_display_includes_name() {
+        let e = LifecycleError::AlreadyExists("dup".to_string());
+        assert_eq!(e.to_string(), "MCP server already exists: dup");
+    }
+
+    #[test]
+    fn from_mcp_error_wraps() {
+        let e: LifecycleError = McpError::Cancelled.into();
+        assert!(e.to_string().starts_with("MCP transport:"));
+    }
+
+    #[test]
+    fn from_json_error_wraps() {
+        let raw = serde_json::from_str::<serde_json::Value>("not json").unwrap_err();
+        let e: LifecycleError = raw.into();
+        assert!(e.to_string().starts_with("JSON:"));
+    }
+}

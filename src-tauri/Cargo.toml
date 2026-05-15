@@ -17,6 +17,11 @@ tauri              = { version = "2", features = [] }
 tauri-plugin-notification = { workspace = true }
 runtime-core       = { workspace = true }
 runtime-main       = { path = "../crates/runtime-main", version = "0.1.0" }
+# M06.C — Tauri shell holds the McpClient + KeyringSecretStore; constructs
+# at app startup with the AuditWriter wired (when present) so MCP
+# install/uninstall/auth events land in the same skills.audit.jsonl as
+# capability + tier audit lines (M05.E precedent).
+runtime-mcp        = { path = "../crates/runtime-mcp", version = "0.1.0" }
 async-trait        = { workspace = true }
 futures            = { workspace = true }
 serde              = { workspace = true, features = ["derive"] }
