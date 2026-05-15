@@ -29,5 +29,6 @@ src/types/task.ts
 src/types/hitl.ts
 src/types/budget.ts
 src/types/capability.ts
+src/types/mcp.ts
 *.yml
 *.yaml

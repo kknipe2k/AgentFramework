@@ -37,6 +37,9 @@ pub mod framework;
 /// M04 Stage E authored the schema + 9-trigger policy evaluator + notifier
 /// plugin interface + 3 built-in notifiers + HITL seam.
 pub mod hitl;
+/// Types generated from `schemas/mcp.v1.json` — MCP server config (spec §5).
+/// M06 Stage B authored the schema + the `runtime-mcp` workspace crate.
+pub mod mcp;
 /// Types generated from `schemas/plan.v1.json` — Plan primitive (spec §3a +
 /// §10). M04 Stage B authored the schema + Plan FSM + projection.
 pub mod plan;

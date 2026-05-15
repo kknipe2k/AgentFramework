@@ -6,6 +6,91 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M06 Stage B (`runtime-mcp` crate + rmcp 1.7.0 transport layer)
+
+- **`crates/runtime-mcp/`** *(new workspace crate)* — protocol-layer
+  dependency boundary for the spec §5 MCP Manager. Wraps the official
+  `rmcp` Rust SDK (1.7.0; `modelcontextprotocol/rust-sdk`) behind a
+  small `Transport` + `Connection` trait pair so Stage C lifecycle +
+  Stage D namespace/dispatch consume runtime-mcp's stable API instead
+  of rmcp's evolving surface. Pattern matches the existing
+  `runtime-drone` / `runtime-sandbox` per-resource-crate convention.
+- **`crates/runtime-mcp/src/transport/stdio.rs`** — `StdioTransport`
+  wrapping `rmcp::transport::TokioChildProcess` for local subprocess
+  MCP servers. Config: command + args + env + cwd. Pure
+  `build_command` seam unit-tested separately from the OS-call
+  `connect()` happy path.
+- **`crates/runtime-mcp/src/transport/http.rs`** — `HttpTransport`
+  wrapping `rmcp::transport::StreamableHttpClientTransport` for remote
+  MCP servers per MCP specification 2025-11-25. Wiremock-backed
+  connect-failure unit tests (404 / 500 / unreachable port).
+- **`crates/runtime-mcp/src/transport/mock.rs`** *(test-helpers
+  feature)* — in-process scripted `MockTransport` for downstream
+  consumers' tests. Scripts tool lists + per-tool call results + per-
+  tool call errors + ping/shutdown error scripts. Trait-level mock; no
+  `tokio::io::duplex` (raw-byte mocks would force every consumer test
+  to reproduce the rmcp wire format — out of scope at the MCP-trait
+  seam).
+- **`crates/runtime-mcp/src/transport/mod.rs`** — `Transport` factory
+  trait + `Connection` live-handle trait + `McpTool` data shape. Both
+  traits `Send + Sync` + object-safe.
+- **`crates/runtime-mcp/src/error.rs`** — `McpError` with six stable
+  variants (`ConnectFailed`, `Transport`, `Protocol`, `Timeout`,
+  `ToolNotFound`, `Cancelled`) + `is_connect_failure` / `is_transient`
+  discriminators for Stage C lifecycle retry policy. `Clone` derived
+  for mock scripting.
+- **`schemas/mcp.v1.json`** *(new)* — MCP server config schema:
+  `McpServerConfig` (name + transport + optional auth_secret_ref) +
+  `$defs/McpServerName` (validated identifier) + `$defs/McpTransport`
+  (discriminated oneOf stdio/http) + `$defs/McpServerStatus` (enum:
+  connected/disconnected/health_pending/error).
+- **`crates/runtime-core/src/generated/mcp.rs`** + **`src/types/mcp.ts`**
+  — regenerated via `cargo xtask regenerate-types`. Per CLAUDE.md §14
+  schema-as-source-of-truth.
+- **`crates/runtime-core/src/lib.rs`** — re-exports `generated::mcp`
+  alongside the other schema-derived modules.
+- **`crates/runtime-mcp/tests/integration.rs`** *(feature-gated
+  `--features integration`)* — manual smoke against
+  `@modelcontextprotocol/server-everything` via `npx`. Parallel to
+  `runtime-main`'s `anthropic_smoke.rs`; CI does NOT run.
+
+### Changed — M06 Stage B
+
+- **`Cargo.toml` (workspace)** — adds `crates/runtime-mcp` to
+  `workspace.members`; adds `rmcp = { version = "1.7", default-features
+  = false, features = ["client", "transport-child-process",
+  "transport-streamable-http-client-reqwest", "reqwest"] }` to
+  `workspace.dependencies` (the `client` + stdio + streamable-http +
+  rustls TLS combo); adds `runtime-mcp` to `workspace.dependencies` as
+  a path-dep.
+- **`Cargo.toml` (workspace, reqwest pin)** — drops the
+  `rustls-native-certs` feature flag from the workspace reqwest pin.
+  rmcp 1.7.0 forces reqwest to `^0.13.2` which dropped the feature
+  (replaced by the `rustls` feature's built-in
+  `rustls-platform-verifier`); no behavioral change on Windows / macOS
+  / Linux (platform-verifier supersedes native-certs).
+- **`crates/xtask/src/main.rs`** — adds `"mcp"` to the Rust schema
+  array + the `("mcp", schemas/mcp.v1.json)` entry to the TS schema
+  array.
+- **`.github/workflows/ci.yml`** — adds the `runtime-mcp` per-crate
+  coverage gate (≥95% on `mod.rs` + `mock.rs` + `error.rs`;
+  `transport/stdio.rs` + `transport/http.rs` excluded as OS-call
+  holdouts parallel to `runtime-main::providers::anthropic`); adds the
+  lcov export + Codecov upload for the new `runtime-mcp` flag.
+- **`.prettierignore` + `eslint.config.js`** — add `src/types/mcp.ts`
+  to the generated-file ignore lists, matching the existing pattern.
+
+### Coverage — M06 Stage B
+
+- **`runtime-mcp` per-crate gate**: 99.02% line on the in-gate surface
+  (`mod.rs` 95.35%, `mock.rs` 99.50%, `error.rs` 100.00%). `stdio.rs`
+  (90.00%) + `http.rs` (84.48%) excluded as OS-call holdouts;
+  rationale documented in CI workflow comment + `M06.B-retrospective.md`.
+- **Workspace gate**: 93.84% line (≥80%) — no regression.
+- **`runtime-main` per-crate**: 97.14% (≥95%); no regression.
+- **`runtime-drone` per-crate**: 95.79% (≥95%); no regression.
+- **`runtime-sandbox` per-crate**: 96.11% (≥95%); no regression.
+
 ### Added — M06 Stage A (ADR-0009 closure — L1 + L2a SDK wire-up + M05.V #3 X.2 truth-up)
 
 - **`crates/runtime-main/src/sdk/event_pipeline.rs`** — L1 wire-up: when

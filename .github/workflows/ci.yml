@@ -414,6 +414,33 @@ jobs:
           cargo llvm-cov --package runtime-sandbox \
             --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.seccomp\.rs|src.landlock\.rs" \
             --fail-under-lines 95
+      # runtime-mcp safety-primitive gate (M06 Stage B). Excludes
+      # (a) main.rs not applicable (no binary), (b) lib.rs (pub-mod
+      # declarations + re-exports — parallel to runtime-sandbox lib.rs
+      # exclusion), (c) transport/stdio.rs + transport/http.rs (the
+      # rmcp wrapper modules whose `connect()` happy paths require a
+      # real MCP-protocol-compliant peer — subprocess speaking JSON-RPC
+      # for stdio, or a full MCP `initialize` handshake for HTTP).
+      # These are OS-call holdouts parallel to runtime-main's
+      # providers/anthropic.rs (real-network reqwest+SSE wrapper). The
+      # rmcp wire-format logic itself lives in the rmcp upstream crate
+      # and is tested there; runtime-mcp's job is to wrap rmcp's API
+      # behind the Transport / Connection trait surface. Coverage credit
+      # for stdio.rs + http.rs comes from (a) `build_command` + pure
+      # helper unit tests + connect-failure-path tests (nonexistent
+      # command for stdio, wiremock 404/500/unreachable-port for http),
+      # which DO exercise the modules; and (b) the feature-gated
+      # `tests/integration.rs` smoke against
+      # `@modelcontextprotocol/server-everything` for the happy path.
+      # In-gate at ≥95%: mod.rs (trait declarations + McpTool serde) +
+      # mock.rs (in-process scripted transport — the canonical
+      # downstream-test surface) + error.rs.
+      # Per CLAUDE.md §5 + M06-mcp-basic.md Stage B.
+      - name: runtime-mcp coverage (≥95%, OS-call holdouts excluded)
+        run: |
+          cargo llvm-cov --package runtime-mcp \
+            --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.transport.stdio\.rs|src.transport.http\.rs" \
+            --fail-under-lines 95
       # lcov export for Codecov — workspace + per-crate uploads. The
       # cargo-llvm-cov --fail-under-lines gates above remain authoritative
       # for absolute floors. Codecov gates the *delta* vs main per
@@ -439,6 +466,11 @@ jobs:
           cargo llvm-cov --package runtime-sandbox --lcov \
             --output-path lcov-sandbox.info \
             --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.seccomp\.rs|src.landlock\.rs"
+      - name: Generate runtime-mcp lcov
+        run: |
+          cargo llvm-cov --package runtime-mcp --lcov \
+            --output-path lcov-mcp.info \
+            --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.transport.stdio\.rs|src.transport.http\.rs"
       # Codecov uploads — required from M02 onward (per CLAUDE.md §5
       # "Coverage delta gating (from M02 onward) — Codecov-enforced").
       # The codecov.yml `informational: false` flags make Codecov status
@@ -470,6 +502,13 @@ jobs:
         with:
           files:            lcov-sandbox.info
           flags:            runtime-sandbox
+          fail_ci_if_error: true
+          token:            ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload runtime-mcp coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files:            lcov-mcp.info
+          flags:            runtime-mcp
           fail_ci_if_error: true
           token:            ${{ secrets.CODECOV_TOKEN }}
 
