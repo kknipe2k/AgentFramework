@@ -392,12 +392,43 @@ Paste the XML block below into a fresh Claude Code session as the opening messag
 
   <test_plan_required>true</test_plan_required>
 
+  <tdd_discipline strict="true">
+    <red_phase>
+      Write all failing tests across the test plan's buckets. Stub the
+      production surfaces just enough to make the test files compile
+      (todo!() / unimplemented!() bodies are fine; the goal is link-time
+      test discovery, not behavior). Confirm tests fail with right-reason
+      errors per CLAUDE.md §5 (assertion failed / cannot find function /
+      unresolved import / not-yet-implemented panic — NOT a test-file
+      compile error and NOT a tautological pass). Commit as a STANDALONE
+      `test(M06.&lt;stage&gt;): failing tests for ...` commit on
+      claude/m06-mcp-basic BEFORE green-phase impl; the commit body
+      pastes the first ~40 lines of cargo test output proving the
+      expected-failure class. Surface the red-phase commit to the user;
+      user approves before green phase begins.
+    </red_phase>
+    <green_phase>
+      Implement until ALL failing tests pass. Do NOT modify the test
+      files during implementation — if a test is wrong, fix it in a
+      SEPARATE labelled follow-up commit with explanation, never silently
+      in the impl commit. The impl commit body MUST state the verifiable
+      audit-surface invariant: `git diff &lt;red-sha&gt;..&lt;impl-sha&gt;
+      -- '**/tests/**'` is EMPTY. Net-new additive tests + mechanical
+      rustfmt/clippy fixes to test files go in the separate follow-up
+      commit. No Co-Authored-By in any commit message (M06.B Decision;
+      gotcha-candidate territory on third recurrence).
+    </green_phase>
+  </tdd_discipline>
+
   <execution_steps>
     <step name="write_failing_tests" budget="1"/>
+    <step name="red_phase_commit" budget="1"/>
+    <step name="surface_for_red_approval"/>
     <step name="implement" budget="1"/>
     <step name="verify_gates" budget_iterations="3"/>
+    <step name="green_phase_commit" budget="1"/>
+    <step name="surface_for_final_approval"/>
     <step name="fill_retrospective"/>
-    <step name="surface"/>
   </execution_steps>
 
   <acceptance_criteria ref="docs/build-prompts/M06-mcp-basic.md" section="A.4 Tests"/>
@@ -1018,12 +1049,43 @@ Same disposition as M02's `anthropic_smoke.rs` — manual gate; CI doesn't run b
 
   <test_plan_required>true</test_plan_required>
 
+  <tdd_discipline strict="true">
+    <red_phase>
+      Write all failing tests across the test plan's buckets. Stub the
+      production surfaces just enough to make the test files compile
+      (todo!() / unimplemented!() bodies are fine; the goal is link-time
+      test discovery, not behavior). Confirm tests fail with right-reason
+      errors per CLAUDE.md §5 (assertion failed / cannot find function /
+      unresolved import / not-yet-implemented panic — NOT a test-file
+      compile error and NOT a tautological pass). Commit as a STANDALONE
+      `test(M06.&lt;stage&gt;): failing tests for ...` commit on
+      claude/m06-mcp-basic BEFORE green-phase impl; the commit body
+      pastes the first ~40 lines of cargo test output proving the
+      expected-failure class. Surface the red-phase commit to the user;
+      user approves before green phase begins.
+    </red_phase>
+    <green_phase>
+      Implement until ALL failing tests pass. Do NOT modify the test
+      files during implementation — if a test is wrong, fix it in a
+      SEPARATE labelled follow-up commit with explanation, never silently
+      in the impl commit. The impl commit body MUST state the verifiable
+      audit-surface invariant: `git diff &lt;red-sha&gt;..&lt;impl-sha&gt;
+      -- '**/tests/**'` is EMPTY. Net-new additive tests + mechanical
+      rustfmt/clippy fixes to test files go in the separate follow-up
+      commit. No Co-Authored-By in any commit message (M06.B Decision;
+      gotcha-candidate territory on third recurrence).
+    </green_phase>
+  </tdd_discipline>
+
   <execution_steps>
     <step name="write_failing_tests" budget="1"/>
+    <step name="red_phase_commit" budget="1"/>
+    <step name="surface_for_red_approval"/>
     <step name="implement" budget="1"/>
     <step name="verify_gates" budget_iterations="3"/>
+    <step name="green_phase_commit" budget="1"/>
+    <step name="surface_for_final_approval"/>
     <step name="fill_retrospective"/>
-    <step name="surface"/>
   </execution_steps>
 
   <acceptance_criteria ref="docs/build-prompts/M06-mcp-basic.md" section="B.4 Tests"/>
@@ -1547,12 +1609,43 @@ Uses the existing M05.E `AuditWriter::log` trait method; no new method addition.
 
   <test_plan_required>true</test_plan_required>
 
+  <tdd_discipline strict="true">
+    <red_phase>
+      Write all failing tests across the test plan's buckets. Stub the
+      production surfaces just enough to make the test files compile
+      (todo!() / unimplemented!() bodies are fine; the goal is link-time
+      test discovery, not behavior). Confirm tests fail with right-reason
+      errors per CLAUDE.md §5 (assertion failed / cannot find function /
+      unresolved import / not-yet-implemented panic — NOT a test-file
+      compile error and NOT a tautological pass). Commit as a STANDALONE
+      `test(M06.&lt;stage&gt;): failing tests for ...` commit on
+      claude/m06-mcp-basic BEFORE green-phase impl; the commit body
+      pastes the first ~40 lines of cargo test output proving the
+      expected-failure class. Surface the red-phase commit to the user;
+      user approves before green phase begins.
+    </red_phase>
+    <green_phase>
+      Implement until ALL failing tests pass. Do NOT modify the test
+      files during implementation — if a test is wrong, fix it in a
+      SEPARATE labelled follow-up commit with explanation, never silently
+      in the impl commit. The impl commit body MUST state the verifiable
+      audit-surface invariant: `git diff &lt;red-sha&gt;..&lt;impl-sha&gt;
+      -- '**/tests/**'` is EMPTY. Net-new additive tests + mechanical
+      rustfmt/clippy fixes to test files go in the separate follow-up
+      commit. No Co-Authored-By in any commit message (M06.B Decision;
+      gotcha-candidate territory on third recurrence).
+    </green_phase>
+  </tdd_discipline>
+
   <execution_steps>
     <step name="write_failing_tests" budget="1"/>
+    <step name="red_phase_commit" budget="1"/>
+    <step name="surface_for_red_approval"/>
     <step name="implement" budget="1"/>
     <step name="verify_gates" budget_iterations="3"/>
+    <step name="green_phase_commit" budget="1"/>
+    <step name="surface_for_final_approval"/>
     <step name="fill_retrospective"/>
-    <step name="surface"/>
   </execution_steps>
 
   <acceptance_criteria ref="docs/build-prompts/M06-mcp-basic.md" section="C.4 Tests"/>
@@ -2074,12 +2167,43 @@ Cross-schema $refs to `mcp.v1.json#/$defs/McpServerName` (Stage B introduced) �
 
   <test_plan_required>true</test_plan_required>
 
+  <tdd_discipline strict="true">
+    <red_phase>
+      Write all failing tests across the test plan's buckets. Stub the
+      production surfaces just enough to make the test files compile
+      (todo!() / unimplemented!() bodies are fine; the goal is link-time
+      test discovery, not behavior). Confirm tests fail with right-reason
+      errors per CLAUDE.md §5 (assertion failed / cannot find function /
+      unresolved import / not-yet-implemented panic — NOT a test-file
+      compile error and NOT a tautological pass). Commit as a STANDALONE
+      `test(M06.&lt;stage&gt;): failing tests for ...` commit on
+      claude/m06-mcp-basic BEFORE green-phase impl; the commit body
+      pastes the first ~40 lines of cargo test output proving the
+      expected-failure class. Surface the red-phase commit to the user;
+      user approves before green phase begins.
+    </red_phase>
+    <green_phase>
+      Implement until ALL failing tests pass. Do NOT modify the test
+      files during implementation — if a test is wrong, fix it in a
+      SEPARATE labelled follow-up commit with explanation, never silently
+      in the impl commit. The impl commit body MUST state the verifiable
+      audit-surface invariant: `git diff &lt;red-sha&gt;..&lt;impl-sha&gt;
+      -- '**/tests/**'` is EMPTY. Net-new additive tests + mechanical
+      rustfmt/clippy fixes to test files go in the separate follow-up
+      commit. No Co-Authored-By in any commit message (M06.B Decision;
+      gotcha-candidate territory on third recurrence).
+    </green_phase>
+  </tdd_discipline>
+
   <execution_steps>
     <step name="write_failing_tests" budget="1"/>
+    <step name="red_phase_commit" budget="1"/>
+    <step name="surface_for_red_approval"/>
     <step name="implement" budget="1"/>
     <step name="verify_gates" budget_iterations="3"/>
+    <step name="green_phase_commit" budget="1"/>
+    <step name="surface_for_final_approval"/>
     <step name="fill_retrospective"/>
-    <step name="surface"/>
   </execution_steps>
 
   <acceptance_criteria ref="docs/build-prompts/M06-mcp-basic.md" section="D.4 Tests"/>
@@ -2540,12 +2664,43 @@ test('adding MCP server via Settings updates graphStore and surfaces row', async
 
   <test_plan_required>true</test_plan_required>
 
+  <tdd_discipline strict="true">
+    <red_phase>
+      Write all failing tests across the test plan's buckets. Stub the
+      production surfaces just enough to make the test files compile
+      (todo!() / unimplemented!() bodies are fine; the goal is link-time
+      test discovery, not behavior). Confirm tests fail with right-reason
+      errors per CLAUDE.md §5 (assertion failed / cannot find function /
+      unresolved import / not-yet-implemented panic — NOT a test-file
+      compile error and NOT a tautological pass). Commit as a STANDALONE
+      `test(M06.&lt;stage&gt;): failing tests for ...` commit on
+      claude/m06-mcp-basic BEFORE green-phase impl; the commit body
+      pastes the first ~40 lines of cargo test output proving the
+      expected-failure class. Surface the red-phase commit to the user;
+      user approves before green phase begins.
+    </red_phase>
+    <green_phase>
+      Implement until ALL failing tests pass. Do NOT modify the test
+      files during implementation — if a test is wrong, fix it in a
+      SEPARATE labelled follow-up commit with explanation, never silently
+      in the impl commit. The impl commit body MUST state the verifiable
+      audit-surface invariant: `git diff &lt;red-sha&gt;..&lt;impl-sha&gt;
+      -- '**/tests/**'` is EMPTY. Net-new additive tests + mechanical
+      rustfmt/clippy fixes to test files go in the separate follow-up
+      commit. No Co-Authored-By in any commit message (M06.B Decision;
+      gotcha-candidate territory on third recurrence).
+    </green_phase>
+  </tdd_discipline>
+
   <execution_steps>
     <step name="write_failing_tests" budget="1"/>
+    <step name="red_phase_commit" budget="1"/>
+    <step name="surface_for_red_approval"/>
     <step name="implement" budget="1"/>
     <step name="verify_gates" budget_iterations="3"/>
+    <step name="green_phase_commit" budget="1"/>
+    <step name="surface_for_final_approval"/>
     <step name="fill_retrospective"/>
-    <step name="surface"/>
   </execution_steps>
 
   <acceptance_criteria ref="docs/build-prompts/M06-mcp-basic.md" section="E.4 Tests"/>
