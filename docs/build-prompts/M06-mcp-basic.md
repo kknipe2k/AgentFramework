@@ -2165,6 +2165,16 @@ Cross-schema $refs to `mcp.v1.json#/$defs/McpServerName` (Stage B introduced) �
 
   <deliverable ref="docs/build-prompts/M06-mcp-basic.md" section="D.3 Detailed Changes"/>
 
+  <!-- Added post-execution (2026-05-15) per maintainer direction so
+       M06.V's bias-guarded <read_first> treats these as KNOWN-DEFERRED
+       carry-forwards, not red findings. Both flow from ADR-0010
+       (dependency inversion) + strict-TDD "no untested production in
+       the green commit". Resolution is Stage E, test-first. -->
+  <scope_change>
+    <descope deliverable="SDK run-loop MCP wiring — AgentSdk field + ProviderEvent::ToolUse interception calling dispatch_if_mcp (None→Stage A fall-through; Some(Ok)→apply_mcp_dispatch + outcome_needs_hitl HITL await; Some(Err)→mcp_dispatch_error_event)" reason="ADR-0010 composition-root: the concrete Arc<dyn McpToolDispatch> is constructed + injected by src-tauri (same shell-injected-seam archetype as Arc<dyn Connection> / Arc<AuditWriter>); no red test covers the run-loop interception, and strict-TDD <tdd_discipline> forbids untested production in the green commit. Stage D ships the seam + outcome→event mapping + concrete dispatcher (all tested)." carry_forward_to="M06 Stage E (src-tauri injection + run-loop interception, test-first) — explicit M06.V Wire-pass scope item, NOT a red finding" authorized_by="ADR-0010 + M06.D <tdd_discipline> strict green-phase constraint"/>
+    <descope deliverable="agent_id-correct ToolInvoked/ToolResult for the apply_mcp_dispatch Invoked success path" reason="McpDispatchOutcome::Invoked carries {server,tool,value} only (the integration test pins that pattern; adding agent_id would break the frozen red test). apply_mcp_dispatch's Invoked branch therefore emits empty agent_id; the SDK run loop (which holds agent_id) must emit the agent_id-correct success events directly when the run-loop wiring lands. gotcha #68 class — must NOT ship empty agent_id to the renderer." carry_forward_to="M06 Stage E (test-first fix: e.g. apply_mcp_dispatch(outcome,input,agent_id) + wire-test update, OR run-loop emits Invoked events directly) — explicit M06.V Wire-pass scope item, NOT a red finding" authorized_by="ADR-0010 note + M06.D-retrospective.md [END] special-log + Decisions"/>
+  </scope_change>
+
   <test_plan_required>true</test_plan_required>
 
   <tdd_discipline strict="true">
