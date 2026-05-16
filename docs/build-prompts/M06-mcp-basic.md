@@ -42,7 +42,7 @@ M06 splits along the natural seams of MCP integration: the protocol-layer crate 
 - **D** — §5a namespace resolver (canonical `<server>__<tool>` + short-name + `mcp_aliases`); MCP dispatch wired through Stage A's L1+L2a gates; `tool_alias_ambiguous` + `mcp_request_blocked` event variants; `mcp_request_blocked` audit emission. Per-module ≥95% on namespace + dispatch.
 - **E** — Renderer: `MCPNode` extended with connection status + tool list; Settings panel → MCP Servers Add/Remove/Test UI; live indicator on the graph node; Playwright behavior test for Add flow. Renderer ≥80% (vitest).
 - **F** — *(maintainer-inserted post-E)* src-tauri `Arc<dyn McpToolDispatch>` injection + live `ProviderEvent::ToolUse` interception in the SDK run loop + `apply_mcp_dispatch` empty-`agent_id` (gotcha #68) test-first fix. Closes the M06.D `<scope_change>` #1+#2 in-milestone. runtime-main ≥95% on the interception logic; src-tauri injection is the `*_with`-seam holdout (M02.C/M05 precedent). Strict v1.7 two-commit TDD.
-- **V** — Stage V Verifier (in-band; fresh CLI session; four passes). Wire pass traces the ADR-0009 closure + MCP dispatch path + audit emissions + the Stage F end-to-end run-loop wire (trace #11, expected DELIVERED).
+- **V** — Stage V Verifier (in-band; fresh CLI session; four passes). Wire pass traces the ADR-0009 closure + MCP dispatch path + audit emissions + the Stage F run-loop dispatch SEAM (trace #11, SPLIT per ADR-0011: 11a seam+injection-seam expected DELIVERED/mock-verified; 11b concrete-construction + live exercise = ADR-0011 M07 carry-forward, NOT 🔴).
 - **G** — Closeout (gap-analysis entry + parent-milestone summary + **v1.6 required `<simplify_pass>`** child of `<deliverables>`).
 
 Stage B is the only stage that ships a new safety primitive (the `runtime-mcp` crate) at ≥95% coverage — comparable to M05.B (capability enforcer) + M05.C1 (sandbox plumbing). C extends the same crate; D extends with namespace + dispatch wiring; E is renderer-only (≥80%). The L1+L2a primitives already exist and ship from M05 at 100%; Stage A wires them — the wire-up tests cover the integration boundary.
@@ -2175,8 +2175,8 @@ Cross-schema $refs to `mcp.v1.json#/$defs/McpServerName` (Stage B introduced) �
        (dependency inversion) + strict-TDD "no untested production in
        the green commit". Resolution is Stage E, test-first. -->
   <scope_change>
-    <descope deliverable="SDK run-loop MCP wiring — AgentSdk field + ProviderEvent::ToolUse interception calling dispatch_if_mcp (None→Stage A fall-through; Some(Ok)→apply_mcp_dispatch + outcome_needs_hitl HITL await; Some(Err)→mcp_dispatch_error_event)" reason="ADR-0010 composition-root: the concrete Arc<dyn McpToolDispatch> is constructed + injected by src-tauri (same shell-injected-seam archetype as Arc<dyn Connection> / Arc<AuditWriter>); no red test covers the run-loop interception, and strict-TDD <tdd_discipline> forbids untested production in the green commit. Stage D ships the seam + outcome→event mapping + concrete dispatcher (all tested)." carry_forward_to="M06 Stage F (src-tauri injection + run-loop interception, test-first — maintainer-inserted wire stage; closed in-milestone, NOT carried to M07). Explicit M06.V Wire-pass trace #11 expected DELIVERED — 🔴 if F regressed/missing, NOT a documented-deferred descope post-F." authorized_by="ADR-0010 + M06.D <tdd_discipline> strict green-phase constraint; Stage F insertion authorized by maintainer post-M06.E scope call"/>
-    <descope deliverable="agent_id-correct ToolInvoked/ToolResult for the apply_mcp_dispatch Invoked success path" reason="McpDispatchOutcome::Invoked carries {server,tool,value} only (the integration test pins that pattern; adding agent_id would break the frozen red test). apply_mcp_dispatch's Invoked branch therefore emits empty agent_id; the SDK run loop (which holds agent_id) must emit the agent_id-correct success events directly when the run-loop wiring lands. gotcha #68 class — must NOT ship empty agent_id to the renderer." carry_forward_to="M06 Stage F (test-first fix: apply_mcp_dispatch(outcome,input,agent_id) + wire-test update, OR run-loop emits Invoked events directly — maintainer-inserted wire stage; closed in-milestone). Explicit M06.V Wire-pass trace #11 scope item expected DELIVERED — 🔴 if F ships empty agent_id, NOT a documented-deferred descope post-F." authorized_by="ADR-0010 note + M06.D-retrospective.md [END] special-log + Decisions; Stage F insertion authorized by maintainer post-M06.E scope call"/>
+    <descope deliverable="SDK run-loop MCP wiring — AgentSdk field + ProviderEvent::ToolUse interception calling dispatch_if_mcp (None→Stage A fall-through; Some(Ok)→apply_mcp_dispatch + outcome_needs_hitl HITL await; Some(Err)→mcp_dispatch_error_event)" reason="ADR-0010 composition-root: the concrete Arc<dyn McpToolDispatch> is constructed + injected by src-tauri (same shell-injected-seam archetype as Arc<dyn Connection> / Arc<AuditWriter>); no red test covers the run-loop interception, and strict-TDD <tdd_discipline> forbids untested production in the green commit. Stage D ships the seam + outcome→event mapping + concrete dispatcher (all tested)." carry_forward_to="M06 Stage F (run-loop interception SEAM + src-tauri *_with injection SEAM, test-first — maintainer-inserted wire stage). FORWARD-CORRECTED BY ADR-0011 (surfaced pre-F-red): trace #11 is SPLIT — 11a (the SDK run-loop interception seam + the src-tauri *_with injection seam, mock-verified) is closed in-milestone, expected DELIVERED, 🔴 if THAT regressed/missing; 11b (concrete McpDispatcher in main.rs + impl ConnectionResolver for McpClient + a live agent-loop exercise) is the explicit ADR-0011 M07 carry-forward, expected ABSENT at M06.V, NOT a 🔴. V reads ADR-0011 and applies the split." authorized_by="ADR-0010 + M06.D <tdd_discipline> strict green-phase constraint; Stage F insertion authorized by maintainer post-M06.E scope call; F-scope split authorized by ADR-0011 (maintainer-selected pre-F-red)"/>
+    <descope deliverable="agent_id-correct ToolInvoked/ToolResult for the apply_mcp_dispatch Invoked success path" reason="McpDispatchOutcome::Invoked carries {server,tool,value} only (the integration test pins that pattern; adding agent_id would break the frozen red test). apply_mcp_dispatch's Invoked branch therefore emits empty agent_id; the SDK run loop (which holds agent_id) must emit the agent_id-correct success events directly when the run-loop wiring lands. gotcha #68 class — must NOT ship empty agent_id to the renderer." carry_forward_to="M06 Stage F (test-first fix: run-loop emits Invoked events directly with the agent_id it holds, leaving apply_mcp_dispatch + the D-frozen McpDispatchOutcome test untouched — maintainer-inserted wire stage; closed in-milestone). FORWARD-CORRECTED BY ADR-0011: this is part of trace #11's 11a (mock-verified) — expected DELIVERED, 🔴 if F ships empty/wrong agent_id on the run-loop Invoked path; the live agent-loop exercise of this path is 11b (ADR-0011 M07 carry-forward, NOT a 🔴)." authorized_by="ADR-0010 note + M06.D-retrospective.md [END] special-log + Decisions; Stage F insertion authorized by maintainer post-M06.E scope call; F-scope split authorized by ADR-0011 (maintainer-selected pre-F-red)"/>
   </scope_change>
 
   <test_plan_required>true</test_plan_required>
@@ -2892,15 +2892,17 @@ https://claude.ai/code/session_<id>
 
 ### F.1 Problem Statement
 
-M06's headline deliverable — MCP tool calls dispatching end-to-end through the L1 capability gate in the *running app* — is not wired. Stage A built the `ProviderEvent::ToolUse` L1 interception point in `event_pipeline.rs`; Stage D built the `McpToolDispatch` trait + concrete `McpDispatcher` + integration tests (per ADR-0010 dependency inversion); Stage E was renderer-only. The composition-root injection that connects them — src-tauri constructing the concrete dispatcher and injecting `Arc<dyn McpToolDispatch>` into the live `AgentSdk` run loop — exists nowhere. Without it, a user adding a filesystem MCP server and asking the agent to use it gets nothing: units green, feature non-functional. This is the gotcha #66 / ADR-0009-recurrence pattern; the maintainer's post-M06.E scope call closes it in-milestone via this focused wire stage rather than a cross-milestone waiver.
+> **Forward-correction (ADR-0011, surfaced before the F red phase — same lineage as ADR-0010's pre-red reconciliation).** The original F.1 framing below ("dispatching end-to-end … in the *running app*") over-reached the code reality + Stage F's own scope locks. Grep-verified before red: (1) **no `impl ConnectionResolver for McpClient` exists** (the M06.D retro special-log + `dispatch.rs` doc-comment claim "McpClient impls it for production" is **false** — only the trait + the test mock exist), so the concrete `McpDispatcher` is **not constructible** in `src-tauri`; (2) F's own `<execution_warnings>` #1 + F.1 "nothing new in `runtime-mcp`" **forbid** adding that adapter; (3) no `CapabilityEnforcer`/`NamespaceResolver` is constructed in the shell; (4) the only `AgentSdk` construction is the fixed no-tools `run_smoke_session` "hello" path — it emits no `ProviderEvent::ToolUse`; the agent-with-tools loop is M07 (pre-existing Stage A `<scope_change>` + ADR-0009, restated in F.1's own "Not in this stage"). **Honest, in-scope F mandate (per ADR-0011, maintainer-selected):** deliver the SDK run-loop interception seam **+** the src-tauri `*_with` composition-root injection seam, both **mock-verified** per the ADR-0010 / `Arc<dyn _>` shell-injected-seam archetype (the same way `Arc<dyn Connection>` / `Arc<AuditWriter>` are verified — mock at the seam, concrete OS-call construction is the excluded holdout). M06.D `<scope_change>` #1+#2 are **CLOSED at the seam + injection-seam level**. The concrete-`McpDispatcher` construction + `impl ConnectionResolver for McpClient` glue + the live agent-loop exercise are an **explicit M07 carry-forward** (ADR-0011 *Neutral / future implications* (a)-(d)) — NOT a Stage F miss and NOT an M06.V 🔴. Read the prose below through this correction. F.5/F.6 ARE forward-corrected to match (F is unexecuted — the grandfathered-not-edited precedent applies only to *executed* stages' prompts, not an un-run one).
 
-Concrete deliverables:
-1. **src-tauri composition-root injection.** `src-tauri/src/main.rs` constructs the concrete `McpDispatcher` (NamespaceResolver + the Stage C `McpClient` + the Stage A `Arc<CapabilityEnforcer>` + the M05.E `AuditWriter`) and injects it into `AgentSdk` as `Arc<dyn McpToolDispatch>` — same shell-injected-seam archetype as `open_mcp_client` / the audit-writer wiring (ADR-0007 + ADR-0010).
-2. **Live run-loop interception.** The `AgentSdk` run loop gains an `Option<Arc<dyn McpToolDispatch>>` field; at the Stage A `ProviderEvent::ToolUse` site, it calls `dispatch_if_mcp` FIRST: `None` → fall through to Stage A's existing non-MCP L1 path (unchanged); `Some(Ok(outcome))` → `apply_mcp_dispatch` emits **agent_id-correct** `ToolInvoked` + `ToolResult`; `Some(Err)`/blocked → `outcome_needs_hitl` HITL await (existing `on_capability_violation` trigger) + `mcp_dispatch_error_event`.
-3. **gotcha #68 fix (the empty-`agent_id`).** `apply_mcp_dispatch`'s Invoked branch currently emits an empty `agent_id` (the M06.D `<scope_change>` #2). Fix test-first: either `apply_mcp_dispatch(outcome, input, agent_id)` + wire-test update, OR the run loop emits the Invoked success events directly with the `agent_id` it holds. The renderer MUST receive a correct non-empty `agent_id`.
-4. **≥95% runtime-main** on the run-loop interception logic + a new wire test. The src-tauri injection itself is the shell-injection holdout (the `commands.rs` / `main.rs` wrappers are excluded per the M02.C / M05 `*_with`-seam precedent — CLAUDE.md §5); the `*_with` testable seam IS unit-tested.
+M06's headline deliverable — the SDK run loop reaching an injected `Arc<dyn McpToolDispatch>` so MCP tool calls route through the L1 capability gate with agent_id-correct events — is not wired. Stage A built the `ProviderEvent::ToolUse` L1 interception point in `event_pipeline.rs`; Stage D built the `McpToolDispatch` trait + concrete `McpDispatcher` + integration tests (per ADR-0010 dependency inversion); Stage E was renderer-only. The SDK-side interception + the composition-root injection *seam* that connect them exist nowhere. Without them the architectural wire is absent: units green, the run loop has no path to a dispatcher. This is the gotcha #66 / ADR-0009-recurrence pattern; the maintainer's post-M06.E scope call closes the **buildable, in-scope** portion in-milestone via this focused wire stage (the residual concrete-construction + live exercise is the ADR-0011 M07 carry-forward, not a cross-milestone waiver of the seam).
 
-Not in this stage: anything renderer (E shipped it); anything new in `runtime-mcp` (D shipped the dispatcher); M07 multi-turn loop (Stage A `<scope_change>`, stays M07).
+Concrete deliverables (as scoped by ADR-0011):
+1. **src-tauri composition-root injection *seam* (mock-verified holdout pattern).** The `*_with` seam (`run_smoke_session_with`) accepts an `Option<Arc<dyn McpToolDispatch>>` and applies `.with_mcp_dispatch` when present — unit-tested with a **mock** dispatch. The production `run_smoke_session` wrapper passes `None` for now (the concrete `McpDispatcher` is not constructible — see the forward-correction); same OS-call-holdout pattern as `providers/anthropic.rs` / `key_store.rs` / `open_mcp_client` (CLAUDE.md §5 — the seam gets the unit test, the wrapper is the excluded holdout). Constructing the concrete `McpDispatcher` in `main.rs` is the **M07 carry-forward** (ADR-0011), not this stage.
+2. **Live run-loop interception.** The `AgentSdk` run loop gains an `Option<Arc<dyn McpToolDispatch>>` field + a `with_mcp_dispatch` builder seam; at the Stage A `ProviderEvent::ToolUse` site (the run loop in `agent_sdk.rs`, which is async — `event_pipeline.rs::next_event` is sync and cannot host the async dispatch; reconcile-not-escalate per the M06.D/E grandfathered-doc precedent), it calls `dispatch_if_mcp` FIRST: `None` → fall through to Stage A's existing non-MCP L1 path (unchanged); `Some(Ok(Invoked))` → the run loop emits **agent_id-correct** `ToolInvoked` + `ToolResult` directly; `Some(Ok(Blocked))` → `apply_mcp_dispatch` events + `outcome_needs_hitl` HITL await (existing `on_capability_violation` trigger, ADR-0007); `Some(Err)` → `mcp_dispatch_error_event`.
+3. **gotcha #68 fix (the empty-`agent_id`).** `apply_mcp_dispatch`'s Invoked branch currently emits an empty `agent_id` (the M06.D `<scope_change>` #2). Fixed via **run-loop-emits-Invoked-events-directly** (the F.3-preferred approach): the run loop holds `agent_id` and emits the success `ToolInvoked`/`ToolResult` itself, leaving `apply_mcp_dispatch` + `McpDispatchOutcome` untouched so the D-frozen `mcp_dispatch_wire.rs` integration test stays intact. The renderer MUST receive a correct non-empty `agent_id`.
+4. **≥95% runtime-main** on the run-loop interception logic + a new wire test against a **mock** `Arc<dyn McpToolDispatch>`. The src-tauri injection seam's wrapper is the shell-injection holdout (the `commands.rs` / `main.rs` wrappers are excluded per the M02.C / M05 `*_with`-seam precedent — CLAUDE.md §5); the `*_with` testable seam IS unit-tested.
+
+Not in this stage: anything renderer (E shipped it); anything new in `runtime-mcp` incl. `impl ConnectionResolver for McpClient` (D shipped the dispatcher; the adapter is the ADR-0011 M07 carry-forward); the concrete `McpDispatcher` constructed in `main.rs` (ADR-0011 M07 carry-forward — not constructible in-shell yet); M07 multi-turn / agent-with-tools loop (Stage A `<scope_change>` + ADR-0009, stays M07 — it is what exercises this wire live).
 
 ### F.2 Files to Change
 
@@ -2937,22 +2939,33 @@ Acceptance: all four run-loop tests + the seam test pass; `cargo llvm-cov -p run
 <work_stage_prompt id="M06.F">
   <context>
     Stage F of M06 (maintainer-inserted post-M06.E, pre-V). Closes the
-    ADR-0010 composition-root wire IN-milestone: src-tauri constructs the
-    concrete McpDispatcher + injects Arc&lt;dyn McpToolDispatch&gt; into the
-    live AgentSdk run loop; the run loop intercepts ProviderEvent::ToolUse
-    (Stage A's L1 site) calling dispatch_if_mcp first (None→Stage A
-    fall-through; Some(Ok)→agent_id-correct ToolInvoked+ToolResult;
-    Some(Err)/blocked→on_capability_violation HITL + dispatch_error
-    event); and fixes the apply_mcp_dispatch empty-agent_id (gotcha #68,
-    M06.D &lt;scope_change&gt; #2) test-first. This is the headline M06
-    deliverable's production wire — without it MCP dispatch is
-    non-functional in the running app. Strict v1.7 two-commit TDD.
+    ADR-0010 composition-root wire SEAM in-milestone, scoped per ADR-0011
+    (forward-correction surfaced + accepted pre-F-red): the AgentSdk run
+    loop gains an Option&lt;Arc&lt;dyn McpToolDispatch&gt;&gt; field + a
+    with_mcp_dispatch builder seam, and at the Stage A
+    ProviderEvent::ToolUse site calls dispatch_if_mcp first (None→Stage A
+    fall-through unchanged; Some(Ok(Invoked))→agent_id-correct
+    ToolInvoked+ToolResult emitted directly by the run loop;
+    Some(Ok(Blocked))→on_capability_violation HITL; Some(Err)→
+    mcp_dispatch_error_event); src-tauri exposes the *_with injection
+    seam (run_smoke_session_with accepts + applies Option&lt;Arc&lt;dyn
+    McpToolDispatch&gt;&gt;), mock-verified per the ADR-0010/Arc&lt;dyn _&gt;
+    archetype. Fixes the apply_mcp_dispatch empty-agent_id (gotcha #68,
+    M06.D &lt;scope_change&gt; #2) test-first via run-loop-emits-directly
+    (apply_mcp_dispatch + the D-frozen McpDispatchOutcome test left
+    untouched). Per ADR-0011 the CONCRETE McpDispatcher construction +
+    impl ConnectionResolver for McpClient + the live agent-loop exercise
+    are the explicit M07 carry-forward (NOT this stage; not constructible
+    in-shell and forbidden by F's own runtime-mcp scope lock). This is
+    the headline M06 deliverable's architectural wire seam. Strict v1.7
+    two-commit TDD.
   </context>
 
   <read_first>
     <file>CLAUDE.md</file>
     <file>STAGE-PROMPT-PROTOCOL.md</file>
-    <file>docs/build-prompts/M06-mcp-basic.md (Stage F sections F.1–F.4; the M06.D &lt;scope_change&gt; block this stage closes; ADR-0010)</file>
+    <file>docs/build-prompts/M06-mcp-basic.md (Stage F sections F.1–F.4 incl. the ADR-0011 forward-correction banner; the M06.D &lt;scope_change&gt; block this stage closes at the seam level; ADR-0010)</file>
+    <file>docs/adr/0011-m06f-scope-seam-not-running-app.md (the F-scope split this stage executes: 11a seam delivered, 11b M07 carry-forward)</file>
     <file>docs/adr/0010-mcp-dispatch-dependency-inversion.md (the seam this stage injects)</file>
     <file>docs/adr/0007-in-process-hitl-seam-architecture.md (shell-injected-seam archetype + on_capability_violation reuse)</file>
     <file>docs/build-prompts/retrospectives/M06.D-retrospective.md ([END] special-log + Decisions — the empty-agent_id + run-loop-injection carry-forwards)</file>
@@ -3078,30 +3091,41 @@ Acceptance: all four run-loop tests + the seam test pass; `cargo llvm-cov -p run
 ### F.6 Commit Message
 
 ```
-feat(runtime): M06 Stage F — src-tauri MCP-dispatch injection + live run-loop wire + gotcha #68 fix
+feat(runtime): M06 Stage F — MCP-dispatch run-loop interception + src-tauri injection seam + gotcha #68 fix
 
-Closes the ADR-0010 composition-root wire in-milestone (maintainer
-scope call post-M06.E) rather than carry M06's headline deliverable
-to M07. src-tauri constructs the concrete McpDispatcher and injects
-Arc<dyn McpToolDispatch> into the live AgentSdk run loop; the run
-loop intercepts ProviderEvent::ToolUse at the Stage A L1 site:
-None → Stage A non-MCP fall-through (unchanged); Some(Ok) →
-agent_id-correct ToolInvoked + ToolResult; Some(Err)/blocked →
-on_capability_violation HITL await + dispatch_error event.
+Closes the ADR-0010 composition-root wire SEAM in-milestone
+(maintainer scope call post-M06.E), scoped per ADR-0011
+(forward-correction accepted pre-F-red). The AgentSdk run loop
+gains an Option<Arc<dyn McpToolDispatch>> field + a with_mcp_dispatch
+builder seam and intercepts ProviderEvent::ToolUse at the Stage A
+L1 site: None → Stage A non-MCP fall-through (unchanged);
+Some(Ok(Invoked)) → agent_id-correct ToolInvoked + ToolResult
+emitted directly by the run loop; Some(Ok(Blocked)) →
+on_capability_violation HITL await; Some(Err) →
+mcp_dispatch_error_event. src-tauri exposes the *_with injection
+seam (run_smoke_session_with accepts + applies the optional
+dispatch), mock-verified per the ADR-0010 / Arc<dyn _> archetype.
 
 Fixes the apply_mcp_dispatch empty-agent_id (gotcha #68, M06.D
 <scope_change> #2): the run loop emits Invoked success events
 directly with the agent_id it holds, leaving the D-frozen
 McpDispatchOutcome {server,tool,value} integration test intact.
 
-M06.D <scope_change> #1 + #2 are now CLOSED — M06.V Wire trace #11
-verifies a delivered wire.
+Per ADR-0011 the concrete McpDispatcher construction +
+impl ConnectionResolver for McpClient + the live agent-loop
+exercise are the explicit M07 carry-forward (not constructible
+in-shell; forbidden by F's runtime-mcp scope lock). M06.D
+<scope_change> #1 + #2 are CLOSED at the seam + injection-seam
+level — M06.V Wire trace #11 SPLIT: 11a delivered/mock-verified,
+11b is the ADR-0011 M07 carry-forward (NOT a 🔴).
 
 Coverage: runtime-main ≥95% on the run-loop interception + new
 crates/runtime-main/tests/mcp_dispatch_runloop.rs wire test
 (agent_id-correct, non-MCP fall-through, blocked→HITL, twice-in-
-sequence). src-tauri injection is the *_with-seam holdout per the
-M02.C/M05 precedent (CLAUDE.md §5).
+sequence) against a mock Arc<dyn McpToolDispatch>. The src-tauri
+*_with injection seam is mock-tested; the production wrapper
+(passes None until M07) is the holdout per the M02.C/M05
+precedent (CLAUDE.md §5).
 
 Strict v1.7 two-commit TDD: git diff <red>..<impl> -- '**/tests/**'
 EMPTY (stated verbatim in the impl commit body).
@@ -3122,7 +3146,7 @@ https://claude.ai/code/session_<id>
 
 ### V.1 Problem Statement
 
-Run the four-pass verifier against M06's deliverables (Stages A–F) in a fresh CLI session. The agent reads only the spec, the phase doc body (V.1–V.6 included), the current code, the verifier templates, AND the phase doc's `<scope_change>` blocks (per v1.6 STAGE-V-VERIFIER-PROMPT-TEMPLATE.md update) — NOT the M06.A–F retrospectives or M06-summary or `docs/gap-analysis.md`. Bias guard is structural via clear-and-paste. Note: Stage F was maintainer-inserted post-M06.E to close the M06.D `<scope_change>` #1+#2 in-milestone; V reads those descope blocks AND their `carry_forward_to="M06 Stage F ... closed in-milestone"` resolution — so Wire trace #11 is verified as DELIVERED (🔴 if missing/regressed), NOT excused as a deferred descope.
+Run the four-pass verifier against M06's deliverables (Stages A–F) in a fresh CLI session. The agent reads only the spec, the phase doc body (V.1–V.6 included), the current code, the verifier templates, the phase doc's `<scope_change>` blocks (per v1.6 STAGE-V-VERIFIER-PROMPT-TEMPLATE.md update), **AND ADR-0011** (the F-scope forward-correction, per the same `<scope_change>`-into-V-read-list mechanism) — NOT the M06.A–F retrospectives or M06-summary or `docs/gap-analysis.md`. Bias guard is structural via clear-and-paste. Note: Stage F was maintainer-inserted post-M06.E to close the M06.D `<scope_change>` #1+#2 in-milestone; **per ADR-0011, trace #11 is SPLIT**: the SDK run-loop interception seam **+** the src-tauri `*_with` injection seam are verified DELIVERED/**mock-verified** (🔴 if *that* seam/injection-seam is missing or regressed); the concrete-`McpDispatcher` construction + `impl ConnectionResolver for McpClient` glue + live agent-loop exercise are the ADR-0011 **M07 carry-forward** and are **NOT** an M06.V 🔴 (V reads ADR-0011 and adjusts the trace #11 expectation accordingly — the ADR-0009 "if the next milestone doesn't wire it, that's the verifier's expected endpoint" mechanism, one milestone later).
 
 M06.V is the FIRST V run to consume v1.6's `<scope_change>` slot (M05.V's Decision 3 + ADR-0009's "future implications"); if any descope appears in a per-stage `<scope_change>` block, V reads it and adjusts expectations rather than emitting 🔴 for the documented carry-forward.
 
@@ -3135,7 +3159,7 @@ Aggregated from Stages A through F's X.2 tables:
 | Layer | Files / surfaces in scope for M06.V |
 |---|---|
 | **Inventory** | Every file path from §A.2 + §B.2 + §C.2 + §D.2 + §E.2 + §F.2 (Stage A: SDK wire-ups + integration tests + `narrowed_from` schema + M05 phase-doc edit; Stage B: `runtime-mcp` crate creation + transport files + `mcp.v1.json`; Stage C: client lifecycle + registry + auth + migration + Tauri commands; Stage D: namespace + mcp_dispatch + 2 schema-event additions + framework `mcp_aliases`; Stage E: 3 new + 1 extended renderer components + Playwright + styles; Stage F: run-loop interception in `event_pipeline.rs` + `agent_sdk.rs` `with_mcp_dispatch` seam + `apply_mcp_dispatch` agent_id fix + src-tauri injection + `mcp_dispatch_runloop.rs`) — verifier checks `git ls-files` presence + shape match against §X.3 detailed-changes narrative. |
-| **Wire** | Spec claims to trace end-to-end: ADR-0009 closure (L1 enforcer.check before provider.invoke; L2a narrow before AgentSpawned) + §5a tool namespace resolution (canonical / short / alias / re-resolution) + §5 MCP lifecycle (add → connect → invoke → disconnect) + §5 audit emissions (mcp_installed / mcp_uninstalled / mcp_auth_granted / mcp_request_blocked) + §8.security L1 MCP-tool gate (mcp_dispatch calls enforcer.check before Connection::invoke_tool) + **§5 MCP dispatch END-TO-END in the live run loop (ProviderEvent::ToolUse → injected `Arc<dyn McpToolDispatch>` → agent_id-correct ToolInvoked/ToolResult) — Stage F; M06.D `<scope_change>` #1+#2 are CLOSED by F, so this is trace #11 expected DELIVERED, 🔴 if missing/regressed, NOT a documented-deferred descope** + renderer wiring (currentMcpServers → MCPNode + MCPServerSettings). |
+| **Wire** | Spec claims to trace end-to-end: ADR-0009 closure (L1 enforcer.check before provider.invoke; L2a narrow before AgentSpawned) + §5a tool namespace resolution (canonical / short / alias / re-resolution) + §5 MCP lifecycle (add → connect → invoke → disconnect) + §5 audit emissions (mcp_installed / mcp_uninstalled / mcp_auth_granted / mcp_request_blocked) + §8.security L1 MCP-tool gate (mcp_dispatch calls enforcer.check before Connection::invoke_tool) + **§5 MCP dispatch SEAM in the live run loop (ProviderEvent::ToolUse → injected `Arc<dyn McpToolDispatch>` → agent_id-correct ToolInvoked/ToolResult) — Stage F, per ADR-0011. trace #11 is SPLIT: the SDK run-loop interception seam + the src-tauri `*_with` injection seam are mock-verified DELIVERED (🔴 if THAT is missing/regressed); the concrete-`McpDispatcher` construction + ConnectionResolver-for-McpClient glue + live agent-loop exercise are the ADR-0011 M07 carry-forward, NOT an M06.V 🔴** + renderer wiring (currentMcpServers → MCPNode + MCPServerSettings). |
 | **Behavior** | Vitest+jsdom: MCPNode renders status indicator variants; MCPServerSettings renders rows + handles Add/Test/Remove; MCPServerAddModal validates + submits. Static: every `.mcp-server-row--<status>` + `.mcp-node--<status>` class has a CSS rule. Rust: namespace resolver against fixture-server-set produces expected resolutions; mcp_dispatch end-to-end against mock transport + real CapabilityEnforcer emits expected events; client lifecycle adds + removes against tempfile SQLite + mock transport; **Stage F `mcp_dispatch_runloop.rs` — MCP ToolUse → injected dispatch → agent_id-correct events, non-MCP fall-through, blocked→HITL, twice-in-sequence**. Playwright: mcp_server_add.spec.ts passes against Vite dev server (with warmup). |
 | **Multi-call** | `NamespaceResolver::resolve` (Stage D); `McpClient::add_server` + `remove_server` + `test_connection` + `get_connection` (Stage C); `mcp_dispatch::dispatch_if_mcp` (Stage D); run-loop MCP dispatch twice-in-sequence (Stage F); `StdioTransport::connect` + `HttpTransport::connect` (Stage B); regression: M04 + M05 multi-call tests still green. |
 
@@ -3163,9 +3187,9 @@ Traces for M06:
 | 8 | §5 "audit emissions for MCP lifecycle" | mcp_installed / mcp_uninstalled / mcp_auth_granted / mcp_request_blocked | skills.audit.jsonl (M05.E writer) | file inspection | Audit log contains the entry per event |
 | 9 | §3 Visual Design + §5 "MCPNode shows connection status" | mcp_installed → graphStore.currentMcpServers | MCPNode reads currentMcpServers via useShallow selector | rendered DOM shows status indicator with correct class | computed-style + class assertion |
 | 10 | §3 "every node-status class has a CSS rule" | (no event; CSS-side check) | (no projection) | styles.css contains `.mcp-server-row--<status>` for each of 4 statuses AND `.mcp-node--<status>` for each | Static check via every_class_has_a_corresponding_CSS_rule pattern |
-| 11 | §5 "MCP dispatch end-to-end in the live run loop" (Stage F — closes M06.D `<scope_change>` #1+#2) | `ProviderEvent::ToolUse` (M02) | (no projection; in-process dispatch) | `event_pipeline.rs` run loop calls injected `Arc<dyn McpToolDispatch>::dispatch_if_mcp` → on Some(Ok) emits **agent_id-correct** `ToolInvoked`+`ToolResult`; on None falls through to Stage A's non-MCP L1 path unchanged; src-tauri `main.rs` constructs + injects the concrete `McpDispatcher` | grep finds the injection call site in src-tauri main.rs AND the `dispatch_if_mcp` call at the event_pipeline.rs ToolUse site; `mcp_dispatch_runloop.rs` asserts agent_id is non-empty AND equals the run-loop agent (gotcha #68). **This trace is expected DELIVERED — Stage F closed the M06.D descope; 🔴 if the injection or run-loop call site is missing OR if agent_id ships empty, NOT a documented-deferred descope.** |
+| 11 | §5 "MCP dispatch SEAM in the live run loop" (Stage F — SPLIT per ADR-0011; closes M06.D `<scope_change>` #1+#2 at the seam level) | `ProviderEvent::ToolUse` (M02) | (no projection; in-process dispatch) | **(11a, DELIVERED)** the `agent_sdk.rs` run loop holds an `Option<Arc<dyn McpToolDispatch>>` + a `with_mcp_dispatch` seam; at the `ProviderEvent::ToolUse` site it calls injected `dispatch_if_mcp` → `Some(Ok(Invoked))` emits **agent_id-correct** `ToolInvoked`+`ToolResult` directly; `None` falls through to Stage A's non-MCP L1 path unchanged; `Some(Ok(Blocked))`→HITL; `Some(Err)`→`mcp_dispatch_error_event`. The src-tauri `*_with` injection seam (`run_smoke_session_with`) accepts + applies `Option<Arc<dyn McpToolDispatch>>`. **(11b, M07 carry-forward — NOT 🔴)** the concrete `McpDispatcher` constructed in `main.rs` + `impl ConnectionResolver for McpClient` + a real agent-loop that emits a resolvable MCP `ToolUse`. | **11a:** grep finds the `with_mcp_dispatch` seam + the `dispatch_if_mcp` call at the run-loop `ToolUse` site + the `*_with` injection seam; `mcp_dispatch_runloop.rs` asserts (against a **mock** `Arc<dyn McpToolDispatch>`) agent_id is non-empty AND equals the run-loop agent (gotcha #68) + non-MCP fall-through + blocked→HITL + twice-in-sequence. **11a is expected DELIVERED/mock-verified — 🔴 only if the seam, the run-loop call site, the injection seam, OR the agent_id-correctness is missing/regressed.** **11b:** per ADR-0011 the concrete construction has no in-shell constructor inputs (no `impl ConnectionResolver for McpClient`; no shell enforcer; no-tools smoke path) and the agent-with-tools loop is M07 (Stage A `<scope_change>` + ADR-0009) — **11b is the documented M07 carry-forward, expected ABSENT at M06.V, NOT a 🔴.** |
 
-Each trace breaks at step 4 with missing/multiple consumers → 🔴 ("wire incomplete" / "wire ambiguous"). Trace #11 specifically: a missing src-tauri injection OR an empty `agent_id` reaching the renderer-facing event stream is 🔴 (Stage F's mandate was to close exactly this) — V must NOT read the M06.D `<scope_change>` #1/#2 as still-deferred, because Stage F's `carry_forward_to` explicitly states they are closed in-milestone.
+Each trace breaks at step 4 with missing/multiple consumers → 🔴 ("wire incomplete" / "wire ambiguous"). Trace #11 specifically (per ADR-0011, which V reads): **11a** is 🔴 only if the `with_mcp_dispatch` seam, the run-loop `dispatch_if_mcp` call site, the src-tauri `*_with` injection seam, OR the non-empty/run-loop-correct `agent_id` is missing or regressed (Stage F's in-scope mandate, mock-verified). **11b** (concrete `McpDispatcher` in `main.rs` + `impl ConnectionResolver for McpClient` + a live agent-loop exercise) is the **documented ADR-0011 M07 carry-forward** — V must read it as expected-ABSENT-at-M06.V, **NOT** 🔴 (same mechanism as ADR-0009's M05→M06 deferral: if M07 doesn't wire 11b, that becomes M07.V's expected endpoint). V must NOT read 11a as still-deferred (the seam IS closed in-milestone) and must NOT read 11b as a Stage F miss (it is the ADR-0011 carry-forward).
 
 #### Behavior pass
 
