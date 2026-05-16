@@ -40,6 +40,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::event_pipeline::{EnforcementContext, EventPipeline};
+use super::mcp_dispatch::McpToolDispatch;
 use crate::capability::{narrow, CapabilityEnforcer};
 use crate::drone_ipc::{DroneClient, DroneIpcError};
 use crate::framework_loader::{
@@ -134,6 +135,12 @@ pub struct AgentSdk<P: LLMProvider> {
     drone_client: Arc<DroneClient>,
     session_id: SessionId,
     capability_wiring: Option<CapabilityWiring>,
+    /// M06.F (ADR-0010 + ADR-0011) MCP-dispatch seam. The Tauri shell
+    /// injects an `Arc<dyn McpToolDispatch>` via [`Self::with_mcp_dispatch`];
+    /// the run loop intercepts `ProviderEvent::ToolUse` through it before
+    /// the existing Stage A non-MCP L1 path. `None` (the M02 / smoke
+    /// path) leaves the run loop pre-M06.F.
+    mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
 }
 
 impl<P: LLMProvider + 'static> AgentSdk<P> {
@@ -152,7 +159,19 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
             drone_client,
             session_id,
             capability_wiring: None,
+            mcp_dispatch: None,
         }
+    }
+
+    /// Inject the M06.F MCP-dispatch seam (ADR-0010 dependency
+    /// inversion; ADR-0011 scopes this to the seam — the concrete
+    /// `McpDispatcher` is constructed by the Tauri shell, an M07
+    /// carry-forward). Builder over the existing constructors so the
+    /// `*_with` shell seam composes it onto a wired-or-unwired SDK.
+    #[must_use]
+    pub fn with_mcp_dispatch(mut self, dispatch: Arc<dyn McpToolDispatch>) -> Self {
+        self.mcp_dispatch = Some(dispatch);
+        self
     }
 
     /// Construct with the M06.A L1 + L2a wire-up active.
@@ -176,6 +195,7 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
             drone_client,
             session_id,
             capability_wiring: Some(wiring),
+            mcp_dispatch: None,
         }
     }
 
@@ -250,17 +270,35 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
             self.spawn_framework_subagents(wiring, &agent_id).await?;
         }
 
+        // The run loop retains `agent_id` (M06.F: the MCP-dispatch
+        // interception needs it to emit agent_id-correct events, gotcha
+        // #68); the pipeline takes a clone.
         let mut pipeline = match self.capability_wiring.as_ref() {
             Some(wiring) => EventPipeline::with_enforcement(
-                agent_id,
+                agent_id.clone(),
                 EnforcementContext::new(
                     Arc::clone(&wiring.enforcer),
                     Arc::clone(&wiring.framework),
                 ),
             ),
-            None => EventPipeline::new(agent_id),
+            None => EventPipeline::new(agent_id.clone()),
         };
         while let Some(provider_event) = stream.next().await {
+            // M06.F (ADR-0010 + ADR-0011): when an MCP-dispatch seam is
+            // injected, a `ProviderEvent::ToolUse` is offered to it
+            // FIRST. `dispatch_if_mcp` returning `None` (not an MCP
+            // tool) falls through to the existing Stage A non-MCP L1
+            // path below, unchanged.
+            if self.mcp_dispatch.is_some() {
+                if let ProviderEvent::ToolUse { name, input, .. } = &provider_event {
+                    if self
+                        .try_mcp_dispatch(&agent_id, name, input.clone())
+                        .await?
+                    {
+                        continue;
+                    }
+                }
+            }
             for agent_event in pipeline.next_event(provider_event) {
                 let needs_hitl = matches!(
                     &agent_event,
@@ -374,6 +412,26 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
                 "capability_violation HITL await did not resolve cleanly; continuing"
             );
         }
+    }
+
+    /// Offer one `ProviderEvent::ToolUse` to the injected MCP-dispatch
+    /// seam. Returns `Ok(true)` when the call was an MCP tool and the
+    /// run loop fully handled it (the event must NOT also flow through
+    /// the Stage A pipeline); `Ok(false)` when it is not an MCP tool
+    /// (pure fall-through to the existing Stage A non-MCP L1 path).
+    ///
+    /// M06.F red phase: signature + call site exist so the workspace
+    /// compiles and `mcp_dispatch_runloop.rs` / the src-tauri seam test
+    /// fail for the right reason (the wire is unbuilt). The green phase
+    /// implements the None / Invoked / Blocked / Err routing.
+    async fn try_mcp_dispatch(
+        &self,
+        agent_id: &str,
+        tool_name: &str,
+        args: serde_json::Value,
+    ) -> Result<bool, SdkError> {
+        let _ = (agent_id, tool_name, args);
+        todo!("M06.F green phase: run-loop MCP dispatch interception not yet wired")
     }
 
     async fn emit(&self, event: AgentEvent) -> Result<(), SdkError> {

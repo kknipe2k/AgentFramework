@@ -48,7 +48,8 @@ use runtime_main::recovery::{
     UncertaintyResolution,
 };
 use runtime_main::sdk::{
-    replay_signals_to_events, AgentSdk, ApprovalDecision, ApprovalError, ApprovalSeam, SessionId,
+    replay_signals_to_events, AgentSdk, ApprovalDecision, ApprovalError, ApprovalSeam,
+    McpToolDispatch, SessionId,
 };
 use runtime_main::tier::{save_tier, Tier, TierPersistenceError};
 use runtime_mcp::client::{McpClient, McpServerSummary};
@@ -121,7 +122,15 @@ pub async fn run_smoke_session(
     let (tx, rx) = mpsc::channel::<AgentEvent>(64);
     let app_clone = app.clone();
     let forwarder = tokio::spawn(forward_events(rx, app_clone));
-    let result = run_smoke_session_with(provider, tx, drone_client, smoke_config()).await;
+    // Per ADR-0011, the production wrapper passes `None`: the concrete
+    // `McpDispatcher` is not constructible in-shell (no
+    // `impl ConnectionResolver for McpClient`; no shell enforcer) and
+    // the no-tools smoke prompt emits no `ProviderEvent::ToolUse`. The
+    // construction + a live agent-loop exercise are the M07
+    // carry-forward; the `*_with` injection seam below is what M06.F
+    // delivers + mock-tests.
+    let result =
+        run_smoke_session_with(provider, tx, drone_client, smoke_config(), None).await;
     drop(api_key);
     // Wait for the forwarder to drain any final events before returning.
     let _ = forwarder.await;
@@ -136,6 +145,13 @@ pub async fn run_smoke_session(
 /// Tests inject an in-memory provider stub and a [`DroneClient::noop`]
 /// and assert on the events received.
 ///
+/// `mcp_dispatch` is the M06.F (ADR-0010 + ADR-0011) composition-root
+/// injection seam: when `Some`, it is composed onto the SDK via
+/// [`AgentSdk::with_mcp_dispatch`] so the run loop intercepts
+/// `ProviderEvent::ToolUse` through it. Production passes `None` (the
+/// concrete `McpDispatcher` construction is the M07 carry-forward per
+/// ADR-0011); the M06.F seam test injects a mock.
+///
 /// # Errors
 ///
 /// Same as [`run_smoke_session`] minus the keychain-read step.
@@ -144,9 +160,13 @@ pub async fn run_smoke_session_with<P: LLMProvider + 'static>(
     event_tx: mpsc::Sender<AgentEvent>,
     drone: Arc<DroneClient>,
     config: AgentConfig,
+    mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
 ) -> Result<(), CmdError> {
     tracing::info!("run_smoke_session starting");
-    let sdk = AgentSdk::new(Arc::new(provider), event_tx, drone, SessionId::new());
+    let mut sdk = AgentSdk::new(Arc::new(provider), event_tx, drone, SessionId::new());
+    if let Some(dispatch) = mcp_dispatch {
+        sdk = sdk.with_mcp_dispatch(dispatch);
+    }
     let result = sdk
         .run_agent(config)
         .await
@@ -1007,7 +1027,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(8);
         let drone = Arc::new(DroneClient::noop());
         let config = smoke_config();
-        run_smoke_session_with(StubProvider, tx, drone, config)
+        run_smoke_session_with(StubProvider, tx, drone, config, None)
             .await
             .expect("run_smoke_session_with");
 
@@ -1026,6 +1046,126 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, AgentEvent::AgentComplete { .. })),
             "expected AgentComplete in {events:?}"
+        );
+    }
+
+    /// Provider that emits a single MCP-shaped `ToolUse` then stops, so
+    /// the M06.F injection-seam test drives the run-loop interception.
+    struct McpToolProvider;
+
+    #[async_trait]
+    impl LLMProvider for McpToolProvider {
+        #[allow(
+            clippy::unnecessary_literal_bound,
+            reason = "trait method returns &str by signature; literal &'static str must reborrow"
+        )]
+        fn name(&self) -> &str {
+            "mcp-tool-stub"
+        }
+        fn supports(&self) -> ProviderSupport {
+            ProviderSupport {
+                tool_use: true,
+                streaming: true,
+                thinking: false,
+            }
+        }
+        async fn stream(
+            &self,
+            _config: AgentConfig,
+        ) -> Result<BoxStream<'_, ProviderEvent>, ProviderError> {
+            Ok(Box::pin(futures::stream::iter(vec![
+                ProviderEvent::ToolUse {
+                    id: "t1".to_string(),
+                    name: "pdf-mcp__extract_text".to_string(),
+                    input: serde_json::json!({"path": "doc.pdf"}),
+                },
+                ProviderEvent::MessageStop {
+                    stop_reason: "end_turn".to_string(),
+                    total_tokens: None,
+                },
+            ])))
+        }
+        async fn count_tokens(&self, _m: &[Message]) -> Result<u64, ProviderError> {
+            Ok(0)
+        }
+        async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+            Ok(Vec::new())
+        }
+        fn estimate_cost(&self, _b: &CostBreakdown, _m: &str) -> f64 {
+            0.0
+        }
+    }
+
+    /// Mock `McpToolDispatch` that always resolves the call as an
+    /// `Invoked` MCP outcome — the seam test asserts the SDK actually
+    /// routed the `ToolUse` through the injected dispatch.
+    struct InvokingMcpDispatch;
+
+    #[async_trait]
+    impl McpToolDispatch for InvokingMcpDispatch {
+        async fn dispatch_if_mcp(
+            &self,
+            _agent_id: &str,
+            _tool_name: &str,
+            _args: serde_json::Value,
+            _aliases: &std::collections::BTreeMap<String, String>,
+        ) -> Option<Result<runtime_main::sdk::McpDispatchOutcome, runtime_main::sdk::McpDispatchError>>
+        {
+            Some(Ok(runtime_main::sdk::McpDispatchOutcome::Invoked {
+                server: "pdf-mcp".to_string(),
+                tool: "extract_text".to_string(),
+                value: serde_json::json!({"text": "extracted"}),
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn run_smoke_session_with_injected_mcp_dispatch_routes_tool_use_through_seam() {
+        // M06.F composition-root injection seam (ADR-0011 trace #11a):
+        // passing `Some(dispatch)` must compose it onto the SDK
+        // (`with_mcp_dispatch`) so an MCP `ProviderEvent::ToolUse`
+        // resolves through the injected dispatch and reaches the
+        // renderer-facing channel as an agent_id-correct, MCP-sourced
+        // ToolInvoked + ToolResult — NOT the Stage A Builtin path.
+        let (tx, mut rx) = mpsc::channel(16);
+        let drone = Arc::new(DroneClient::noop());
+        run_smoke_session_with(
+            McpToolProvider,
+            tx,
+            drone,
+            smoke_config(),
+            Some(Arc::new(InvokingMcpDispatch) as Arc<dyn McpToolDispatch>),
+        )
+        .await
+        .expect("run_smoke_session_with(Some(dispatch))");
+
+        let mut events = Vec::new();
+        while let Some(e) = rx.recv().await {
+            events.push(e);
+        }
+        let invoked = events
+            .iter()
+            .find_map(|e| match e {
+                AgentEvent::ToolInvoked {
+                    agent_id,
+                    source,
+                    server,
+                    ..
+                } => Some((agent_id.clone(), source.clone(), server.clone())),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected an MCP ToolInvoked; events: {events:?}"));
+        assert!(
+            !invoked.0.is_empty(),
+            "injected-dispatch ToolInvoked agent_id MUST be non-empty (gotcha #68)"
+        );
+        assert_eq!(invoked.1, runtime_core::event::ToolSource::Mcp);
+        assert_eq!(invoked.2.as_deref(), Some("pdf-mcp"));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::ToolResult { .. })),
+            "the injected MCP dispatch must also surface a ToolResult; events: {events:?}"
         );
     }
 
@@ -1073,7 +1213,8 @@ mod tests {
         // into CmdError::Provider per the existing translation.
         let (tx, _rx) = mpsc::channel(8);
         let drone = Arc::new(DroneClient::noop());
-        let result = run_smoke_session_with(FailingProvider, tx, drone, smoke_config()).await;
+        let result =
+            run_smoke_session_with(FailingProvider, tx, drone, smoke_config(), None).await;
         let err = result.expect_err("expected provider error");
         assert!(
             matches!(err, CmdError::Provider(_)),
