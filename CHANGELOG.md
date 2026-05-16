@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M06 Stage F (src-tauri MCP-dispatch injection seam + live run-loop interception + gotcha #68 fix)
+
+- **SDK run-loop MCP-dispatch interception**
+  (`crates/runtime-main/src/sdk/agent_sdk.rs`): `AgentSdk` gains an
+  `Option<Arc<dyn McpToolDispatch>>` field + a `with_mcp_dispatch`
+  builder seam; `run_agent_with_provider_stream` intercepts
+  `ProviderEvent::ToolUse` and calls the injected `dispatch_if_mcp`
+  FIRST — `None` → the existing Stage A non-MCP L1 path, unchanged
+  (no regression); `Some(Ok(Invoked))` → the run loop emits
+  **agent_id-correct** `ToolInvoked` + `ToolResult` directly (gotcha
+  #68 fix: `apply_mcp_dispatch` + `McpDispatchOutcome` left untouched
+  so the D-frozen `mcp_dispatch_wire.rs` stays green);
+  `Some(Ok(Blocked))` → `apply_mcp_dispatch` + the existing
+  `on_capability_violation` HITL trigger (ADR-0007, no new seam);
+  `Some(Ok(Ambiguous))` → the D-frozen `apply_mcp_dispatch` →
+  `ToolAliasAmbiguous` (non-blocking); `Some(Err)` →
+  `mcp_dispatch_error_event`.
+- **src-tauri composition-root injection seam** (`src-tauri/src/commands.rs`):
+  `run_smoke_session_with` accepts `Option<Arc<dyn McpToolDispatch>>`
+  applied via `.with_mcp_dispatch`. The production `run_smoke_session`
+  wrapper passes `None` (per ADR-0011 the concrete `McpDispatcher`
+  construction is the M07 carry-forward); the seam is mock-tested.
+- **`crates/runtime-main/tests/mcp_dispatch_runloop.rs`** (new): 4
+  tests vs a mock `Arc<dyn McpToolDispatch>` — agent_id-correct
+  (gotcha #68 load-bearing: non-empty AND == the run-loop agent),
+  non-MCP fall-through (no regression), blocked→HITL + Err→ToolError,
+  twice-in-sequence (gotcha #69). Plus the `run_smoke_session_with`
+  injection-seam test (the 2 existing seam tests stay green on `None`).
+- **ADR-0011** (`docs/adr/0011-m06f-scope-seam-not-running-app.md`,
+  Accepted): F.1's "running app end-to-end" over-reached the code
+  reality + F's own scope locks (grep-verified: no
+  `impl ConnectionResolver for McpClient`; no shell enforcer; the
+  no-tools smoke path; agent loop = M07). Honest F scope = SDK seam +
+  src-tauri injection seam, mock-verified per the ADR-0010/`Arc<dyn _>`
+  archetype; concrete construction + live exercise = explicit M07
+  carry-forward. M06.D `<scope_change>` #1+#2 CLOSED at the
+  seam+injection-seam level.
+
+### Changed — M06 Stage F
+
+- **`docs/build-prompts/M06-mcp-basic.md`** forward-corrected (coupled
+  to ADR-0011): F.1 reframed to the seam-level mandate; §V/V.1/V.2/V.3
+  Wire **trace #11 SPLIT** — 11a (seam + injection seam, mock-verified)
+  DELIVERED / 🔴 if regressed; 11b (concrete construction + live
+  exercise) = ADR-0011 M07 carry-forward, **NOT** an M06.V 🔴; the
+  M06.D `<scope_change>` `carry_forward_to` clauses + F.5
+  `<context>`/`<read_first>` + F.6 commit message updated (F is
+  unexecuted, so the grandfathered-not-edited precedent —
+  executed-stages-only — does not apply).
+
 ### Added — M06 Stage E (Renderer: MCPNode live wiring + Settings → MCP Servers UI)
 
 - **`MCPNode` live wiring** (`src/components/nodes/MCPNode.tsx`):
