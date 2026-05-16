@@ -272,3 +272,39 @@ fn aliases_validate_accepts_well_formed_distinct_map() {
         .expect("well-formed distinct map validates");
     assert_eq!(aliases.as_map(), &m);
 }
+
+// ── §5a rule 5: disconnect re-resolution (net-new; the red plan's
+//    D.4.1 list under-specified the disconnect path) ─────────────────
+
+#[test]
+fn disconnect_server_re_resolves_and_resolves_ambiguity_without_new_ambiguity() {
+    // pdf-mcp + image-mcp both expose extract_text → ambiguous.
+    // Disconnecting image-mcp removes the collision: the short name
+    // now resolves to pdf-mcp, and disconnect introduces no NEW
+    // ambiguity (spec §5a step 5 — disconnect can only remove it).
+    let mut r = NamespaceResolver::new(connected(&[
+        ("pdf-mcp", &["extract_text"]),
+        ("image-mcp", &["extract_text"]),
+    ]));
+    assert!(matches!(
+        r.resolve("extract_text", &no_aliases()),
+        Err(NamespaceError::Ambiguous { .. })
+    ));
+    let new_ambiguities = r.disconnect_server("image-mcp");
+    assert!(
+        new_ambiguities.is_empty(),
+        "disconnect never introduces new ambiguity, got {new_ambiguities:?}"
+    );
+    // The short name now resolves unambiguously to the survivor; the
+    // canonical for the disconnected server no longer resolves.
+    let got = r
+        .resolve("extract_text", &no_aliases())
+        .expect("ambiguity cleared by disconnect");
+    assert_eq!(got.server, "pdf-mcp");
+    assert_eq!(
+        r.resolve("image-mcp__extract_text", &no_aliases()),
+        Err(NamespaceError::NotFound(
+            "image-mcp__extract_text".to_string()
+        ))
+    );
+}

@@ -6,7 +6,7 @@
 //!
 //! - [`InMemorySecretStore`] — `HashMap`-backed; for tests + the v0.1
 //!   pre-keychain path. Per-call `Mutex` guards concurrent access.
-//! - [`KeyringSecretStore`] — production impl. Wraps the `keyring` crate
+//! - [`super::KeyringSecretStore`] — production impl. Wraps the `keyring` crate
 //!   directly with the MCP-namespaced service `agent-runtime/mcp` so
 //!   per-server secrets land in OS-distinct entries vs the M02
 //!   API-key keychain entry. Reuses the workspace `keyring` pin (with
