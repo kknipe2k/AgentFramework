@@ -492,6 +492,16 @@ interface GraphState {
    * toast; cleared on `clear()`.
    */
   toolAliasWarnings: ToolAliasWarning[];
+  /**
+   * Spec §5 (M06.E): in-flight MCP tool calls keyed by server name,
+   * value = the active tool's node id (`tool:<agent>:<tool>`). Set when
+   * a `tool_invoked` with `source: 'mcp'` lands; cleared on the matching
+   * `tool_result`. Drives the MCPNode active-call animation. Per-session
+   * state — reset on `clear()` (an active-call glow must not leak into a
+   * new session); diverges from the `<test_isolation_audit>` slot claim
+   * deliberately. Test files still reset it in `beforeEach`.
+   */
+  activeMcpCalls: Record<string, string>;
 
   /**
    * Single entry point for translating AgentEvent into node + edge
@@ -690,6 +700,7 @@ export const useGraphStore = create<GraphState>((set) => ({
   tierViolations: {},
   currentMcpServers: {},
   toolAliasWarnings: [],
+  activeMcpCalls: {},
 
   applyEvent: (event) =>
     set((state) => {

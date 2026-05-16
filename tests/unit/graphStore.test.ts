@@ -549,6 +549,60 @@ describe('graphStore.applyEvent', () => {
     });
   });
 
+  describe('activeMcpCalls (M06.E)', () => {
+    // activeMcpCalls is per-session animation state — reset on clear()
+    // (an active-call glow must not leak into a new session) AND reset
+    // explicitly here per the v1.6 <test_isolation_audit> discipline.
+    beforeEach(() => {
+      useGraphStore.setState({ activeMcpCalls: {}, currentMcpServers: {} });
+    });
+
+    const mcpInvoke: AgentEvent = {
+      type: 'tool_invoked',
+      agent_id: 'a1',
+      tool_name: 'extract_text',
+      source: 'mcp',
+      server: 'pdf-mcp',
+      input: { path: '/x.pdf' },
+    };
+
+    it('tool_invoked_with_source_mcp_sets_activeMcpCalls_for_server', () => {
+      useGraphStore.getState().applyEvent(mcpInvoke);
+      expect(useGraphStore.getState().activeMcpCalls['pdf-mcp']).toBe('tool:a1:extract_text');
+    });
+
+    it('tool_invoked_builtin_does_not_set_activeMcpCalls', () => {
+      useGraphStore.getState().applyEvent(toolInvoked); // source: 'builtin'
+      expect(Object.keys(useGraphStore.getState().activeMcpCalls)).toHaveLength(0);
+    });
+
+    it('tool_result_clears_activeMcpCalls_for_server', () => {
+      useGraphStore.getState().applyEvent(mcpInvoke);
+      expect(useGraphStore.getState().activeMcpCalls['pdf-mcp']).toBeDefined();
+      useGraphStore.getState().applyEvent({
+        type: 'tool_result',
+        agent_id: 'a1',
+        tool_name: 'extract_text',
+        output: { ok: true },
+        duration_ms: 7,
+      });
+      expect(useGraphStore.getState().activeMcpCalls['pdf-mcp']).toBeUndefined();
+    });
+
+    it('clear_resets_activeMcpCalls_unlike_currentMcpServers', () => {
+      useGraphStore.setState({
+        activeMcpCalls: { 'pdf-mcp': 'tool:a1:extract_text' },
+        currentMcpServers: {
+          'pdf-mcp': { name: 'pdf-mcp', transportKind: 'stdio', hasAuth: false, status: 'connected' },
+        },
+      });
+      useGraphStore.getState().clear();
+      expect(useGraphStore.getState().activeMcpCalls).toEqual({});
+      // currentMcpServers is registry-backed — survives clear().
+      expect(useGraphStore.getState().currentMcpServers['pdf-mcp']).toBeDefined();
+    });
+  });
+
   it('clear_empties_nodes_edges_and_selectedNodeId', () => {
     useGraphStore.getState().applyEvent(spawnA);
     useGraphStore.getState().applyEvent(spawnB);

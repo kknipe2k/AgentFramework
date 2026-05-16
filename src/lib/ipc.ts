@@ -2,6 +2,32 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { AgentEvent } from '../types/agent_event';
 import type { CmdError } from '../types/error';
+import type { McpServerConfig } from '../types/mcp';
+
+/**
+ * One tool a connected MCP server exposes. Mirrors the serde shape of
+ * `runtime_mcp::transport::McpTool` (NOT schema-generated — the struct
+ * lives in `crates/runtime-mcp/src/transport/mod.rs:62` and crosses the
+ * Tauri bridge as-is). `mcp_test_connection` returns `McpTool[]`.
+ */
+export interface McpTool {
+  name: string;
+  description?: string;
+  input_schema: unknown;
+}
+
+/**
+ * One registered MCP server's summary row. Mirrors the serde shape of
+ * `runtime_mcp::client::McpServerSummary`
+ * (`crates/runtime-mcp/src/client/mod.rs:60`). `mcp_list_servers`
+ * returns `McpServerSummary[]`.
+ */
+export interface McpServerSummary {
+  name: string;
+  transport: string;
+  has_auth: boolean;
+  status: string;
+}
 
 export async function invokeRunSmokeSession(): Promise<void> {
   await invoke('run_smoke_session');
@@ -138,6 +164,46 @@ export async function invokeRespondUncertainty(
  */
 export async function invokeSetGlobalBudget(usdCap: number): Promise<void> {
   await invoke('set_global_budget', { usdCap });
+}
+
+/**
+ * Register a new MCP server (M06 Stage E → Stage C `mcp_add_server`).
+ * `config` is the schema-generated {@link McpServerConfig}; `auth` is
+ * the optional per-server secret (null for unauthenticated servers).
+ * Errors surface as the Tauri `CmdError` shape — render via
+ * {@link unwrapCmdError}.
+ */
+export async function mcpAddServer(
+  _config: McpServerConfig,
+  _auth: string | null,
+): Promise<void> {
+  throw new Error('not implemented: M06.E green phase');
+}
+
+/**
+ * Remove a registered MCP server by name (Stage C `mcp_remove_server`).
+ */
+export async function mcpRemoveServer(_name: string): Promise<void> {
+  throw new Error('not implemented: M06.E green phase');
+}
+
+/**
+ * Test a server connection without persisting (Stage C
+ * `mcp_test_connection`). Takes the full {@link McpServerConfig} — the
+ * Stage C command connects + `list_tools` + disconnects from the config
+ * directly (it does NOT take a server name; the E.3.4 phase-doc
+ * pseudocode drifted — reconciled against `commands.rs:821`).
+ */
+export async function mcpTestConnection(_config: McpServerConfig): Promise<McpTool[]> {
+  throw new Error('not implemented: M06.E green phase');
+}
+
+/**
+ * List registered MCP servers + their current state (Stage C
+ * `mcp_list_servers`).
+ */
+export async function mcpListServers(): Promise<McpServerSummary[]> {
+  throw new Error('not implemented: M06.E green phase');
 }
 
 export async function subscribeAgentEvents(
