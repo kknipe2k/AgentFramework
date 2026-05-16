@@ -173,18 +173,15 @@ export async function invokeSetGlobalBudget(usdCap: number): Promise<void> {
  * Errors surface as the Tauri `CmdError` shape — render via
  * {@link unwrapCmdError}.
  */
-export async function mcpAddServer(
-  _config: McpServerConfig,
-  _auth: string | null,
-): Promise<void> {
-  throw new Error('not implemented: M06.E green phase');
+export async function mcpAddServer(config: McpServerConfig, auth: string | null): Promise<void> {
+  await invoke('mcp_add_server', { config, auth });
 }
 
 /**
  * Remove a registered MCP server by name (Stage C `mcp_remove_server`).
  */
-export async function mcpRemoveServer(_name: string): Promise<void> {
-  throw new Error('not implemented: M06.E green phase');
+export async function mcpRemoveServer(name: string): Promise<void> {
+  await invoke('mcp_remove_server', { name });
 }
 
 /**
@@ -194,8 +191,8 @@ export async function mcpRemoveServer(_name: string): Promise<void> {
  * directly (it does NOT take a server name; the E.3.4 phase-doc
  * pseudocode drifted — reconciled against `commands.rs:821`).
  */
-export async function mcpTestConnection(_config: McpServerConfig): Promise<McpTool[]> {
-  throw new Error('not implemented: M06.E green phase');
+export async function mcpTestConnection(config: McpServerConfig): Promise<McpTool[]> {
+  return await invoke<McpTool[]>('mcp_test_connection', { config });
 }
 
 /**
@@ -203,7 +200,7 @@ export async function mcpTestConnection(_config: McpServerConfig): Promise<McpTo
  * `mcp_list_servers`).
  */
 export async function mcpListServers(): Promise<McpServerSummary[]> {
-  throw new Error('not implemented: M06.E green phase');
+  return await invoke<McpServerSummary[]>('mcp_list_servers');
 }
 
 export async function subscribeAgentEvents(

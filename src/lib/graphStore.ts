@@ -844,6 +844,10 @@ export const useGraphStore = create<GraphState>((set) => ({
               ...state,
               nodes: newMcp ? [...state.nodes, newMcp, newTool] : [...state.nodes, newTool],
               edges: newEdges,
+              // Spec §5 (M06.E): mark the call in-flight so the MCPNode
+              // animates. Keyed by server name, value = the tool node id
+              // so `tool_result` can clear it without server context.
+              activeMcpCalls: { ...state.activeMcpCalls, [event.server]: id },
             };
           }
           // Non-MCP tool — agent → tool directly (Stage B behavior +
@@ -882,8 +886,16 @@ export const useGraphStore = create<GraphState>((set) => ({
           const tokensIn = event.tokens_in ?? 0;
           const tokensOut = event.tokens_out ?? 0;
           const agentTarget = `agent:${event.agent_id}`;
+          // Spec §5 (M06.E): the in-flight MCP call (if any) for this
+          // tool node id completes — drop it so the MCPNode animation
+          // stops. `tool_result` has no server context, so match by the
+          // tool node id stored as the value.
+          const activeMcpCalls = Object.fromEntries(
+            Object.entries(state.activeMcpCalls).filter(([, toolId]) => toolId !== id),
+          );
           return {
             ...state,
+            activeMcpCalls,
             nodes: state.nodes.map((n) => {
               if (n.id === id && n.type === 'tool') {
                 return {
@@ -1608,6 +1620,10 @@ export const useGraphStore = create<GraphState>((set) => ({
       // session clears. toolAliasWarnings are per-session — cleared.
       currentMcpServers: state.currentMcpServers,
       toolAliasWarnings: [],
+      // activeMcpCalls is per-session animation state — reset on clear()
+      // (unlike currentMcpServers): an in-flight glow must not leak into
+      // a new session.
+      activeMcpCalls: {},
     })),
 
   selectNode: (id) => set({ selectedNodeId: id }),
