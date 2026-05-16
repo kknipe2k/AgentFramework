@@ -166,9 +166,7 @@ describe('MCPNode live wiring (M06.E)', () => {
       });
     }
     expect(screen.getByTestId('mcp-node-github-mcp')).toBeInTheDocument();
-    const loopErr = errorSpy.mock.calls.find((c) =>
-      String(c[0]).includes('Maximum update depth'),
-    );
+    const loopErr = errorSpy.mock.calls.find((c) => String(c[0]).includes('Maximum update depth'));
     expect(loopErr).toBeUndefined();
   });
 

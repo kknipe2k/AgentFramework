@@ -593,7 +593,12 @@ describe('graphStore.applyEvent', () => {
       useGraphStore.setState({
         activeMcpCalls: { 'pdf-mcp': 'tool:a1:extract_text' },
         currentMcpServers: {
-          'pdf-mcp': { name: 'pdf-mcp', transportKind: 'stdio', hasAuth: false, status: 'connected' },
+          'pdf-mcp': {
+            name: 'pdf-mcp',
+            transportKind: 'stdio',
+            hasAuth: false,
+            status: 'connected',
+          },
         },
       });
       useGraphStore.getState().clear();
