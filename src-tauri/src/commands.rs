@@ -129,8 +129,7 @@ pub async fn run_smoke_session(
     // construction + a live agent-loop exercise are the M07
     // carry-forward; the `*_with` injection seam below is what M06.F
     // delivers + mock-tests.
-    let result =
-        run_smoke_session_with(provider, tx, drone_client, smoke_config(), None).await;
+    let result = run_smoke_session_with(provider, tx, drone_client, smoke_config(), None).await;
     drop(api_key);
     // Wait for the forwarder to drain any final events before returning.
     let _ = forwarder.await;
@@ -1109,8 +1108,9 @@ mod tests {
             _tool_name: &str,
             _args: serde_json::Value,
             _aliases: &std::collections::BTreeMap<String, String>,
-        ) -> Option<Result<runtime_main::sdk::McpDispatchOutcome, runtime_main::sdk::McpDispatchError>>
-        {
+        ) -> Option<
+            Result<runtime_main::sdk::McpDispatchOutcome, runtime_main::sdk::McpDispatchError>,
+        > {
             Some(Ok(runtime_main::sdk::McpDispatchOutcome::Invoked {
                 server: "pdf-mcp".to_string(),
                 tool: "extract_text".to_string(),
@@ -1213,8 +1213,7 @@ mod tests {
         // into CmdError::Provider per the existing translation.
         let (tx, _rx) = mpsc::channel(8);
         let drone = Arc::new(DroneClient::noop());
-        let result =
-            run_smoke_session_with(FailingProvider, tx, drone, smoke_config(), None).await;
+        let result = run_smoke_session_with(FailingProvider, tx, drone, smoke_config(), None).await;
         let err = result.expect_err("expected provider error");
         assert!(
             matches!(err, CmdError::Provider(_)),

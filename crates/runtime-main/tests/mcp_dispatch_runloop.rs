@@ -190,7 +190,7 @@ fn exec_grant_for_builtin_tool(name: &str) -> CapabilityDeclaration {
     }
 }
 
-/// Build an SDK with capability wiring (so the run-loop agent_id is the
+/// Build an SDK with capability wiring (so the run-loop `agent_id` is the
 /// framework's `session_root_agent`, the HITL seam exists for the
 /// blocked path, and the non-MCP fall-through exercises the real Stage A
 /// L1 pipeline) PLUS an injected mock `McpToolDispatch`.
@@ -320,7 +320,10 @@ async fn mcp_tool_use_routes_through_injected_dispatch_and_emits_agent_id_correc
             _ => None,
         })
         .unwrap_or_else(|| panic!("expected a ToolInvoked; events: {events:?}"));
-    assert!(!invoked.0.is_empty(), "agent_id MUST NOT be empty (gotcha #68)");
+    assert!(
+        !invoked.0.is_empty(),
+        "agent_id MUST NOT be empty (gotcha #68)"
+    );
     assert_eq!(
         invoked.0, agent_id,
         "agent_id MUST equal the run-loop agent, not the empty apply_mcp_dispatch value"
@@ -493,9 +496,9 @@ async fn blocked_mcp_tool_use_awaits_hitl_and_emits_dispatch_error_event() {
     );
     // The blocked dispatch MUST NOT emit a success ToolInvoked.
     assert!(
-        !events
-            .iter()
-            .any(|e| matches!(e, AgentEvent::ToolInvoked { source, .. } if *source == ToolSource::Mcp)),
+        !events.iter().any(
+            |e| matches!(e, AgentEvent::ToolInvoked { source, .. } if *source == ToolSource::Mcp)
+        ),
         "a blocked MCP dispatch MUST NOT emit an Mcp ToolInvoked; events: {events:?}"
     );
 }
