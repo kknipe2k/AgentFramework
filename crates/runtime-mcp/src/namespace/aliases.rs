@@ -42,17 +42,14 @@ impl Aliases {
     /// Wrap a raw `mcp_aliases` map WITHOUT validation (the resolver's
     /// hot path; `validate` is the load-time guard).
     #[must_use]
-    pub fn new(map: BTreeMap<String, String>) -> Self {
-        // Red-phase stub (M06.D strict TDD): green phase implements.
-        let _ = map;
-        unimplemented!("M06.D green phase: Aliases::new")
+    pub const fn new(map: BTreeMap<String, String>) -> Self {
+        Self(map)
     }
 
     /// Borrow the underlying map for [`super::NamespaceResolver::resolve`].
     #[must_use]
-    pub fn as_map(&self) -> &BTreeMap<String, String> {
-        // Red-phase stub (M06.D strict TDD): green phase implements.
-        unimplemented!("M06.D green phase: Aliases::as_map")
+    pub const fn as_map(&self) -> &BTreeMap<String, String> {
+        &self.0
     }
 
     /// Validate every value is a canonical `<server>__<tool>` form and
@@ -64,7 +61,27 @@ impl Aliases {
     ///   empty server or tool segment.
     /// - [`AliasError::Collision`] — two short names share a canonical.
     pub fn validate(&self) -> Result<(), AliasError> {
-        // Red-phase stub (M06.D strict TDD): green phase implements.
-        unimplemented!("M06.D green phase: Aliases::validate")
+        // BTreeMap iteration is key-sorted → deterministic collision
+        // pair (a < b lexically on the short names).
+        let mut seen: BTreeMap<&str, &str> = BTreeMap::new();
+        for (alias, value) in &self.0 {
+            match value.split_once("__") {
+                Some((server, tool)) if !server.is_empty() && !tool.is_empty() => {}
+                _ => {
+                    return Err(AliasError::NotCanonical {
+                        alias: alias.clone(),
+                        value: value.clone(),
+                    });
+                }
+            }
+            if let Some(first) = seen.insert(value.as_str(), alias.as_str()) {
+                return Err(AliasError::Collision {
+                    a: first.to_string(),
+                    b: alias.clone(),
+                    canonical: value.clone(),
+                });
+            }
+        }
+        Ok(())
     }
 }

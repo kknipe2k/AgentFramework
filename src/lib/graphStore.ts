@@ -1465,26 +1465,106 @@ export const useGraphStore = create<GraphState>((set) => ({
         // below is the forcing function: any new variant added to the
         // schema breaks the compile until handled.
         //
-        // M06.C: mcp_installed / mcp_uninstalled / mcp_auth_granted are
-        // graph-no-op at this stage — the M06.C deliverable is the
-        // lifecycle + audit surface, not the MCPNode rendering. Stage E
-        // adds the MCPNode + the Settings-panel server list that
-        // consume these. Handled here as explicit no-ops so the
-        // exhaustiveness check passes without pre-building Stage E.
+        case 'mcp_installed': {
+          // Spec §5 (M06.D): server installed → track live status keyed
+          // by name. currentMcpServers is registry-backed install state
+          // (preserved across clear(), like currentTier). Idempotent:
+          // a repeat install overwrites the same key with an equivalent
+          // record.
+          return {
+            ...state,
+            currentMcpServers: {
+              ...state.currentMcpServers,
+              [event.name]: {
+                name: event.name,
+                transportKind: event.transport_kind,
+                hasAuth: event.has_auth,
+                status: 'connected',
+              },
+            },
+          };
+        }
+
+        case 'mcp_uninstalled': {
+          // Spec §5 (M06.D): server removed → drop it from the map so
+          // the MCPNode + Settings list reflect the post-state.
+          if (!(event.name in state.currentMcpServers)) {
+            return state;
+          }
+          const next = { ...state.currentMcpServers };
+          delete next[event.name];
+          return { ...state, currentMcpServers: next };
+        }
+
+        case 'mcp_auth_granted': {
+          // Spec §5 + §13.5 (M06.D): a per-server secret was stored.
+          // Flip the credential indicator. No-op if the server isn't
+          // tracked (auth without a prior install is not expected;
+          // mirror the M05.D defensive shape rather than synthesize a
+          // partial record).
+          const existing = state.currentMcpServers[event.name];
+          if (!existing) {
+            return state;
+          }
+          return {
+            ...state,
+            currentMcpServers: {
+              ...state.currentMcpServers,
+              [event.name]: { ...existing, hasAuth: true },
+            },
+          };
+        }
+
+        case 'mcp_request_blocked': {
+          // Spec §5a + §8.security (M06.D): an MCP tool dispatch was
+          // denied. Record into capabilityViolations keyed by agent
+          // (same shape + last-write-wins as capability_violation) so
+          // the inspector + capability-violation modal surface it; the
+          // MCP server + tool ride in requestedAction so the renderer
+          // can attribute the block to the MCPNode.
+          return {
+            ...state,
+            capabilityViolations: {
+              ...state.capabilityViolations,
+              [event.agent_id]: {
+                capabilityKind: 'exec',
+                requestedAction: `invoke MCP tool '${event.server}__${event.tool}'`,
+                declaredScope: event.reason,
+                timestamp: Date.now(),
+              },
+            },
+          };
+        }
+
+        case 'tool_alias_ambiguous': {
+          // Spec §5a step 5 (M06.D): a short name became ambiguous on
+          // re-resolution. Append a per-session warning the renderer
+          // surfaces as a toast; the framework silences it via
+          // mcp_aliases.
+          return {
+            ...state,
+            toolAliasWarnings: [
+              ...state.toolAliasWarnings,
+              {
+                name: event.name,
+                candidates: event.candidates,
+                timestamp: Date.now(),
+              },
+            ],
+          };
+        }
+
+        // No-op variants — stream_text + decision_record + token_usage
+        // feed the inspector, not the graph; session_end + tool_error +
+        // mode_changed are graph-no-op by design. The exhaustive default
+        // below is the forcing function: any new variant added to the
+        // schema breaks the compile until handled.
         case 'session_end':
         case 'tool_error':
         case 'mode_changed':
         case 'stream_text':
         case 'decision_record':
         case 'token_usage':
-        case 'mcp_installed':
-        case 'mcp_uninstalled':
-        case 'mcp_auth_granted':
-        // M06.D red-phase: branches added in green. Held as explicit
-        // no-ops so the exhaustiveness check compiles the test file
-        // while the assertions fail for the right reason.
-        case 'mcp_request_blocked':
-        case 'tool_alias_ambiguous':
           return state;
 
         default: {

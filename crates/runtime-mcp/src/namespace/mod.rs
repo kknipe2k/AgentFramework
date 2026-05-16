@@ -23,7 +23,7 @@
 
 pub mod aliases;
 
-pub use aliases::{Aliases, AliasError};
+pub use aliases::{AliasError, Aliases};
 
 use std::collections::BTreeMap;
 
@@ -77,22 +77,14 @@ pub struct NewAmbiguity {
 /// mutate the snapshot and return any newly-ambiguous short names.
 #[derive(Debug, Clone, Default)]
 pub struct NamespaceResolver {
-    // M06.D red-phase: the green-phase resolve/connect/disconnect impl
-    // reads this. `expect` (not `allow`) is self-deactivating — it
-    // warns "unfulfilled" once green phase reads the field, so the
-    // green-phase clippy-fix step removes it with no manual cleanup
-    // (M06.C decision; gotcha #79 candidate).
-    #[expect(dead_code, reason = "M06.D green phase reads the connected-server snapshot")]
     connected: BTreeMap<String, Vec<String>>,
 }
 
 impl NamespaceResolver {
     /// Construct from the initial connected-server snapshot.
     #[must_use]
-    pub fn new(connected: BTreeMap<String, Vec<String>>) -> Self {
-        // Red-phase stub (M06.D strict TDD): green phase implements.
-        let _ = connected;
-        unimplemented!("M06.D green phase: NamespaceResolver::new")
+    pub const fn new(connected: BTreeMap<String, Vec<String>>) -> Self {
+        Self { connected }
     }
 
     /// Resolve a tool name per §5a (alias → canonical → short).
@@ -108,9 +100,42 @@ impl NamespaceResolver {
         name: &str,
         aliases: &BTreeMap<String, String>,
     ) -> Result<ResolvedTool, NamespaceError> {
-        // Red-phase stub (M06.D strict TDD): green phase implements.
-        let _ = (name, aliases);
-        unimplemented!("M06.D green phase: NamespaceResolver::resolve")
+        // §5a step 1 — alias override. An alias resolves to its
+        // canonical; failing that is an UnknownAlias (a framework
+        // config error), distinct from a NotFound short name.
+        if let Some(canonical) = aliases.get(name) {
+            return self
+                .resolve_canonical(canonical)
+                .ok_or_else(|| NamespaceError::UnknownAlias(name.to_string(), canonical.clone()));
+        }
+        // §5a step 2 — canonical `<server>__<tool>`, split on the FIRST
+        // `__` (server names cannot contain `__`; tool names may, so
+        // the remainder after the first `__` is the whole tool name).
+        if name.contains("__") {
+            return self
+                .resolve_canonical(name)
+                .ok_or_else(|| NamespaceError::NotFound(name.to_string()));
+        }
+        // §5a step 3 — short name; resolves iff unambiguous. Match the
+        // servers directly (no canonical string round-trip) so there's
+        // no infallible-`expect` to document.
+        let servers: Vec<&String> = self
+            .connected
+            .iter()
+            .filter(|(_, tools)| tools.iter().any(|t| t == name))
+            .map(|(server, _)| server)
+            .collect();
+        match servers.as_slice() {
+            [] => Err(NamespaceError::NotFound(name.to_string())),
+            [server] => Ok(ResolvedTool {
+                server: (*server).clone(),
+                tool: name.to_string(),
+            }),
+            _ => Err(NamespaceError::Ambiguous {
+                name: name.to_string(),
+                candidates: self.candidates_for(name),
+            }),
+        }
     }
 
     /// Record a server connect + its tool list. Returns the short names
@@ -122,9 +147,9 @@ impl NamespaceResolver {
         server: impl Into<String>,
         tools: Vec<String>,
     ) -> Vec<NewAmbiguity> {
-        // Red-phase stub (M06.D strict TDD): green phase implements.
-        let _ = (server.into(), tools);
-        unimplemented!("M06.D green phase: NamespaceResolver::connect_server")
+        let before = self.ambiguous_short_names();
+        self.connected.insert(server.into(), tools);
+        self.newly_ambiguous_since(&before)
     }
 
     /// Record a server disconnect. Disconnect can only REMOVE ambiguity,
@@ -132,17 +157,83 @@ impl NamespaceResolver {
     /// still updates the snapshot so subsequent `resolve` calls reflect
     /// the smaller connected set.
     pub fn disconnect_server(&mut self, server: &str) -> Vec<NewAmbiguity> {
-        // Red-phase stub (M06.D strict TDD): green phase implements.
-        let _ = server;
-        unimplemented!("M06.D green phase: NamespaceResolver::disconnect_server")
+        let before = self.ambiguous_short_names();
+        self.connected.remove(server);
+        // Removing a server cannot introduce a new collision; the
+        // diff against `before` is provably empty. Kept symmetric with
+        // `connect_server` so the re-evaluation site is one shape.
+        self.newly_ambiguous_since(&before)
     }
 
     /// Snapshot accessor — the canonical `<server>__<tool>` names a
-    /// short name currently matches (used by dispatch + tests).
+    /// short name currently matches, sorted for deterministic output.
     #[must_use]
     pub fn candidates_for(&self, short_name: &str) -> Vec<String> {
-        // Red-phase stub (M06.D strict TDD): green phase implements.
-        let _ = short_name;
-        unimplemented!("M06.D green phase: NamespaceResolver::candidates_for")
+        let mut out: Vec<String> = self
+            .connected
+            .iter()
+            .filter(|(_, tools)| tools.iter().any(|t| t == short_name))
+            .map(|(server, _)| format!("{server}__{short_name}"))
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// Resolve a canonical `<server>__<tool>` to a `ResolvedTool` iff
+    /// that server is connected AND exposes that tool. `None` otherwise
+    /// (caller maps to `NotFound` / `UnknownAlias` per context).
+    fn resolve_canonical(&self, canonical: &str) -> Option<ResolvedTool> {
+        let resolved = Self::split_canonical(canonical)?;
+        let exposed = self
+            .connected
+            .get(&resolved.server)
+            .is_some_and(|tools| tools.contains(&resolved.tool));
+        exposed.then_some(resolved)
+    }
+
+    /// Split a canonical name on the FIRST `__`. `None` if there is no
+    /// `__` or either segment is empty (spec §5a step 4 — server names
+    /// cannot contain `__`; the remainder is the tool, which MAY).
+    fn split_canonical(canonical: &str) -> Option<ResolvedTool> {
+        let (server, tool) = canonical.split_once("__")?;
+        if server.is_empty() || tool.is_empty() {
+            return None;
+        }
+        Some(ResolvedTool {
+            server: server.to_string(),
+            tool: tool.to_string(),
+        })
+    }
+
+    /// The set of short names currently ambiguous (exposed by ≥2
+    /// connected servers), mapped to their sorted canonical candidates.
+    fn ambiguous_short_names(&self) -> BTreeMap<String, Vec<String>> {
+        let mut counts: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (server, tools) in &self.connected {
+            for tool in tools {
+                counts
+                    .entry(tool.clone())
+                    .or_default()
+                    .push(format!("{server}__{tool}"));
+            }
+        }
+        counts.retain(|_, c| c.len() >= 2);
+        for c in counts.values_mut() {
+            c.sort();
+        }
+        counts
+    }
+
+    /// Short names ambiguous now but not in `before` — the spec §5a
+    /// step 5 "newly ambiguous on connect" delta.
+    fn newly_ambiguous_since(&self, before: &BTreeMap<String, Vec<String>>) -> Vec<NewAmbiguity> {
+        self.ambiguous_short_names()
+            .into_iter()
+            .filter(|(name, _)| !before.contains_key(name))
+            .map(|(short_name, candidates)| NewAmbiguity {
+                short_name,
+                candidates,
+            })
+            .collect()
     }
 }

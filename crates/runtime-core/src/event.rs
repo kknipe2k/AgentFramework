@@ -767,7 +767,7 @@ pub enum AgentEvent {
     /// An MCP tool dispatch was denied by the L1+L4 capability check —
     /// spec §5a + §8.security (M06.D). Emitted alongside
     /// `CapabilityViolation` on a single deny; carries the resolved MCP
-    /// server + tool so the renderer attributes the block to the MCPNode.
+    /// server + tool so the renderer attributes the block to the `MCPNode`.
     McpRequestBlocked {
         /// Agent whose MCP dispatch the enforcer rejected.
         agent_id: String,

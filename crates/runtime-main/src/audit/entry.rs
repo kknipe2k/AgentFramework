@@ -234,9 +234,16 @@ pub fn mcp_request_blocked(
     tool: &str,
     reason: &str,
 ) -> AuditEntry {
-    // Red-phase stub (M06.D strict TDD): green phase implements.
-    let _ = (session, agent_id, server, tool, reason);
-    unimplemented!("M06.D green phase: AuditEntry::mcp_request_blocked")
+    entry(
+        session,
+        AuditEntryKind::McpRequestBlocked,
+        details(json!({
+            "agent_id": agent_id,
+            "server": server,
+            "tool": tool,
+            "reason": reason,
+        })),
+    )
 }
 
 /// `tier_transition` — emitted when the user's tier changes.

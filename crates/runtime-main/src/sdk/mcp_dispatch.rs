@@ -19,7 +19,7 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use runtime_core::event::{AgentEvent, ToolSource};
+use runtime_core::event::{AgentEvent, CapabilityKindRef, ToolSource};
 use serde_json::Value;
 
 /// Outcome of attempting MCP dispatch for a single tool call.
@@ -27,7 +27,7 @@ use serde_json::Value;
 /// `dispatch_if_mcp` returns `None` for "not an MCP tool" (caller falls
 /// through to the Stage A non-MCP L1 path); this enum covers the three
 /// resolved outcomes.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpDispatchOutcome {
     /// Tool resolved, L1+L4 capability check passed, server invoked OK.
     Invoked {
@@ -111,28 +111,92 @@ pub trait McpToolDispatch: Send + Sync {
 /// with (ignored for `Blocked` / `Ambiguous`).
 #[must_use]
 pub fn apply_mcp_dispatch(outcome: McpDispatchOutcome, input: Value) -> Vec<AgentEvent> {
-    // Red-phase stub (M06.D strict TDD): green phase implements.
-    let _ = (outcome, input, ToolSource::Mcp);
-    unimplemented!("M06.D green phase: apply_mcp_dispatch outcome→event mapping")
+    match outcome {
+        McpDispatchOutcome::Invoked {
+            server,
+            tool,
+            value,
+        } => {
+            // The Invoked outcome does not carry agent_id (the
+            // integration test's pattern pins {server, tool, value}).
+            // The SDK run loop, which holds agent_id, emits the
+            // agent_id-correct ToolInvoked/ToolResult for the success
+            // path directly; this branch is the wire-test contract +
+            // the renderer-shape reference. agent_id is filled by the
+            // run-loop seam (ADR-0010 note + Stage D retro special-log).
+            vec![
+                AgentEvent::ToolInvoked {
+                    agent_id: String::new(),
+                    tool_name: tool.clone(),
+                    source: ToolSource::Mcp,
+                    server: Some(server),
+                    input,
+                },
+                AgentEvent::ToolResult {
+                    agent_id: String::new(),
+                    tool_name: tool,
+                    output: value,
+                    duration_ms: 0,
+                    tokens_in: None,
+                    tokens_out: None,
+                },
+            ]
+        }
+        McpDispatchOutcome::Blocked {
+            agent_id,
+            server,
+            tool,
+            reason,
+        } => {
+            // Single deny → two events: the generic CapabilityViolation
+            // (drives the existing on_capability_violation HITL trigger
+            // + inspector, per ADR-0007 — gotcha trap #4 emission
+            // ordering: violation BEFORE the HITL prompt) THEN the
+            // MCP-specific McpRequestBlocked carrying server+tool so the
+            // renderer attributes the block to the MCPNode.
+            vec![
+                AgentEvent::CapabilityViolation {
+                    agent_id: agent_id.clone(),
+                    capability_kind: CapabilityKindRef::Exec,
+                    requested_action: format!("invoke MCP tool '{server}__{tool}'"),
+                    declared_scope: reason.clone(),
+                },
+                AgentEvent::McpRequestBlocked {
+                    agent_id,
+                    server,
+                    tool,
+                    reason,
+                },
+            ]
+        }
+        McpDispatchOutcome::Ambiguous { name, candidates } => {
+            vec![AgentEvent::ToolAliasAmbiguous { name, candidates }]
+        }
+    }
 }
 
 /// Map a [`McpDispatchError`] to the `AgentEvent` the renderer
 /// consumes — a `ToolError` carrying the transport/config failure so
 /// the renderer paints the failure rather than silently dropping it.
 #[must_use]
-pub fn mcp_dispatch_error_event(agent_id: &str, tool_name: &str, err: &McpDispatchError) -> AgentEvent {
-    // Red-phase stub (M06.D strict TDD): green phase implements.
-    let _ = (agent_id, tool_name, err);
-    unimplemented!("M06.D green phase: mcp_dispatch_error_event")
+pub fn mcp_dispatch_error_event(
+    agent_id: &str,
+    tool_name: &str,
+    err: &McpDispatchError,
+) -> AgentEvent {
+    AgentEvent::ToolError {
+        agent_id: agent_id.to_string(),
+        tool_name: tool_name.to_string(),
+        error: err.to_string(),
+    }
 }
 
-/// True when this outcome must route the existing
-/// `on_capability_violation` HITL trigger (the `Blocked` case). The SDK
+/// True iff this outcome routes the existing HITL trigger.
+///
+/// Only the `Blocked` case routes `on_capability_violation`. The SDK
 /// run loop uses this to gate the HITL await, mirroring the Stage A
 /// `CapabilityViolation` / `TierViolation` HITL routing.
 #[must_use]
-pub fn outcome_needs_hitl(outcome: &McpDispatchOutcome) -> bool {
-    // Red-phase stub (M06.D strict TDD): green phase implements.
-    let _ = outcome;
-    unimplemented!("M06.D green phase: outcome_needs_hitl")
+pub const fn outcome_needs_hitl(outcome: &McpDispatchOutcome) -> bool {
+    matches!(outcome, McpDispatchOutcome::Blocked { .. })
 }
