@@ -6,6 +6,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M06 Stage D (§5a Tool Namespace Resolution + MCP dispatch through L1+L4 + audit)
+
+- **§5a Tool Namespace Resolution** (`crates/runtime-mcp/src/namespace/`):
+  `NamespaceResolver::resolve` implements the five locked §5a rules —
+  alias override, canonical `<server>__<tool>` (split on the FIRST `__`
+  so tool names may contain `__`), short-name unambiguity, and
+  connect/disconnect re-resolution emitting `NewAmbiguity` records.
+  `Aliases::validate` rejects non-canonical values + short-name
+  collisions.
+- **MCP dispatch through the L1+L4 capability gates** (`crates/
+  runtime-mcp/src/dispatch.rs`): `McpDispatcher` resolves → enforces
+  (`CapabilityEnforcer::check`) → on deny writes the
+  `mcp_request_blocked` audit line (gotcha #66 correlation) → else
+  invokes via the injected `ConnectionResolver` seam. Implements the
+  `runtime_main::sdk::McpToolDispatch` trait per **ADR-0010**
+  (dependency inversion — the seam lives in `runtime-main`, the impl in
+  `runtime-mcp`, the wiring in `src-tauri`; resolves the
+  `runtime-mcp → runtime-main` cycle the phase doc's literal placement
+  would have closed).
+- **`runtime-main::sdk::mcp_dispatch`** — the `McpToolDispatch` trait +
+  `McpDispatchOutcome` value type + `apply_mcp_dispatch`
+  (outcome→`AgentEvent` mapping: Invoked→ToolInvoked+ToolResult;
+  Blocked→CapabilityViolation+McpRequestBlocked; Ambiguous→
+  ToolAliasAmbiguous) + `mcp_dispatch_error_event` +
+  `outcome_needs_hitl`.
+- **Schema:** `event.v1.json` gains `tool_alias_ambiguous` +
+  `mcp_request_blocked` variants (inline `minLength` strings extracted
+  to `AmbiguousToolName`/`BlockedMcpTool`/`McpBlockReason` $defs per
+  gotcha #43; `server` uses the M06.C `McpServerNameRef` local mirror).
+  `audit.v1.json` `AuditEntryKind` gains `mcp_request_blocked`.
+  Generated Rust + TS regenerated; `crates/runtime-core/src/event.rs`
+  hand-mirror updated.
+- **Audit:** `AuditEntry::mcp_request_blocked` constructor (agent_id +
+  server + tool + reason).
+- **Renderer (graphStore branches; Stage E wires components):**
+  `currentMcpServers` + `toolAliasWarnings` store slots;
+  `mcp_installed`/`mcp_uninstalled`/`mcp_auth_granted` →
+  `currentMcpServers`; `mcp_request_blocked` → `capabilityViolations`
+  (keyed by agent, MCP context in `requestedAction`);
+  `tool_alias_ambiguous` → `toolAliasWarnings`. `currentMcpServers`
+  preserved across `clear()` (registry-backed, like `currentTier`).
+- **ADR-0010** filed (Accepted) — MCP dispatch dependency inversion.
+
+### Coverage — M06 Stage D
+
+- `runtime-mcp` aggregate 97.16% line ≥95 (exact CI cmd). New-module
+  baselines: `namespace/mod.rs` 99.11%, `namespace/aliases.rs` 100%,
+  `dispatch.rs` 100%. `runtime-main` `sdk/mcp_dispatch.rs` 100% line.
+- Strict-TDD two-commit pattern: red `17aeb9b` → green `23bc369`
+  (`git diff 17aeb9b..23bc369 -- '**/tests/**'` EMPTY) → mechanical
+  fmt follow-up `1d377d0` → net-new disconnect coverage test +
+  pre-existing M06.C doc-link fix `30b5f67`.
+
 ### Added — M06 Stage C (`runtime-mcp::client` lifecycle — install + auth + connection mgmt + audit)
 
 - **`crates/runtime-mcp/src/client/`** *(new module)* — server lifecycle
