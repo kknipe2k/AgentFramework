@@ -21,7 +21,7 @@ fn connected(pairs: &[(&str, &[&str])]) -> BTreeMap<String, Vec<String>> {
         .collect()
 }
 
-fn no_aliases() -> BTreeMap<String, String> {
+const fn no_aliases() -> BTreeMap<String, String> {
     BTreeMap::new()
 }
 
@@ -100,7 +100,10 @@ fn resolve_short_name_fails_when_ambiguous_returns_candidate_list() {
         .resolve("extract_text", &no_aliases())
         .expect_err("ambiguous short name must fail");
     match err {
-        NamespaceError::Ambiguous { name, mut candidates } => {
+        NamespaceError::Ambiguous {
+            name,
+            mut candidates,
+        } => {
             assert_eq!(name, "extract_text");
             candidates.sort();
             assert_eq!(
@@ -175,9 +178,12 @@ fn re_evaluate_short_names_emits_new_ambiguity_when_server_connects_with_overlap
     // connects, also exposing extract_text → the short name BECOMES
     // ambiguous → connect_server returns a NewAmbiguity for it.
     let mut r = NamespaceResolver::new(connected(&[("pdf-mcp", &["extract_text"])]));
-    let new_ambiguities =
-        r.connect_server("image-mcp", vec!["extract_text".to_string()]);
-    assert_eq!(new_ambiguities.len(), 1, "exactly one short name became ambiguous");
+    let new_ambiguities = r.connect_server("image-mcp", vec!["extract_text".to_string()]);
+    assert_eq!(
+        new_ambiguities.len(),
+        1,
+        "exactly one short name became ambiguous"
+    );
     let amb = &new_ambiguities[0];
     assert_eq!(amb.short_name, "extract_text");
     let mut cands = amb.candidates.clone();
@@ -255,9 +261,14 @@ fn aliases_validate_rejects_collision_on_same_canonical() {
 #[test]
 fn aliases_validate_accepts_well_formed_distinct_map() {
     let mut m = BTreeMap::new();
-    m.insert("extract_text".to_string(), "pdf-mcp__extract_text".to_string());
+    m.insert(
+        "extract_text".to_string(),
+        "pdf-mcp__extract_text".to_string(),
+    );
     m.insert("render".to_string(), "image-mcp__render".to_string());
     let aliases = Aliases::new(m.clone());
-    aliases.validate().expect("well-formed distinct map validates");
+    aliases
+        .validate()
+        .expect("well-formed distinct map validates");
     assert_eq!(aliases.as_map(), &m);
 }

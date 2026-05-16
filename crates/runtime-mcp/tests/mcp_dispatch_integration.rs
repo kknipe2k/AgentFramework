@@ -16,7 +16,9 @@ use runtime_main::capability::CapabilityEnforcer;
 use runtime_main::sdk::{McpDispatchOutcome, McpToolDispatch};
 use runtime_main::tier::Tier;
 use runtime_mcp::transport::{Connection, MockTransport, Transport};
-use runtime_mcp::{mcp_tool_capability, ConnectionResolver, McpDispatcher, McpError, NamespaceResolver};
+use runtime_mcp::{
+    mcp_tool_capability, ConnectionResolver, McpDispatcher, McpError, NamespaceResolver,
+};
 use serde_json::json;
 use tempfile::tempdir;
 use tokio::sync::RwLock;
@@ -148,7 +150,10 @@ async fn mcp_tool_dispatch_ambiguous_short_name_emits_tool_alias_ambiguous() {
         .expect("ambiguity is a resolved outcome, not a dispatch error");
 
     match outcome {
-        McpDispatchOutcome::Ambiguous { name, mut candidates } => {
+        McpDispatchOutcome::Ambiguous {
+            name,
+            mut candidates,
+        } => {
             assert_eq!(name, "extract_text");
             candidates.sort();
             assert_eq!(
@@ -221,7 +226,12 @@ async fn non_mcp_tool_falls_through_to_default_dispatch_path() {
     );
 
     let result = dispatcher
-        .dispatch_if_mcp("worker", "Read", json!({"path": "src/lib.rs"}), &no_aliases())
+        .dispatch_if_mcp(
+            "worker",
+            "Read",
+            json!({"path": "src/lib.rs"}),
+            &no_aliases(),
+        )
         .await;
     assert!(
         result.is_none(),

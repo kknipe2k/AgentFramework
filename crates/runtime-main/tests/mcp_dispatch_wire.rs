@@ -34,7 +34,11 @@ fn invoked_outcome_maps_to_tool_invoked_then_tool_result_with_mcp_source() {
             assert_eq!(tool_name, "extract_text");
             assert_eq!(*source, ToolSource::Mcp);
             assert_eq!(server.as_deref(), Some("pdf-mcp"));
-            assert_eq!(*input, json!({"q": "needle"}), "original args ride into ToolInvoked");
+            assert_eq!(
+                *input,
+                json!({"q": "needle"}),
+                "original args ride into ToolInvoked"
+            );
         }
         other => panic!("events[0] must be ToolInvoked, got {other:?}"),
     }

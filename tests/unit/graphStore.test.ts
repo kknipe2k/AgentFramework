@@ -536,10 +536,7 @@ describe('graphStore.applyEvent', () => {
       const warnings = useGraphStore.getState().toolAliasWarnings;
       expect(warnings).toHaveLength(1);
       expect(warnings[0]!.name).toBe('extract_text');
-      expect(warnings[0]!.candidates).toEqual([
-        'pdf-mcp__extract_text',
-        'image-mcp__extract_text',
-      ]);
+      expect(warnings[0]!.candidates).toEqual(['pdf-mcp__extract_text', 'image-mcp__extract_text']);
       expect(warnings[0]!.timestamp).toBeGreaterThan(0);
     });
 
