@@ -6,6 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M06 Stage E (Renderer: MCPNode live wiring + Settings → MCP Servers UI)
+
+- **`MCPNode` live wiring** (`src/components/nodes/MCPNode.tsx`):
+  `useShallow`-wrapped `currentMcpServers[serverName]` selector drives a
+  `.mcp-node__status-indicator` + `mcp-node--conn-<status>` class family
+  (connected / disconnected / health_pending / error) — a separate axis
+  from the M03 NodeStatus `mcp-node--<active|complete|error>` classes
+  (backward-compatible: the 5 M03 tests still pin those). New
+  `activeMcpCalls` selector adds `mcp-node--call-active`.
+- **`MCPServerSettings`** (`src/components/MCPServerSettings.tsx`, new):
+  installed-server list from `currentMcpServers` with per-row status +
+  confirm-gated Remove + an Add-server modal. Mounts as a
+  `.graph-layout` sibling panel (no Settings-tab infra in v0.1 —
+  reconciled vs the E.3.2 phase-doc premise).
+- **`MCPServerAddModal`** (`src/components/MCPServerAddModal.tsx`, new):
+  name-regex-gated form (`^[a-z0-9][a-z0-9-]*$`) for stdio/http
+  transport + args CSV + env `KEY=value` lines + optional auth secret;
+  renderer-side Test (`mcpTestConnection`) showing the discovered
+  `McpTool[]`; tier-eval display (spec §8.security L4) computed from
+  store `currentTier` — no new Tauri command / tier primitive.
+- **IPC wrappers** (`src/lib/ipc.ts`): `mcpAddServer` /
+  `mcpRemoveServer` / `mcpTestConnection` / `mcpListServers` +
+  `McpTool` / `McpServerSummary` interfaces, wired to the actual
+  Stage C command signatures — `mcp_test_connection` takes `{config}`
+  NOT `{name}` (E.3.4 pseudocode drift; reconciled vs
+  `commands.rs:821`).
+- **`activeMcpCalls` store slot** (`src/lib/graphStore.ts`):
+  `Record<server, toolNodeId>` set on `tool_invoked(source=mcp)`,
+  cleared on `tool_result`, reset on `clear()` (per-session animation
+  state — deliberately diverges from the `<test_isolation_audit
+  preserved_across_clear>` claim).
+- **Styles** (`src/styles.css`): full `mcp-node--conn-*` /
+  `mcp-server-settings` / `mcp-server-row` / `mcp-server-add-modal` /
+  `mcp-tool-list` family; every className paired with a CSS rule,
+  guarded by two `every_*_class_has_a_corresponding_CSS_rule` static
+  tests (gotcha #67).
+- **Tests:** `MCPNode.test.tsx` (+7), `MCPServerSettings.test.tsx`
+  (new, 7), `MCPServerAddModal.test.tsx` (new, 8), `ipc.test.ts` (+5),
+  `graphStore.test.ts` (+4 `activeMcpCalls`), `mcp_server_add.spec.ts`
+  (new Playwright, 3) via `window.__graphStore` injection (gotcha #54).
+  Full vitest 329/329; renderer coverage 97.98% (`src/components`
+  98.18%). Renderer-only — cargo gates unchanged.
+
 ### Added — M06 Stage D (§5a Tool Namespace Resolution + MCP dispatch through L1+L4 + audit)
 
 - **§5a Tool Namespace Resolution** (`crates/runtime-mcp/src/namespace/`):
