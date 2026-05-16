@@ -29,12 +29,18 @@
 //! M06-mcp-basic.md` Stage B for the staging plan.
 
 pub mod client;
+pub mod dispatch;
 pub mod error;
+pub mod namespace;
 pub mod transport;
 
 pub use client::{
     InMemorySecretStore, KeyringSecretStore, LifecycleError, McpClient, McpServerRecord,
     McpServerSummary, Registry, SecretStore, MCP_KEYRING_SERVICE,
 };
+pub use dispatch::{mcp_tool_capability, ConnectionResolver, McpDispatcher};
 pub use error::McpError;
+pub use namespace::{
+    AliasError, Aliases, NamespaceError, NamespaceResolver, NewAmbiguity, ResolvedTool,
+};
 pub use transport::{Connection, McpTool, Transport};

@@ -8,6 +8,7 @@ import type {
   HitlTriggerRef,
   HitlUiVariantRef,
   HookCategoryRef,
+  McpTransportKind,
   OnFailureRef,
   RailPolicy,
   TierRef,
@@ -383,6 +384,35 @@ export interface TierViolationRecord {
   timestamp: number;
 }
 
+/**
+ * Spec §5 (M06.D): live state of one installed MCP server, keyed by
+ * server name in `currentMcpServers`. Driven by the M06.C lifecycle
+ * events (`mcp_installed` / `mcp_uninstalled` / `mcp_auth_granted`);
+ * Stage E's MCPNode + Settings panel read this. `currentMcpServers`
+ * follows the M05.D `currentTier` pattern — persistent across `clear()`
+ * because MCP servers are registry-backed install state, not
+ * per-session graph state (test files reset it explicitly in
+ * `beforeEach`).
+ */
+export interface McpServerStatusRecord {
+  name: string;
+  transportKind: McpTransportKind | null;
+  hasAuth: boolean;
+  status: string;
+}
+
+/**
+ * Spec §5a step 5 (M06.D): one `tool_alias_ambiguous` warning. The
+ * runtime emits this when a server connect makes a short tool name
+ * ambiguous; the framework silences it by pinning the name in
+ * `mcp_aliases`. Append-only, per-session (cleared on `clear()`).
+ */
+export interface ToolAliasWarning {
+  name: string;
+  candidates: string[];
+  timestamp: number;
+}
+
 interface GraphState {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -448,6 +478,20 @@ interface GraphState {
    * violations from the same agent.
    */
   tierViolations: Record<string, TierViolationRecord>;
+  /**
+   * Spec §5 (M06.D): installed MCP servers keyed by server name.
+   * Driven by `mcp_installed` / `mcp_uninstalled` / `mcp_auth_granted`.
+   * Persistent across `clear()` (registry-backed install state, like
+   * `currentTier`) — test files reset it in `beforeEach`. Stage E's
+   * MCPNode + Settings panel consume it.
+   */
+  currentMcpServers: Record<string, McpServerStatusRecord>;
+  /**
+   * Spec §5a step 5 (M06.D): append-only `tool_alias_ambiguous`
+   * warnings for the current session. Renderer surfaces a warning
+   * toast; cleared on `clear()`.
+   */
+  toolAliasWarnings: ToolAliasWarning[];
 
   /**
    * Single entry point for translating AgentEvent into node + edge
@@ -644,6 +688,8 @@ export const useGraphStore = create<GraphState>((set) => ({
   capabilityGrants: [],
   currentTier: 'novice',
   tierViolations: {},
+  currentMcpServers: {},
+  toolAliasWarnings: [],
 
   applyEvent: (event) =>
     set((state) => {
@@ -1434,6 +1480,11 @@ export const useGraphStore = create<GraphState>((set) => ({
         case 'mcp_installed':
         case 'mcp_uninstalled':
         case 'mcp_auth_granted':
+        // M06.D red-phase: branches added in green. Held as explicit
+        // no-ops so the exhaustiveness check compiles the test file
+        // while the assertions fail for the right reason.
+        case 'mcp_request_blocked':
+        case 'tool_alias_ambiguous':
           return state;
 
         default: {
@@ -1461,6 +1512,11 @@ export const useGraphStore = create<GraphState>((set) => ({
       // session clears so the Settings toggle keeps its state.
       tierViolations: {},
       currentTier: state.currentTier,
+      // currentMcpServers is registry-backed install state (like
+      // currentTier), not per-session graph state — preserved across
+      // session clears. toolAliasWarnings are per-session — cleared.
+      currentMcpServers: state.currentMcpServers,
+      toolAliasWarnings: [],
     })),
 
   selectNode: (id) => set({ selectedNodeId: id }),

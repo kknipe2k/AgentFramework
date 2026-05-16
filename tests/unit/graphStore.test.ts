@@ -468,6 +468,90 @@ describe('graphStore.applyEvent', () => {
     });
   });
 
+  describe('MCP events (M06.D)', () => {
+    // currentMcpServers persists across clear() (registry-backed, like
+    // currentTier) so reset() alone won't zero it — explicitly reset
+    // the slot per the v1.6 <test_isolation_audit> discipline.
+    beforeEach(() => {
+      useGraphStore.setState({ currentMcpServers: {}, toolAliasWarnings: [] });
+    });
+
+    const installed: AgentEvent = {
+      type: 'mcp_installed',
+      name: 'pdf-mcp',
+      transport_kind: 'stdio',
+      has_auth: false,
+    };
+
+    it('applyEvent_mcp_installed_adds_server_to_currentMcpServers', () => {
+      useGraphStore.getState().applyEvent(installed);
+      const server = useGraphStore.getState().currentMcpServers['pdf-mcp'];
+      expect(server).toBeDefined();
+      expect(server!.name).toBe('pdf-mcp');
+      expect(server!.transportKind).toBe('stdio');
+      expect(server!.hasAuth).toBe(false);
+      expect(server!.status).toBe('connected');
+    });
+
+    it('applyEvent_mcp_uninstalled_removes_server_from_currentMcpServers', () => {
+      useGraphStore.getState().applyEvent(installed);
+      expect(useGraphStore.getState().currentMcpServers['pdf-mcp']).toBeDefined();
+      useGraphStore.getState().applyEvent({ type: 'mcp_uninstalled', name: 'pdf-mcp' });
+      expect(useGraphStore.getState().currentMcpServers['pdf-mcp']).toBeUndefined();
+    });
+
+    it('applyEvent_mcp_auth_granted_updates_server_has_auth_flag', () => {
+      useGraphStore.getState().applyEvent(installed);
+      expect(useGraphStore.getState().currentMcpServers['pdf-mcp']!.hasAuth).toBe(false);
+      useGraphStore.getState().applyEvent({ type: 'mcp_auth_granted', name: 'pdf-mcp' });
+      expect(useGraphStore.getState().currentMcpServers['pdf-mcp']!.hasAuth).toBe(true);
+    });
+
+    it('applyEvent_mcp_request_blocked_appends_to_capabilityViolations_list_with_mcp_context', () => {
+      const blocked: AgentEvent = {
+        type: 'mcp_request_blocked',
+        agent_id: 'worker',
+        server: 'pdf-mcp',
+        tool: 'extract_text',
+        reason: 'no capabilities declared',
+      };
+      useGraphStore.getState().applyEvent(blocked);
+      const record = useGraphStore.getState().capabilityViolations['worker'];
+      expect(record).toBeDefined();
+      // The MCP server + tool context must be readable from the
+      // recorded violation (gotcha #68 — every field read).
+      expect(record!.requestedAction).toContain('pdf-mcp');
+      expect(record!.requestedAction).toContain('extract_text');
+      expect(record!.declaredScope).toBe('no capabilities declared');
+      expect(record!.timestamp).toBeGreaterThan(0);
+    });
+
+    it('applyEvent_tool_alias_ambiguous_records_warning', () => {
+      const ambiguous: AgentEvent = {
+        type: 'tool_alias_ambiguous',
+        name: 'extract_text',
+        candidates: ['pdf-mcp__extract_text', 'image-mcp__extract_text'],
+      };
+      useGraphStore.getState().applyEvent(ambiguous);
+      const warnings = useGraphStore.getState().toolAliasWarnings;
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]!.name).toBe('extract_text');
+      expect(warnings[0]!.candidates).toEqual([
+        'pdf-mcp__extract_text',
+        'image-mcp__extract_text',
+      ]);
+      expect(warnings[0]!.timestamp).toBeGreaterThan(0);
+    });
+
+    it('mcp_installed_is_idempotent_under_repeated_identical_events', () => {
+      useGraphStore.getState().applyEvent(installed);
+      useGraphStore.getState().applyEvent(installed);
+      const servers = useGraphStore.getState().currentMcpServers;
+      expect(Object.keys(servers)).toEqual(['pdf-mcp']);
+      expect(servers['pdf-mcp']!.hasAuth).toBe(false);
+    });
+  });
+
   it('clear_empties_nodes_edges_and_selectedNodeId', () => {
     useGraphStore.getState().applyEvent(spawnA);
     useGraphStore.getState().applyEvent(spawnB);

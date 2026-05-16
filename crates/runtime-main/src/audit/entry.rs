@@ -218,6 +218,27 @@ pub fn mcp_auth_granted(session: &str, name: &str) -> AuditEntry {
     )
 }
 
+/// `mcp_request_blocked` — emitted by M06.D MCP dispatch when the L1+L4
+/// capability check denies an MCP tool call.
+///
+/// Records the resolved server + tool + the deny reason so the audit
+/// trail captures *which* MCP tool was blocked and why. Emitted
+/// alongside the `capability_violation` + `mcp_request_blocked` events
+/// (gotcha #66 correlation: dispatch deny fires both the event sequence
+/// AND this audit line).
+#[must_use]
+pub fn mcp_request_blocked(
+    session: &str,
+    agent_id: &str,
+    server: &str,
+    tool: &str,
+    reason: &str,
+) -> AuditEntry {
+    // Red-phase stub (M06.D strict TDD): green phase implements.
+    let _ = (session, agent_id, server, tool, reason);
+    unimplemented!("M06.D green phase: AuditEntry::mcp_request_blocked")
+}
+
 /// `tier_transition` — emitted when the user's tier changes.
 ///
 /// Records both sides of the flip + the human-readable reason so the

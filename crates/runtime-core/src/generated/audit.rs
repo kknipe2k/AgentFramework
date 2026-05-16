@@ -94,14 +94,14 @@ impl AuditEntry {
         Default::default()
     }
 }
-#[doc = "Discriminator for the `details` shape. v0.1 emits nine kinds: `framework_loaded` (Stage A successful load), `gap_detected` (Stage A walker emitted a gap), `gap_resolved` (Stage A resolution event), `capability_granted` (Stage B enforcer accepted), `capability_denied` (Stage B enforcer rejected), `tier_transition` (Stage D evaluator-state flip), `mcp_installed` (M06.C McpClient::add_server succeeded), `mcp_uninstalled` (M06.C McpClient::remove_server succeeded), `mcp_auth_granted` (M06.C secret stored for an MCP server; secret value never logged). Per gotcha #43 (typify-friendly extraction): enum extracted to $defs with title."]
+#[doc = "Discriminator for the `details` shape. v0.1 emits ten kinds: `framework_loaded` (Stage A successful load), `gap_detected` (Stage A walker emitted a gap), `gap_resolved` (Stage A resolution event), `capability_granted` (Stage B enforcer accepted), `capability_denied` (Stage B enforcer rejected), `tier_transition` (Stage D evaluator-state flip), `mcp_installed` (M06.C McpClient::add_server succeeded), `mcp_uninstalled` (M06.C McpClient::remove_server succeeded), `mcp_auth_granted` (M06.C secret stored for an MCP server; secret value never logged), `mcp_request_blocked` (M06.D capability check denied an MCP tool dispatch; records server + tool + reason). Per gotcha #43 (typify-friendly extraction): enum extracted to $defs with title."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
 #[doc = r" ```json"]
 #[doc = "{"]
 #[doc = "  \"title\": \"AuditEntryKind\","]
-#[doc = "  \"description\": \"Discriminator for the `details` shape. v0.1 emits nine kinds: `framework_loaded` (Stage A successful load), `gap_detected` (Stage A walker emitted a gap), `gap_resolved` (Stage A resolution event), `capability_granted` (Stage B enforcer accepted), `capability_denied` (Stage B enforcer rejected), `tier_transition` (Stage D evaluator-state flip), `mcp_installed` (M06.C McpClient::add_server succeeded), `mcp_uninstalled` (M06.C McpClient::remove_server succeeded), `mcp_auth_granted` (M06.C secret stored for an MCP server; secret value never logged). Per gotcha #43 (typify-friendly extraction): enum extracted to $defs with title.\","]
+#[doc = "  \"description\": \"Discriminator for the `details` shape. v0.1 emits ten kinds: `framework_loaded` (Stage A successful load), `gap_detected` (Stage A walker emitted a gap), `gap_resolved` (Stage A resolution event), `capability_granted` (Stage B enforcer accepted), `capability_denied` (Stage B enforcer rejected), `tier_transition` (Stage D evaluator-state flip), `mcp_installed` (M06.C McpClient::add_server succeeded), `mcp_uninstalled` (M06.C McpClient::remove_server succeeded), `mcp_auth_granted` (M06.C secret stored for an MCP server; secret value never logged), `mcp_request_blocked` (M06.D capability check denied an MCP tool dispatch; records server + tool + reason). Per gotcha #43 (typify-friendly extraction): enum extracted to $defs with title.\","]
 #[doc = "  \"type\": \"string\","]
 #[doc = "  \"enum\": ["]
 #[doc = "    \"framework_loaded\","]
@@ -112,7 +112,8 @@ impl AuditEntry {
 #[doc = "    \"tier_transition\","]
 #[doc = "    \"mcp_installed\","]
 #[doc = "    \"mcp_uninstalled\","]
-#[doc = "    \"mcp_auth_granted\""]
+#[doc = "    \"mcp_auth_granted\","]
+#[doc = "    \"mcp_request_blocked\""]
 #[doc = "  ]"]
 #[doc = "}"]
 #[doc = r" ```"]
@@ -148,6 +149,8 @@ pub enum AuditEntryKind {
     McpUninstalled,
     #[serde(rename = "mcp_auth_granted")]
     McpAuthGranted,
+    #[serde(rename = "mcp_request_blocked")]
+    McpRequestBlocked,
 }
 impl ::std::fmt::Display for AuditEntryKind {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -161,6 +164,7 @@ impl ::std::fmt::Display for AuditEntryKind {
             Self::McpInstalled => f.write_str("mcp_installed"),
             Self::McpUninstalled => f.write_str("mcp_uninstalled"),
             Self::McpAuthGranted => f.write_str("mcp_auth_granted"),
+            Self::McpRequestBlocked => f.write_str("mcp_request_blocked"),
         }
     }
 }
@@ -177,6 +181,7 @@ impl ::std::str::FromStr for AuditEntryKind {
             "mcp_installed" => Ok(Self::McpInstalled),
             "mcp_uninstalled" => Ok(Self::McpUninstalled),
             "mcp_auth_granted" => Ok(Self::McpAuthGranted),
+            "mcp_request_blocked" => Ok(Self::McpRequestBlocked),
             _ => Err("invalid value".into()),
         }
     }

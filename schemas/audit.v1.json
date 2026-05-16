@@ -28,7 +28,7 @@
     "AuditEntryKind": {
       "type": "string",
       "title": "AuditEntryKind",
-      "description": "Discriminator for the `details` shape. v0.1 emits nine kinds: `framework_loaded` (Stage A successful load), `gap_detected` (Stage A walker emitted a gap), `gap_resolved` (Stage A resolution event), `capability_granted` (Stage B enforcer accepted), `capability_denied` (Stage B enforcer rejected), `tier_transition` (Stage D evaluator-state flip), `mcp_installed` (M06.C McpClient::add_server succeeded), `mcp_uninstalled` (M06.C McpClient::remove_server succeeded), `mcp_auth_granted` (M06.C secret stored for an MCP server; secret value never logged). Per gotcha #43 (typify-friendly extraction): enum extracted to $defs with title.",
+      "description": "Discriminator for the `details` shape. v0.1 emits ten kinds: `framework_loaded` (Stage A successful load), `gap_detected` (Stage A walker emitted a gap), `gap_resolved` (Stage A resolution event), `capability_granted` (Stage B enforcer accepted), `capability_denied` (Stage B enforcer rejected), `tier_transition` (Stage D evaluator-state flip), `mcp_installed` (M06.C McpClient::add_server succeeded), `mcp_uninstalled` (M06.C McpClient::remove_server succeeded), `mcp_auth_granted` (M06.C secret stored for an MCP server; secret value never logged), `mcp_request_blocked` (M06.D capability check denied an MCP tool dispatch; records server + tool + reason). Per gotcha #43 (typify-friendly extraction): enum extracted to $defs with title.",
       "enum": [
         "framework_loaded",
         "gap_detected",
@@ -38,7 +38,8 @@
         "tier_transition",
         "mcp_installed",
         "mcp_uninstalled",
-        "mcp_auth_granted"
+        "mcp_auth_granted",
+        "mcp_request_blocked"
       ]
     },
     "AuditSessionId": {

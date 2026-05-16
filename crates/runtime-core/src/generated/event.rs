@@ -1443,6 +1443,62 @@ pub mod error {
 #[doc = "        }"]
 #[doc = "      },"]
 #[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"title\": \"ToolAliasAmbiguous\","]
+#[doc = "      \"description\": \"Spec §5a step 5 (M06.D) — emitted on re-resolution when an MCP server connect makes a previously-unambiguous short tool name newly ambiguous across the connected-server set. The framework pins the name via `mcp_aliases` to silence it. Renderer surfaces a warning toast listing the canonical candidates. Distinct from `mcp_request_blocked` (a capability deny) — this is a namespace warning, not a security event.\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"candidates\","]
+#[doc = "        \"name\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"candidates\": {"]
+#[doc = "          \"type\": \"array\","]
+#[doc = "          \"items\": {"]
+#[doc = "            \"type\": \"string\""]
+#[doc = "          },"]
+#[doc = "          \"minItems\": 2"]
+#[doc = "        },"]
+#[doc = "        \"name\": {"]
+#[doc = "          \"$ref\": \"#/$defs/AmbiguousToolName\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"tool_alias_ambiguous\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"title\": \"McpRequestBlocked\","]
+#[doc = "      \"description\": \"Spec §5a + §8.security (M06.D) — emitted when the L1+L4 capability check denies an MCP tool dispatch. Distinct from the generic `capability_violation` (L1, kind-only): records the resolved MCP server + tool so the renderer can attribute the block to the MCPNode. Emitted ALONGSIDE `capability_violation` on a single deny + alongside the audit `mcp_request_blocked` line. `server` mirrors mcp.v1.json#/$defs/McpServerName via the local McpServerNameRef $def (typify does not support cross-schema $ref to validated newtypes — the M06.C McpServerNameRef pattern).\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"agent_id\","]
+#[doc = "        \"reason\","]
+#[doc = "        \"server\","]
+#[doc = "        \"tool\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"agent_id\": {"]
+#[doc = "          \"type\": \"string\""]
+#[doc = "        },"]
+#[doc = "        \"reason\": {"]
+#[doc = "          \"$ref\": \"#/$defs/McpBlockReason\""]
+#[doc = "        },"]
+#[doc = "        \"server\": {"]
+#[doc = "          \"$ref\": \"#/$defs/McpServerNameRef\""]
+#[doc = "        },"]
+#[doc = "        \"tool\": {"]
+#[doc = "          \"$ref\": \"#/$defs/BlockedMcpTool\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"mcp_request_blocked\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
 #[doc = "    }"]
 #[doc = "  ]"]
 #[doc = "}"]
@@ -1839,6 +1895,90 @@ pub enum AgentEvent {
         model: ::std::string::String,
         output: u64,
     },
+    #[doc = "ToolAliasAmbiguous\n\nSpec §5a step 5 (M06.D) — emitted on re-resolution when an MCP server connect makes a previously-unambiguous short tool name newly ambiguous across the connected-server set. The framework pins the name via `mcp_aliases` to silence it. Renderer surfaces a warning toast listing the canonical candidates. Distinct from `mcp_request_blocked` (a capability deny) — this is a namespace warning, not a security event."]
+    #[serde(rename = "tool_alias_ambiguous")]
+    ToolAliasAmbiguous {
+        candidates: ::std::vec::Vec<::std::string::String>,
+        name: AmbiguousToolName,
+    },
+    #[doc = "McpRequestBlocked\n\nSpec §5a + §8.security (M06.D) — emitted when the L1+L4 capability check denies an MCP tool dispatch. Distinct from the generic `capability_violation` (L1, kind-only): records the resolved MCP server + tool so the renderer can attribute the block to the MCPNode. Emitted ALONGSIDE `capability_violation` on a single deny + alongside the audit `mcp_request_blocked` line. `server` mirrors mcp.v1.json#/$defs/McpServerName via the local McpServerNameRef $def (typify does not support cross-schema $ref to validated newtypes — the M06.C McpServerNameRef pattern)."]
+    #[serde(rename = "mcp_request_blocked")]
+    McpRequestBlocked {
+        agent_id: ::std::string::String,
+        reason: McpBlockReason,
+        server: McpServerNameRef,
+        tool: BlockedMcpTool,
+    },
+}
+#[doc = "The short tool name that became ambiguous on re-resolution (spec §5a step 5). Per gotcha #43 (typify-friendly extraction): inline-validated strings inside oneOf variants must be extracted to $defs with a title or typify panics."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"AmbiguousToolName\","]
+#[doc = "  \"description\": \"The short tool name that became ambiguous on re-resolution (spec §5a step 5). Per gotcha #43 (typify-friendly extraction): inline-validated strings inside oneOf variants must be extracted to $defs with a title or typify panics.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"minLength\": 1"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct AmbiguousToolName(::std::string::String);
+impl ::std::ops::Deref for AmbiguousToolName {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<AmbiguousToolName> for ::std::string::String {
+    fn from(value: AmbiguousToolName) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for AmbiguousToolName {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for AmbiguousToolName {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for AmbiguousToolName {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AmbiguousToolName {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for AmbiguousToolName {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
 }
 #[doc = "Source of the plan approval. `user` = HITL approval seam resolved by the renderer; `auto` = framework JSON declared `approval_required: false`."]
 #[doc = r""]
@@ -1912,6 +2052,76 @@ impl ::std::convert::TryFrom<::std::string::String> for ApprovedBy {
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
+    }
+}
+#[doc = "The MCP tool name whose dispatch the capability check denied (spec §5a + §8.security). Per gotcha #43 (typify-friendly extraction)."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"BlockedMcpTool\","]
+#[doc = "  \"description\": \"The MCP tool name whose dispatch the capability check denied (spec §5a + §8.security). Per gotcha #43 (typify-friendly extraction).\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"minLength\": 1"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct BlockedMcpTool(::std::string::String);
+impl ::std::ops::Deref for BlockedMcpTool {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<BlockedMcpTool> for ::std::string::String {
+    fn from(value: BlockedMcpTool) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for BlockedMcpTool {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for BlockedMcpTool {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for BlockedMcpTool {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for BlockedMcpTool {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for BlockedMcpTool {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
     }
 }
 #[doc = "Capability-kind discriminator embedded in capability_violation + capability_grant events. Spec §8.security L1 — mirrors capability.v1.json CapabilityKind (5 values, locked). The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, GapSeverityRef)."]
@@ -2576,6 +2786,76 @@ impl ::std::convert::TryFrom<::std::string::String> for HookCategoryRef {
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
+    }
+}
+#[doc = "Human-readable reason the MCP tool dispatch was denied — the rendered capability-deny cause. Renderer surfaces verbatim on the MCPNode + capability-violation modal. Per gotcha #43 (typify-friendly extraction)."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"McpBlockReason\","]
+#[doc = "  \"description\": \"Human-readable reason the MCP tool dispatch was denied — the rendered capability-deny cause. Renderer surfaces verbatim on the MCPNode + capability-violation modal. Per gotcha #43 (typify-friendly extraction).\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"minLength\": 1"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct McpBlockReason(::std::string::String);
+impl ::std::ops::Deref for McpBlockReason {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<McpBlockReason> for ::std::string::String {
+    fn from(value: McpBlockReason) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for McpBlockReason {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for McpBlockReason {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for McpBlockReason {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for McpBlockReason {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for McpBlockReason {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
     }
 }
 #[doc = "MCP server identifier embedded in M06.C lifecycle events (mcp_installed / mcp_uninstalled / mcp_auth_granted). Mirrors mcp.v1.json#/$defs/McpServerName (DNS-label pattern, 1–64 chars). The mirror exists because typify does not support cross-schema $ref to validated string newtypes; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef, TierRef)."]

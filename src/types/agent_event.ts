@@ -66,7 +66,9 @@ export type AgentEvent =
   | DecisionRecord
   | TierViolation
   | TierTransition
-  | TokenUsage;
+  | TokenUsage
+  | ToolAliasAmbiguous
+  | McpRequestBlocked;
 /**
  * One short, human-readable description of a parent capability that the L2a narrowing seam considered when computing a child's narrowed grants. Format is emitter-defined (e.g., `read:src:glob:src/**`); renderer surfaces verbatim. Per gotcha #43 (typify-friendly extraction): inline-validated strings inside oneOf variants must be extracted to $defs with a title or typify panics.
  */
@@ -164,6 +166,18 @@ export type TierForbiddenAction = string;
  * Plain-English reason for the tier transition. For promotions: user clicked confirm in the Settings panel. For demotions: user clicked demote OR a downgrade-on-uncertainty affordance fired. Per gotcha #43 (typify-friendly extraction).
  */
 export type TierTransitionReason = string;
+/**
+ * The short tool name that became ambiguous on re-resolution (spec §5a step 5). Per gotcha #43 (typify-friendly extraction): inline-validated strings inside oneOf variants must be extracted to $defs with a title or typify panics.
+ */
+export type AmbiguousToolName = string;
+/**
+ * The MCP tool name whose dispatch the capability check denied (spec §5a + §8.security). Per gotcha #43 (typify-friendly extraction).
+ */
+export type BlockedMcpTool = string;
+/**
+ * Human-readable reason the MCP tool dispatch was denied — the rendered capability-deny cause. Renderer surfaces verbatim on the MCPNode + capability-violation modal. Per gotcha #43 (typify-friendly extraction).
+ */
+export type McpBlockReason = string;
 
 export interface SessionStart {
   type: "session_start";
@@ -572,4 +586,25 @@ export interface TokenUsage {
   output: number;
   model: string;
   cost_usd: number;
+}
+/**
+ * Spec §5a step 5 (M06.D) — emitted on re-resolution when an MCP server connect makes a previously-unambiguous short tool name newly ambiguous across the connected-server set. The framework pins the name via `mcp_aliases` to silence it. Renderer surfaces a warning toast listing the canonical candidates. Distinct from `mcp_request_blocked` (a capability deny) — this is a namespace warning, not a security event.
+ */
+export interface ToolAliasAmbiguous {
+  type: "tool_alias_ambiguous";
+  name: AmbiguousToolName;
+  /**
+   * @minItems 2
+   */
+  candidates: [string, string, ...string[]];
+}
+/**
+ * Spec §5a + §8.security (M06.D) — emitted when the L1+L4 capability check denies an MCP tool dispatch. Distinct from the generic `capability_violation` (L1, kind-only): records the resolved MCP server + tool so the renderer can attribute the block to the MCPNode. Emitted ALONGSIDE `capability_violation` on a single deny + alongside the audit `mcp_request_blocked` line. `server` mirrors mcp.v1.json#/$defs/McpServerName via the local McpServerNameRef $def (typify does not support cross-schema $ref to validated newtypes — the M06.C McpServerNameRef pattern).
+ */
+export interface McpRequestBlocked {
+  type: "mcp_request_blocked";
+  agent_id: string;
+  server: McpServerNameRef;
+  tool: BlockedMcpTool;
+  reason: McpBlockReason;
 }
