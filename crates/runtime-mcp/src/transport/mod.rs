@@ -138,10 +138,60 @@ pub trait Transport: Send + Sync {
     async fn connect(&self) -> Result<Box<dyn Connection>, McpError>;
 }
 
+/// Convert an rmcp protocol tool descriptor into the runtime's
+/// internal [`McpTool`]. Shared by every [`Transport`] impl — the
+/// rmcp `Tool` shape is the same regardless of stdio vs HTTP, so this
+/// lives once at the transport-module root rather than per transport.
+fn rmcp_tool_to_mcp_tool(tool: rmcp::model::Tool) -> McpTool {
+    let input_schema = serde_json::to_value(&*tool.input_schema).unwrap_or(Value::Null);
+    McpTool {
+        name: tool.name.to_string(),
+        description: tool.description.map(|d| d.to_string()),
+        input_schema,
+    }
+}
+
+/// Normalize a tool-call arguments [`Value`] into the `Map` rmcp's
+/// `call_tool` requires. Shared by every [`Transport`] impl.
+fn value_to_object(arguments: Value) -> Option<serde_json::Map<String, Value>> {
+    match arguments {
+        Value::Object(m) => Some(m),
+        Value::Null => None,
+        other => {
+            // Wrap non-object payloads in {"value": other}; rmcp
+            // requires Map for arguments. Stage D's dispatch layer
+            // should be passing Map values; this is a defensive
+            // shim with a single allocation.
+            let mut m = serde_json::Map::new();
+            m.insert("value".to_string(), other);
+            Some(m)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn value_to_object_passes_through_object() {
+        let v = json!({"path": "/tmp"});
+        let out = value_to_object(v).unwrap();
+        assert_eq!(out.get("path").unwrap(), &json!("/tmp"));
+    }
+
+    #[test]
+    fn value_to_object_maps_null_to_none() {
+        assert!(value_to_object(Value::Null).is_none());
+    }
+
+    #[test]
+    fn value_to_object_wraps_non_object_under_value_key() {
+        let v = json!(42);
+        let out = value_to_object(v).unwrap();
+        assert_eq!(out.get("value").unwrap(), &json!(42));
+    }
 
     #[test]
     fn mcptool_serde_round_trip_preserves_all_fields() {

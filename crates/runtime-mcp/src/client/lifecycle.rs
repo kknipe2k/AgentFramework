@@ -10,8 +10,13 @@
 //!
 //! Per ADR-0007 the seam state lives in the main process; the drone is
 //! audit + projection, not orchestrator. The health-ping loop runs as a
-//! `tokio::task::JoinHandle<()>` owned by the `McpClient`; on `McpClient`
-//! drop the join handle is aborted.
+//! detached `tokio::task::JoinHandle<()>` **returned to the caller** (the
+//! Tauri shell), not stored on the `McpClient`. The spawned task holds an
+//! `Arc<McpClient>`, so the client stays alive for the loop's lifetime;
+//! the loop only stops when the caller explicitly `.abort()`s the handle
+//! (e.g., at app shutdown). There is no abort-on-`McpClient`-drop — the
+//! `Arc` the loop holds prevents that drop from ever firing while the
+//! loop runs.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,8 +43,10 @@ pub fn spawn_health_pinger(client: Arc<McpClient>) -> JoinHandle<()> {
 /// (e.g., 50ms) so the loop's behavior is observable within a single
 /// test run. Failed pings route through the supplied `emit_missing`
 /// callback bound at the call site to the existing `mcp_missing` event
-/// variant. Loop runs until the spawned task is aborted (typically on
-/// `McpClient` drop).
+/// variant. The loop runs until the caller `.abort()`s the returned
+/// [`JoinHandle`]; it does not stop on `McpClient` drop (the spawned
+/// task holds an `Arc<McpClient>`, keeping the client alive until the
+/// handle is aborted).
 #[must_use]
 pub fn spawn_health_pinger_with_interval(
     client: Arc<McpClient>,

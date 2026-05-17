@@ -27,7 +27,7 @@ use rmcp::ServiceExt;
 use serde_json::Value;
 use tokio::process::Command;
 
-use super::{Connection, McpTool, Transport};
+use super::{rmcp_tool_to_mcp_tool, value_to_object, Connection, McpTool, Transport};
 use crate::error::McpError;
 
 /// Stdio (child-process) transport for a local MCP server.
@@ -157,31 +157,6 @@ impl Connection for StdioConnection {
     }
 }
 
-fn rmcp_tool_to_mcp_tool(tool: rmcp::model::Tool) -> McpTool {
-    let input_schema = serde_json::to_value(&*tool.input_schema).unwrap_or(Value::Null);
-    McpTool {
-        name: tool.name.to_string(),
-        description: tool.description.map(|d| d.to_string()),
-        input_schema,
-    }
-}
-
-fn value_to_object(arguments: Value) -> Option<serde_json::Map<String, Value>> {
-    match arguments {
-        Value::Object(m) => Some(m),
-        Value::Null => None,
-        other => {
-            // Wrap non-object payloads in {"value": other}; rmcp
-            // requires Map for arguments. Stage D's dispatch layer
-            // should be passing Map values; this is a defensive
-            // shim with a single allocation.
-            let mut m = serde_json::Map::new();
-            m.insert("value".to_string(), other);
-            Some(m)
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,24 +270,5 @@ mod tests {
                 "expected ConnectFailed, got {err:?}"
             ),
         }
-    }
-
-    #[test]
-    fn value_to_object_passes_through_object() {
-        let v = serde_json::json!({"path": "/tmp"});
-        let out = value_to_object(v).unwrap();
-        assert_eq!(out.get("path").unwrap(), &serde_json::json!("/tmp"));
-    }
-
-    #[test]
-    fn value_to_object_maps_null_to_none() {
-        assert!(value_to_object(Value::Null).is_none());
-    }
-
-    #[test]
-    fn value_to_object_wraps_non_object_under_value_key() {
-        let v = serde_json::json!(42);
-        let out = value_to_object(v).unwrap();
-        assert_eq!(out.get("value").unwrap(), &serde_json::json!(42));
     }
 }
