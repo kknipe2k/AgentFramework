@@ -22,10 +22,15 @@ import {
   invokeRespondHitl,
   invokeRunSmokeSession,
   invokeSetApiKey,
+  mcpAddServer,
+  mcpListServers,
+  mcpRemoveServer,
+  mcpTestConnection,
   subscribeAgentEvents,
   unwrapCmdError,
 } from '../../src/lib/ipc';
 import type { AgentEvent } from '../../src/types/agent_event';
+import type { McpServerConfig } from '../../src/types/mcp';
 
 describe('ipc', () => {
   beforeEach(() => {
@@ -179,5 +184,52 @@ describe('ipc', () => {
       promptId: 'u-1',
       choice: 'skip',
     });
+  });
+
+  // ── M06.E — MCP server lifecycle wrappers (Stage C commands) ──────
+  const stdioConfig: McpServerConfig = {
+    name: 'filesystem',
+    transport: { type: 'stdio', command: 'npx', args: ['-y', 'server'] },
+  };
+
+  it('mcpAddServer_passes_config_and_auth', async () => {
+    invokeMock.mockResolvedValueOnce(undefined);
+    await mcpAddServer(stdioConfig, 'secret-token');
+    expect(invokeMock).toHaveBeenCalledWith('mcp_add_server', {
+      config: stdioConfig,
+      auth: 'secret-token',
+    });
+  });
+
+  it('mcpAddServer_passes_null_auth_for_unauthenticated_server', async () => {
+    invokeMock.mockResolvedValueOnce(undefined);
+    await mcpAddServer(stdioConfig, null);
+    expect(invokeMock).toHaveBeenCalledWith('mcp_add_server', {
+      config: stdioConfig,
+      auth: null,
+    });
+  });
+
+  it('mcpRemoveServer_passes_name_arg', async () => {
+    invokeMock.mockResolvedValueOnce(undefined);
+    await mcpRemoveServer('filesystem');
+    expect(invokeMock).toHaveBeenCalledWith('mcp_remove_server', { name: 'filesystem' });
+  });
+
+  it('mcpTestConnection_passes_config_arg_not_name', async () => {
+    // Contract guard (gotcha #66): the Stage C command takes `config`,
+    // NOT `name` — the E.3.4 phase-doc pseudocode drifted. A regression
+    // to `{ name }` would silently fail the Test button.
+    invokeMock.mockResolvedValueOnce([]);
+    await mcpTestConnection(stdioConfig);
+    expect(invokeMock).toHaveBeenCalledWith('mcp_test_connection', { config: stdioConfig });
+    const [, arg] = invokeMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect(arg).not.toHaveProperty('name');
+  });
+
+  it('mcpListServers_calls_invoke_with_correct_command_name', async () => {
+    invokeMock.mockResolvedValueOnce([]);
+    await mcpListServers();
+    expect(invokeMock).toHaveBeenCalledWith('mcp_list_servers');
   });
 });

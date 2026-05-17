@@ -46,6 +46,9 @@ export type AgentEvent =
   | SkillMissing
   | ToolMissing
   | McpMissing
+  | McpInstalled
+  | McpUninstalled
+  | McpAuthGranted
   | AgentMissing
   | GapResolved
   | HitlRequested
@@ -63,7 +66,9 @@ export type AgentEvent =
   | DecisionRecord
   | TierViolation
   | TierTransition
-  | TokenUsage;
+  | TokenUsage
+  | ToolAliasAmbiguous
+  | McpRequestBlocked;
 /**
  * One short, human-readable description of a parent capability that the L2a narrowing seam considered when computing a child's narrowed grants. Format is emitter-defined (e.g., `read:src:glob:src/**`); renderer surfaces verbatim. Per gotcha #43 (typify-friendly extraction): inline-validated strings inside oneOf variants must be extracted to $defs with a title or typify panics.
  */
@@ -100,6 +105,14 @@ export type SuggestedAction = string;
  * How this gap was discovered. `loader` = the framework_loader walked the framework JSON at session start and the reference did not resolve. `request_capability` = a running agent asked for the capability mid-session via the meta-tool. Drives renderer display + HITL prompt copy.
  */
 export type GapSource = "loader" | "request_capability";
+/**
+ * MCP server identifier embedded in M06.C lifecycle events (mcp_installed / mcp_uninstalled / mcp_auth_granted). Mirrors mcp.v1.json#/$defs/McpServerName (DNS-label pattern, 1–64 chars). The mirror exists because typify does not support cross-schema $ref to validated string newtypes; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef, TierRef).
+ */
+export type McpServerNameRef = string;
+/**
+ * Transport discriminant — mirrors the McpTransport oneOf type tag from mcp.v1.json. Embedded inline rather than via cross-schema $ref because typify cross-schema enum refs require per-schema $defs duplication (pattern: HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef).
+ */
+export type McpTransportKind = "stdio" | "http";
 /**
  * HITL trigger discriminator embedded in HITL + notifier events. Spec §6a — mirrors hitl.v1.json HitlTrigger (9 values, locked). The mirror exists because typify does not support cross-schema $ref to enums; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy).
  */
@@ -153,6 +166,18 @@ export type TierForbiddenAction = string;
  * Plain-English reason for the tier transition. For promotions: user clicked confirm in the Settings panel. For demotions: user clicked demote OR a downgrade-on-uncertainty affordance fired. Per gotcha #43 (typify-friendly extraction).
  */
 export type TierTransitionReason = string;
+/**
+ * The short tool name that became ambiguous on re-resolution (spec §5a step 5). Per gotcha #43 (typify-friendly extraction): inline-validated strings inside oneOf variants must be extracted to $defs with a title or typify panics.
+ */
+export type AmbiguousToolName = string;
+/**
+ * The MCP tool name whose dispatch the capability check denied (spec §5a + §8.security). Per gotcha #43 (typify-friendly extraction).
+ */
+export type BlockedMcpTool = string;
+/**
+ * Human-readable reason the MCP tool dispatch was denied — the rendered capability-deny cause. Renderer surfaces verbatim on the MCPNode + capability-violation modal. Per gotcha #43 (typify-friendly extraction).
+ */
+export type McpBlockReason = string;
 
 export interface SessionStart {
   type: "session_start";
@@ -354,6 +379,32 @@ export interface McpMissing {
   requested_via: GapSource;
 }
 /**
+ * Spec §5 + §13.5: M06.C McpClient::add_server succeeded. Records server name + transport discriminant + presence-of-auth so the renderer + audit consumer can show installation history without exposing secrets. Emitted alongside the audit `mcp_installed` line.
+ */
+export interface McpInstalled {
+  type: "mcp_installed";
+  name: McpServerNameRef;
+  transport_kind: McpTransportKind;
+  /**
+   * True iff a per-server auth secret was stored alongside the install. Indicates the renderer should show the credential indicator on the MCPNode (Stage E).
+   */
+  has_auth: boolean;
+}
+/**
+ * Spec §5 + §13.5: M06.C McpClient::remove_server succeeded. Records server name only — transport / auth-state are stripped on removal so the audit trail reflects the post-state.
+ */
+export interface McpUninstalled {
+  type: "mcp_uninstalled";
+  name: McpServerNameRef;
+}
+/**
+ * Spec §5 + §13.5 + §8.security L5: M06.C secret stored for an MCP server's auth_secret_ref. The secret value is NEVER logged — only the server name + the keychain-key reference. Emitted alongside the audit `mcp_auth_granted` line.
+ */
+export interface McpAuthGranted {
+  type: "mcp_auth_granted";
+  name: McpServerNameRef;
+}
+/**
  * Spec §4b Layer 1 (loader) — `framework.agents[].spawns[]` references an agent id absent from `framework.agents[]`. Per spec §4b severity matrix this is a load-time block: the framework fails to load (severity=critical). Also emittable from Layer 2 request_capability when an agent asks for a sub-agent it cannot spawn.
  */
 export interface AgentMissing {
@@ -535,4 +586,25 @@ export interface TokenUsage {
   output: number;
   model: string;
   cost_usd: number;
+}
+/**
+ * Spec §5a step 5 (M06.D) — emitted on re-resolution when an MCP server connect makes a previously-unambiguous short tool name newly ambiguous across the connected-server set. The framework pins the name via `mcp_aliases` to silence it. Renderer surfaces a warning toast listing the canonical candidates. Distinct from `mcp_request_blocked` (a capability deny) — this is a namespace warning, not a security event.
+ */
+export interface ToolAliasAmbiguous {
+  type: "tool_alias_ambiguous";
+  name: AmbiguousToolName;
+  /**
+   * @minItems 2
+   */
+  candidates: [string, string, ...string[]];
+}
+/**
+ * Spec §5a + §8.security (M06.D) — emitted when the L1+L4 capability check denies an MCP tool dispatch. Distinct from the generic `capability_violation` (L1, kind-only): records the resolved MCP server + tool so the renderer can attribute the block to the MCPNode. Emitted ALONGSIDE `capability_violation` on a single deny + alongside the audit `mcp_request_blocked` line. `server` mirrors mcp.v1.json#/$defs/McpServerName via the local McpServerNameRef $def (typify does not support cross-schema $ref to validated newtypes — the M06.C McpServerNameRef pattern).
+ */
+export interface McpRequestBlocked {
+  type: "mcp_request_blocked";
+  agent_id: string;
+  server: McpServerNameRef;
+  tool: BlockedMcpTool;
+  reason: McpBlockReason;
 }

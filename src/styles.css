@@ -306,6 +306,29 @@ p.error {
   color: var(--node-fg-muted);
   margin-top: 2px;
 }
+/* M06.E — live connection status (separate axis from NodeStatus). */
+.mcp-node__status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 4px;
+  background: var(--node-fg-muted);
+}
+.mcp-node--conn-connected .mcp-node__status-indicator {
+  background: var(--node-complete);
+}
+.mcp-node--conn-disconnected .mcp-node__status-indicator {
+  background: var(--node-fg-muted);
+}
+.mcp-node--conn-health_pending .mcp-node__status-indicator {
+  background: #ffb300;
+}
+.mcp-node--conn-error .mcp-node__status-indicator {
+  background: var(--node-error);
+}
+.mcp-node--call-active {
+  box-shadow: 0 0 0 2px var(--node-active);
+}
 
 /* ---- GapNode (Stage C) — missing tool/skill, amber per spec §3 ---- */
 
@@ -963,4 +986,141 @@ p.error {
 }
 .capability-badge--promoted {
   background-color: #ff9800;
+}
+
+/* M06.E — Settings → MCP Servers panel + Add modal. Status color tokens
+ * match the MCPNode connection-status family for visual consistency. */
+.mcp-server-settings {
+  background: var(--node-bg);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 6px;
+  padding: 0.75rem;
+  font-size: 13px;
+}
+.mcp-server-settings__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.mcp-server-settings__title {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0;
+}
+.mcp-server-settings__empty {
+  color: var(--node-fg-muted);
+  font-size: 12px;
+}
+.mcp-server-settings__error {
+  color: var(--node-error);
+  font-size: 12px;
+}
+.mcp-server-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+.mcp-server-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  border-left: 3px solid var(--node-fg-muted);
+  border-radius: 3px;
+}
+.mcp-server-row--connected {
+  border-left-color: var(--node-complete);
+}
+.mcp-server-row--disconnected {
+  border-left-color: var(--node-fg-muted);
+}
+.mcp-server-row--health_pending {
+  border-left-color: #ffb300;
+}
+.mcp-server-row--error {
+  border-left-color: var(--node-error);
+}
+.mcp-server-row__name {
+  font-weight: 600;
+}
+.mcp-server-row__transport {
+  color: var(--node-fg-muted);
+  font-size: 11px;
+}
+.mcp-server-row__status {
+  font-size: 11px;
+  margin-left: auto;
+}
+.mcp-server-row__remove,
+.mcp-server-row__confirm {
+  font-size: 11px;
+}
+.mcp-server-add-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+.mcp-server-add-modal {
+  background: var(--node-bg);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 6px;
+  padding: 1rem;
+  min-width: 360px;
+  max-width: 480px;
+}
+.mcp-server-add-modal__title {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+}
+.mcp-server-add-modal__tier-eval {
+  font-size: 12px;
+  padding: 0.4rem 0.5rem;
+  border-radius: 4px;
+  background: var(--node-bg-alt);
+}
+.mcp-server-add-modal__tier-eval--novice {
+  border-left: 3px solid #ff9800;
+}
+.mcp-server-add-modal__tier-eval--promoted {
+  border-left: 3px solid var(--node-complete);
+}
+.mcp-server-add-modal__error {
+  color: var(--node-error);
+  font-size: 12px;
+}
+.mcp-server-add-modal__form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.mcp-server-add-modal__label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 12px;
+}
+.mcp-server-add-modal__actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 0.5rem;
+}
+.mcp-tool-list {
+  list-style: none;
+  margin: 0.25rem 0;
+  padding: 0.25rem 0.5rem;
+  background: var(--node-bg-alt);
+  border-radius: 4px;
+  font-size: 12px;
+}
+.mcp-tool-list__item {
+  padding: 0.1rem 0;
 }

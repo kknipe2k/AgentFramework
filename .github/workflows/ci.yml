@@ -227,7 +227,15 @@ jobs:
       # (per spec §M2 acceptance + CLAUDE.md §13 zero-telemetry).
       # `--all-features` would un-gate it and CI would panic on missing key.
       # Real-API smoke runs only as a manual `cargo test --features integration`.
-      - run: cargo test --workspace
+      #
+      # `--features runtime-mcp/test-helpers` is REQUIRED (M06.C): the
+      # MCP client lifecycle contract tests live in
+      # `crates/runtime-mcp/tests/client_lifecycle.rs` behind
+      # `#![cfg(feature = "test-helpers")]` (they drive the in-process
+      # MockTransport). Without the feature, `cargo test --workspace`
+      # silently skips them — the gotcha #66 "tests-pass-but-contract-
+      # fails" failure mode the M06.C strict-TDD red phase guards against.
+      - run: cargo test --workspace --features runtime-mcp/test-helpers
       - name: Type generation drift check
         run: cargo xtask regenerate-types --check
         if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
@@ -414,6 +422,32 @@ jobs:
           cargo llvm-cov --package runtime-sandbox \
             --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.seccomp\.rs|src.landlock\.rs" \
             --fail-under-lines 95
+      # runtime-mcp safety-primitive gate (M06 Stage B + Stage C).
+      # Excludes (a) main.rs not applicable (no binary), (b) lib.rs
+      # (pub-mod declarations + re-exports — parallel to
+      # runtime-sandbox lib.rs exclusion), (c) transport/stdio.rs +
+      # transport/http.rs (rmcp wrapper modules whose `connect()` happy
+      # paths require a real MCP-protocol-compliant peer — OS-call
+      # holdouts parallel to runtime-main providers/anthropic.rs),
+      # (d) M06.C client/auth_keyring.rs (KeyringSecretStore wraps the
+      # `keyring` crate — every method touches the real OS keychain;
+      # structurally untestable on CI cells without a session bus /
+      # signed-in user; parallel to runtime-main key_store.rs +
+      # the M02.C anthropic.rs precedent), (e) M06.C client/lifecycle.rs
+      # (spawn_health_pinger is a tokio::spawn'd infinite loop; the loop
+      # body delegates to McpClient::run_health_pass which IS in-gate;
+      # the spawn wrapper is parallel to drone's lib.rs run() exclusion).
+      # In-gate at ≥95%: client/{mod,registry,auth,error}.rs +
+      # transport/{mod,mock}.rs + error.rs. The `--features
+      # test-helpers` flag is REQUIRED — M06.C's client_lifecycle.rs
+      # integration tests are `#![cfg(feature = "test-helpers")]`-gated
+      # and exercise the McpClient surface (without the feature, client/
+      # coverage craters). Per CLAUDE.md §5 + M06-mcp-basic.md Stage B/C.
+      - name: runtime-mcp coverage (≥95%, OS-call holdouts excluded)
+        run: |
+          cargo llvm-cov --package runtime-mcp --features test-helpers \
+            --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.transport.stdio\.rs|src.transport.http\.rs|src.client.auth_keyring\.rs|src.client.lifecycle\.rs" \
+            --fail-under-lines 95
       # lcov export for Codecov — workspace + per-crate uploads. The
       # cargo-llvm-cov --fail-under-lines gates above remain authoritative
       # for absolute floors. Codecov gates the *delta* vs main per
@@ -439,6 +473,11 @@ jobs:
           cargo llvm-cov --package runtime-sandbox --lcov \
             --output-path lcov-sandbox.info \
             --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.seccomp\.rs|src.landlock\.rs"
+      - name: Generate runtime-mcp lcov
+        run: |
+          cargo llvm-cov --package runtime-mcp --features test-helpers --lcov \
+            --output-path lcov-mcp.info \
+            --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.transport.stdio\.rs|src.transport.http\.rs|src.client.auth_keyring\.rs|src.client.lifecycle\.rs"
       # Codecov uploads — required from M02 onward (per CLAUDE.md §5
       # "Coverage delta gating (from M02 onward) — Codecov-enforced").
       # The codecov.yml `informational: false` flags make Codecov status
@@ -470,6 +509,13 @@ jobs:
         with:
           files:            lcov-sandbox.info
           flags:            runtime-sandbox
+          fail_ci_if_error: true
+          token:            ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload runtime-mcp coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files:            lcov-mcp.info
+          flags:            runtime-mcp
           fail_ci_if_error: true
           token:            ${{ secrets.CODECOV_TOKEN }}
 

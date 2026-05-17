@@ -1,0 +1,38 @@
+[package]
+name         = "runtime-mcp"
+version      = { workspace = true }
+edition      = { workspace = true }
+license      = { workspace = true }
+repository   = { workspace = true }
+rust-version = { workspace = true }
+
+[lints]
+workspace = true
+
+[dependencies]
+rmcp          = { workspace = true }
+runtime-core  = { workspace = true }
+runtime-main  = { workspace = true }
+runtime-drone = { workspace = true }
+keyring       = { workspace = true }
+rusqlite      = { workspace = true, features = ["bundled"] }
+tokio        = { workspace = true, features = ["rt-multi-thread", "macros", "process", "sync", "time", "io-util"] }
+serde        = { workspace = true, features = ["derive"] }
+serde_json   = { workspace = true }
+thiserror    = { workspace = true }
+tracing      = { workspace = true }
+async-trait  = { workspace = true }
+
+[dev-dependencies]
+tokio       = { workspace = true, features = ["test-util"] }
+wiremock    = { workspace = true }
+tempfile    = { workspace = true }
+
+[features]
+# Expose the in-process mock transport to downstream crates' tests
+# (Stage C+ uses it to drive lifecycle tests without a real MCP server).
+test-helpers = []
+# Gate the live-MCP-server smoke (analogue of runtime-main's
+# `--features integration` against the Anthropic API per M02.C
+# anthropic_smoke.rs). CI does NOT run this.
+integration  = []

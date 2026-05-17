@@ -30,16 +30,21 @@
 //!   the proposed-set serialized to `narrowed_from`. Widening attempts
 //!   emit `CapabilityViolation` and skip the spawn.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use futures::stream::{Stream, StreamExt};
-use runtime_core::event::AgentEvent;
+use runtime_core::event::{AgentEvent, ToolSource};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::event_pipeline::{EnforcementContext, EventPipeline};
+use super::mcp_dispatch::{
+    apply_mcp_dispatch, mcp_dispatch_error_event, outcome_needs_hitl, McpDispatchOutcome,
+    McpToolDispatch,
+};
 use crate::capability::{narrow, CapabilityEnforcer};
 use crate::drone_ipc::{DroneClient, DroneIpcError};
 use crate::framework_loader::{
@@ -134,6 +139,12 @@ pub struct AgentSdk<P: LLMProvider> {
     drone_client: Arc<DroneClient>,
     session_id: SessionId,
     capability_wiring: Option<CapabilityWiring>,
+    /// M06.F (ADR-0010 + ADR-0011) MCP-dispatch seam. The Tauri shell
+    /// injects an `Arc<dyn McpToolDispatch>` via [`Self::with_mcp_dispatch`];
+    /// the run loop intercepts `ProviderEvent::ToolUse` through it before
+    /// the existing Stage A non-MCP L1 path. `None` (the M02 / smoke
+    /// path) leaves the run loop pre-M06.F.
+    mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
 }
 
 impl<P: LLMProvider + 'static> AgentSdk<P> {
@@ -152,7 +163,19 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
             drone_client,
             session_id,
             capability_wiring: None,
+            mcp_dispatch: None,
         }
+    }
+
+    /// Inject the M06.F MCP-dispatch seam (ADR-0010 dependency
+    /// inversion; ADR-0011 scopes this to the seam — the concrete
+    /// `McpDispatcher` is constructed by the Tauri shell, an M07
+    /// carry-forward). Builder over the existing constructors so the
+    /// `*_with` shell seam composes it onto a wired-or-unwired SDK.
+    #[must_use]
+    pub fn with_mcp_dispatch(mut self, dispatch: Arc<dyn McpToolDispatch>) -> Self {
+        self.mcp_dispatch = Some(dispatch);
+        self
     }
 
     /// Construct with the M06.A L1 + L2a wire-up active.
@@ -176,6 +199,7 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
             drone_client,
             session_id,
             capability_wiring: Some(wiring),
+            mcp_dispatch: None,
         }
     }
 
@@ -250,17 +274,37 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
             self.spawn_framework_subagents(wiring, &agent_id).await?;
         }
 
-        let mut pipeline = match self.capability_wiring.as_ref() {
-            Some(wiring) => EventPipeline::with_enforcement(
-                agent_id,
-                EnforcementContext::new(
-                    Arc::clone(&wiring.enforcer),
-                    Arc::clone(&wiring.framework),
-                ),
-            ),
-            None => EventPipeline::new(agent_id),
-        };
+        // The run loop retains `agent_id` (M06.F: the MCP-dispatch
+        // interception needs it to emit agent_id-correct events, gotcha
+        // #68); the pipeline takes a clone.
+        let mut pipeline = self.capability_wiring.as_ref().map_or_else(
+            || EventPipeline::new(agent_id.clone()),
+            |wiring| {
+                EventPipeline::with_enforcement(
+                    agent_id.clone(),
+                    EnforcementContext::new(
+                        Arc::clone(&wiring.enforcer),
+                        Arc::clone(&wiring.framework),
+                    ),
+                )
+            },
+        );
         while let Some(provider_event) = stream.next().await {
+            // M06.F (ADR-0010 + ADR-0011): when an MCP-dispatch seam is
+            // injected, a `ProviderEvent::ToolUse` is offered to it
+            // FIRST. `dispatch_if_mcp` returning `None` (not an MCP
+            // tool) falls through to the existing Stage A non-MCP L1
+            // path below, unchanged.
+            if self.mcp_dispatch.is_some() {
+                if let ProviderEvent::ToolUse { name, input, .. } = &provider_event {
+                    if self
+                        .try_mcp_dispatch(&agent_id, name, input.clone())
+                        .await?
+                    {
+                        continue;
+                    }
+                }
+            }
             for agent_event in pipeline.next_event(provider_event) {
                 let needs_hitl = matches!(
                     &agent_event,
@@ -374,6 +418,104 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
                 "capability_violation HITL await did not resolve cleanly; continuing"
             );
         }
+    }
+
+    /// Offer one `ProviderEvent::ToolUse` to the injected MCP-dispatch
+    /// seam. Returns `Ok(true)` when the call was an MCP tool and the
+    /// run loop fully handled it (the event must NOT also flow through
+    /// the Stage A pipeline); `Ok(false)` when it is not an MCP tool
+    /// (pure fall-through to the existing Stage A non-MCP L1 path).
+    ///
+    /// ADR-0010 dependency-inversion seam; ADR-0011 scopes this to the
+    /// SDK side. `dispatch_if_mcp` returning `None` (not an MCP tool) is
+    /// a pure fall-through (`Ok(false)`). `Some(Ok(Invoked))` → the run
+    /// loop emits the success `ToolInvoked`/`ToolResult` itself with the
+    /// `agent_id` it holds (gotcha #68: `McpDispatchOutcome::Invoked`
+    /// carries no `agent_id`; `apply_mcp_dispatch`'s empty-agent_id Invoked
+    /// branch is the D-frozen wire-test contract only, never shipped to
+    /// the renderer). `Some(Ok(Blocked|Ambiguous))` → the D-frozen
+    /// `apply_mcp_dispatch` mapping (Blocked carries its own `agent_id`;
+    /// Ambiguous emits `ToolAliasAmbiguous`, no `agent_id` field — so no
+    /// empty-agent_id reaches the renderer either way), and Blocked
+    /// routes the existing `on_capability_violation` HITL trigger
+    /// (ADR-0007, no new seam — mirrors the Stage A violation routing).
+    /// `Some(Err)` → `mcp_dispatch_error_event` (a `ToolError`).
+    async fn try_mcp_dispatch(
+        &self,
+        agent_id: &str,
+        tool_name: &str,
+        args: serde_json::Value,
+    ) -> Result<bool, SdkError> {
+        let Some(dispatch) = self.mcp_dispatch.as_ref() else {
+            return Ok(false);
+        };
+        // `dispatch_if_mcp` takes the framework's `mcp_aliases`
+        // (§5a explicit-alias override). The Framework stores it as a
+        // HashMap; the seam signature takes a BTreeMap (stable order).
+        // No wiring (or no framework) ⇒ no aliases ⇒ empty map.
+        let aliases: BTreeMap<String, String> = self
+            .capability_wiring
+            .as_ref()
+            .map(|w| {
+                w.framework
+                    .mcp_aliases
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let Some(result) = dispatch
+            .dispatch_if_mcp(agent_id, tool_name, args.clone(), &aliases)
+            .await
+        else {
+            // Not an MCP tool — pure fall-through to the Stage A
+            // non-MCP L1 path (caller continues into pipeline.next_event).
+            return Ok(false);
+        };
+
+        match result {
+            Ok(McpDispatchOutcome::Invoked {
+                server,
+                tool,
+                value,
+            }) => {
+                self.emit(AgentEvent::ToolInvoked {
+                    agent_id: agent_id.to_string(),
+                    tool_name: tool.clone(),
+                    source: ToolSource::Mcp,
+                    server: Some(server),
+                    input: args,
+                })
+                .await?;
+                self.emit(AgentEvent::ToolResult {
+                    agent_id: agent_id.to_string(),
+                    tool_name: tool,
+                    output: value,
+                    duration_ms: 0,
+                    tokens_in: None,
+                    tokens_out: None,
+                })
+                .await?;
+            }
+            Ok(outcome) => {
+                let needs_hitl = outcome_needs_hitl(&outcome);
+                for ev in apply_mcp_dispatch(outcome, args) {
+                    self.emit(ev).await?;
+                }
+                if needs_hitl {
+                    if let Some(wiring) = self.capability_wiring.as_ref() {
+                        self.await_capability_violation_hitl(&wiring.hitl_seam)
+                            .await;
+                    }
+                }
+            }
+            Err(e) => {
+                self.emit(mcp_dispatch_error_event(agent_id, tool_name, &e))
+                    .await?;
+            }
+        }
+        Ok(true)
     }
 
     async fn emit(&self, event: AgentEvent) -> Result<(), SdkError> {

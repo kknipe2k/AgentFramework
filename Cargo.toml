@@ -5,6 +5,7 @@ members = [
     "crates/runtime-main",
     "crates/runtime-drone",
     "crates/runtime-sandbox",
+    "crates/runtime-mcp",
     "crates/xtask",
     "src-tauri",
 ]
@@ -36,7 +37,15 @@ tempfile    = "3.12"
 
 # M02 Stage B — LLM provider deps. Versions confirmed against crates.io as
 # of 2026-05. Pin here; member crates pull via `dep = { workspace = true }`.
-reqwest             = { version = "0.13", default-features = false, features = ["rustls", "rustls-native-certs", "json", "stream"] }
+# NOTE (M06.B): the `rustls-native-certs` feature was removed from reqwest
+# 0.13.2+ (replaced by the `rustls` feature's built-in
+# `rustls-platform-verifier`, which loads native certs + delegates to OS
+# verification on Windows/macOS/Linux). M06.B's rmcp 1.7.0 dep pins
+# reqwest to ^0.13.2 which forced this update. No behavioral change on
+# Windows + macOS (platform-verifier supersedes the explicit
+# native-certs feature); on Linux the platform-verifier uses
+# rustls-native-certs internally under the hood.
+reqwest             = { version = "0.13", default-features = false, features = ["rustls", "json", "stream"] }
 eventsource-stream  = "0.2"
 async-trait         = "0.1"
 secrecy             = "0.10"
@@ -81,6 +90,12 @@ runtime-drone       = { path = "crates/runtime-drone", version = "0.1.0" }
 # sandbox crate. Stage C2 adds OS-isolation deps inside runtime-sandbox
 # itself; the runtime-main consumer side stays unchanged.
 runtime-sandbox     = { path = "crates/runtime-sandbox", version = "0.1.0" }
+# runtime-main path-dep for runtime-mcp (M06 Stage C). runtime-mcp consumes
+# the runtime-main `audit::AuditWriter` + `audit::entry::*` constructors so
+# McpClient lifecycle emissions land in the same `skills.audit.jsonl` as
+# capability + tier audit lines. Forward-only edge: runtime-main does NOT
+# depend on runtime-mcp — Tauri shell bridges the two.
+runtime-main        = { path = "crates/runtime-main", version = "0.1.0" }
 
 # M05 Stage C2 — Linux OS isolation primitives. Both crates ship via
 # crates.io with MIT / Apache-2.0 licenses; libseccomp dynamically links
@@ -98,6 +113,33 @@ landlock            = { version = "0.4", default-features = false }
 # lint in deny.toml may surface other windows-sys versions; that's an
 # existing transitive landscape, not C2-specific.
 windows-sys         = { version = "0.59", default-features = false }
+
+# M06 Stage B — rmcp 1.7.0 (the official Rust SDK for the Model Context
+# Protocol; modelcontextprotocol/rust-sdk). Pinned via the runtime-mcp
+# crate per the §5 protocol-boundary convention; runtime-main never
+# depends on rmcp directly (the boundary is `runtime-mcp::transport`).
+# Feature selection (corrected at authoring time per WEBCHECK; phase-doc
+# B.3.1 drift noted in M06.B-retrospective):
+#   client                                       — client-role traits
+#   transport-child-process                      — TokioChildProcess (stdio
+#                                                  via subprocess); the
+#                                                  phase doc said
+#                                                  `transport-io` which
+#                                                  is the server-side
+#                                                  stdin/stdout helper.
+#   transport-streamable-http-client-reqwest     — StreamableHttpClientTransport
+#                                                  (remote HTTP per MCP
+#                                                  2025-11-25)
+#   reqwest                                      — alias enabling
+#                                                  reqwest?/rustls so the
+#                                                  http transport ships
+#                                                  with rustls TLS (matches
+#                                                  the M02 workspace
+#                                                  reqwest pin)
+# `default-features = false` keeps the dep tree minimal (no `server`,
+# no `macros`, no `base64` defaults).
+rmcp                = { version = "1.7", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
+runtime-mcp         = { path = "crates/runtime-mcp", version = "0.1.0" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

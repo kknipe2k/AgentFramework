@@ -47,3 +47,8 @@ Thumbs.db
 
 # Tauri development cache / dev-mode state
 .tauri/
+
+# Local CI-failure scratch file — carried over untracked across
+# M06.A/B/C pre-flights; never a build artifact. Ignored at M06.C
+# per the recurring pre-flight residue (CLAUDE.md §16 clean-tree gate).
+ci-failures.txt

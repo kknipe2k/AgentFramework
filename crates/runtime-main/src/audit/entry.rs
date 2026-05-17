@@ -169,6 +169,83 @@ pub fn capability_denied(
     )
 }
 
+/// `mcp_installed` — emitted by M06.C `McpClient::add_server` on success.
+///
+/// Records server name + transport discriminant + presence-of-auth so the
+/// audit consumer can show installation history without exposing secret
+/// values. Per gotcha #66 correlation: `add_server` with auth emits BOTH
+/// `mcp_installed` AND `mcp_auth_granted` in order.
+#[must_use]
+pub fn mcp_installed(
+    session: &str,
+    name: &str,
+    transport_kind: &str,
+    has_auth: bool,
+) -> AuditEntry {
+    entry(
+        session,
+        AuditEntryKind::McpInstalled,
+        details(json!({
+            "name": name,
+            "transport_kind": transport_kind,
+            "has_auth": has_auth,
+        })),
+    )
+}
+
+/// `mcp_uninstalled` — emitted by M06.C `McpClient::remove_server` on success.
+///
+/// Records server name only — transport / auth-state are stripped on
+/// removal so the audit trail reflects the post-state.
+#[must_use]
+pub fn mcp_uninstalled(session: &str, name: &str) -> AuditEntry {
+    entry(
+        session,
+        AuditEntryKind::McpUninstalled,
+        details(json!({ "name": name })),
+    )
+}
+
+/// `mcp_auth_granted` — emitted by M06.C when a per-server secret is
+/// stored. The secret value is NEVER logged; only the server name lands
+/// in the audit details. Spec §13.5 zero-secret-logging discipline.
+#[must_use]
+pub fn mcp_auth_granted(session: &str, name: &str) -> AuditEntry {
+    entry(
+        session,
+        AuditEntryKind::McpAuthGranted,
+        details(json!({ "name": name })),
+    )
+}
+
+/// `mcp_request_blocked` — emitted by M06.D MCP dispatch when the L1+L4
+/// capability check denies an MCP tool call.
+///
+/// Records the resolved server + tool + the deny reason so the audit
+/// trail captures *which* MCP tool was blocked and why. Emitted
+/// alongside the `capability_violation` + `mcp_request_blocked` events
+/// (gotcha #66 correlation: dispatch deny fires both the event sequence
+/// AND this audit line).
+#[must_use]
+pub fn mcp_request_blocked(
+    session: &str,
+    agent_id: &str,
+    server: &str,
+    tool: &str,
+    reason: &str,
+) -> AuditEntry {
+    entry(
+        session,
+        AuditEntryKind::McpRequestBlocked,
+        details(json!({
+            "agent_id": agent_id,
+            "server": server,
+            "tool": tool,
+            "reason": reason,
+        })),
+    )
+}
+
 /// `tier_transition` — emitted when the user's tier changes.
 ///
 /// Records both sides of the flip + the human-readable reason so the

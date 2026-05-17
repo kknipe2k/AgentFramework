@@ -6,6 +6,343 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M06 closeout (Stage G — gap-analysis + parent-milestone summary + first `<simplify_pass>`)
+
+- **`docs/gap-analysis.md`** — appended the immutable M06 entry
+  (cumulative product↔spec audit M01–M06; six sections +
+  `gotchas_graduation` across A–E + Stage V special-log + the v1.6
+  Simplify-pass outcome subsection). ADR-0009 closure recorded
+  **SATISFIED** (M06.V Wire traces #1 `enforcer.check` before
+  `ToolInvoked` @ `event_pipeline.rs:215` + #2 `narrow` before
+  `AgentSpawned` @ `agent_sdk.rs:356`, verified production call sites).
+  Append-only: M01–M05 entries unmodified (literal-prefix preserved).
+- **`docs/build-prompts/retrospectives/M06-summary.md`** (new) —
+  parent-milestone summary aggregating A–F + Stage V; axis means
+  Process 38.0/40, Product 38.17/40, Pattern 30.17/35; time-box 0.73×
+  (in-band); verdict "pattern held but with friction" (the M06.A G5
+  TDD-ordering hard-gate violation + documented maintainer override,
+  structurally closed by v1.7 `<tdd_discipline>` merged mid-milestone).
+- **First `<simplify_pass>` at closeout** — three parallel read-only
+  review agents vs the M06.A..HEAD cumulative diff (91 files /
+  +14,657 / −102). Verdict: broadly clean. 13 proposals surfaced;
+  recommended approved subset = transport-helper dedupe (CQ-1) +
+  `spawn_health_pinger` docstring correction (EFF-9); non-approved
+  deferred to `docs/tech-debt.md` (TD-007..TD-013, gated on the
+  maintainer subset decision). Proposal-only — no auto-applied changes.
+
+### Added — M06 Stage F (src-tauri MCP-dispatch injection seam + live run-loop interception + gotcha #68 fix)
+
+- **SDK run-loop MCP-dispatch interception**
+  (`crates/runtime-main/src/sdk/agent_sdk.rs`): `AgentSdk` gains an
+  `Option<Arc<dyn McpToolDispatch>>` field + a `with_mcp_dispatch`
+  builder seam; `run_agent_with_provider_stream` intercepts
+  `ProviderEvent::ToolUse` and calls the injected `dispatch_if_mcp`
+  FIRST — `None` → the existing Stage A non-MCP L1 path, unchanged
+  (no regression); `Some(Ok(Invoked))` → the run loop emits
+  **agent_id-correct** `ToolInvoked` + `ToolResult` directly (gotcha
+  #68 fix: `apply_mcp_dispatch` + `McpDispatchOutcome` left untouched
+  so the D-frozen `mcp_dispatch_wire.rs` stays green);
+  `Some(Ok(Blocked))` → `apply_mcp_dispatch` + the existing
+  `on_capability_violation` HITL trigger (ADR-0007, no new seam);
+  `Some(Ok(Ambiguous))` → the D-frozen `apply_mcp_dispatch` →
+  `ToolAliasAmbiguous` (non-blocking); `Some(Err)` →
+  `mcp_dispatch_error_event`.
+- **src-tauri composition-root injection seam** (`src-tauri/src/commands.rs`):
+  `run_smoke_session_with` accepts `Option<Arc<dyn McpToolDispatch>>`
+  applied via `.with_mcp_dispatch`. The production `run_smoke_session`
+  wrapper passes `None` (per ADR-0011 the concrete `McpDispatcher`
+  construction is the M07 carry-forward); the seam is mock-tested.
+- **`crates/runtime-main/tests/mcp_dispatch_runloop.rs`** (new): 4
+  tests vs a mock `Arc<dyn McpToolDispatch>` — agent_id-correct
+  (gotcha #68 load-bearing: non-empty AND == the run-loop agent),
+  non-MCP fall-through (no regression), blocked→HITL + Err→ToolError,
+  twice-in-sequence (gotcha #69). Plus the `run_smoke_session_with`
+  injection-seam test (the 2 existing seam tests stay green on `None`).
+- **ADR-0011** (`docs/adr/0011-m06f-scope-seam-not-running-app.md`,
+  Accepted): F.1's "running app end-to-end" over-reached the code
+  reality + F's own scope locks (grep-verified: no
+  `impl ConnectionResolver for McpClient`; no shell enforcer; the
+  no-tools smoke path; agent loop = M07). Honest F scope = SDK seam +
+  src-tauri injection seam, mock-verified per the ADR-0010/`Arc<dyn _>`
+  archetype; concrete construction + live exercise = explicit M07
+  carry-forward. M06.D `<scope_change>` #1+#2 CLOSED at the
+  seam+injection-seam level.
+
+### Changed — M06 Stage F
+
+- **`docs/build-prompts/M06-mcp-basic.md`** forward-corrected (coupled
+  to ADR-0011): F.1 reframed to the seam-level mandate; §V/V.1/V.2/V.3
+  Wire **trace #11 SPLIT** — 11a (seam + injection seam, mock-verified)
+  DELIVERED / 🔴 if regressed; 11b (concrete construction + live
+  exercise) = ADR-0011 M07 carry-forward, **NOT** an M06.V 🔴; the
+  M06.D `<scope_change>` `carry_forward_to` clauses + F.5
+  `<context>`/`<read_first>` + F.6 commit message updated (F is
+  unexecuted, so the grandfathered-not-edited precedent —
+  executed-stages-only — does not apply).
+
+### Added — M06 Stage E (Renderer: MCPNode live wiring + Settings → MCP Servers UI)
+
+- **`MCPNode` live wiring** (`src/components/nodes/MCPNode.tsx`):
+  `useShallow`-wrapped `currentMcpServers[serverName]` selector drives a
+  `.mcp-node__status-indicator` + `mcp-node--conn-<status>` class family
+  (connected / disconnected / health_pending / error) — a separate axis
+  from the M03 NodeStatus `mcp-node--<active|complete|error>` classes
+  (backward-compatible: the 5 M03 tests still pin those). New
+  `activeMcpCalls` selector adds `mcp-node--call-active`.
+- **`MCPServerSettings`** (`src/components/MCPServerSettings.tsx`, new):
+  installed-server list from `currentMcpServers` with per-row status +
+  confirm-gated Remove + an Add-server modal. Mounts as a
+  `.graph-layout` sibling panel (no Settings-tab infra in v0.1 —
+  reconciled vs the E.3.2 phase-doc premise).
+- **`MCPServerAddModal`** (`src/components/MCPServerAddModal.tsx`, new):
+  name-regex-gated form (`^[a-z0-9][a-z0-9-]*$`) for stdio/http
+  transport + args CSV + env `KEY=value` lines + optional auth secret;
+  renderer-side Test (`mcpTestConnection`) showing the discovered
+  `McpTool[]`; tier-eval display (spec §8.security L4) computed from
+  store `currentTier` — no new Tauri command / tier primitive.
+- **IPC wrappers** (`src/lib/ipc.ts`): `mcpAddServer` /
+  `mcpRemoveServer` / `mcpTestConnection` / `mcpListServers` +
+  `McpTool` / `McpServerSummary` interfaces, wired to the actual
+  Stage C command signatures — `mcp_test_connection` takes `{config}`
+  NOT `{name}` (E.3.4 pseudocode drift; reconciled vs
+  `commands.rs:821`).
+- **`activeMcpCalls` store slot** (`src/lib/graphStore.ts`):
+  `Record<server, toolNodeId>` set on `tool_invoked(source=mcp)`,
+  cleared on `tool_result`, reset on `clear()` (per-session animation
+  state — deliberately diverges from the `<test_isolation_audit
+  preserved_across_clear>` claim).
+- **Styles** (`src/styles.css`): full `mcp-node--conn-*` /
+  `mcp-server-settings` / `mcp-server-row` / `mcp-server-add-modal` /
+  `mcp-tool-list` family; every className paired with a CSS rule,
+  guarded by two `every_*_class_has_a_corresponding_CSS_rule` static
+  tests (gotcha #67).
+- **Tests:** `MCPNode.test.tsx` (+7), `MCPServerSettings.test.tsx`
+  (new, 7), `MCPServerAddModal.test.tsx` (new, 8), `ipc.test.ts` (+5),
+  `graphStore.test.ts` (+4 `activeMcpCalls`), `mcp_server_add.spec.ts`
+  (new Playwright, 3) via `window.__graphStore` injection (gotcha #54).
+  Full vitest 329/329; renderer coverage 97.98% (`src/components`
+  98.18%). Renderer-only — cargo gates unchanged.
+
+### Added — M06 Stage D (§5a Tool Namespace Resolution + MCP dispatch through L1+L4 + audit)
+
+- **§5a Tool Namespace Resolution** (`crates/runtime-mcp/src/namespace/`):
+  `NamespaceResolver::resolve` implements the five locked §5a rules —
+  alias override, canonical `<server>__<tool>` (split on the FIRST `__`
+  so tool names may contain `__`), short-name unambiguity, and
+  connect/disconnect re-resolution emitting `NewAmbiguity` records.
+  `Aliases::validate` rejects non-canonical values + short-name
+  collisions.
+- **MCP dispatch through the L1+L4 capability gates** (`crates/
+  runtime-mcp/src/dispatch.rs`): `McpDispatcher` resolves → enforces
+  (`CapabilityEnforcer::check`) → on deny writes the
+  `mcp_request_blocked` audit line (gotcha #66 correlation) → else
+  invokes via the injected `ConnectionResolver` seam. Implements the
+  `runtime_main::sdk::McpToolDispatch` trait per **ADR-0010**
+  (dependency inversion — the seam lives in `runtime-main`, the impl in
+  `runtime-mcp`, the wiring in `src-tauri`; resolves the
+  `runtime-mcp → runtime-main` cycle the phase doc's literal placement
+  would have closed).
+- **`runtime-main::sdk::mcp_dispatch`** — the `McpToolDispatch` trait +
+  `McpDispatchOutcome` value type + `apply_mcp_dispatch`
+  (outcome→`AgentEvent` mapping: Invoked→ToolInvoked+ToolResult;
+  Blocked→CapabilityViolation+McpRequestBlocked; Ambiguous→
+  ToolAliasAmbiguous) + `mcp_dispatch_error_event` +
+  `outcome_needs_hitl`.
+- **Schema:** `event.v1.json` gains `tool_alias_ambiguous` +
+  `mcp_request_blocked` variants (inline `minLength` strings extracted
+  to `AmbiguousToolName`/`BlockedMcpTool`/`McpBlockReason` $defs per
+  gotcha #43; `server` uses the M06.C `McpServerNameRef` local mirror).
+  `audit.v1.json` `AuditEntryKind` gains `mcp_request_blocked`.
+  Generated Rust + TS regenerated; `crates/runtime-core/src/event.rs`
+  hand-mirror updated.
+- **Audit:** `AuditEntry::mcp_request_blocked` constructor (agent_id +
+  server + tool + reason).
+- **Renderer (graphStore branches; Stage E wires components):**
+  `currentMcpServers` + `toolAliasWarnings` store slots;
+  `mcp_installed`/`mcp_uninstalled`/`mcp_auth_granted` →
+  `currentMcpServers`; `mcp_request_blocked` → `capabilityViolations`
+  (keyed by agent, MCP context in `requestedAction`);
+  `tool_alias_ambiguous` → `toolAliasWarnings`. `currentMcpServers`
+  preserved across `clear()` (registry-backed, like `currentTier`).
+- **ADR-0010** filed (Accepted) — MCP dispatch dependency inversion.
+
+### Coverage — M06 Stage D
+
+- `runtime-mcp` aggregate 97.16% line ≥95 (exact CI cmd). New-module
+  baselines: `namespace/mod.rs` 99.11%, `namespace/aliases.rs` 100%,
+  `dispatch.rs` 100%. `runtime-main` `sdk/mcp_dispatch.rs` 100% line.
+- Strict-TDD two-commit pattern: red `17aeb9b` → green `23bc369`
+  (`git diff 17aeb9b..23bc369 -- '**/tests/**'` EMPTY) → mechanical
+  fmt follow-up `1d377d0` → net-new disconnect coverage test +
+  pre-existing M06.C doc-link fix `30b5f67`.
+
+### Added — M06 Stage C (`runtime-mcp::client` lifecycle — install + auth + connection mgmt + audit)
+
+- **`crates/runtime-mcp/src/client/`** *(new module)* — server lifecycle
+  management wrapping the Stage B transport primitive:
+  - `McpClient` — `add_server` / `remove_server` / `test_connection` /
+    `list_servers` / `get_connection`. Holds the SQLite registry, the
+    secret store, the M05.E `AuditWriter`, and a cache of live
+    connections keyed by server name. Per ADR-0007: lives in the main
+    process; the drone is audit + projection, not orchestrator.
+  - `Registry` — SQLite-backed `mcp_servers` persistence;
+    path-agnostic `Registry::open(path: &Path)` per the CLAUDE.md §9
+    archetype; wires through `runtime_drone::db::init` for the WAL
+    pragmas + migration runner.
+  - `SecretStore` trait + `InMemorySecretStore` (tests) +
+    `KeyringSecretStore` (production; MCP-namespaced
+    `agent-runtime/mcp` keychain service, distinct from the M02
+    Anthropic API-key entry).
+  - `lifecycle::spawn_health_pinger` — 30s default health-ping loop;
+    failed pings route through the existing `mcp_missing` event variant
+    (M05.A) + the existing `on_gap` HITL trigger (M04.E). **No new
+    event variant and no new HITL trigger** for the offline case.
+  - `LifecycleError` — aggregates Mcp / Registry / Auth / NotFound /
+    AlreadyExists / Json variants via `thiserror`.
+- **`schemas/event.v1.json`** — adds `mcp_installed`, `mcp_uninstalled`,
+  `mcp_auth_granted` event variants. `McpServerName` is mirrored as the
+  `McpServerNameRef` $def (+ `McpTransportKind`) per the M04.D
+  cross-schema-ref-avoidance pattern (typify can't $ref validated
+  string newtypes across schemas — gotcha #43 family).
+- **`schemas/audit.v1.json`** — `AuditEntryKind` gains `mcp_installed`,
+  `mcp_uninstalled`, `mcp_auth_granted`.
+- **`crates/runtime-main/src/audit/entry.rs`** — `mcp_installed` /
+  `mcp_uninstalled` / `mcp_auth_granted` entry constructors (per the
+  M05.E builder pattern; `AuditWriter` trait surface unchanged). Per
+  gotcha #66 correlation: `add_server` with auth emits BOTH
+  `mcp_installed` AND `mcp_auth_granted` in order. Per spec §13.5:
+  the secret value is never logged — only the server name.
+- **`crates/runtime-drone/migrations/002_mcp_servers.sql`** — two-line
+  schema alignment per CLAUDE.md §14 schema-as-source-of-truth:
+  `RENAME COLUMN auth_token_ref TO auth_secret_ref` (matches
+  `mcp.v1.json::McpServerConfig.auth_secret_ref`) + `ADD COLUMN cwd
+  TEXT` (round-trips the `McpTransport` stdio cwd). The M02-scaffolded
+  `mcp_servers` table already had the other 24 columns; the phase
+  doc's larger proposed migration was redundant (caught via the
+  `<phase_doc_inventory_audit>` WEBCHECK slot).
+- **`src-tauri/src/commands.rs`** — `mcp_add_server` /
+  `mcp_remove_server` / `mcp_test_connection` / `mcp_list_servers`
+  Tauri commands (+ `*_with` test seams). Renderer wires in Stage E.
+- **`src-tauri/src/main.rs`** — `McpClient` constructed at app startup
+  with `<app_local_data_dir>/mcp.sqlite` registry +
+  `KeyringSecretStore` + the shared `AuditWriter` (when present).
+
+### Changed — M06 Stage C
+
+- **`crates/runtime-drone/migrations/000_initial.sql` effective schema**
+  — `mcp_servers.auth_token_ref` renamed to `auth_secret_ref` via
+  migration 002. Existing `db.rs` + `migration_runner.rs` tests
+  updated for the rename + the new third migration.
+- **Workspace deps** — `runtime-mcp` gains `runtime-main` +
+  `runtime-drone` + `keyring` + `rusqlite` (path-deps via the
+  workspace pin). The `runtime-main → runtime-mcp` edge stays absent
+  (forward-only per the ADR-0007 architecture; Tauri shell bridges).
+- **`.github/workflows/ci.yml`** — `cargo test --workspace` now passes
+  `--features runtime-mcp/test-helpers` so the MCP client lifecycle
+  contract tests run in the main test step (not just coverage). The
+  runtime-mcp coverage gate adds `client/auth_keyring.rs` +
+  `client/lifecycle.rs` to the OS-call-holdout exclusion regex.
+
+### Coverage — M06 Stage C
+
+- `runtime-mcp` in-gate: **96.64% line** (≥95% gate). New OS-call
+  holdouts excluded: `client/auth_keyring.rs` (KeyringSecretStore —
+  real OS keychain; parallel to runtime-main `key_store.rs`) +
+  `client/lifecycle.rs` (`spawn_health_pinger` tokio-spawn'd loop;
+  parallel to drone `lib.rs`). Workspace 92.94%; runtime-drone 95.86%;
+  runtime-main 97.15%; runtime-sandbox 96.11% — all gates hold.
+- Built under the strict TDD red-phase + green-phase two-commit
+  pattern (per the M06.C user override + Anthropic Claude Code TDD
+  docs + TDAD arXiv:2603.17973). Red-phase commit `2ff18ca` is the
+  contract; the green-phase commit satisfies it without modifying
+  tests. Rationale + v1.7 graduation recommendation in
+  `M06.C-retrospective.md`.
+
+### Added — M06 Stage B (`runtime-mcp` crate + rmcp 1.7.0 transport layer)
+
+- **`crates/runtime-mcp/`** *(new workspace crate)* — protocol-layer
+  dependency boundary for the spec §5 MCP Manager. Wraps the official
+  `rmcp` Rust SDK (1.7.0; `modelcontextprotocol/rust-sdk`) behind a
+  small `Transport` + `Connection` trait pair so Stage C lifecycle +
+  Stage D namespace/dispatch consume runtime-mcp's stable API instead
+  of rmcp's evolving surface. Pattern matches the existing
+  `runtime-drone` / `runtime-sandbox` per-resource-crate convention.
+- **`crates/runtime-mcp/src/transport/stdio.rs`** — `StdioTransport`
+  wrapping `rmcp::transport::TokioChildProcess` for local subprocess
+  MCP servers. Config: command + args + env + cwd. Pure
+  `build_command` seam unit-tested separately from the OS-call
+  `connect()` happy path.
+- **`crates/runtime-mcp/src/transport/http.rs`** — `HttpTransport`
+  wrapping `rmcp::transport::StreamableHttpClientTransport` for remote
+  MCP servers per MCP specification 2025-11-25. Wiremock-backed
+  connect-failure unit tests (404 / 500 / unreachable port).
+- **`crates/runtime-mcp/src/transport/mock.rs`** *(test-helpers
+  feature)* — in-process scripted `MockTransport` for downstream
+  consumers' tests. Scripts tool lists + per-tool call results + per-
+  tool call errors + ping/shutdown error scripts. Trait-level mock; no
+  `tokio::io::duplex` (raw-byte mocks would force every consumer test
+  to reproduce the rmcp wire format — out of scope at the MCP-trait
+  seam).
+- **`crates/runtime-mcp/src/transport/mod.rs`** — `Transport` factory
+  trait + `Connection` live-handle trait + `McpTool` data shape. Both
+  traits `Send + Sync` + object-safe.
+- **`crates/runtime-mcp/src/error.rs`** — `McpError` with six stable
+  variants (`ConnectFailed`, `Transport`, `Protocol`, `Timeout`,
+  `ToolNotFound`, `Cancelled`) + `is_connect_failure` / `is_transient`
+  discriminators for Stage C lifecycle retry policy. `Clone` derived
+  for mock scripting.
+- **`schemas/mcp.v1.json`** *(new)* — MCP server config schema:
+  `McpServerConfig` (name + transport + optional auth_secret_ref) +
+  `$defs/McpServerName` (validated identifier) + `$defs/McpTransport`
+  (discriminated oneOf stdio/http) + `$defs/McpServerStatus` (enum:
+  connected/disconnected/health_pending/error).
+- **`crates/runtime-core/src/generated/mcp.rs`** + **`src/types/mcp.ts`**
+  — regenerated via `cargo xtask regenerate-types`. Per CLAUDE.md §14
+  schema-as-source-of-truth.
+- **`crates/runtime-core/src/lib.rs`** — re-exports `generated::mcp`
+  alongside the other schema-derived modules.
+- **`crates/runtime-mcp/tests/integration.rs`** *(feature-gated
+  `--features integration`)* — manual smoke against
+  `@modelcontextprotocol/server-everything` via `npx`. Parallel to
+  `runtime-main`'s `anthropic_smoke.rs`; CI does NOT run.
+
+### Changed — M06 Stage B
+
+- **`Cargo.toml` (workspace)** — adds `crates/runtime-mcp` to
+  `workspace.members`; adds `rmcp = { version = "1.7", default-features
+  = false, features = ["client", "transport-child-process",
+  "transport-streamable-http-client-reqwest", "reqwest"] }` to
+  `workspace.dependencies` (the `client` + stdio + streamable-http +
+  rustls TLS combo); adds `runtime-mcp` to `workspace.dependencies` as
+  a path-dep.
+- **`Cargo.toml` (workspace, reqwest pin)** — drops the
+  `rustls-native-certs` feature flag from the workspace reqwest pin.
+  rmcp 1.7.0 forces reqwest to `^0.13.2` which dropped the feature
+  (replaced by the `rustls` feature's built-in
+  `rustls-platform-verifier`); no behavioral change on Windows / macOS
+  / Linux (platform-verifier supersedes native-certs).
+- **`crates/xtask/src/main.rs`** — adds `"mcp"` to the Rust schema
+  array + the `("mcp", schemas/mcp.v1.json)` entry to the TS schema
+  array.
+- **`.github/workflows/ci.yml`** — adds the `runtime-mcp` per-crate
+  coverage gate (≥95% on `mod.rs` + `mock.rs` + `error.rs`;
+  `transport/stdio.rs` + `transport/http.rs` excluded as OS-call
+  holdouts parallel to `runtime-main::providers::anthropic`); adds the
+  lcov export + Codecov upload for the new `runtime-mcp` flag.
+- **`.prettierignore` + `eslint.config.js`** — add `src/types/mcp.ts`
+  to the generated-file ignore lists, matching the existing pattern.
+
+### Coverage — M06 Stage B
+
+- **`runtime-mcp` per-crate gate**: 99.02% line on the in-gate surface
+  (`mod.rs` 95.35%, `mock.rs` 99.50%, `error.rs` 100.00%). `stdio.rs`
+  (90.00%) + `http.rs` (84.48%) excluded as OS-call holdouts;
+  rationale documented in CI workflow comment + `M06.B-retrospective.md`.
+- **Workspace gate**: 93.84% line (≥80%) — no regression.
+- **`runtime-main` per-crate**: 97.14% (≥95%); no regression.
+- **`runtime-drone` per-crate**: 95.79% (≥95%); no regression.
+- **`runtime-sandbox` per-crate**: 96.11% (≥95%); no regression.
+
 ### Added — M06 Stage A (ADR-0009 closure — L1 + L2a SDK wire-up + M05.V #3 X.2 truth-up)
 
 - **`crates/runtime-main/src/sdk/event_pipeline.rs`** — L1 wire-up: when

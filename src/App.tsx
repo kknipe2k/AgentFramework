@@ -7,6 +7,7 @@ import { HITLModal } from './components/HITLModal';
 import { HITLPanel } from './components/HITLPanel';
 import { HITLToast } from './components/HITLToast';
 import { InspectorPanel } from './components/InspectorPanel';
+import { MCPServerSettings } from './components/MCPServerSettings';
 import { RecoveryDialog } from './components/RecoveryDialog';
 import { SetupPanel } from './components/SetupPanel';
 import { SmokeButton } from './components/SmokeButton';
@@ -120,6 +121,7 @@ export function App(): JSX.Element {
         <ApprovalPanel />
         <HITLPanel />
         <GapPanel />
+        <MCPServerSettings />
       </div>
       <HITLModal />
       <HITLToast />

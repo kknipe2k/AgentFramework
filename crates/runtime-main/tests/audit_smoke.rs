@@ -309,6 +309,59 @@ async fn all_seams_together_produce_complete_audit_trail() {
     );
 }
 
+// ── M06.C — mcp_installed / mcp_uninstalled / mcp_auth_granted entry tests ──
+
+#[tokio::test]
+async fn mcp_installed_entry_writes_correlated_audit_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let writer = open_audit(&dir).await;
+    let entry = runtime_main::audit::mcp_installed("sess-mcp", "github", "stdio", true);
+    writer.log(&entry).await.expect("log");
+    let lines = read_lines(&dir).await;
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0]["kind"], "mcp_installed");
+    assert_eq!(lines[0]["session_id"], "sess-mcp");
+    assert_eq!(lines[0]["details"]["name"], "github");
+    assert_eq!(lines[0]["details"]["transport_kind"], "stdio");
+    assert_eq!(lines[0]["details"]["has_auth"], true);
+}
+
+#[tokio::test]
+async fn mcp_uninstalled_entry_writes_audit_line_with_name_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let writer = open_audit(&dir).await;
+    let entry = runtime_main::audit::mcp_uninstalled("sess-mcp", "vault");
+    writer.log(&entry).await.expect("log");
+    let lines = read_lines(&dir).await;
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0]["kind"], "mcp_uninstalled");
+    assert_eq!(lines[0]["details"]["name"], "vault");
+    // Per spec §13.5 zero-secret-logging: uninstall details carry name only.
+    assert!(
+        lines[0]["details"].get("auth_secret_ref").is_none(),
+        "auth_secret_ref must NOT appear in the uninstall details"
+    );
+}
+
+#[tokio::test]
+async fn mcp_auth_granted_entry_does_not_log_secret_value() {
+    // Per spec §13.5: the secret value is never logged. The audit line
+    // carries server name only — no secret material in `details`.
+    let dir = tempfile::tempdir().unwrap();
+    let writer = open_audit(&dir).await;
+    let entry = runtime_main::audit::mcp_auth_granted("sess-mcp", "kafka");
+    writer.log(&entry).await.expect("log");
+    let lines = read_lines(&dir).await;
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0]["kind"], "mcp_auth_granted");
+    assert_eq!(lines[0]["details"]["name"], "kafka");
+    let raw = serde_json::to_string(&lines[0]).unwrap();
+    assert!(
+        !raw.contains("secret"),
+        "secret-value substrings must not appear anywhere in audit line: {raw}"
+    );
+}
+
 #[tokio::test]
 async fn enforcer_without_audit_writer_silently_skips_emission() {
     // Audit availability is not a dispatch gate — when no writer is

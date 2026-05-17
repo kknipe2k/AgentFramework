@@ -8,6 +8,7 @@ import type {
   HitlTriggerRef,
   HitlUiVariantRef,
   HookCategoryRef,
+  McpTransportKind,
   OnFailureRef,
   RailPolicy,
   TierRef,
@@ -383,6 +384,35 @@ export interface TierViolationRecord {
   timestamp: number;
 }
 
+/**
+ * Spec §5 (M06.D): live state of one installed MCP server, keyed by
+ * server name in `currentMcpServers`. Driven by the M06.C lifecycle
+ * events (`mcp_installed` / `mcp_uninstalled` / `mcp_auth_granted`);
+ * Stage E's MCPNode + Settings panel read this. `currentMcpServers`
+ * follows the M05.D `currentTier` pattern — persistent across `clear()`
+ * because MCP servers are registry-backed install state, not
+ * per-session graph state (test files reset it explicitly in
+ * `beforeEach`).
+ */
+export interface McpServerStatusRecord {
+  name: string;
+  transportKind: McpTransportKind | null;
+  hasAuth: boolean;
+  status: string;
+}
+
+/**
+ * Spec §5a step 5 (M06.D): one `tool_alias_ambiguous` warning. The
+ * runtime emits this when a server connect makes a short tool name
+ * ambiguous; the framework silences it by pinning the name in
+ * `mcp_aliases`. Append-only, per-session (cleared on `clear()`).
+ */
+export interface ToolAliasWarning {
+  name: string;
+  candidates: string[];
+  timestamp: number;
+}
+
 interface GraphState {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -448,6 +478,30 @@ interface GraphState {
    * violations from the same agent.
    */
   tierViolations: Record<string, TierViolationRecord>;
+  /**
+   * Spec §5 (M06.D): installed MCP servers keyed by server name.
+   * Driven by `mcp_installed` / `mcp_uninstalled` / `mcp_auth_granted`.
+   * Persistent across `clear()` (registry-backed install state, like
+   * `currentTier`) — test files reset it in `beforeEach`. Stage E's
+   * MCPNode + Settings panel consume it.
+   */
+  currentMcpServers: Record<string, McpServerStatusRecord>;
+  /**
+   * Spec §5a step 5 (M06.D): append-only `tool_alias_ambiguous`
+   * warnings for the current session. Renderer surfaces a warning
+   * toast; cleared on `clear()`.
+   */
+  toolAliasWarnings: ToolAliasWarning[];
+  /**
+   * Spec §5 (M06.E): in-flight MCP tool calls keyed by server name,
+   * value = the active tool's node id (`tool:<agent>:<tool>`). Set when
+   * a `tool_invoked` with `source: 'mcp'` lands; cleared on the matching
+   * `tool_result`. Drives the MCPNode active-call animation. Per-session
+   * state — reset on `clear()` (an active-call glow must not leak into a
+   * new session); diverges from the `<test_isolation_audit>` slot claim
+   * deliberately. Test files still reset it in `beforeEach`.
+   */
+  activeMcpCalls: Record<string, string>;
 
   /**
    * Single entry point for translating AgentEvent into node + edge
@@ -644,6 +698,9 @@ export const useGraphStore = create<GraphState>((set) => ({
   capabilityGrants: [],
   currentTier: 'novice',
   tierViolations: {},
+  currentMcpServers: {},
+  toolAliasWarnings: [],
+  activeMcpCalls: {},
 
   applyEvent: (event) =>
     set((state) => {
@@ -787,6 +844,10 @@ export const useGraphStore = create<GraphState>((set) => ({
               ...state,
               nodes: newMcp ? [...state.nodes, newMcp, newTool] : [...state.nodes, newTool],
               edges: newEdges,
+              // Spec §5 (M06.E): mark the call in-flight so the MCPNode
+              // animates. Keyed by server name, value = the tool node id
+              // so `tool_result` can clear it without server context.
+              activeMcpCalls: { ...state.activeMcpCalls, [event.server]: id },
             };
           }
           // Non-MCP tool — agent → tool directly (Stage B behavior +
@@ -825,8 +886,16 @@ export const useGraphStore = create<GraphState>((set) => ({
           const tokensIn = event.tokens_in ?? 0;
           const tokensOut = event.tokens_out ?? 0;
           const agentTarget = `agent:${event.agent_id}`;
+          // Spec §5 (M06.E): the in-flight MCP call (if any) for this
+          // tool node id completes — drop it so the MCPNode animation
+          // stops. `tool_result` has no server context, so match by the
+          // tool node id stored as the value.
+          const activeMcpCalls = Object.fromEntries(
+            Object.entries(state.activeMcpCalls).filter(([, toolId]) => toolId !== id),
+          );
           return {
             ...state,
+            activeMcpCalls,
             nodes: state.nodes.map((n) => {
               if (n.id === id && n.type === 'tool') {
                 return {
@@ -1418,6 +1487,101 @@ export const useGraphStore = create<GraphState>((set) => ({
         // mode_changed are graph-no-op by design. The exhaustive default
         // below is the forcing function: any new variant added to the
         // schema breaks the compile until handled.
+        //
+        case 'mcp_installed': {
+          // Spec §5 (M06.D): server installed → track live status keyed
+          // by name. currentMcpServers is registry-backed install state
+          // (preserved across clear(), like currentTier). Idempotent:
+          // a repeat install overwrites the same key with an equivalent
+          // record.
+          return {
+            ...state,
+            currentMcpServers: {
+              ...state.currentMcpServers,
+              [event.name]: {
+                name: event.name,
+                transportKind: event.transport_kind,
+                hasAuth: event.has_auth,
+                status: 'connected',
+              },
+            },
+          };
+        }
+
+        case 'mcp_uninstalled': {
+          // Spec §5 (M06.D): server removed → drop it from the map so
+          // the MCPNode + Settings list reflect the post-state.
+          if (!(event.name in state.currentMcpServers)) {
+            return state;
+          }
+          const next = { ...state.currentMcpServers };
+          delete next[event.name];
+          return { ...state, currentMcpServers: next };
+        }
+
+        case 'mcp_auth_granted': {
+          // Spec §5 + §13.5 (M06.D): a per-server secret was stored.
+          // Flip the credential indicator. No-op if the server isn't
+          // tracked (auth without a prior install is not expected;
+          // mirror the M05.D defensive shape rather than synthesize a
+          // partial record).
+          const existing = state.currentMcpServers[event.name];
+          if (!existing) {
+            return state;
+          }
+          return {
+            ...state,
+            currentMcpServers: {
+              ...state.currentMcpServers,
+              [event.name]: { ...existing, hasAuth: true },
+            },
+          };
+        }
+
+        case 'mcp_request_blocked': {
+          // Spec §5a + §8.security (M06.D): an MCP tool dispatch was
+          // denied. Record into capabilityViolations keyed by agent
+          // (same shape + last-write-wins as capability_violation) so
+          // the inspector + capability-violation modal surface it; the
+          // MCP server + tool ride in requestedAction so the renderer
+          // can attribute the block to the MCPNode.
+          return {
+            ...state,
+            capabilityViolations: {
+              ...state.capabilityViolations,
+              [event.agent_id]: {
+                capabilityKind: 'exec',
+                requestedAction: `invoke MCP tool '${event.server}__${event.tool}'`,
+                declaredScope: event.reason,
+                timestamp: Date.now(),
+              },
+            },
+          };
+        }
+
+        case 'tool_alias_ambiguous': {
+          // Spec §5a step 5 (M06.D): a short name became ambiguous on
+          // re-resolution. Append a per-session warning the renderer
+          // surfaces as a toast; the framework silences it via
+          // mcp_aliases.
+          return {
+            ...state,
+            toolAliasWarnings: [
+              ...state.toolAliasWarnings,
+              {
+                name: event.name,
+                candidates: event.candidates,
+                timestamp: Date.now(),
+              },
+            ],
+          };
+        }
+
+        // No-op variants — stream_text + decision_record + token_usage
+        // feed the inspector, not the graph; session_end + tool_error +
+        // mode_changed are graph-no-op by design. The exhaustive default
+        // below is the forcing function: any new variant added to the
+        // schema breaks the compile until handled.
         case 'session_end':
         case 'tool_error':
         case 'mode_changed':
@@ -1451,6 +1615,15 @@ export const useGraphStore = create<GraphState>((set) => ({
       // session clears so the Settings toggle keeps its state.
       tierViolations: {},
       currentTier: state.currentTier,
+      // currentMcpServers is registry-backed install state (like
+      // currentTier), not per-session graph state — preserved across
+      // session clears. toolAliasWarnings are per-session — cleared.
+      currentMcpServers: state.currentMcpServers,
+      toolAliasWarnings: [],
+      // activeMcpCalls is per-session animation state — reset on clear()
+      // (unlike currentMcpServers): an in-flight glow must not leak into
+      // a new session.
+      activeMcpCalls: {},
     })),
 
   selectNode: (id) => set({ selectedNodeId: id }),

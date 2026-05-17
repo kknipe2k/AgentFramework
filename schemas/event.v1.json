@@ -115,10 +115,42 @@
       "description": "Plain-English reason for the tier transition. For promotions: user clicked confirm in the Settings panel. For demotions: user clicked demote OR a downgrade-on-uncertainty affordance fired. Per gotcha #43 (typify-friendly extraction).",
       "minLength": 1
     },
+    "McpServerNameRef": {
+      "type": "string",
+      "title": "McpServerNameRef",
+      "description": "MCP server identifier embedded in M06.C lifecycle events (mcp_installed / mcp_uninstalled / mcp_auth_granted). Mirrors mcp.v1.json#/$defs/McpServerName (DNS-label pattern, 1–64 chars). The mirror exists because typify does not support cross-schema $ref to validated string newtypes; per-schema $defs duplication is the established M04.D pattern (HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef, TierRef).",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "McpTransportKind": {
+      "type": "string",
+      "title": "McpTransportKind",
+      "description": "Transport discriminant — mirrors the McpTransport oneOf type tag from mcp.v1.json. Embedded inline rather than via cross-schema $ref because typify cross-schema enum refs require per-schema $defs duplication (pattern: HookCategoryRef, OnFailureRef, RailPolicy, HitlTriggerRef, CapabilityKindRef).",
+      "enum": ["stdio", "http"]
+    },
     "NarrowedFromGrantDescription": {
       "type": "string",
       "title": "NarrowedFromGrantDescription",
       "description": "One short, human-readable description of a parent capability that the L2a narrowing seam considered when computing a child's narrowed grants. Format is emitter-defined (e.g., `read:src:glob:src/**`); renderer surfaces verbatim. Per gotcha #43 (typify-friendly extraction): inline-validated strings inside oneOf variants must be extracted to $defs with a title or typify panics.",
+      "minLength": 1
+    },
+    "AmbiguousToolName": {
+      "type": "string",
+      "title": "AmbiguousToolName",
+      "description": "The short tool name that became ambiguous on re-resolution (spec §5a step 5). Per gotcha #43 (typify-friendly extraction): inline-validated strings inside oneOf variants must be extracted to $defs with a title or typify panics.",
+      "minLength": 1
+    },
+    "BlockedMcpTool": {
+      "type": "string",
+      "title": "BlockedMcpTool",
+      "description": "The MCP tool name whose dispatch the capability check denied (spec §5a + §8.security). Per gotcha #43 (typify-friendly extraction).",
+      "minLength": 1
+    },
+    "McpBlockReason": {
+      "type": "string",
+      "title": "McpBlockReason",
+      "description": "Human-readable reason the MCP tool dispatch was denied — the rendered capability-deny cause. Renderer surfaces verbatim on the MCPNode + capability-violation modal. Per gotcha #43 (typify-friendly extraction).",
       "minLength": 1
     }
   },
@@ -493,6 +525,44 @@
     },
     {
       "type": "object",
+      "title": "McpInstalled",
+      "description": "Spec §5 + §13.5: M06.C McpClient::add_server succeeded. Records server name + transport discriminant + presence-of-auth so the renderer + audit consumer can show installation history without exposing secrets. Emitted alongside the audit `mcp_installed` line.",
+      "additionalProperties": false,
+      "required": ["type", "name", "transport_kind", "has_auth"],
+      "properties": {
+        "type": { "const": "mcp_installed" },
+        "name": { "$ref": "#/$defs/McpServerNameRef" },
+        "transport_kind": { "$ref": "#/$defs/McpTransportKind" },
+        "has_auth": {
+          "type": "boolean",
+          "description": "True iff a per-server auth secret was stored alongside the install. Indicates the renderer should show the credential indicator on the MCPNode (Stage E)."
+        }
+      }
+    },
+    {
+      "type": "object",
+      "title": "McpUninstalled",
+      "description": "Spec §5 + §13.5: M06.C McpClient::remove_server succeeded. Records server name only — transport / auth-state are stripped on removal so the audit trail reflects the post-state.",
+      "additionalProperties": false,
+      "required": ["type", "name"],
+      "properties": {
+        "type": { "const": "mcp_uninstalled" },
+        "name": { "$ref": "#/$defs/McpServerNameRef" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "McpAuthGranted",
+      "description": "Spec §5 + §13.5 + §8.security L5: M06.C secret stored for an MCP server's auth_secret_ref. The secret value is NEVER logged — only the server name + the keychain-key reference. Emitted alongside the audit `mcp_auth_granted` line.",
+      "additionalProperties": false,
+      "required": ["type", "name"],
+      "properties": {
+        "type": { "const": "mcp_auth_granted" },
+        "name": { "$ref": "#/$defs/McpServerNameRef" }
+      }
+    },
+    {
+      "type": "object",
       "title": "AgentMissing",
       "description": "Spec §4b Layer 1 (loader) — `framework.agents[].spawns[]` references an agent id absent from `framework.agents[]`. Per spec §4b severity matrix this is a load-time block: the framework fails to load (severity=critical). Also emittable from Layer 2 request_capability when an agent asks for a sub-agent it cannot spawn.",
       "additionalProperties": false,
@@ -774,6 +844,32 @@
         "output": { "type": "integer", "minimum": 0 },
         "model": { "type": "string" },
         "cost_usd": { "type": "number" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "ToolAliasAmbiguous",
+      "description": "Spec §5a step 5 (M06.D) — emitted on re-resolution when an MCP server connect makes a previously-unambiguous short tool name newly ambiguous across the connected-server set. The framework pins the name via `mcp_aliases` to silence it. Renderer surfaces a warning toast listing the canonical candidates. Distinct from `mcp_request_blocked` (a capability deny) — this is a namespace warning, not a security event.",
+      "additionalProperties": false,
+      "required": ["type", "name", "candidates"],
+      "properties": {
+        "type": { "const": "tool_alias_ambiguous" },
+        "name": { "$ref": "#/$defs/AmbiguousToolName" },
+        "candidates": { "type": "array", "items": { "type": "string" }, "minItems": 2 }
+      }
+    },
+    {
+      "type": "object",
+      "title": "McpRequestBlocked",
+      "description": "Spec §5a + §8.security (M06.D) — emitted when the L1+L4 capability check denies an MCP tool dispatch. Distinct from the generic `capability_violation` (L1, kind-only): records the resolved MCP server + tool so the renderer can attribute the block to the MCPNode. Emitted ALONGSIDE `capability_violation` on a single deny + alongside the audit `mcp_request_blocked` line. `server` mirrors mcp.v1.json#/$defs/McpServerName via the local McpServerNameRef $def (typify does not support cross-schema $ref to validated newtypes — the M06.C McpServerNameRef pattern).",
+      "additionalProperties": false,
+      "required": ["type", "agent_id", "server", "tool", "reason"],
+      "properties": {
+        "type": { "const": "mcp_request_blocked" },
+        "agent_id": { "type": "string" },
+        "server": { "$ref": "#/$defs/McpServerNameRef" },
+        "tool": { "$ref": "#/$defs/BlockedMcpTool" },
+        "reason": { "$ref": "#/$defs/McpBlockReason" }
       }
     }
   ]

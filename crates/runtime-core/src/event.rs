@@ -753,6 +753,31 @@ pub enum AgentEvent {
         /// Estimated cost in USD.
         cost_usd: f64,
     },
+    /// A short MCP tool name became ambiguous on re-resolution — spec §5a
+    /// step 5 (M06.D). Emitted when a server connect makes a
+    /// previously-unambiguous short name resolve to >1 candidate across
+    /// the connected-server set. The framework pins it via `mcp_aliases`
+    /// to silence the warning. Renderer surfaces a warning toast.
+    ToolAliasAmbiguous {
+        /// The short tool name that is now ambiguous.
+        name: String,
+        /// The ≥2 canonical `<server>__<tool>` candidates it matched.
+        candidates: Vec<String>,
+    },
+    /// An MCP tool dispatch was denied by the L1+L4 capability check —
+    /// spec §5a + §8.security (M06.D). Emitted alongside
+    /// `CapabilityViolation` on a single deny; carries the resolved MCP
+    /// server + tool so the renderer attributes the block to the `MCPNode`.
+    McpRequestBlocked {
+        /// Agent whose MCP dispatch the enforcer rejected.
+        agent_id: String,
+        /// Resolved MCP server name.
+        server: String,
+        /// Resolved MCP tool name.
+        tool: String,
+        /// Human-readable deny cause (rendered verbatim).
+        reason: String,
+    },
 }
 
 #[cfg(test)]

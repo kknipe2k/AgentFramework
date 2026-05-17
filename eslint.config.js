@@ -30,6 +30,7 @@ export default tseslint.config(
       'src/types/hitl.ts',
       'src/types/budget.ts',
       'src/types/capability.ts',
+      'src/types/mcp.ts',
     ],
   },
   js.configs.recommended,

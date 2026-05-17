@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aria-runtime.dev/mcp.v1.json",
+  "title": "McpServerConfig",
+  "description": "MCP server configuration (spec §5). One MCP server's identity + transport + optional per-server auth-secret reference. Two transport variants — stdio (local subprocess JSON-RPC over stdin/stdout) and http (remote streamable HTTP per MCP specification 2025-11-25). Stage C lifecycle holds one config per registered server in the `mcp_servers` SQLite table. Per CLAUDE.md §14 schema-as-source-of-truth: Rust types in `crates/runtime-core/src/generated/mcp.rs` + TS types in `src/types/mcp.ts` regenerate from this file.",
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "transport"],
+
+  "properties": {
+    "name": { "$ref": "#/$defs/McpServerName" },
+    "transport": { "$ref": "#/$defs/McpTransport" },
+    "auth_secret_ref": {
+      "type": ["string", "null"],
+      "title": "AuthSecretRef",
+      "description": "OS-keychain key identifier for per-server authentication secrets; null for unauthenticated servers. Stage C wires the per-server keychain surface via `runtime-main::key_store`. The string format is `mcp.<server-name>` by convention; the runtime owns the namespace, the schema is permissive (any non-empty string)."
+    }
+  },
+
+  "$defs": {
+    "McpServerName": {
+      "type": "string",
+      "title": "McpServerName",
+      "description": "Server identifier — lowercase alphanumeric + hyphen, 1–64 chars. Used as the namespace prefix in §5a tool resolution (`<server>__<tool>`). Pattern matches DNS-label conventions; first character must be alphanumeric (no leading hyphens).",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+
+    "McpTransport": {
+      "title": "McpTransport",
+      "description": "Transport variant — stdio (local subprocess via JSON-RPC over stdin/stdout, suitable for `@modelcontextprotocol/server-filesystem` and similar local servers) or http (remote streamable HTTP per MCP specification 2025-11-25). Discriminated by the `type` field per gotcha #26 (struct-shape variants required for serde(tag)).",
+      "oneOf": [
+        {
+          "type": "object",
+          "title": "StdioTransportConfig",
+          "additionalProperties": false,
+          "required": ["type", "command"],
+          "properties": {
+            "type": { "type": "string", "enum": ["stdio"] },
+            "command": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Executable name (PATH-resolved) or absolute path."
+            },
+            "args": {
+              "type": "array",
+              "items": { "type": "string" },
+              "default": [],
+              "description": "Command-line arguments passed after the executable name."
+            },
+            "env": {
+              "type": "object",
+              "additionalProperties": { "type": "string" },
+              "default": {},
+              "description": "Environment variables set for the subprocess. Inherits from parent unless an env key is explicitly overridden here."
+            },
+            "cwd": {
+              "type": ["string", "null"],
+              "description": "Working directory for the subprocess. null = inherit from parent."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "HttpTransportConfig",
+          "additionalProperties": false,
+          "required": ["type", "url"],
+          "properties": {
+            "type": { "type": "string", "enum": ["http"] },
+            "url": {
+              "type": "string",
+              "format": "uri",
+              "minLength": 1,
+              "description": "Streamable-HTTP endpoint URL (per MCP specification 2025-11-25). HTTPS endpoints use rustls TLS (configured via the workspace reqwest pin)."
+            }
+          }
+        }
+      ]
+    },
+
+    "McpServerStatus": {
+      "type": "string",
+      "title": "McpServerStatus",
+      "description": "Runtime status of an MCP server connection. Surfaced by §5 lifecycle (Stage C) and rendered by the MCPNode (Stage E). Transitions: `disconnected → health_pending → connected` on add; `connected → error` on transport failure; `error → health_pending → connected` on auto-reconnect.",
+      "enum": ["connected", "disconnected", "health_pending", "error"]
+    }
+  }
+}

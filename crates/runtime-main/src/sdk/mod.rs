@@ -14,6 +14,13 @@
 
 mod agent_sdk;
 mod event_pipeline;
+/// MCP tool-dispatch seam — M06.D, ADR-0010 (dependency inversion).
+///
+/// Defines the [`mcp_dispatch::McpToolDispatch`] trait + the
+/// [`mcp_dispatch::McpDispatchOutcome`] value type the SDK run loop
+/// calls; the concrete dispatcher lives in `runtime-mcp` and is
+/// shell-injected as `Arc<dyn McpToolDispatch>`.
+pub mod mcp_dispatch;
 pub mod replay;
 
 /// Approval-gate seam — spec §3a (M04 Stage B).
@@ -32,6 +39,10 @@ pub mod structured_emitter;
 pub use agent_sdk::{AgentSdk, CapabilityWiring, SdkError, SessionId};
 pub use approval::{ApprovalDecision, ApprovalError, ApprovalSeam};
 pub use event_pipeline::{EnforcementContext, EventPipeline};
+pub use mcp_dispatch::{
+    apply_mcp_dispatch, mcp_dispatch_error_event, outcome_needs_hitl, McpDispatchError,
+    McpDispatchOutcome, McpToolDispatch,
+};
 pub use replay::replay_signals_to_events;
 pub use request_capability::{
     handle_request_capability, CapabilityKind, RequestCapabilityError, RequestCapabilityInvocation,

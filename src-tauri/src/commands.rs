@@ -48,9 +48,12 @@ use runtime_main::recovery::{
     UncertaintyResolution,
 };
 use runtime_main::sdk::{
-    replay_signals_to_events, AgentSdk, ApprovalDecision, ApprovalError, ApprovalSeam, SessionId,
+    replay_signals_to_events, AgentSdk, ApprovalDecision, ApprovalError, ApprovalSeam,
+    McpToolDispatch, SessionId,
 };
 use runtime_main::tier::{save_tier, Tier, TierPersistenceError};
+use runtime_mcp::client::{McpClient, McpServerSummary};
+use runtime_mcp::transport::McpTool;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
@@ -119,7 +122,14 @@ pub async fn run_smoke_session(
     let (tx, rx) = mpsc::channel::<AgentEvent>(64);
     let app_clone = app.clone();
     let forwarder = tokio::spawn(forward_events(rx, app_clone));
-    let result = run_smoke_session_with(provider, tx, drone_client, smoke_config()).await;
+    // Per ADR-0011, the production wrapper passes `None`: the concrete
+    // `McpDispatcher` is not constructible in-shell (no
+    // `impl ConnectionResolver for McpClient`; no shell enforcer) and
+    // the no-tools smoke prompt emits no `ProviderEvent::ToolUse`. The
+    // construction + a live agent-loop exercise are the M07
+    // carry-forward; the `*_with` injection seam below is what M06.F
+    // delivers + mock-tests.
+    let result = run_smoke_session_with(provider, tx, drone_client, smoke_config(), None).await;
     drop(api_key);
     // Wait for the forwarder to drain any final events before returning.
     let _ = forwarder.await;
@@ -134,6 +144,13 @@ pub async fn run_smoke_session(
 /// Tests inject an in-memory provider stub and a [`DroneClient::noop`]
 /// and assert on the events received.
 ///
+/// `mcp_dispatch` is the M06.F (ADR-0010 + ADR-0011) composition-root
+/// injection seam: when `Some`, it is composed onto the SDK via
+/// [`AgentSdk::with_mcp_dispatch`] so the run loop intercepts
+/// `ProviderEvent::ToolUse` through it. Production passes `None` (the
+/// concrete `McpDispatcher` construction is the M07 carry-forward per
+/// ADR-0011); the M06.F seam test injects a mock.
+///
 /// # Errors
 ///
 /// Same as [`run_smoke_session`] minus the keychain-read step.
@@ -142,9 +159,13 @@ pub async fn run_smoke_session_with<P: LLMProvider + 'static>(
     event_tx: mpsc::Sender<AgentEvent>,
     drone: Arc<DroneClient>,
     config: AgentConfig,
+    mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
 ) -> Result<(), CmdError> {
     tracing::info!("run_smoke_session starting");
-    let sdk = AgentSdk::new(Arc::new(provider), event_tx, drone, SessionId::new());
+    let mut sdk = AgentSdk::new(Arc::new(provider), event_tx, drone, SessionId::new());
+    if let Some(dispatch) = mcp_dispatch {
+        sdk = sdk.with_mcp_dispatch(dispatch);
+    }
     let result = sdk
         .run_agent(config)
         .await
@@ -738,6 +759,137 @@ pub async fn respond_hitl_with(
     }
 }
 
+// ── M06 Stage C — MCP server lifecycle commands ──────────────
+
+/// Add a new MCP server. Persists to the registry, optionally stores the
+/// per-server auth secret in the OS keychain (under the
+/// `agent-runtime/mcp` namespace), runs a one-shot test connection, and
+/// emits the audit lines (`mcp_installed` + `mcp_auth_granted` when
+/// applicable). Renderer wires from the Settings panel "Add Server" form.
+///
+/// # Errors
+///
+/// - [`CmdError::Internal`] for any lifecycle error (registry / transport /
+///   auth / connect failure). The error body carries the underlying detail.
+#[tauri::command]
+pub async fn mcp_add_server(
+    config: serde_json::Value,
+    auth: Option<String>,
+    client: tauri::State<'_, Arc<McpClient>>,
+) -> Result<(), CmdError> {
+    mcp_add_server_with(config, auth, client.inner().as_ref()).await
+}
+
+/// Test-seam for [`mcp_add_server`]. Accepts a borrowed `McpClient` so
+/// unit tests construct one with `tempfile`-backed registry + audit and
+/// drive the lifecycle without Tauri state plumbing.
+///
+/// # Errors
+///
+/// See [`mcp_add_server`].
+pub async fn mcp_add_server_with(
+    config: serde_json::Value,
+    auth: Option<String>,
+    client: &McpClient,
+) -> Result<(), CmdError> {
+    let parsed: runtime_core::generated::mcp::McpServerConfig = serde_json::from_value(config)
+        .map_err(|e| CmdError::internal(format!("mcp_add_server: invalid config JSON: {e}")))?;
+    let transport = McpClient::transport_from_config(&parsed);
+    tracing::info!(name = %parsed.name.to_string(), has_auth = auth.is_some(), "mcp_add_server invoked");
+    client
+        .add_server(parsed, auth, transport)
+        .await
+        .map_err(|e| CmdError::internal(format!("mcp_add_server: {e}")))
+}
+
+/// Remove a registered MCP server. Disconnects, removes registry row,
+/// drops the auth secret if present, emits `mcp_uninstalled` audit line.
+///
+/// # Errors
+///
+/// - [`CmdError::Internal`] for any lifecycle error. `NotFound` surfaces as
+///   `Internal` with the underlying detail body — the renderer interprets.
+#[tauri::command]
+pub async fn mcp_remove_server(
+    name: String,
+    client: tauri::State<'_, Arc<McpClient>>,
+) -> Result<(), CmdError> {
+    mcp_remove_server_with(name, client.inner().as_ref()).await
+}
+
+/// Test-seam for [`mcp_remove_server`].
+///
+/// # Errors
+///
+/// See [`mcp_remove_server`].
+pub async fn mcp_remove_server_with(name: String, client: &McpClient) -> Result<(), CmdError> {
+    tracing::info!(name = %name, "mcp_remove_server invoked");
+    client
+        .remove_server(&name)
+        .await
+        .map_err(|e| CmdError::internal(format!("mcp_remove_server: {e}")))
+}
+
+/// Test a server connection without persisting (Settings panel "Test"
+/// button). Connect + `list_tools` + disconnect.
+///
+/// # Errors
+///
+/// - [`CmdError::Internal`] for any lifecycle error.
+#[tauri::command]
+pub async fn mcp_test_connection(
+    config: serde_json::Value,
+    client: tauri::State<'_, Arc<McpClient>>,
+) -> Result<Vec<McpTool>, CmdError> {
+    mcp_test_connection_with(config, client.inner().as_ref()).await
+}
+
+/// Test-seam for [`mcp_test_connection`].
+///
+/// # Errors
+///
+/// See [`mcp_test_connection`].
+pub async fn mcp_test_connection_with(
+    config: serde_json::Value,
+    client: &McpClient,
+) -> Result<Vec<McpTool>, CmdError> {
+    let parsed: runtime_core::generated::mcp::McpServerConfig = serde_json::from_value(config)
+        .map_err(|e| {
+            CmdError::internal(format!("mcp_test_connection: invalid config JSON: {e}"))
+        })?;
+    let transport = McpClient::transport_from_config(&parsed);
+    tracing::info!(name = %parsed.name.to_string(), "mcp_test_connection invoked");
+    client
+        .test_connection(transport)
+        .await
+        .map_err(|e| CmdError::internal(format!("mcp_test_connection: {e}")))
+}
+
+/// List registered MCP servers + their current state.
+///
+/// # Errors
+///
+/// - [`CmdError::Internal`] for registry failures.
+#[tauri::command]
+pub async fn mcp_list_servers(
+    client: tauri::State<'_, Arc<McpClient>>,
+) -> Result<Vec<McpServerSummary>, CmdError> {
+    mcp_list_servers_with(client.inner().as_ref()).await
+}
+
+/// Test-seam for [`mcp_list_servers`].
+///
+/// # Errors
+///
+/// See [`mcp_list_servers`].
+pub async fn mcp_list_servers_with(client: &McpClient) -> Result<Vec<McpServerSummary>, CmdError> {
+    tracing::info!("mcp_list_servers invoked");
+    client
+        .list_servers()
+        .await
+        .map_err(|e| CmdError::internal(format!("mcp_list_servers: {e}")))
+}
+
 /// Shared resolve-and-log helper for the three approval-flow commands.
 /// Treats `ApprovalError::NotFound` as soft-Ok with a warn-log per the
 /// no-pending-await rationale on [`approve_plan`].
@@ -874,7 +1026,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(8);
         let drone = Arc::new(DroneClient::noop());
         let config = smoke_config();
-        run_smoke_session_with(StubProvider, tx, drone, config)
+        run_smoke_session_with(StubProvider, tx, drone, config, None)
             .await
             .expect("run_smoke_session_with");
 
@@ -893,6 +1045,127 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, AgentEvent::AgentComplete { .. })),
             "expected AgentComplete in {events:?}"
+        );
+    }
+
+    /// Provider that emits a single MCP-shaped `ToolUse` then stops, so
+    /// the M06.F injection-seam test drives the run-loop interception.
+    struct McpToolProvider;
+
+    #[async_trait]
+    impl LLMProvider for McpToolProvider {
+        #[allow(
+            clippy::unnecessary_literal_bound,
+            reason = "trait method returns &str by signature; literal &'static str must reborrow"
+        )]
+        fn name(&self) -> &str {
+            "mcp-tool-stub"
+        }
+        fn supports(&self) -> ProviderSupport {
+            ProviderSupport {
+                tool_use: true,
+                streaming: true,
+                thinking: false,
+            }
+        }
+        async fn stream(
+            &self,
+            _config: AgentConfig,
+        ) -> Result<BoxStream<'_, ProviderEvent>, ProviderError> {
+            Ok(Box::pin(futures::stream::iter(vec![
+                ProviderEvent::ToolUse {
+                    id: "t1".to_string(),
+                    name: "pdf-mcp__extract_text".to_string(),
+                    input: serde_json::json!({"path": "doc.pdf"}),
+                },
+                ProviderEvent::MessageStop {
+                    stop_reason: "end_turn".to_string(),
+                    total_tokens: None,
+                },
+            ])))
+        }
+        async fn count_tokens(&self, _m: &[Message]) -> Result<u64, ProviderError> {
+            Ok(0)
+        }
+        async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+            Ok(Vec::new())
+        }
+        fn estimate_cost(&self, _b: &CostBreakdown, _m: &str) -> f64 {
+            0.0
+        }
+    }
+
+    /// Mock `McpToolDispatch` that always resolves the call as an
+    /// `Invoked` MCP outcome — the seam test asserts the SDK actually
+    /// routed the `ToolUse` through the injected dispatch.
+    struct InvokingMcpDispatch;
+
+    #[async_trait]
+    impl McpToolDispatch for InvokingMcpDispatch {
+        async fn dispatch_if_mcp(
+            &self,
+            _agent_id: &str,
+            _tool_name: &str,
+            _args: serde_json::Value,
+            _aliases: &std::collections::BTreeMap<String, String>,
+        ) -> Option<
+            Result<runtime_main::sdk::McpDispatchOutcome, runtime_main::sdk::McpDispatchError>,
+        > {
+            Some(Ok(runtime_main::sdk::McpDispatchOutcome::Invoked {
+                server: "pdf-mcp".to_string(),
+                tool: "extract_text".to_string(),
+                value: serde_json::json!({"text": "extracted"}),
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn run_smoke_session_with_injected_mcp_dispatch_routes_tool_use_through_seam() {
+        // M06.F composition-root injection seam (ADR-0011 trace #11a):
+        // passing `Some(dispatch)` must compose it onto the SDK
+        // (`with_mcp_dispatch`) so an MCP `ProviderEvent::ToolUse`
+        // resolves through the injected dispatch and reaches the
+        // renderer-facing channel as an agent_id-correct, MCP-sourced
+        // ToolInvoked + ToolResult — NOT the Stage A Builtin path.
+        let (tx, mut rx) = mpsc::channel(16);
+        let drone = Arc::new(DroneClient::noop());
+        run_smoke_session_with(
+            McpToolProvider,
+            tx,
+            drone,
+            smoke_config(),
+            Some(Arc::new(InvokingMcpDispatch) as Arc<dyn McpToolDispatch>),
+        )
+        .await
+        .expect("run_smoke_session_with(Some(dispatch))");
+
+        let mut events = Vec::new();
+        while let Some(e) = rx.recv().await {
+            events.push(e);
+        }
+        let invoked = events
+            .iter()
+            .find_map(|e| match e {
+                AgentEvent::ToolInvoked {
+                    agent_id,
+                    source,
+                    server,
+                    ..
+                } => Some((agent_id.clone(), source.clone(), server.clone())),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected an MCP ToolInvoked; events: {events:?}"));
+        assert!(
+            !invoked.0.is_empty(),
+            "injected-dispatch ToolInvoked agent_id MUST be non-empty (gotcha #68)"
+        );
+        assert_eq!(invoked.1, runtime_core::event::ToolSource::Mcp);
+        assert_eq!(invoked.2.as_deref(), Some("pdf-mcp"));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::ToolResult { .. })),
+            "the injected MCP dispatch must also surface a ToolResult; events: {events:?}"
         );
     }
 
@@ -940,7 +1213,7 @@ mod tests {
         // into CmdError::Provider per the existing translation.
         let (tx, _rx) = mpsc::channel(8);
         let drone = Arc::new(DroneClient::noop());
-        let result = run_smoke_session_with(FailingProvider, tx, drone, smoke_config()).await;
+        let result = run_smoke_session_with(FailingProvider, tx, drone, smoke_config(), None).await;
         let err = result.expect_err("expected provider error");
         assert!(
             matches!(err, CmdError::Provider(_)),
