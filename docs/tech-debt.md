@@ -132,3 +132,43 @@ The wrong scope didn't break the V run; the Inventory pass correctly flagged the
 ### Recommended approach (when addressed)
 
 Add a "Choosing `<scope_to_verify>`" subsection to `docs/build-prompts/STAGE-V-VERIFIER-PROMPT-TEMPLATE.md`'s "Authoring guidance for the per-milestone parameterization" section. Specify the derivation chain: per-stage X.2 files-to-change → milestone V.2 scope-to-verify table → V prompt's `<scope_to_verify>` inline content (or `ref` if V.2 exists in the phase doc). Cite TD-004 as the bit-by-this incident. Apply BEFORE M05.V authoring.
+
+## TD-005 — runtime-main `cargo llvm-cov` gate not Windows-local-measurable (gotcha #56 nested-cargo-build recurrence)
+
+**Date logged:** 2026-05-16
+**Found by:** Stage V verifier run M06.V (finding #3)
+**Pass that surfaced it:** Behavior
+**Category:** observability (CI-parity: per-crate coverage gate not locally executable on Windows)
+**Resolution status:** open
+
+### Description
+
+`cargo llvm-cov --package runtime-main --ignore-filename-regex "…" --fail-under-lines 95` aborts (exit 101) at `crates/runtime-main/tests/drone_ipc_loopback.rs:63` — `assert!(status.success(), "drone build failed")`. `ensure_drone_built()` runs a nested `cargo build --bin runtime-drone` with `CARGO_TARGET_DIR` set by llvm-cov to `target/llvm-cov-target`; that instrumented nested build fails on the Windows host. The same 10 `drone_ipc_loopback` tests pass 10/10 under plain `cargo test -p runtime-main --lib --tests`. The `-- --skip drone_ipc_loopback` mitigation does not work: `--skip` matches test *names* (`connects_to_drone`, …), which lack the filename prefix, so the abort persists.
+
+### Why it's debt not bug
+
+Documented gotcha #56 ("Windows-local `cargo llvm-cov` may flake on subprocess-spawning tests"). CLAUDE.md §6 designates **CI Linux** as the authoritative coverage gate. The M06 runtime-main delta (event_pipeline L1 wire, agent_sdk `narrow`/`try_mcp_dispatch`, mcp_dispatch.rs) is fully exercised by green integration tests (sdk_capability_integration 4, sdk_narrowing_integration 4, mcp_dispatch_runloop 4, mcp_dispatch_wire 5) + 434 lib tests; the runtime-mcp per-crate gate independently passed at 97.16% ≥95%. No coverage regression — only a local-measurement infra gap.
+
+### Recommended approach (when addressed)
+
+Make `ensure_drone_built()` robust under llvm-cov: either (a) build the instrumented drone into the llvm-cov target dir before the assertion (respecting the llvm-cov-set `CARGO_TARGET_DIR`), or (b) pre-stage the drone binary as an llvm-cov fixture step, or (c) complete the gotcha #56 CI-workflow graduation already tracked in CLAUDE.md §6 so the local gap is moot. ~30–60 min; touches `crates/runtime-main/tests/drone_ipc_loopback.rs` + possibly the CI workflow. Natural moment: M07 (which adds the concrete MCP-dispatch construction and will re-audit the runtime-main coverage surface).
+
+## TD-006 — V.3 / A.4.4 / CLAUDE.md §6 runtime-main `llvm-cov` regex inconsistency (`key_store.rs`)
+
+**Date logged:** 2026-05-16
+**Found by:** Stage V verifier run M06.V (finding #4)
+**Pass that surfaced it:** Behavior
+**Category:** cosmetic (gate-definition drift across canonical sources)
+**Resolution status:** open
+
+### Description
+
+The M06 phase doc's V.3 Behavior-harness runtime-main coverage command (`docs/build-prompts/M06-mcp-basic.md:3210`) and the A.4.4 acceptance line append `|src.key_store\.rs` to the `--ignore-filename-regex`. The CLAUDE.md §6 canonical runtime-main gate regex omits `key_store.rs` (exclusions: `main.rs|generated|providers/anthropic.rs|drone_ipc/connection.rs|sandbox_ipc/connection.rs`). Three nominally-canonical sources disagree on one exclusion token.
+
+### Why it's debt not bug
+
+`key_store.rs` is an OS-keychain holdout already outside the runtime-main *patch* gate semantics; the line-count delta from including/excluding one OS-call wrapper is small and did not affect any M06.V finding (the gate was not locally measurable regardless — see TD-005). CI uses the CLAUDE.md §6 form, which is the hard-floor authority. Functionally inert; a consistency/maintenance hazard, not a correctness bug.
+
+### Recommended approach (when addressed)
+
+Pick one canonical runtime-main `--ignore-filename-regex` and make CLAUDE.md §6, M06 V.3, and M06 A.4.4 agree. Recommend the CLAUDE.md §6 form is authoritative (it is the CI-run command); correct V.3 + A.4.4 to drop `|src.key_store\.rs`, or add a one-line note in §6 if `key_store.rs` should in fact be excluded. ~10 min `docs:` edit. Roll into the M07 Stage A pre-flight alongside the M06.V 🟡 #2 X.2 truth-up.
