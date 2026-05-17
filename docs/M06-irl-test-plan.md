@@ -56,11 +56,13 @@ npm run tauri dev
 ```powershell
 $APPDATA_DIR = "$env:LOCALAPPDATA\dev.aria-runtime.app"
 $AUDIT = "$APPDATA_DIR\skills.audit.jsonl"
-$REG   = "$APPDATA_DIR\mcp_servers.sqlite"
+$REG   = "$APPDATA_DIR\session.sqlite"
 $SCRATCH = (New-Item -ItemType Directory "$env:TEMP\m06irl-$(Get-Random)").FullName
 "hello-irl" | Out-File -Encoding utf8 "$SCRATCH\probe.txt"
 $SCRATCH
 ```
+
+There is no standalone MCP registry file — the `mcp_servers` table lives in the drone session DB (`session.sqlite`). Per IRL finding 🔴-1, `add_server` currently mis-resolves and writes to a stray `mcp.sqlite` instead; `$REG` points at the *correct* live DB so the B-card queries surface that divergence rather than hide it. See `docs/M06-irl-findings.md`.
 
 ---
 
@@ -345,9 +347,15 @@ $SCRATCH
 npm run tauri dev
 ```
 
-**C-6. [App]** Expect: the previous session's graph/history re-renders WITHOUT a new run starting and NO new streaming/token activity (replays, does not re-execute). PASS = history shown + no new API call. FAIL = blank, or a fresh run auto-starts.
+**C-6. [App]** v0.1 starts a **fresh session** on relaunch — there is no auto history-replay (resume is the RecoveryDialog path, out of scope per §0). A blank graph here is **expected, not a finding**. The valid integrity check is drone-DB durability, not UI replay.
 
-**C-7. [App]** Settings → MCP Servers. Expect: `persist-test` still listed. PASS = present.
+**C-7. [Window B]** Append-only durability across restart — did prior data survive:
+
+```powershell
+sqlite3 $REG "SELECT (SELECT count(*) FROM signals) AS sig,(SELECT count(*) FROM token_usage) AS tok,(SELECT count(*) FROM heartbeats) AS hb,(SELECT count(*) FROM snapshots) AS snap;"
+```
+
+Expect: `hb` and `snap` > 0 (drone persisted across restart). Per IRL finding 🔴-2, `sig`/`tok` are currently `0` after successful smoke runs while `hb`/`snap` populate — that is the blocking signal-persistence defect, not a test artifact. PASS = hb/snap > 0; the sig/tok=0 result is the logged 🔴-2 (see `docs/M06-irl-findings.md`), not re-discovered here.
 
 Scenario C done.
 
