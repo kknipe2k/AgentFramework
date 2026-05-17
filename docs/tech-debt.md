@@ -172,3 +172,143 @@ The M06 phase doc's V.3 Behavior-harness runtime-main coverage command (`docs/bu
 ### Recommended approach (when addressed)
 
 Pick one canonical runtime-main `--ignore-filename-regex` and make CLAUDE.md §6, M06 V.3, and M06 A.4.4 agree. Recommend the CLAUDE.md §6 form is authoritative (it is the CI-run command); correct V.3 + A.4.4 to drop `|src.key_store\.rs`, or add a one-line note in §6 if `key_store.rs` should in fact be excluded. ~10 min `docs:` edit. Roll into the M07 Stage A pre-flight alongside the M06.V 🟡 #2 X.2 truth-up.
+
+## TD-007 — `kind_to_ref` / `tier_to_ref` duplicated across three modules
+
+**Date logged:** 2026-05-16
+**Found by:** Stage G `<simplify_pass>` (code-quality agent CQ-4)
+**Pass that surfaced it:** N/A (closeout simplify pass)
+**Category:** structural (cross-module duplication on the safety-primitive wire surface)
+**Resolution status:** open
+
+### Description
+
+`kind_to_ref(CapabilityKind) -> CapabilityKindRef` appears in `crates/runtime-main/src/sdk/event_pipeline.rs:304` and `crates/runtime-main/src/sdk/agent_sdk.rs:529`; `tier_to_ref` appears in `event_pipeline.rs` and `src-tauri/src/commands.rs:530`. All four are identical `const fn` match expressions duplicated because no shared location exports them.
+
+### Why it's debt not bug
+
+Functionally correct; clippy's `non_exhaustive_patterns` red-flags a missed copy at compile time when a new `CapabilityKind`/`Tier` variant is added, so the maintenance risk is compile-time-caught, not silent. Maintainer deferred (chose the CQ-1+EFF-9-only subset at M06.G) because the extract touches the M06.V-verified ADR-0009 wire path (`event_pipeline.rs`/`agent_sdk.rs`) and the M06 PR diff should stay scoped to V-verified surfaces.
+
+### Recommended approach (when addressed)
+
+Add `pub(crate) kind_to_ref` + `tier_to_ref` to `crates/runtime-main/src/sdk/mod.rs`; the two sdk sub-modules import from there; `commands.rs` either imports the promoted `pub` form or keeps its 2-line `Tier→TierRef` inline. ~10-line extract + 2 import changes. Natural window: M07 (which re-audits the runtime-main coverage surface and re-touches the dispatch wire).
+
+## TD-008 — `apply_mcp_dispatch` Invoked-arm is dead in production (empty `agent_id`)
+
+**Date logged:** 2026-05-16
+**Found by:** Stage G `<simplify_pass>` (code-quality CQ-2 / code-reuse reuse-5)
+**Pass that surfaced it:** N/A (closeout simplify pass)
+**Category:** structural (type-unsafe dead path guarded only by a comment)
+**Resolution status:** open (M07 — bundle with ADR-0011 live dispatch)
+
+### Description
+
+`crates/runtime-main/src/sdk/mcp_dispatch.rs:113` `apply_mcp_dispatch`'s `Invoked` arm builds `ToolInvoked`+`ToolResult` with `agent_id: String::new()`. The run loop special-cases `Invoked` (`agent_sdk.rs:478`) and emits agent_id-correct events directly (the gotcha #68 fix), so the function's `Invoked` arm is reached only by the D-frozen `mcp_dispatch_wire.rs` integration test. Any future caller of `apply_mcp_dispatch` with `Invoked` silently produces broken (empty-`agent_id`) events; the inline comment is the only guard.
+
+### Why it's debt not bug
+
+Not a runtime bug today — the only production caller (the run loop) never routes `Invoked` through `apply_mcp_dispatch`, and the behavior is documented inline (gotcha #68 / ADR-0010 rationale). The type-level fix (split a `Blocked | Ambiguous` enum so `apply_mcp_dispatch` cannot be called with `Invoked`) perturbs the M06.V-verified D-frozen `mcp_dispatch_wire.rs` test, so it was deferred at M06.G rather than landed in the V-verified milestone PR.
+
+### Recommended approach (when addressed)
+
+At M07, alongside the ADR-0011 (a)–(d) concrete-`McpDispatcher`-construction + live-dispatch wire: introduce `McpNonInvokedOutcome { Blocked, Ambiguous }`, make `apply_mcp_dispatch` take that (exhaustive-by-construction), delete the dead `Invoked` arm + its comment, and update the `mcp_dispatch_wire.rs` integration test to the new shape in the same commit (the D-frozen contract is intentionally re-opened at M07 when the live path lands). Bundle with TD-009 (`ServerStatus` enum) since both land with the M07 dispatch/health state machine.
+
+## TD-009 — `status` is a stringly-typed `String` where a `ServerStatus` enum belongs
+
+**Date logged:** 2026-05-16
+**Found by:** Stage G `<simplify_pass>` (code-quality CQ-6)
+**Pass that surfaced it:** N/A (closeout simplify pass)
+**Category:** structural (stringly-typed lifecycle state)
+**Resolution status:** open (M07 — health-ping state machine)
+
+### Description
+
+`crates/runtime-mcp/src/client/registry.rs` `McpServerRecord.status` and `crates/runtime-mcp/src/client/mod.rs` `McpServerSummary.status` are both `String` with the enumerated value set documented only in a comment (`"configured" | "connected" | "errored" | "disabled" | "failed"`). A typo (`"error"` vs `"errored"`) could reach the DB or the renderer untyped.
+
+### Why it's debt not bug
+
+No active bug: M06 writes `status` exactly once as `"configured"` at insert; `run_health_pass` does not yet write status transitions (it updates `last_connected_at` on success and drops the connection on failure without writing `"errored"` to the column). The stringly-typed risk only materializes when the lifecycle state machine starts mutating `status`.
+
+### Recommended approach (when addressed)
+
+Introduce `ServerStatus { Configured, Connected, Errored, Disabled, Failed }` in `registry.rs` with `serde(rename_all = "snake_case")`, used by both `McpServerRecord` and `McpServerSummary`. Land it together with the M07 health-ping state machine that writes `"connected"`/`"errored"` to the column (the missing status-update is the same M07 work). Bundle with TD-008.
+
+## TD-010 — Constructor-shape inconsistency + `now_unix_ms` third copy in `runtime-mcp`
+
+**Date logged:** 2026-05-16
+**Found by:** Stage G `<simplify_pass>` (code-quality CQ-3/CQ-10, code-reuse reuse-1)
+**Pass that surfaced it:** N/A (closeout simplify pass)
+**Category:** structural (constructor duplication + helper duplication)
+**Resolution status:** open
+
+### Description
+
+(a) `McpClient::new` vs `McpClient::new_with_audit` (`client/mod.rs:75`) is a dual constructor differing only in `audit: Option<Arc<AuditWriter>>`; the `new` docstring itself says "prefer `new_with_audit`" and the no-audit path "doesn't exist" in production. (b) `McpDispatcher::new` (`dispatch.rs:104`) takes 5 positional params with `audit: Option<…>` `None` at 5 of 7 test sites — inconsistent with the `AgentSdk::new` + `with_mcp_dispatch` builder shape. (c) `now_unix_ms()` is defined a third time privately in `client/registry.rs:37` (i64) — `runtime_main::audit::entry::now_unix_ms` (u64, public) is already in scope (M06.C `run_health_pass` calls it at `client/mod.rs:341`).
+
+### Why it's debt not bug
+
+All three are pure structural/cosmetic; zero runtime cost, no behavior difference. The dual constructor and 5-arg constructor work correctly; the `now_unix_ms` third copy is a one-liner with an i64/u64 cast difference already handled at the existing call site.
+
+### Recommended approach (when addressed)
+
+Collapse `McpClient` to a single `new(…, audit: Option<Arc<AuditWriter>>)`; convert `McpDispatcher::new` to `new(resolver, enforcer, connections, session_id)` + `with_audit(writer) -> Self` mirroring `AgentSdk`; have `registry.rs` call `runtime_main::audit::entry::now_unix_ms` (cast at the site as line 341 already does) and delete the private copy. Pure refactor with no behavior change; roll into any M07 `runtime-mcp` touch.
+
+## TD-011 — `ipc.ts` `McpTool`/`McpServerSummary` are hand-written non-schema mirrors
+
+**Date logged:** 2026-05-16
+**Found by:** Stage G `<simplify_pass>` (code-reuse reuse-7)
+**Pass that surfaced it:** N/A (closeout simplify pass)
+**Category:** extensibility (schema-coverage gap vs CLAUDE.md §14)
+**Resolution status:** open
+
+### Description
+
+`src/lib/ipc.ts:13–30` hand-writes the TS interfaces `McpTool` + `McpServerSummary` mirroring `runtime_mcp::transport::McpTool` + `runtime_mcp::client::McpServerSummary`. Per CLAUDE.md §14 cross-bridge types should be schema-generated, but these response shapes are not in `schemas/mcp.v1.json` (the schema covers `McpServerConfig`, not the transport/client response types). The drift is documented inline at `ipc.ts:8`.
+
+### Why it's debt not bug
+
+Deliberate + documented; the structs are `transport`/`client` response types, not the persisted config the schema covers. The hand-maintenance is small and the doc-comment flags it. No correctness risk today.
+
+### Recommended approach (when addressed)
+
+If a future stage adds these response shapes to `schemas/mcp.v1.json` (or a sibling schema), regenerate the TS types and delete the hand-written mirrors. Otherwise accept the documented deliberate exception. Re-evaluate at M07 (registry import re-touches the MCP wire types) or M08 (Builder Canvas consumes the tool list).
+
+## TD-012 — `runtime-mcp` namespace/dispatch/health-pass efficiency cluster
+
+**Date logged:** 2026-05-16
+**Found by:** Stage G `<simplify_pass>` (efficiency agent EFF-1, EFF-2/3, EFF-4)
+**Pass that surfaced it:** N/A (closeout simplify pass)
+**Category:** scalability (cold/warm-path waste, no v0.1 impact)
+**Resolution status:** open (EFF-4 → M07; EFF-1/2/3 → tech-debt)
+
+### Description
+
+(EFF-1) `try_mcp_dispatch` (`crates/runtime-main/src/sdk/agent_sdk.rs:455`) rebuilds a `BTreeMap<String,String>` from the framework `mcp_aliases` on every `ProviderEvent::ToolUse` — warm path, O(N) clone, N immutable for the run-loop lifetime. (EFF-2/3) `crates/runtime-mcp/src/namespace/mod.rs:148/159` `connect_server` does two full O(S*T) `ambiguous_short_names()` scans per connect; `disconnect_server` does the same and the result is provably empty (the inline comment documents it). (EFF-4) `client/mod.rs:341` `run_health_pass` issues K sequential SQLite `UPDATE`s (one per pinged server) where a single `UPDATE … WHERE name IN (…)` would do.
+
+### Why it's debt not bug
+
+All correct; all negligible at v0.1 single-session, few-aliases, handful-of-servers scale. EFF-1 is a warm-path constant; EFF-2/3 are cold-path (connect/disconnect events); EFF-4 is zero-cost at single-server.
+
+### Recommended approach (when addressed)
+
+EFF-1: hoist the `aliases` binding out of the event loop (or pass the framework `&HashMap` by reference into `dispatch_if_mcp`) — one-line lift. EFF-2/3: `disconnect_server` becomes `self.connected.remove(server); vec![]` (+ optional `debug_assert!` for the documented invariant); `connect_server` limits the post-insert scan to the newly-added server's tool names. EFF-4: batch the `last_alive` updates into one SQL call. Land EFF-4 with the M07 multi-server health state machine (bundle with TD-008/TD-009); EFF-1/2/3 in any M07+ `runtime-mcp` cleanup pass.
+
+## TD-013 — Renderer MCP store-update efficiency (graphStore + MCPNode)
+
+**Date logged:** 2026-05-16
+**Found by:** Stage G `<simplify_pass>` (efficiency agent EFF-5, EFF-6)
+**Pass that surfaced it:** N/A (closeout simplify pass)
+**Category:** scalability (no v0.1 impact; React/Zustand re-render hygiene)
+**Resolution status:** open
+
+### Description
+
+(EFF-5) `src/lib/graphStore.ts:893` — every `tool_result` event (including non-MCP results, where `activeMcpCalls` is empty/unchanged) runs `Object.fromEntries(Object.entries(activeMcpCalls).filter(…))` and returns a new `activeMcpCalls` slice, defeating Zustand reference-equality even when nothing changed. (EFF-6) `src/components/nodes/MCPNode.tsx:26–28` uses two `useGraphStore` subscriptions (one `useShallow`-wrapped, one not) where a single combined `useShallow` selector returning `{ connStatus, callActive }` would halve the subscription overhead.
+
+### Why it's debt not bug
+
+Both correct; immaterial at v0.1 single-agent single-session node counts. EFF-5's map has ≤ one entry per connected server; EFF-6's double subscription is two cheap selectors. No incorrect render, just avoidable churn.
+
+### Recommended approach (when addressed)
+
+EFF-5: add an early-return guard — if `activeMcpCalls` is empty, skip the filter and return the unmodified slice (reference-stable). EFF-6: combine into one `useShallow((s) => ({ connStatus: s.currentMcpServers[name]?..., callActive: s.activeMcpCalls[name] }))`. Roll into the M08 Builder Canvas renderer pass or any M07+ renderer touch; pairs with the M05.F `<test_isolation_audit>` / Zustand-selector gotcha cluster.

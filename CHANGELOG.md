@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M06 closeout (Stage G — gap-analysis + parent-milestone summary + first `<simplify_pass>`)
+
+- **`docs/gap-analysis.md`** — appended the immutable M06 entry
+  (cumulative product↔spec audit M01–M06; six sections +
+  `gotchas_graduation` across A–E + Stage V special-log + the v1.6
+  Simplify-pass outcome subsection). ADR-0009 closure recorded
+  **SATISFIED** (M06.V Wire traces #1 `enforcer.check` before
+  `ToolInvoked` @ `event_pipeline.rs:215` + #2 `narrow` before
+  `AgentSpawned` @ `agent_sdk.rs:356`, verified production call sites).
+  Append-only: M01–M05 entries unmodified (literal-prefix preserved).
+- **`docs/build-prompts/retrospectives/M06-summary.md`** (new) —
+  parent-milestone summary aggregating A–F + Stage V; axis means
+  Process 38.0/40, Product 38.17/40, Pattern 30.17/35; time-box 0.73×
+  (in-band); verdict "pattern held but with friction" (the M06.A G5
+  TDD-ordering hard-gate violation + documented maintainer override,
+  structurally closed by v1.7 `<tdd_discipline>` merged mid-milestone).
+- **First `<simplify_pass>` at closeout** — three parallel read-only
+  review agents vs the M06.A..HEAD cumulative diff (91 files /
+  +14,657 / −102). Verdict: broadly clean. 13 proposals surfaced;
+  recommended approved subset = transport-helper dedupe (CQ-1) +
+  `spawn_health_pinger` docstring correction (EFF-9); non-approved
+  deferred to `docs/tech-debt.md` (TD-007..TD-013, gated on the
+  maintainer subset decision). Proposal-only — no auto-applied changes.
+
 ### Added — M06 Stage F (src-tauri MCP-dispatch injection seam + live run-loop interception + gotcha #68 fix)
 
 - **SDK run-loop MCP-dispatch interception**
