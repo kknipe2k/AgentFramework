@@ -1,34 +1,33 @@
 # M06 IRL Test Plan — Windows Runbook (cumulative M01–M06)
 
-Manual verification of the running app as of the M06 merge. Default shell is **PowerShell** (Windows). Every fenced block is paste-as-is. Blocks that are NOT PowerShell are labelled in the line above them (the Playwright spec is a file to save; the DevTools snippets go in the app's console). Findings feed M07 Stage A.
+Manual verification of the running app as of the M06 merge. Default shell is **PowerShell**. Every fenced block is paste-as-is. Blocks that are NOT PowerShell are labelled in the line above them: **[DevTools JS]** = paste into the app's F12 → Console; the others are PowerShell. No mocks anywhere — real app, real backend, real renderer. Findings feed M07 Stage A.
 
 ---
 
 ## 0. Do NOT log these as bugs (scope fence)
 
-v0.1's only live agent path is the no-tools smoke session. These are shipped + Stage-V-verified but unreachable by normal use until M07 — exercising them looks like a bug but is not: plan-approval, HITL/escalation, budget bar, recovery/uncertainty, GapPanel, capability-violation modal, tier-badge change, **an agent actually using an MCP tool end-to-end** (ADR-0011 trace-#11b M07 carry-forward), §5a alias/ambiguity at dispatch.
+v0.1's only live agent path is the no-tools smoke session. These are shipped + Stage-V-verified but have no live trigger until M07 — you will still *see* them in Scenario D (driven via the app's own DevTools store affordance, real components in the real window), but do NOT log "the agent didn't trigger this on its own" as a bug: plan-approval, HITL, budget, recovery/uncertainty, gap, capability-violation, and an agent actually *using* an MCP tool end-to-end (ADR-0011 trace-#11b, M07).
 
-Live and testable in v0.1: first-run/key, the smoke session + its live graph render, the full MCP server-management UI + backend, persistence/restart, error surfacing.
+`RecoveryDialog` is not in this pass — it reads `localStorage` before the renderer mounts, so it cannot be driven post-load. It is Vitest-covered.
 
 ---
 
 ## 1. Where each thing runs
 
-| Context | What | How you know |
-|---|---|---|
-| **Window A** (PowerShell) | builds + runs the app; stays occupied | `npm run tauri dev` does not return |
-| **Window B** (PowerShell) | every verify command; variables persist here | keep it open the whole run |
-| **App GUI** | manual card actions (Settings → MCP Servers, etc.) | the running app window |
-| **App DevTools** (F12 → Console) | the C3/C4 JS snippets | inside the app, not a terminal |
-| **Playwright** | §3.3 UI spec | `npm run test:e2e`, own browser |
+| Context | What |
+|---|---|
+| **Window A** (PowerShell) | builds + runs the app; stays occupied (`npm run tauri dev` never returns) |
+| **Window B** (PowerShell) | every verify command; `$AUDIT`/`$REG`/`$SCRATCH` persist here — keep it open |
+| **App** | manual actions + visual inspection in the running window |
+| **App DevTools** (F12 → Console) | the `[DevTools JS]` snippets — real components, real window, injected trigger |
 
-Nothing here needs bash. PowerShell only.
+Three MCP layers (all real): **A** `cargo test --features integration` (real rmcp transport), **B** MCP Inspector (real reference server, isolates server-health), **manual** Scenario B (real app add/connect/persist/offline). Nothing here uses Playwright or any mock.
 
 ---
 
 ## 2. One-time prerequisites
 
-`sqlite3` is not on Windows by default. Install once (skip if you already have it):
+`sqlite3` is not on Windows by default. Install once (skip if present):
 
 ```powershell
 winget install --id SQLite.SQLite -e --accept-source-agreements --accept-package-agreements
@@ -44,7 +43,7 @@ node -v; npx -v; (Get-Command sqlite3 -ErrorAction SilentlyContinue).Source
 
 ## 3. Setup
 
-### Window A — build + run (this window is then occupied; do not paste anything else here)
+### Window A — build + run (this window is then occupied; nothing else goes here)
 
 ```powershell
 npm ci
@@ -52,7 +51,7 @@ cargo build --workspace
 npm run tauri dev
 ```
 
-### Window B — open a second PowerShell. Paste once. Keep this window open for the whole run (these variables only live in this session).
+### Window B — open a second PowerShell, paste once, keep it open all run (these variables only live in this session)
 
 ```powershell
 $APPDATA_DIR = "$env:LOCALAPPDATA\dev.aria-runtime.app"
@@ -65,302 +64,63 @@ $SCRATCH
 
 ---
 
-## 4. MCP — three layers
+## 4. Walkthroughs — follow the numbered steps in order
 
-Read these before the UI cards: Layer A proves the real transport, Layer B proves the reference server itself is healthy (so a later failure is our client, not the server), Layer C proves the UI.
-
-### Layer A — real rmcp transport (automated)
-
-```powershell
-cargo test -p runtime-mcp --features integration -- --nocapture
-```
-
-Expect: connects to a real `npx @modelcontextprotocol/server-filesystem`, lists tools incl. `read_file`/`write_file`, invokes one, disconnects — 0 failed. If it skips with an `npx`-not-found message that is an environment block, not a bug. A real transport error is 🔴.
-
-Do not run `cargo llvm-cov` here — the Windows-local drone build-fail (gotcha #56) is known; coverage is CI-Linux-authoritative.
-
-### Layer B — MCP Inspector (isolate "is the server healthy")
-
-```powershell
-npx @modelcontextprotocol/inspector npx -y "@modelcontextprotocol/server-filesystem" $SCRATCH
-```
-
-In the Inspector browser UI: list tools, invoke `read_file` on `probe.txt`, expect `hello-irl`. If this fails, the reference server is broken (environment) — do not attribute to our code. Close the Inspector before continuing.
-
-### Layer C — renderer Playwright (UI render-contract; mocked backend)
-
-This is a file, not a paste-in-terminal. Save exactly as `tests\e2e\m06_mcp_irl.spec.ts`. It extends the shipped `mcp_server_add.spec.ts` pattern (verified testids reused; four `CONFIRM` testids you align against the live components before running).
-
-```ts
-import { test, expect, type Page } from '@playwright/test';
-
-async function dispatch(page: Page, events: unknown[]): Promise<void> {
-  await page.evaluate((evts) => {
-    const w = window as unknown as {
-      __graphStore?: { getState: () => { applyEvent: (e: unknown) => void } };
-    };
-    if (!w.__graphStore) throw new Error('window.__graphStore missing (App.tsx affordance)');
-    const s = w.__graphStore.getState();
-    for (const e of evts as unknown[]) s.applyEvent(e);
-  }, events);
-}
-
-async function resetMcpState(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const w = window as unknown as {
-      __graphStore?: {
-        getState: () => { clear: () => void };
-        setState: (s: Record<string, unknown>) => void;
-      };
-    };
-    w.__graphStore?.getState().clear();
-    w.__graphStore?.setState({ currentMcpServers: {}, activeMcpCalls: {} });
-  });
-}
-
-test.describe('M06 IRL UI render-contract', () => {
-  test.describe.configure({ timeout: 120_000 });
-
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await resetMcpState(page);
-  });
-
-  test('connected row has a real status color (gotcha 67)', async ({ page }) => {
-    await dispatch(page, [
-      { type: 'mcp_installed', name: 'fs-test', transport_kind: 'stdio', has_auth: false },
-      { type: 'mcp_status_changed', name: 'fs-test', status: 'connected',
-        tools: ['fs-test__read_file', 'fs-test__write_file'] },
-    ]);
-    const row = page.getByTestId('mcp-server-row-fs-test');
-    await expect(row).toBeVisible();
-    await expect(row).toHaveClass(/mcp-server-row--connected/);
-    const bg = await page
-      .getByTestId('mcp-status-indicator-fs-test')
-      .evaluate((el) => getComputedStyle(el).backgroundColor);
-    expect(bg).not.toBe('rgba(0, 0, 0, 0)');
-    expect(bg).not.toBe('transparent');
-    const tools = page.getByTestId('mcp-tool-list-fs-test');
-    await expect(tools).toContainText('read_file');
-    await expect(tools).toContainText('write_file');
-  });
-
-  test('error status flips row class + indicator color', async ({ page }) => {
-    await dispatch(page, [
-      { type: 'mcp_installed', name: 'fs-test', transport_kind: 'stdio', has_auth: false },
-      { type: 'mcp_status_changed', name: 'fs-test', status: 'error' },
-    ]);
-    await expect(page.getByTestId('mcp-server-row-fs-test')).toHaveClass(/mcp-server-row--error/);
-    const bg = await page
-      .getByTestId('mcp-status-indicator-fs-test')
-      .evaluate((el) => getComputedStyle(el).backgroundColor);
-    expect(bg).not.toBe('rgba(0, 0, 0, 0)');
-  });
-
-  test('add modal opens; invalid name blocks submit', async ({ page }) => {
-    await page.getByTestId('mcp-add-server-button').click();
-    await expect(page.getByTestId('mcp-server-add-modal')).toBeVisible();
-    await page.getByTestId('mcp-add-name').fill('Bad_Name!');
-    await expect(page.getByTestId('mcp-add-submit')).toBeDisabled();
-    await page.getByTestId('mcp-add-name').fill('fs-test');
-    await expect(page.getByTestId('mcp-add-submit')).toBeEnabled();
-  });
-
-  test('empty state with no servers', async ({ page }) => {
-    await expect(page.getByTestId('mcp-server-settings-empty')).toBeVisible();
-  });
-});
-```
-
-Before running, grep `src\components\MCPServerSettings.tsx`, `MCPServerAddModal.tsx`, `src\components\nodes\MCPNode.tsx`, `src\lib\graphStore.ts` and align these four if they differ: `mcp-status-indicator-fs-test`, `mcp-tool-list-fs-test`, `mcp-add-name`, `mcp-add-submit`, and the `mcp_status_changed` event name. The rest are verified from the shipped spec. Then, in Window B:
-
-```powershell
-npm run test:e2e -- m06_mcp_irl
-```
-
----
-
-## 5. Cards C1–C10
-
-Each card: an action (App GUI / DevTools / PowerShell), then one PowerShell verify block in Window B, then expected + pass/fail.
-
-### C1 — First-run key + persistence
-
-Action (App GUI): remove the `agent-runtime` entry in Windows Credential Manager (Control Panel → Credential Manager → Windows Credentials), then in Window A stop and rerun `npm run tauri dev`. Enter a valid key on launch 1. Quit. Rerun launch 2.
-
-Verify (Window B):
-
-```powershell
-cmdkey /list | Select-String agent-runtime
-Get-ChildItem -Recurse $APPDATA_DIR -ErrorAction SilentlyContinue | Select-String -SimpleMatch (Read-Host 'paste first 6 chars of your key') 2>$null
-```
-
-Expect: credential entry present; the key-prefix search returns nothing (no plaintext on disk). Launch 2 shows no key prompt. PASS = no re-prompt + entry present + no disk hit. FAIL = re-prompt (stub backend, gotcha #29) or a disk hit.
-
-### C2 — Live smoke session
-
-Action (App GUI): trigger the smoke/run affordance. Watch the graph.
-
-Verify: an agent node appears and token/event activity updates as the response streams. No PowerShell needed.
-
-PASS = streamed render + node populates. FAIL = silent no-op / hang / node never populates.
-
-### C3 — Graph fills the window (gotcha #70 — a real M04 bug)
-
-Action: resize the app window large (≥1280) and small. Then App DevTools → F12 → Console, paste (this is JavaScript in the app console, not PowerShell):
-
-```js
-const c = document.querySelector('.react-flow'); const m = document.querySelector('main');
-[c?.clientWidth, m?.clientWidth, window.innerWidth]
-```
-
-Expect: canvas width tracks window width (not pinned ~720). PASS = tracks + pan/zoom work. FAIL = narrow fixed column at large sizes.
-
-### C4 — Non-blank node labels (gotcha #71)
-
-Action: App DevTools Console (JavaScript):
-
-```js
-[...document.querySelectorAll('[data-testid^="rf__node"]')].map(n => n.textContent?.trim())
-```
-
-Expect: no entry empty / "untitled" / a raw uuid. PASS = all meaningful. FAIL = blank/untitled/raw-id.
-
-### C5 — Error surfacing readable (gotcha #30/#31)
-
-Action (App GUI): set an empty/bad key, trigger the smoke run. Window A shows the app's stdout.
-
-Verify: the app UI shows a readable error (e.g. "authentication failed"), not `[object Object]`; Window A shows a structured log line containing `error`. PASS = readable UI + structured log. FAIL = `[object Object]` in UI or zero log output.
-
-### C6 — Restart / recovery integrity (gotcha #15)
-
-Action (App GUI): after a successful C2 run, hard-kill the app (close Window A with Ctrl+C / kill the process), relaunch `npm run tauri dev`.
-
-Verify: prior session history re-renders and there is no second Anthropic call (no new streaming, token activity does not increase on restart).
-
-PASS = history replays, zero re-execution. FAIL = blank state, or a second live call fires on restart.
-
-### C7 — MCP add stdio + Test + status color + persist
-
-Action (App GUI): Settings → MCP Servers → Add. Name `fs-test`, transport stdio, command `npx`, arguments `-y @modelcontextprotocol/server-filesystem` then the scratch path printed by the Window B setup block. Note the tier-eval shown before Confirm. Confirm. Click Test connection. Then quit and relaunch the app.
-
-Verify (Window B):
-
-```powershell
-sqlite3 $REG "SELECT name,transport_type,status FROM mcp_servers;"
-Get-Content $AUDIT -Tail 10 | Where-Object { $_ -match '"kind":"mcp_installed"' }
-```
-
-Expect: a `fs-test,stdio,...` row; one `mcp_installed` line naming `fs-test`. In the app: tool list shows `fs-test__read_file` etc.; the MCPNode connected indicator has a real color (run §3.3 spec for the computed-style proof). After relaunch `fs-test` is still listed.
-
-PASS = tool list populated + colored indicator + survives restart. FAIL = empty tool list on a reachable server (gotcha #68), class but no color (gotcha #67), or gone after restart.
-
-### C8 — MCP auth: keychain, never in audit (§13.5)
-
-Action (App GUI): Add a server with an auth secret set to exactly `SENTINEL-9F2A`.
-
-Verify (Window B):
-
-```powershell
-if (Select-String -SimpleMatch 'SENTINEL-9F2A' $AUDIT -ErrorAction SilentlyContinue) { 'LEAK - FAIL' } else { 'no leak - ok' }
-Get-Content $AUDIT -Tail 10 | Where-Object { $_ -match '"kind":"mcp_(installed|auth_granted)"' }
-cmdkey /list | Select-String agent-runtime
-```
-
-Expect: prints `no leak - ok`; `mcp_installed` then `mcp_auth_granted` in that order for the same name; a credential entry present. PASS = no sentinel anywhere + ordered lines + keychain entry. FAIL = sentinel found (🔴), missing order, or no keychain entry.
-
-### C9 — MCP offline detection
-
-Action (App GUI): with `fs-test` connected, kill the server subprocess in Window B, then wait one ping interval:
-
-```powershell
-Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like '*server-filesystem*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
-Start-Sleep -Seconds 35
-```
-
-Verify (Window B):
-
-```powershell
-Get-Content $AUDIT -Tail 10 | Where-Object { $_ -match '"kind":"mcp_missing"' }
-sqlite3 $REG "SELECT name,status FROM mcp_servers WHERE name='fs-test';"
-```
-
-Expect: an `mcp_missing` line; status `error` or `disconnected`; the app's MCPNode flips to error. PASS = node→error + `mcp_missing` within ~1–2 intervals, no crash. FAIL = stuck connected / crash / hang.
-
-### C10 — Add-modal validation + transport + tier
-
-Action: run the §3.3 Playwright spec for name-validation; do the http transport + tier-eval display manually in the App GUI (switch transport to http, confirm the url field replaces command/args, confirm tier-eval shows before Confirm, add an http server).
-
-Verify (Window B):
-
-```powershell
-npm run test:e2e -- m06_mcp_irl
-sqlite3 $REG "SELECT name,transport_type FROM mcp_servers WHERE transport_type='http';"
-```
-
-Expect: spec green; an http row present after adding one. PASS = invalid name blocked + fields swap per transport + tier-eval shown + http persists as `http`. FAIL = any of those wrong.
-
----
-
-## 6. Walkthroughs — follow the numbered steps in order
-
-§5 above is reference detail. To actually run the test, ignore §5 and just do these steps top to bottom. Each step says where it runs in **[bold]**. If a code block is shown, paste it exactly into the window named in that step.
+Each step is tagged with where it runs in **[bold]**. Paste the block shown into exactly that window. Run Scenario A, then B, then D, then C.
 
 ### Scenario A — Cold start → first run
 
 **A1. [App / Windows]** Control Panel → Credential Manager → Windows Credentials. Delete any entry whose name contains `agent-runtime`.
 
-**A2. [Window A]** If the app is running, press Ctrl+C. Then:
+**A2. [Window A]** If the app is running, Ctrl+C. Then:
 
 ```powershell
 npm run tauri dev
 ```
 
-Wait for the app window to open.
+Wait for the app window.
 
-**A3. [App]** At the key prompt, enter a valid Anthropic API key, submit. Expect: app proceeds to the main graph screen.
+**A3. [App]** At the key prompt, enter a valid Anthropic key, submit. Expect: app reaches the main graph screen.
 
 **A4. [App]** Close the app window completely.
 
-**A5. [Window A]** Press Ctrl+C if needed, then:
+**A5. [Window A]** Ctrl+C if needed, then:
 
 ```powershell
 npm run tauri dev
 ```
 
-Expect: NO key prompt this time. PASS if no prompt. FAIL if it asks again.
+Expect: NO key prompt. PASS = no prompt. FAIL = it asks again.
 
-**A6. [App]** Trigger the run/smoke action. Expect: an agent node appears and text/token activity streams in. PASS if it renders. FAIL if nothing or hang.
+**A6. [App]** Trigger the run/smoke action. Expect: an agent node appears and text/token activity streams in. PASS = renders. FAIL = nothing/hang.
 
-**A7. [App]** Drag the window wider than ~1300px, then smaller.
-
-**A8. [App → press F12 → Console tab]** Paste this JavaScript (not PowerShell), press Enter:
+**A7. [App → F12 → Console]** **[DevTools JS]**:
 
 ```js
 const c=document.querySelector('.react-flow');const m=document.querySelector('main');[c?.clientWidth,m?.clientWidth,window.innerWidth]
 ```
 
-Expect: first two numbers ≈ the third. PASS if canvas tracks window width. FAIL if first number stuck near 720 while the window is wide.
+Expect: first two numbers ≈ the third. PASS = canvas tracks window. FAIL = first number stuck near 720 while window is wide (gotcha #70).
 
-**A9. [App DevTools Console]** Paste this JavaScript, press Enter:
+**A8. [App DevTools]** **[DevTools JS]**:
 
 ```js
 [...document.querySelectorAll('[data-testid^="rf__node"]')].map(n=>n.textContent?.trim())
 ```
 
-Expect: every string meaningful — none empty, none "untitled", none a raw id. PASS/FAIL accordingly.
+Expect: every string meaningful — none empty / "untitled" / a raw id (gotcha #71). PASS/FAIL accordingly.
 
-**A10. [App / Windows]** Close the app. In Credential Manager delete the `agent-runtime` entry again.
+**A9. [App / Windows]** Close the app. Delete the `agent-runtime` credential again.
 
-**A11. [Window A]** Run `npm run tauri dev`. At the key prompt enter `bad-key`. In the app, trigger the run action.
+**A10. [Window A]** `npm run tauri dev`. At the prompt enter `bad-key`. In the app, trigger the run.
 
-**A12. [App + Window A]** Expect: app shows a readable error (e.g. "authentication failed"), NOT `[object Object]`; Window A shows a log line containing `error`. PASS = readable message + log line. FAIL = `[object Object]` or no log.
+**A11. [App + Window A]** Expect: a readable error (e.g. "authentication failed"), NOT `[object Object]`; Window A shows a log line containing `error`. PASS = readable + logged. FAIL = `[object Object]` or no log.
 
 Scenario A done.
 
-### Scenario B — MCP lifecycle
+### Scenario B — MCP lifecycle (all real)
 
-Before B1: the Window B setup block in §3 must already be pasted in this PowerShell session, and the app must be running with a valid key.
+Window B setup (§3) already pasted; app running with a valid key.
 
 **B1. [Window B]**
 
@@ -368,7 +128,7 @@ Before B1: the Window B setup block in §3 must already be pasted in this PowerS
 npx @modelcontextprotocol/inspector npx -y "@modelcontextprotocol/server-filesystem" $SCRATCH
 ```
 
-A browser opens. In it: list tools, invoke `read_file` on `probe.txt`. Expect: returns `hello-irl`. Close that browser tab, then press Ctrl+C in Window B to stop the inspector. PASS = `hello-irl` returned.
+Browser opens. In it: list tools, invoke `read_file` on `probe.txt`. Expect: returns `hello-irl`. Close the tab; Ctrl+C in Window B. PASS = `hello-irl` returned (reference server healthy in isolation).
 
 **B2. [Window B]**
 
@@ -376,30 +136,38 @@ A browser opens. In it: list tools, invoke `read_file` on `probe.txt`. Expect: r
 cargo test -p runtime-mcp --features integration -- --nocapture
 ```
 
-Expect: `test result: ok`, 0 failed. PASS = green. If it says npx not found = BLOCKED (environment), not a FAIL.
+Expect: `test result: ok`, 0 failed (real rmcp transport). npx-not-found = BLOCKED (environment), not FAIL.
 
-**B3. [Window B]** Show the scratch path you will type next:
+**B3. [Window B]**
 
 ```powershell
 $SCRATCH
 ```
 
-**B4. [App]** Settings → MCP Servers → Add. Name `fs-test`; Transport `stdio`; Command `npx`; Arguments: `-y @modelcontextprotocol/server-filesystem ` followed by the path B3 printed. Expect: a tier-eval message shows before Confirm. Click Confirm.
+**B4. [App]** Settings → MCP Servers → Add. Name `fs-test`; Transport `stdio`; Command `npx`; Arguments: `-y @modelcontextprotocol/server-filesystem ` then the B3 path. Expect: tier-eval message before Confirm. Click Confirm.
 
 **B5. [App]** Click Test connection on the `fs-test` row. Expect: a tool list with `read_file`, `write_file`, etc.; the row indicator is colored (connected), not blank.
 
-**B6. [Window B]**
+**B6. [App → F12 → Console]** **[DevTools JS]** — proves the indicator has a real CSS color, not just a class (gotcha #67):
+
+```js
+getComputedStyle(document.querySelector('[data-testid^="mcp-status-indicator"]')).backgroundColor
+```
+
+Expect: NOT `rgba(0, 0, 0, 0)` and NOT `transparent`. PASS = a real color. FAIL = transparent (class present, no CSS rule).
+
+**B7. [Window B]**
 
 ```powershell
 sqlite3 $REG "SELECT name,transport_type,status FROM mcp_servers;"
 Get-Content $AUDIT -Tail 10 | Where-Object { $_ -match '"kind":"mcp_installed"' }
 ```
 
-Expect: a `fs-test|stdio|...` row; one line mentioning `mcp_installed` and `fs-test`. PASS accordingly.
+Expect: a `fs-test|stdio|...` row; one `mcp_installed` line naming `fs-test`. PASS accordingly.
 
-**B7. [App]** Add a second server: Name `auth-test`; any stdio command; set the Auth secret field to exactly `SENTINEL-9F2A`. Confirm.
+**B8. [App]** Add a second server: Name `auth-test`; any stdio command; Auth secret exactly `SENTINEL-9F2A`. Confirm.
 
-**B8. [Window B]**
+**B9. [Window B]**
 
 ```powershell
 if (Select-String -SimpleMatch 'SENTINEL-9F2A' $AUDIT -ErrorAction SilentlyContinue) { 'LEAK - FAIL' } else { 'no leak - ok' }
@@ -407,33 +175,33 @@ Get-Content $AUDIT -Tail 10 | Where-Object { $_ -match '"kind":"mcp_(installed|a
 cmdkey /list | Select-String agent-runtime
 ```
 
-Expect: prints `no leak - ok`; shows `mcp_installed` then `mcp_auth_granted` for `auth-test`; a credential entry listed. `LEAK - FAIL` = 🔴 STOP. PASS = no leak + ordered lines + entry.
+Expect: prints `no leak - ok`; `mcp_installed` then `mcp_auth_granted` for `auth-test`; a credential entry. `LEAK - FAIL` = 🔴 STOP. PASS = no leak + ordered + entry.
 
-**B9. [App]** Open the Add modal. Type name `Bad_Name!`. Expect: confirm button disabled. Change to `ok-name`. Expect: button enables. Switch Transport to `http`. Expect: command/args replaced by one URL field; tier-eval still shows. Cancel the modal (do not add).
+**B10. [App]** Open Add modal. Type name `Bad_Name!`. Expect: confirm disabled. Change to `ok-name`. Expect: enables. Switch Transport to `http`. Expect: command/args replaced by one URL field; tier-eval still shows. Cancel (do not add).
 
-**B10. [Window B]**
+**B11. [Window B]**
 
 ```powershell
 Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like '*server-filesystem*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 Start-Sleep -Seconds 35
 ```
 
-**B11. [Window B]**
+**B12. [Window B]**
 
 ```powershell
 Get-Content $AUDIT -Tail 10 | Where-Object { $_ -match '"kind":"mcp_missing"' }
 sqlite3 $REG "SELECT name,status FROM mcp_servers WHERE name='fs-test';"
 ```
 
-Expect: an `mcp_missing` line; `fs-test` status `error` or `disconnected`; in the app the `fs-test` node shows an error state. PASS accordingly.
+Expect: an `mcp_missing` line; `fs-test` status `error`/`disconnected`; the app node shows error. PASS accordingly.
 
-**B12. [App, then Window A]** Close the app. In Window A run `npm run tauri dev`.
+**B13. [App, then Window A]** Close the app. In Window A: `npm run tauri dev`.
 
-**B13. [App]** Settings → MCP Servers. Expect: `fs-test` and `auth-test` still listed (persisted). PASS = both present.
+**B14. [App]** Settings → MCP Servers. Expect: `fs-test` and `auth-test` still listed. PASS = both present.
 
-**B14. [App]** Remove `fs-test` (Remove button → confirm).
+**B15. [App]** Remove `fs-test` (Remove → confirm).
 
-**B15. [Window B]**
+**B16. [Window B]**
 
 ```powershell
 Get-Content $AUDIT -Tail 10 | Where-Object { $_ -match '"kind":"mcp_uninstalled"' }
@@ -441,47 +209,157 @@ Get-Content $AUDIT -Tail 10 | Where-Object { $_ -match '"kind":"mcp_uninstalled"
 
 Expect: an `mcp_uninstalled` line for `fs-test`.
 
-**B16. [App, then Window A]** Close the app, relaunch `npm run tauri dev`, open Settings → MCP Servers. Expect: `fs-test` gone, `auth-test` still present. PASS accordingly.
+**B17. [App, then Window A]** Close app, relaunch, open Settings → MCP Servers. Expect: `fs-test` gone, `auth-test` present. PASS accordingly.
 
 Scenario B done.
 
+### Scenario D — UI sweep (real app: visual + interaction)
+
+App running, valid key, on the main screen. The `[DevTools JS]` snippets drive the **real components in the real window** via the app's own store affordance — only the trigger is injected. After each panel: look (visual) + do (interaction) + the stated expect. Each snippet self-resets first.
+
+**D1. [App]** Drag the window wide (≥1300px) then narrow. Look: graph canvas fills width at both sizes; no fixed ~720 column; header/panels not clipped or overlapping. Do: drag-pan the canvas; wheel-zoom. PASS = fills + pan/zoom work. FAIL = narrow column / clipping / dead pan-zoom (gotcha #70).
+
+**D2. [App]** Trigger a smoke run. Look: agent node label is meaningful (not blank/"untitled"/uuid), node not clipped, activity updates live (gotcha #71).
+
+**D3. [App → F12 → Console] [DevTools JS]** — Approval panel + PlanNode:
+
+```js
+{const s=window.__graphStore.getState();s.clear();s.applyEvent({type:'plan_created',plan_id:'p1',title:'Refactor auth flow',task_count:3,approval_required:true});s.applyEvent({type:'plan_approval_requested',plan_id:'p1'});}
+```
+
+Look: an Approval panel showing "Refactor auth flow" + task count, buttons visibly styled (not raw text); a PlanNode with a status style. Do: hover/click an approve control — it should visibly react. Then resolve:
+
+```js
+window.__graphStore.getState().applyEvent({type:'plan_approved',plan_id:'p1',approved_by:'user'})
+```
+
+Look: Approval panel disappears; PlanNode status visibly changes. PASS = renders + dismisses on resolve. FAIL = unstyled / does not dismiss.
+
+**D4. [App DevTools] [DevTools JS]** — HITL panel:
+
+```js
+{const s=window.__graphStore.getState();s.clear();s.applyEvent({type:'hitl_requested',prompt_id:'p-f',trigger:'on_failure_threshold',agent_id:null,question:'Task t-1 exceeded failure budget after 3 attempts. Retry, skip, or abort?',options:['retry','skip','abort'],ui_variant:'panel',timeout_at_unix_ms:9000000000000});}
+```
+
+Look: HITL panel, question wraps readably, three styled buttons (retry/skip/abort). Do: press `Escape` — panel dismisses locally. PASS = readable + 3 buttons + Escape dismisses.
+
+**D5. [App DevTools] [DevTools JS]** — HITL modal (risky tool):
+
+```js
+{const s=window.__graphStore.getState();s.clear();s.applyEvent({type:'hitl_requested',prompt_id:'p-r',trigger:'on_risky_tool',agent_id:'agent-1',question:'Run Bash:rm -rf /tmp/foo?',options:['allow','block'],ui_variant:'modal',timeout_at_unix_ms:9000000000000});}
+```
+
+Look: a true modal — dimmed/overlaid background, centered, the command text visible. Do: press `Tab` repeatedly — focus stays trapped inside the modal. PASS = modal chrome (not an inline panel) + focus trap. FAIL = renders as a plain inline block / no overlay.
+
+**D6. [App DevTools] [DevTools JS]** — HITL toast:
+
+```js
+{const s=window.__graphStore.getState();s.clear();s.applyEvent({type:'hitl_requested',prompt_id:'p-t',trigger:'per_task',agent_id:null,question:'Approve next task?',options:['ok','skip'],ui_variant:'toast',timeout_at_unix_ms:9000000000000});}
+```
+
+Look: a small corner toast that does NOT dim the screen, summary visible. PASS = non-blocking toast styling. FAIL = it blocks/centers like a modal.
+
+**D7. [App DevTools] [DevTools JS]** — Budget bar through all four states (color/badge must visibly differ — gotcha #67):
+
+```js
+{const s=window.__graphStore.getState();s.clear();s.applyEvent({type:'budget_warn',spent_usd:2.5,cap_usd:5.0,percent:50});}
+```
+
+Look: header bar appears, warn color, shows `$2.50` / `$5.00`. Do: click the bar — a settings panel opens. Then run each next line, looking for a visibly distinct state each time:
+
+```js
+window.__graphStore.getState().applyEvent({type:'budget_downshift',from_model:'claude-opus-4-7',to_model:'claude-sonnet-4-6',reason:'budget_threshold'})
+```
+```js
+window.__graphStore.getState().applyEvent({type:'budget_suspended',spent_usd:4.5,cap_usd:5.0})
+```
+```js
+window.__graphStore.getState().applyEvent({type:'budget_exceeded',spent_usd:5.0,cap_usd:5.0})
+```
+
+Look: downshift badge → suspended badge → exceeded banner "Session terminated", each a visibly different color/badge (not just changed text). PASS = four distinct visual states + click opens settings. FAIL = identical-looking states (missing CSS, gotcha #67).
+
+**D8. [App DevTools] [DevTools JS]** — Gap panel:
+
+```js
+{const s=window.__graphStore.getState();s.clear();s.applyEvent({type:'tool_missing',agent_id:'worker',tool_name:'fetch_prs',severity:'critical',suggested_action:"Install tool 'fetch_prs' and click Resume.",requested_via:'loader'});}
+```
+
+Look: Gap panel with critical-severity styling (color), tool name + suggested action readable, a Resume affordance. Then resolve:
+
+```js
+window.__graphStore.getState().applyEvent({type:'gap_resolved',agent_id:'worker',kind:'tool',capability:'fetch_prs'})
+```
+
+Look: panel dismisses. PASS = severity-colored + readable + dismisses.
+
+**D9. [App DevTools] [DevTools JS]** — Capability-violation modal (ADR-0007 reuse of the HITL modal — should look identical to D5's chrome):
+
+```js
+{const s=window.__graphStore.getState();s.clear();s.applyEvent({type:'hitl_requested',prompt_id:'p-cv',trigger:'on_capability_violation',agent_id:'worker',question:"Agent worker requested capability 'write' on /etc — not in granted scope. Allow once, deny, or abort?",options:['allow_once','deny','abort'],ui_variant:'modal',timeout_at_unix_ms:9000000000000});}
+```
+
+Look: modal with the violation text + three buttons; same modal chrome as D5 (consistency). PASS = consistent modal styling + violation text. FAIL = different/broken chrome vs D5.
+
+**D10. [App DevTools] [DevTools JS]** — Uncertainty prompt (note: `recordUncertainInvocation`, not `applyEvent`):
+
+```js
+{const s=window.__graphStore.getState();s.clear();s.recordUncertainInvocation({invocationId:'sig-tool-1',toolName:'Read',agentId:'a1'});}
+```
+
+Look: a modal dialog showing invocation id `sig-tool-1` and four actions (retry/skip/mark/abort) visibly styled. Then add more:
+
+```js
+{const s=window.__graphStore.getState();s.recordUncertainInvocation({invocationId:'sig-2'});s.recordUncertainInvocation({invocationId:'sig-3'});}
+```
+
+Look: a remaining-count indicator (e.g. "2 more"). PASS = dialog + 4 actions + remaining count. FAIL = missing actions / no count.
+
+**D11. [App DevTools] [DevTools JS]** — cleanup:
+
+```js
+window.__graphStore.getState().clear()
+```
+
+Look: all injected panels gone, main screen normal (no stuck overlay). PASS = clean return.
+
+Scenario D done.
+
 ### Scenario C — Restart integrity
 
-**C-1. [App]** With a valid key, trigger the run/smoke action. Let it finish (text streamed, node rendered).
+**C-1. [App]** With a valid key, trigger the run/smoke action; let it finish.
 
-**C-2. [App]** Note that the run completed (rough token/event activity).
-
-**C-3. [Window B]**
+**C-2. [Window B]**
 
 ```powershell
 $SCRATCH
 ```
 
-**C-4. [App]** Settings → MCP Servers → Add: Name `persist-test`; stdio; Command `npx`; Arguments `-y @modelcontextprotocol/server-filesystem ` + the C-3 path. Confirm.
+**C-3. [App]** Settings → MCP Servers → Add: Name `persist-test`; stdio; Command `npx`; Arguments `-y @modelcontextprotocol/server-filesystem ` + the C-2 path. Confirm.
 
-**C-5. [Window A]** Hard-stop the app: press Ctrl+C in Window A (or kill the app process).
+**C-4. [Window A]** Hard-stop: Ctrl+C in Window A (or kill the app process).
 
-**C-6. [Window A]**
+**C-5. [Window A]**
 
 ```powershell
 npm run tauri dev
 ```
 
-**C-7. [App]** Expect: the previous session's graph/history re-renders WITHOUT a new run starting and with NO new streaming/token activity (replays, does not re-execute). PASS = history shown + no new API call. FAIL = blank, or a fresh run starts on its own.
+**C-6. [App]** Expect: the previous session's graph/history re-renders WITHOUT a new run starting and NO new streaming/token activity (replays, does not re-execute). PASS = history shown + no new API call. FAIL = blank, or a fresh run auto-starts.
 
-**C-8. [App]** Settings → MCP Servers. Expect: `persist-test` still listed. PASS = present.
+**C-7. [App]** Settings → MCP Servers. Expect: `persist-test` still listed. PASS = present.
 
 Scenario C done.
 
-Hard gate: B8 must print `no leak - ok`. `LEAK - FAIL` is 🔴 — stop and log it before anything else.
+Hard gate: B9 must print `no leak - ok`. `LEAK - FAIL` is 🔴 — stop and log before anything else.
 
 ---
 
-## 7. Findings (feeds M07 Stage A)
+## 5. Findings (feeds M07 Stage A)
 
 🔴 fix before M07 · 🟡 M07 Stage A absorbs · 🟢 `docs/tech-debt.md` · BLOCKED = environment, not a bug.
 
-| # | Card | Sev | Observed vs expected | Class / gotcha | Disposition |
+| # | Step | Sev | Observed vs expected | Class / gotcha | Disposition |
 |---|---|---|---|---|---|
 |  |  |  |  |  |  |
 
@@ -489,10 +367,11 @@ Header to record: machine / Windows version / app SHA / Anthropic key source / d
 
 ---
 
-## 8. Sign-off
+## 6. Sign-off
 
-- [ ] Layer A green; Layer B healthy; §3.3 spec testids aligned + green.
-- [ ] C1–C10 executed or BLOCKED-with-reason; Scenarios A/B/C walked.
-- [ ] C8 prints `no leak - ok` (hard §13.5 gate).
+- [ ] Scenario A (cold start) walked.
+- [ ] Scenario B (MCP, all real): Inspector healthy + `cargo --features integration` green + add/test/persist/offline/remove + **B9 prints `no leak - ok`** (hard §13.5 gate).
+- [ ] Scenario D (UI sweep): D1–D11 — every panel eyeballed for visual + interaction.
+- [ ] Scenario C (restart integrity).
 - [ ] Findings dispositioned; 🔴 count = 0 to enter M07 Stage A without a fix cycle.
-- [ ] Scope fence (§0) respected.
+- [ ] Scope fence (§0) respected — RecoveryDialog correctly out of scope; no shipped-but-M07 surface logged as a bug.
