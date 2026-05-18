@@ -629,6 +629,24 @@ mod tests {
     use futures::stream::BoxStream;
 
     #[test]
+    fn signal_kind_maps_each_coarse_category() {
+        // Pins the derived AgentEvent→signals.type mapping (M06.5
+        // 🔴-2). The assembled smoke path only exercises the "agent"
+        // arm (agent_spawned/stream_text/agent_complete); these pin
+        // the tool/decision/verify arms the M07 loop will hit so a
+        // mis-categorized signal (e.g. a decision not reaching the
+        // VDR projector, which keys on type="decision") is caught.
+        assert_eq!(signal_kind("tool_invoked"), "tool");
+        assert_eq!(signal_kind("tool_result"), "tool");
+        assert_eq!(signal_kind("decision"), "decision");
+        assert_eq!(signal_kind("decision_record"), "decision");
+        assert_eq!(signal_kind("verify_passed"), "verify");
+        assert_eq!(signal_kind("agent_spawned"), "agent");
+        assert_eq!(signal_kind("stream_text"), "agent");
+        assert_eq!(signal_kind("unknown"), "agent");
+    }
+
+    #[test]
     fn session_id_is_unique() {
         let a = SessionId::new();
         let b = SessionId::new();

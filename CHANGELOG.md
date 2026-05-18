@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed — M06.5 Stage B.fix (IRL 🔴-2 — agent signal stream not persisted to the live drone DB)
+
+- **`crates/runtime-main/src/sdk/agent_sdk.rs`** — every `AgentEvent`
+  flowed through `emit`, which only did `event_tx.send` and never
+  persisted to the drone; `signals = 0` in the live `session.sqlite`
+  after a smoke run while `heartbeats`/`snapshots` populated the same
+  DB (`docs/M06-irl-findings.md` 🔴-2). A private `persist_signal` at
+  the single `emit` choke point now writes every event via the
+  existing `DroneClient::write_signal` IPC under the run's `SessionId`
+  (additive — the renderer/in-mem-bus `event_tx.send` is unchanged;
+  best-effort — a transient drone-IPC failure is logged, never aborts
+  the run). Restores spec §11's drone/signals+VDR/plan sinks. No new
+  field/constructor/IPC-protocol change.
+- **`src-tauri/src/{drone_lifecycle,main,commands}.rs`** — second
+  necessary condition (surfaced + maintainer-approved during the
+  assembled-app regression build; the phase doc diagnosed only the
+  missing emission): `signals.session_id` is a FK into `sessions(id)`
+  and `runtime-drone` seeds one `sessions` row = its `--session-id`
+  under `PRAGMA foreign_keys=ON`, but `DroneLifecycle::spawn` minted a
+  `Uuid` independent of `run_smoke_session`'s `SessionId::new()`, so
+  every signal was silently FK-rejected even with the emission wired.
+  `DroneLifecycle::sdk_session_id()` exposes the seeded id; it is
+  registered as managed state; `run_smoke_session[_with]` builds the
+  `AgentSdk` with that shared `SessionId` (composition-layer fix,
+  parallel to 🔴-1/ADR-0012; no drone/IPC change).
+- **`crates/runtime-main/tests/smoke_signal_persistence.rs`** *(new)* —
+  assembled real-drone-subprocess regression (the Stage-V blind spot):
+  drives `AgentSdk::run_agent` (the exact path `run_smoke_session_with`
+  wraps) — NOT a manual `client.write_signal()` like the existing-green
+  `recovery_lifecycle.rs`. `smoke_session_persists_signals_to_live_drone_db`
+  (signals land under the run session id),
+  `smoke_session_signal_count_matches_emitted_event_count` (wiring
+  complete, not partial), `transient_signal_write_failure_does_not_abort_run`
+  (drone killed mid-run → run still `Ok`, renderer sink intact).
+- Scope: `token_usage = 0` (also in the IRL finding) is a **separate**
+  missing-projector defect — no production code writes `token_usage`
+  (the sole `INSERT` is `#[cfg(test)]` in `runtime-drone/vdr.rs`).
+  Recorded for C.fix re-verification / M07.A carry-forward; not in
+  B.fix scope (would require a forbidden `runtime-drone` change).
+
 ### Fixed — M06.5 Stage A.fix (IRL 🔴-1 — single source-of-truth session DB path)
 
 - **`src-tauri/src/main.rs`** — `open_mcp_client` resolved the MCP

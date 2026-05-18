@@ -3,11 +3,14 @@
 //!
 //! IRL ground truth: after a smoke run the live `session.sqlite` had
 //! `signals = 0` while `heartbeats`/`snapshots` populated the same DB.
-//! Root cause: `AgentSdk::run_agent_with_provider_stream` routes every
-//! `AgentEvent` through `self.emit` (`agent_sdk.rs:251,313,322-323`);
-//! `emit` (`agent_sdk.rs:521-526`) only did `event_tx.send` and never
-//! called `self.drone_client.write_signal` — a missing emission, not a
-//! no-op drone (the same client successfully sends `SnapshotNow`).
+//! Two necessary conditions (the phase doc diagnosed only the first):
+//! (1) missing emission — `emit` (`agent_sdk.rs`) only did
+//! `event_tx.send`, never `write_signal`; (2) session-id mismatch —
+//! `signals.session_id` is a FK into `sessions(id)` and the drone
+//! seeds one `sessions` row = its `--session-id`, so the SDK's
+//! independent `SessionId::new()` was silently FK-rejected. The B.fix
+//! shares the drone's seeded id with the SDK; these tests model that
+//! corrected composition (drone spawned with the SDK's session id).
 //!
 //! The DISCRIMINATOR vs the existing-green
 //! `crates/runtime-main/tests/recovery_lifecycle.rs` (the Stage-V blind
@@ -182,6 +185,10 @@ struct StubProvider;
 
 #[async_trait]
 impl LLMProvider for StubProvider {
+    #[allow(
+        clippy::unnecessary_literal_bound,
+        reason = "trait method returns &str by signature; literal &'static str must reborrow"
+    )]
     fn name(&self) -> &str {
         "smoke-sig-stub"
     }
@@ -220,14 +227,18 @@ impl LLMProvider for StubProvider {
 /// Gated stub: yields a single `MessageStop` only AFTER `gate` is
 /// notified. Lets the test interleave a drone kill between the
 /// pre-loop `emit(AgentSpawned)` (drone alive → signal persists) and
-/// the loop's `emit(AgentComplete)` (drone dead → write_signal errors,
-/// must be tolerated and the run must still complete).
+/// the loop's `emit(AgentComplete)` (drone dead → `write_signal`
+/// errors, must be tolerated and the run must still complete).
 struct GatedStub {
     gate: Arc<Notify>,
 }
 
 #[async_trait]
 impl LLMProvider for GatedStub {
+    #[allow(
+        clippy::unnecessary_literal_bound,
+        reason = "trait method returns &str by signature; literal &'static str must reborrow"
+    )]
     fn name(&self) -> &str {
         "smoke-sig-gated-stub"
     }
@@ -273,11 +284,18 @@ async fn smoke_session_persists_signals_to_live_drone_db() {
     let db_path = dir.path().join("session.sqlite");
     let socket = make_socket(dir.path());
 
-    let mut child = spawn_drone("drone-smoke-sig-1", &db_path, &socket);
-    let client = connect_with_retry(&socket_to_addr(&socket)).await;
-
+    // Model the corrected composition the B.fix production change
+    // establishes: the drone is seeded with the SAME id the SDK
+    // writes signals under (DroneLifecycle::sdk_session_id →
+    // run_smoke_session). A divergent id is exactly the real-app
+    // bug — signals.session_id is a FK into sessions(id) and the
+    // drone seeds one sessions row = its --session-id, so a
+    // mismatched id is silently FK-rejected (IRL 🔴-2, condition 2).
     let session = SessionId::new();
     let sid = session.as_string();
+    let mut child = spawn_drone(&sid, &db_path, &socket);
+    let client = connect_with_retry(&socket_to_addr(&socket)).await;
+
     // Hold `rx` for the whole run — a dropped receiver makes
     // `emit`'s event_tx.send fail with EventChannelClosed and aborts
     // the run before any signal could persist.
@@ -315,7 +333,7 @@ async fn smoke_session_persists_signals_to_live_drone_db() {
 
 /// Pins the wiring is COMPLETE, not partial: the number of persisted
 /// signal rows equals the number of signal-bearing `AgentEvent`s the
-/// assembled run emits (guards an "only AgentSpawned persisted"
+/// assembled run emits (guards an "only `AgentSpawned` persisted"
 /// regression).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn smoke_session_signal_count_matches_emitted_event_count() {
@@ -324,11 +342,12 @@ async fn smoke_session_signal_count_matches_emitted_event_count() {
     let db_path = dir.path().join("session.sqlite");
     let socket = make_socket(dir.path());
 
-    let mut child = spawn_drone("drone-smoke-sig-2", &db_path, &socket);
-    let client = connect_with_retry(&socket_to_addr(&socket)).await;
-
+    // Corrected shared-id composition (see test 1).
     let session = SessionId::new();
     let sid = session.as_string();
+    let mut child = spawn_drone(&sid, &db_path, &socket);
+    let client = connect_with_retry(&socket_to_addr(&socket)).await;
+
     let (tx, mut rx) = mpsc::channel::<AgentEvent>(16);
     let sdk = AgentSdk::new(Arc::new(StubProvider), tx, Arc::new(client), session);
 
@@ -345,6 +364,7 @@ async fn smoke_session_signal_count_matches_emitted_event_count() {
         emitted >= 3,
         "smoke path emits ≥3 AgentEvents (AgentSpawned, StreamText, AgentComplete); got {emitted}"
     );
+    let emitted = i64::try_from(emitted).expect("event count fits i64");
 
     poll_until(
         &db_path,
@@ -354,7 +374,7 @@ async fn smoke_session_signal_count_matches_emitted_event_count() {
                 [sid.as_str()],
                 |r| r.get::<_, i64>(0),
             )
-            .unwrap_or(0) as usize
+            .unwrap_or(0)
                 >= emitted
         },
         "every emitted AgentEvent persisted as a signal",
@@ -362,7 +382,7 @@ async fn smoke_session_signal_count_matches_emitted_event_count() {
     .await;
 
     assert_eq!(
-        signals_count_for_session(&db_path, &sid) as usize,
+        signals_count_for_session(&db_path, &sid),
         emitted,
         "persisted signal count must equal the emitted signal-bearing \
          AgentEvent count (wiring complete, not partial)"
@@ -378,9 +398,9 @@ async fn smoke_session_signal_count_matches_emitted_event_count() {
 /// persist is ADDITIVE). The drone is killed AFTER the pre-loop
 /// `emit(AgentSpawned)` persists (drone alive) but BEFORE the gated
 /// `MessageStop` drives `emit(AgentComplete)` (drone dead →
-/// write_signal errors). The run must still return `Ok`, all events
-/// must still reach `event_tx`, and the pre-kill signal must be on
-/// disk.
+/// `write_signal` errors). The run must still return `Ok`, all
+/// events must still reach `event_tx`, and the pre-kill signal must
+/// be on disk.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn transient_signal_write_failure_does_not_abort_run() {
     ensure_drone_built();
@@ -388,12 +408,15 @@ async fn transient_signal_write_failure_does_not_abort_run() {
     let db_path = dir.path().join("session.sqlite");
     let socket = make_socket(dir.path());
 
-    let mut child = spawn_drone("drone-smoke-sig-3", &db_path, &socket);
+    // Corrected shared-id composition (see test 1) so the pre-kill
+    // AgentSpawned signal is FK-accepted; the kill then exercises
+    // the transient-failure tolerance on the post-kill emit.
+    let session = SessionId::new();
+    let sid = session.as_string();
+    let mut child = spawn_drone(&sid, &db_path, &socket);
     let client = connect_with_retry(&socket_to_addr(&socket)).await;
 
     let gate = Arc::new(Notify::new());
-    let session = SessionId::new();
-    let sid = session.as_string();
     let (tx, mut rx) = mpsc::channel::<AgentEvent>(16);
     let sdk = AgentSdk::new(
         Arc::new(GatedStub {
