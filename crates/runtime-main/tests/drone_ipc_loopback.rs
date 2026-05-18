@@ -25,45 +25,8 @@ use runtime_main::drone_ipc::{DroneClient, DroneIpcError};
 use tempfile::TempDir;
 use tokio::time::timeout;
 
-/// Locate the `runtime-drone` binary. Derives the path from
-/// `current_exe()` so it works under `cargo test` (target dir = `target/`)
-/// AND under `cargo llvm-cov` (target dir = `target/llvm-cov-target/`).
-/// The test binary lives at `<target>/<profile>/deps/drone_ipc_loopback-*`;
-/// the drone binary is at `<target>/<profile>/runtime-drone`.
-fn drone_binary() -> std::path::PathBuf {
-    let mut p = std::env::current_exe().expect("current_exe");
-    p.pop(); // drop the test exe filename
-    if p.ends_with("deps") {
-        p.pop(); // up to the profile dir
-    }
-    #[cfg(windows)]
-    p.push("runtime-drone.exe");
-    #[cfg(unix)]
-    p.push("runtime-drone");
-    p
-}
-
-fn ensure_drone_built() {
-    let bin = drone_binary();
-    if !bin.exists() {
-        // Build into the same target dir (so the binary lands next to us).
-        let target_dir = bin.parent().expect("parent");
-        // CARGO_TARGET_DIR may already be set by llvm-cov; preserve it.
-        let mut cmd = std::process::Command::new(env!("CARGO"));
-        cmd.args(["build", "--bin", "runtime-drone"]);
-        if std::env::var_os("CARGO_TARGET_DIR").is_none() {
-            // Force the target dir so an out-of-band build lands next to us.
-            // Walk back up to the workspace root for cargo.
-            cmd.env(
-                "CARGO_TARGET_DIR",
-                target_dir.parent().expect("profile parent"),
-            );
-        }
-        let status = cmd.status().expect("cargo build");
-        assert!(status.success(), "drone build failed");
-    }
-    assert!(bin.exists(), "drone binary missing at {}", bin.display());
-}
+mod common;
+use common::{drone_binary, ensure_drone_built};
 
 #[cfg(unix)]
 fn make_socket(dir: &std::path::Path) -> std::path::PathBuf {

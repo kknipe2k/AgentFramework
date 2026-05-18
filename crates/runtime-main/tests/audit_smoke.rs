@@ -18,7 +18,7 @@ use runtime_core::generated::capability::{
     ResourceName, SideEffectClass,
 };
 use runtime_main::audit::AuditWriter;
-use runtime_main::capability::CapabilityEnforcer;
+use runtime_main::capability::{CapabilityEnforcer, CapabilityError};
 use runtime_main::framework_loader::{load_and_validate_str_with_audit, AuditContext, Emitter};
 use runtime_main::tier::{transition, Tier};
 use tempfile::TempDir;
@@ -30,6 +30,15 @@ fn read_glob(resource: &str, glob: &str) -> CapabilityDeclaration {
         resource: ResourceName::from_str(resource).unwrap(),
         scope: CapabilityScope::Glob(GlobPattern::from_str(glob).unwrap()),
         side_effect_class: SideEffectClass::Pure,
+    }
+}
+
+fn write_glob(resource: &str, glob: &str) -> CapabilityDeclaration {
+    CapabilityDeclaration {
+        kind: CapabilityKind::Write,
+        resource: ResourceName::from_str(resource).unwrap(),
+        scope: CapabilityScope::Glob(GlobPattern::from_str(glob).unwrap()),
+        side_effect_class: SideEffectClass::FilesystemMutate,
     }
 }
 
@@ -379,4 +388,37 @@ async fn enforcer_without_audit_writer_silently_skips_emission() {
         !audit_path.exists(),
         "no writer wired → no audit file created"
     );
+}
+
+/// M05 🟡 — the `audit_check_result` `Err(CapabilityError::TierForbidden)`
+/// arm. M06.A's L1 wire-up added integration coverage of `enforcer.check`
+/// and the `Err(Denied)` audit arm (`capability_denial_writes_audit_line`)
+/// but never the `TierForbidden`-then-audit branch (enforcer.rs left at
+/// 94.24% within the runtime-main ≥95 gate). A Novice-tier enforcer (the
+/// default) rejects a Write request at L4 with `TierForbidden`; the audit
+/// arm re-tags it under `capability_denied` with the `no_matching_grant`
+/// reason analogue (the tier-specific context lives in the `TierViolation`
+/// event, not the audit log). Pins both the error shape and the audit line.
+#[tokio::test]
+async fn tier_forbidden_writes_capability_denied_audit_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let writer = open_audit(&dir).await;
+    let mut enforcer = CapabilityEnforcer::new();
+    enforcer.set_audit_writer(Arc::clone(&writer), "sess-tier-forbidden");
+    // Novice (the default tier) forbids Write at L4 → TierForbidden,
+    // never Denied (the L4-before-L1 §8.security ordering).
+    let req = write_glob("src", "src/**");
+    let result = enforcer.check("worker", &req);
+    assert!(
+        matches!(result, Err(CapabilityError::TierForbidden { .. })),
+        "Novice Write must be TierForbidden, got {result:?}"
+    );
+    enforcer.audit_check_result("worker", &req, &result).await;
+    let lines = read_lines(&dir).await;
+    assert_eq!(lines.len(), 1, "exactly one audit line expected");
+    assert_eq!(lines[0]["kind"], "capability_denied");
+    assert_eq!(lines[0]["session_id"], "sess-tier-forbidden");
+    assert_eq!(lines[0]["details"]["agent_id"], "worker");
+    assert_eq!(lines[0]["details"]["capability_kind"], "write");
+    assert_eq!(lines[0]["details"]["reason"], "no_matching_grant");
 }
