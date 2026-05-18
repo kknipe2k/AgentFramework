@@ -6,6 +6,107 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed — M06.5 Stage C.fix (IRL fix-cycle close — M07 Stage A gate reconciled)
+
+- Closes the M06.5 IRL fix cycle (`docs/build-prompts/M06.5-irl-fix.md`).
+  Both blocking findings in `docs/M06-irl-findings.md` re-verified
+  **RESOLVED** in the assembled app and the M07 Stage A gate
+  reconciled. Verification of record (user-approved 2026-05-18, C.3
+  path-1): the A.fix + B.fix assembled-app regression tests green in
+  the full v1.6 canonical CI suite — `session_db.rs`
+  (`registry_path_equals_drone_session_db_path`,
+  `add_server_then_list_round_trips_through_the_same_store`,
+  `no_stray_mcp_sqlite_path_literal_constructed`) and
+  `smoke_signal_persistence.rs`
+  (`smoke_session_persists_signals_to_live_drone_db`,
+  `smoke_session_signal_count_matches_emitted_event_count`,
+  `transient_signal_write_failure_does_not_abort_run`). They exercise
+  the assembled composition, not the isolated components Stage-V
+  verified — the precise gotcha #66 gap the IRL cycle exists to catch.
+  The manual UI repro is documented agent-blocked per gotcha #23 (a
+  Tauri 2.x window cannot be driven/observed from the agent side); the
+  objective DB evidence the 🔴 cards turn on is what the regression
+  tests assert.
+- **`docs/M06-irl-findings.md`** — appended a `## Resolution (M06.5 fix
+  cycle)` section (prior disposition lines untouched; append-only
+  audit-trail discipline though the file is not the gap-analysis
+  ledger). 🔴-1 RESOLVED at `7fc3277` (ADR-0012); 🔴-2 RESOLVED at
+  `9653718` (ADR-0013). **New distinct finding:** `token_usage = 0`
+  (no production `token_usage` writer; sole `INSERT` is `#[cfg(test)]`
+  in `runtime-drone/vdr.rs`) carries to **M07 Stage A** alongside the
+  unchanged 🟡-1..4 — it is *not* part of 🔴-2's missing-emission and
+  was maintainer-approved out of B.fix scope.
+- M07 Stage A is **unblocked**: 🔴-1 + 🔴-2 resolved and re-tested
+  green. Per CLAUDE.md §20 this fix cycle adds **no
+  `docs/gap-analysis.md` entry**; the resolution flows into M07's
+  gap-analysis Carry-forward. The assembled-app-regression mandate is
+  recorded as the empirical input for Cycle 2 (M06.6) — recorded only;
+  no protocol artifact changed in this cycle.
+
+### Fixed — M06.5 Stage B.fix (IRL 🔴-2 — agent signal stream not persisted to the live drone DB)
+
+- **`crates/runtime-main/src/sdk/agent_sdk.rs`** — every `AgentEvent`
+  flowed through `emit`, which only did `event_tx.send` and never
+  persisted to the drone; `signals = 0` in the live `session.sqlite`
+  after a smoke run while `heartbeats`/`snapshots` populated the same
+  DB (`docs/M06-irl-findings.md` 🔴-2). A private `persist_signal` at
+  the single `emit` choke point now writes every event via the
+  existing `DroneClient::write_signal` IPC under the run's `SessionId`
+  (additive — the renderer/in-mem-bus `event_tx.send` is unchanged;
+  best-effort — a transient drone-IPC failure is logged, never aborts
+  the run). Restores spec §11's drone/signals+VDR/plan sinks. No new
+  field/constructor/IPC-protocol change.
+- **`src-tauri/src/{drone_lifecycle,main,commands}.rs`** — second
+  necessary condition (surfaced + maintainer-approved during the
+  assembled-app regression build; the phase doc diagnosed only the
+  missing emission): `signals.session_id` is a FK into `sessions(id)`
+  and `runtime-drone` seeds one `sessions` row = its `--session-id`
+  under `PRAGMA foreign_keys=ON`, but `DroneLifecycle::spawn` minted a
+  `Uuid` independent of `run_smoke_session`'s `SessionId::new()`, so
+  every signal was silently FK-rejected even with the emission wired.
+  `DroneLifecycle::sdk_session_id()` exposes the seeded id; it is
+  registered as managed state; `run_smoke_session[_with]` builds the
+  `AgentSdk` with that shared `SessionId` (composition-layer fix,
+  parallel to 🔴-1/ADR-0012; no drone/IPC change). Recorded as
+  **ADR-0013** (cross-process run identity — the drone-seeded session
+  id is canonical, the in-process SDK adopts it; the 🔴-2 sibling to
+  ADR-0012), **Accepted** in this PR.
+- **`crates/runtime-main/tests/smoke_signal_persistence.rs`** *(new)* —
+  assembled real-drone-subprocess regression (the Stage-V blind spot):
+  drives `AgentSdk::run_agent` (the exact path `run_smoke_session_with`
+  wraps) — NOT a manual `client.write_signal()` like the existing-green
+  `recovery_lifecycle.rs`. `smoke_session_persists_signals_to_live_drone_db`
+  (signals land under the run session id),
+  `smoke_session_signal_count_matches_emitted_event_count` (wiring
+  complete, not partial), `transient_signal_write_failure_does_not_abort_run`
+  (drone killed mid-run → run still `Ok`, renderer sink intact).
+- Scope: `token_usage = 0` (also in the IRL finding) is a **separate**
+  missing-projector defect — no production code writes `token_usage`
+  (the sole `INSERT` is `#[cfg(test)]` in `runtime-drone/vdr.rs`).
+  Recorded for C.fix re-verification / M07.A carry-forward; not in
+  B.fix scope (would require a forbidden `runtime-drone` change).
+
+### Fixed — M06.5 Stage A.fix (IRL 🔴-1 — single source-of-truth session DB path)
+
+- **`src-tauri/src/main.rs`** — `open_mcp_client` resolved the MCP
+  registry at a stray `<app_local_data_dir>/mcp.sqlite` while
+  `resolve_db_path` gave the drone `<app_local_data_dir>/session.sqlite`
+  (the file the runtime reads). An added MCP server was audited
+  (`mcp_installed`) yet invisible to the MCP Servers panel and
+  (downstream, M07) undispatchable — `docs/M06-irl-findings.md` 🔴-1.
+  Both call sites now resolve through one shared
+  `session_db::session_db_path` seam, so the registry shares the
+  canonical drone session DB (ADR-0012, **Accepted** in this PR; safe
+  per `db::init` WAL + `busy_timeout=5000` + idempotent migrations).
+- **`src-tauri/src/session_db.rs`** *(new)* — the path-agnostic
+  single-source-of-truth resolver seam + `SESSION_DB_FILENAME`
+  constant; assembled-path regression tests (the Stage-V blind spot):
+  `registry_path_equals_drone_session_db_path`,
+  `add_server_then_list_round_trips_through_the_same_store` (ADR-0012
+  two-connection invariant), `no_stray_mcp_sqlite_path_literal_constructed`.
+- **`docs/adr/0012-single-source-session-db-path.md`** — Status flipped
+  `Proposed → Accepted` (CLAUDE.md §11).
+
 ### Added — M06 closeout (Stage G — gap-analysis + parent-milestone summary + first `<simplify_pass>`)
 
 - **`docs/gap-analysis.md`** — appended the immutable M06 entry

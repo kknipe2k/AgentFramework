@@ -3,6 +3,7 @@
 mod commands;
 mod drone_lifecycle;
 mod sandbox_lifecycle;
+mod session_db;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,7 +14,7 @@ use runtime_main::audit::{audit_path, AuditWriter};
 use runtime_main::drone_ipc::DroneClient;
 use runtime_main::hitl::HitlSeam;
 use runtime_main::sandbox_ipc::SandboxClient;
-use runtime_main::sdk::ApprovalSeam;
+use runtime_main::sdk::{ApprovalSeam, SessionId};
 use runtime_main::tier::{load_tier, Tier};
 use runtime_mcp::client::{
     InMemorySecretStore, KeyringSecretStore, McpClient, Registry, SecretStore,
@@ -133,6 +134,14 @@ fn main() {
                     Ok(lifecycle) => {
                         let client: Arc<DroneClient> = Arc::clone(&lifecycle.client);
                         app_handle.manage(client);
+                        // M06.5 🔴-2: the SDK MUST write signals under
+                        // the drone's seeded session id or the
+                        // signals→sessions FK rejects every row. Manage
+                        // it so run_smoke_session builds the AgentSdk
+                        // with the matching SessionId (single
+                        // source-of-truth, parallel to 🔴-1/ADR-0012).
+                        let sdk_session: SessionId = lifecycle.sdk_session_id();
+                        app_handle.manage(sdk_session);
                         let managed: ManagedLifecycle = Mutex::new(Some(lifecycle));
                         app_handle.manage(managed);
                     }
@@ -237,7 +246,11 @@ fn open_audit_writer<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<Arc
 
 /// Open the M06.C `McpClient` at app startup.
 ///
-/// Resolves `<app_local_data_dir>/mcp.sqlite` for the registry, opens a
+/// Resolves the registry path through the single source-of-truth
+/// [`session_db::session_db_path`] (ADR-0012) — the **same**
+/// `<app_local_data_dir>/session.sqlite` the drone uses via
+/// [`resolve_db_path`], so an added MCP server is visible to the runtime
+/// (closes `docs/M06-irl-findings.md` 🔴-1). Opens a
 /// [`KeyringSecretStore`] for per-server auth secrets, and (optionally)
 /// wires the existing M05.E `AuditWriter` so MCP install/uninstall/auth
 /// events land in the same `skills.audit.jsonl` as capability + tier
@@ -259,7 +272,7 @@ fn open_mcp_client<R: tauri::Runtime>(
     if let Err(e) = std::fs::create_dir_all(&dir) {
         tracing::warn!(error = %e, "MCP registry dir create failed");
     }
-    let path = dir.join("mcp.sqlite");
+    let path = session_db::session_db_path(&dir);
     let registry = match Registry::open(&path) {
         Ok(r) => Arc::new(r),
         Err(e) => {
@@ -298,7 +311,7 @@ fn open_mcp_client<R: tauri::Runtime>(
 fn resolve_db_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<PathBuf> {
     let dir = app.path().app_local_data_dir()?;
     std::fs::create_dir_all(&dir).map_err(tauri::Error::Io)?;
-    Ok(dir.join("session.sqlite"))
+    Ok(session_db::session_db_path(&dir))
 }
 
 /// Initialize the global `tracing` subscriber for the Tauri main process.

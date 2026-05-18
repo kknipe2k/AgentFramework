@@ -36,6 +36,7 @@ use std::time::Duration;
 
 use runtime_core::{CmdError, DroneCommand};
 use runtime_main::drone_ipc::DroneClient;
+use runtime_main::sdk::SessionId;
 use uuid::Uuid;
 
 /// Number of `DroneClient::connect` attempts before surfacing
@@ -154,6 +155,28 @@ impl DroneLifecycle {
             addr,
             session_id,
         })
+    }
+
+    /// The `SessionId` the SDK MUST write signals under for this
+    /// lifecycle's drone.
+    ///
+    /// `runtime-drone` runs `INSERT OR IGNORE INTO sessions` for its
+    /// `--session-id` at startup and enforces `PRAGMA foreign_keys=ON`;
+    /// `signals.session_id` is a FOREIGN KEY into `sessions(id)`. A
+    /// signal written under any *other* id is rejected by the FK and
+    /// silently lost (M06.5 IRL 🔴-2 — the assembled smoke→drone
+    /// signal sink was dead because `AgentSdk` minted an independent
+    /// `SessionId::new()` that never matched this seeded id). The Tauri
+    /// shell registers this as managed state so `run_smoke_session`
+    /// constructs the `AgentSdk` with it. `spawn` always seeds a valid
+    /// hyphenated UUID; the `unwrap_or_default` guards only the
+    /// `spawn_with` test seam (arbitrary ids), which no production path
+    /// calls this on.
+    #[must_use]
+    pub fn sdk_session_id(&self) -> SessionId {
+        Uuid::parse_str(&self.session_id)
+            .map(SessionId)
+            .unwrap_or_default()
     }
 
     /// Send a [`DroneCommand::GracefulShutdown`], await the child to
