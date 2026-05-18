@@ -164,6 +164,8 @@ Before any commit lands, **all** of these must pass locally and on CI. No except
 
 **Strict TDD two-commit ordering (v1.7 — `<tdd_discipline>`).** For any work stage carrying `<tdd_discipline strict="true">` (the recommended default from M06.D onward per `STAGE-PROMPT-PROTOCOL.md` §7 + the §15 v1.7 changelog), the cycle is two commits on the same branch: (1) write all failing tests → commit as a standalone `test(M0X.Y): ...` commit → surface for red-phase approval; (2) implement WITHOUT modifying the test files → run the gate ordering above → commit as the impl commit whose body states the verifiable invariant `git diff <red-sha>..<impl-sha> -- '**/tests/**'` is EMPTY → surface for final approval. Net-new additive tests + mechanical test-file formatting go in a SEPARATE labelled follow-up commit. (Evidence basis — Nagappan 2009, TDAD arXiv:2603.17973, Anthropic TDD docs — and the M06.A negative case / M06.C reference implementation: see `STAGE-PROMPT-PROTOCOL.md` §7 + the §15 v1.7 changelog.)
 
+**Assembled-app-regression mandate (v1.8 — work-stage acceptance convention).** A stage's regression test must exercise the **assembled running-app path** (the real composition / real subprocess), not the isolated component that already passes its unit test. The phase-doc root cause is a **falsifiable hypothesis the assembled regression test must disprove**, not a premise — M06.5 proved the assembled test catches both incomplete *code* (Stage-V's blind spot) and an incomplete *phase-doc root-cause diagnosis* (B.fix's missed FK/session-id second condition). Binary-crate variant: when the target crate is binary-only and `git diff <red>..<impl> -- '**/tests/**'` is vacuously empty, the strict-TDD invariant (above) is satisfied instead by proving the in-source `#[cfg(test)]` block byte-identical red→impl via a scoped `git diff … src-tauri/src/<seam>.rs` (the M06.5.A.fix precedent). Authoring-time + verification-time surfaces of the same through-line: `STAGE-PROMPT-PROTOCOL.md` v1.8 `<construction_reachability_check>` + the §15 v1.8 changelog + the `STAGE-V-VERIFIER-PROMPT-TEMPLATE.md` Decision-6/7 codifications.
+
 The autofix step (2) before final verification (3) eliminates 6–15 mechanical lints per stage. `STAGE-PROMPT-PROTOCOL.md` §10 encodes the same ordering at the protocol layer.
 
 ### Rust gates
@@ -673,7 +675,7 @@ This checklist is the orientation before TDD's "Red" phase. Skip it and you'll d
 | Current scope and milestones | `docs/MVP-v0.1.md` |
 | Per-milestone prompt | `docs/build-prompts/M[NN]-*.md` |
 | Per-milestone template (v1.0 grandfathered) | `docs/build-prompts/TEMPLATE.md` |
-| Stage prompt XML schema (v1.5; M03 onward) | `STAGE-PROMPT-PROTOCOL.md` (repo root) |
+| Stage prompt XML schema (v1.8; M03 onward) | `STAGE-PROMPT-PROTOCOL.md` (repo root) |
 | Stage prompt schema validator | `bin/validate-stage-prompts.mjs` + `npm run validate:prompts` |
 | Stage V (Verifier) prompt template (v1.5+) | `docs/build-prompts/STAGE-V-VERIFIER-PROMPT-TEMPLATE.md` |
 | Verifier retrospective template (v1.5+) | `docs/build-prompts/retrospectives/VERIFIER-RETROSPECTIVE-TEMPLATE.md` |

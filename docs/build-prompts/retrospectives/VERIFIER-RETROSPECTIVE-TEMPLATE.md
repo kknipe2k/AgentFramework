@@ -66,6 +66,13 @@ Repeat for 🟡 (carries forward to next milestone's Stage A) and 🟢 (logged t
 
 Sum of three axes < 9 (avg < 3) is the **soft signal**: the V protocol needs iteration; document specifics in the next section.
 
+### Standing-rule compliance (v1.8 — M06.V Decisions 6 + 7)
+
+Recorded, not scored (does not affect the three-axis sum / soft-signal threshold). Confirms the codified standing rules from `STAGE-V-VERIFIER-PROMPT-TEMPLATE.md` were applied this V run:
+
+- **Decision 6 — delivered+tested / driver-absent / root = accepted-ADR carry-forward → 🟡 + mandatory enumeration:** [Applied to finding(s) #N — named ADR + quoted carry-forward clause + owning next milestone/stage | "Not triggered this V — no delivered-but-undriven primitive with an accepted-ADR root"]. Cross-checked `<wire_trace_vs_adr_reconcile>` / `<scope_change>` blocks: [yes / n/a — milestone has none].
+- **Decision 7 — `--features integration` reference-MCP-server smoke (binding from M07.V):** integration smoke executed: [N/M, not 0/0 | "0/0 — informational only, this V predates M07.V" | "🟡 #N — unrunnable, blocker: <what>"].
+
 ### Outcome (one-line marker)
 
 Pick one:

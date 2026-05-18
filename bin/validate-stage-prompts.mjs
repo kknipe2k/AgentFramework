@@ -78,6 +78,18 @@ const REQUIRED_BY_ROOT = {
   ],
 };
 
+// Lean-validator pass-through set (STAGE-PROMPT-PROTOCOL.md §11). Optional
+// slots introduced v1.3 → v1.8 are NOT allowlisted here: the regex parser is
+// permissive for non-root tags, so they pass through structurally without
+// enforcement. The v1.8 additions recognized as pass-through (no body
+// cross-check until v1.9+ per the §15 v1.8 changelog §G maintainer decision):
+//   <construction_reachability_check>  (children: <wire>)
+//   <wire_signature_audit>             (children: <wrapper>)
+//   <wire_trace_vs_adr_reconcile>      (children: <trace>)
+//   <phase_doc_inventory_audit shape=> (optional attr on type="store_slot")
+// This comment is the v1.8 "registration" — documentation, not logic. The
+// only version-gated REQUIRED-tag enforcement remains <simplify_pass> (v1.6).
+
 // Required tags that apply only when the phase doc's `**Protocol version:**`
 // banner is at or above the listed version. M05 and earlier closeouts predate
 // `<simplify_pass>`; v1.6 makes it required for M06+ closeouts only. See

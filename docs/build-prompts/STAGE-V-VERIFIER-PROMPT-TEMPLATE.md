@@ -89,6 +89,20 @@ This is the load-bearing discipline. The build agent + per-stage retro agent + c
       🔴 ("wire ambiguous: <which interpretation is right?>"). Forces the
       build agent to either fix the wire or file an ADR-class waiver per
       `<merge_gate waiver_path="...">` (see below).
+      STANDING RULE (codified from M06.V Decision 6 — apply every
+      milestone, do NOT re-derive): when the primitive IS delivered and
+      unit-tested but its PRODUCTION DRIVER is absent, AND the root cause
+      is an already-accepted ADR's NAMED carry-forward, classify 🟡
+      (NOT 🔴 — the primitive is correct; NOT silent) WITH mandatory
+      carry-forward enumeration: name the ADR, quote the exact
+      carry-forward clause, and name the next milestone/stage that owns
+      the wire-up. (M06.V handled trace #11/#6 correctly by reasoning
+      from ADR-0011 — this rule makes it template-codified, not
+      per-milestone re-derived.) Cross-check the milestone's
+      `<wire_trace_vs_adr_reconcile>` and `<scope_change>` blocks
+      (STAGE-PROMPT-PROTOCOL.md v1.8 / v1.6) before applying — if a
+      `<trace>` already flags the trace as ADR-superseded, the 🟡 +
+      enumeration is the expected, not surprising, outcome.
     </pass>
     <pass name="behavior">
       Runtime-render check. For each primitive in {{behavior-targets}}, run
@@ -100,6 +114,19 @@ This is the load-bearing discipline. The build agent + per-stage retro agent + c
       response. Static analysis is INSUFFICIENT for this pass — the M04
       BudgetHeaderBar bug (component shipped without its CSS rules) is the
       canonical case static analysis missed.
+      STANDING RULE (codified from M06.V Decision 7 — the explicit
+      M06.V→M07.V protocol carry-forward): from M07.V onward the
+      Behavior pass MUST run the `--features integration`
+      reference-MCP-server smoke (e.g.
+      `cargo test -p runtime-mcp --features integration`) and record
+      "integration smoke executed: N/M, not 0/0" in the verifier retro.
+      Rationale: by M07 a real MCP dispatch path exists; a mock-only
+      Behavior pass CANNOT rule out rmcp wire-format correctness — that
+      is the `transport/stdio.rs`+`http.rs` excluded-holdout latent
+      risk, attributed to the feature-gated `tests/integration.rs`
+      smoke which ran 0/0 at M06.V (not exercised). If the smoke is
+      genuinely unrunnable on the V environment, that is itself a 🟡
+      finding (not a silent skip) naming what blocked it.
     </pass>
     <pass name="multi_call_invariants">
       For each method / IPC command / Tauri command in {{multi-call-surface}},
@@ -180,6 +207,14 @@ When V's Inventory pass observes a file or symbol the phase doc X.2 / X.3 named 
 Conversely, `<expand>` children declare files / symbols / capabilities that landed without being in the phase doc X.2 / X.3 tables. V's Inventory pass should NOT flag these as drift; the expand block is the authoritative record that the addition was intentional and documented at stage time.
 
 If the milestone has NO `<scope_change>` block and a deliverable is missing, V proceeds as in M05.V — 🔴 finding; build agent must address via D.fix iter 1 OR file an ADR-class waiver per ADR-0008's interpretation-dispute lane.
+
+### Standing rules codified from M06.V (v1.8)
+
+Two rules the verifier previously re-derived every milestone are now codified inline in the pass prose above. Authors parameterizing this template do NOT strip them:
+
+1. **Delivered + tested / driver-absent / root = accepted-ADR carry-forward → 🟡 + mandatory enumeration** (M06.V Decision 6). In the Wire pass, when a primitive is correct and unit-tested but its production driver is absent because an already-accepted ADR explicitly carries the wire-up forward, the finding is 🟡 (not 🔴, not silent), and the finding text MUST name the ADR + quote the carry-forward clause + name the owning next milestone/stage. Cross-reference the milestone's `<wire_trace_vs_adr_reconcile>` (STAGE-PROMPT-PROTOCOL.md v1.8) and `<scope_change>` (v1.6) blocks — when a `<trace>` already declares the trace ADR-superseded, the 🟡 + enumeration is the expected outcome, not a surprise finding. The matching record line is in `VERIFIER-RETROSPECTIVE-TEMPLATE.md`.
+
+2. **M07.V+ Behavior pass MUST run the `--features integration` reference-MCP-server smoke** (M06.V Decision 7 — the explicit M06.V→M07.V protocol carry-forward). Mock-only Behavior cannot rule out rmcp wire-format correctness (the `transport/stdio.rs`+`http.rs` excluded holdout). From M07.V the smoke is a required Behavior input; the retro records `integration smoke executed: N/M, not 0/0`. An unrunnable smoke is a 🟡 finding naming the blocker, never a silent skip. For M06.V (already run) this is informational only; it binds from M07.V onward.
 
 ### Choosing `{{behavior-targets}}` — the Pass 3 inputs
 
