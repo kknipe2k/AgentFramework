@@ -873,8 +873,8 @@ type AgentEvent =
 
   // Gaps (see Phase 4 / WI-05)
   | { type: 'agent_missing'; agent_id: string; referenced_by: string } // schema error at load
-  | { type: 'gap_resolved'; capability_name: string; capability_kind: 'tool' | 'skill' | 'agent' }
-  | { type: 'capability_requested'; agent_id: string; capability_name: string; capability_kind: 'tool' | 'skill'; reason: string } // request_capability call
+  | { type: 'gap_resolved'; capability_name: string; capability_kind: 'tool' | 'skill' | 'mcp' | 'agent' }
+  | { type: 'capability_requested'; agent_id: string; capability_name: string; capability_kind: 'tool' | 'skill' | 'mcp' | 'agent'; reason: string } // request_capability call (4-kind set; matches the shipped schema + §4b)
 
   // Budget & cost (see §2a / WI-07)
   | { type: 'budget_warning';     scope: 'session' | 'framework' | 'global'; spent_usd: number; cap_usd: number; percent: number }
@@ -882,10 +882,12 @@ type AgentEvent =
   | { type: 'budget_suspended';   scope: 'session' | 'framework' | 'global'; spent_usd: number; cap_usd: number; percent: number }
   | { type: 'budget_exceeded';    scope: 'session' | 'framework' | 'global'; spent_usd: number; cap_usd: number }
 
-  // Hooks & Rails (see §4a / WI-02)
-  | { type: 'hook_started'; hook_id: string; category: 'verify' | 'lint' | 'build' | 'test' | 'custom'; firing_point: string }
-  | { type: 'hook_passed';  hook_id: string; duration_ms: number; output_preview?: string }
-  | { type: 'hook_failed';  hook_id: string; duration_ms: number; error: string; on_failure: 'block' | 'warn' | 'rollback' }
+  // Verify &amp; Rails (see §4a / WI-02) — event names are `verify_*`
+  // (the shipped schema + Rust + TS + renderer; spec reconciled from
+  // the historical `hook_*` per the post-M05/M06 docs(spec) PR).
+  | { type: 'verify_started'; hook_id: string; category: 'verify' | 'lint' | 'build' | 'test' | 'custom'; firing_point: string }
+  | { type: 'verify_passed';  hook_id: string; duration_ms: number; output_preview?: string }
+  | { type: 'verify_failed';  hook_id: string; duration_ms: number; error: string; on_failure: 'block' | 'warn' | 'rollback' }
   | { type: 'rail_triggered'; rail_id: string; policy: 'hard' | 'soft'; firing_point: string; message: string; agent_id?: string }
 
   // Mode (see §3b / WI-15)
@@ -1126,8 +1128,8 @@ A signal is a persisted, schema-validated record of one operation. Eight signal 
 | 2 | `skill` | `skill_loaded`, `skill_load_requested` | Skill-load record with mode, trigger_kind, parent agent |
 | 3 | `agent` | `agent_spawned`, `agent_complete`, `agent_error` | Subagent record with tools_used summary, files_touched, parent chain |
 | 4 | `decision` | `decision_record`, `capability_grant`, `tier_changed` | Discrete decision points with rationale and confidence |
-| 5 | `verify` | `hook_*` where category=verify; `rail_triggered` | Verification outcome with test results, coverage, failing items |
-| 6 | `error` | `agent_error`, `hook_failed`, `tool_missing`, `capability_violation` | Error chain with retry_of correlation |
+| 5 | `verify` | `verify_*` where category=verify; `rail_triggered` | Verification outcome with test results, coverage, failing items |
+| 6 | `error` | `agent_error`, `verify_failed`, `tool_missing`, `capability_violation` | Error chain with retry_of correlation |
 | 7 | `hitl` | `hitl_requested`, `hitl_response`, `plan_approval_*`, `task_escalated` | Human intervention record with decision time, response |
 | 8 | `session` | `session_start`, `plan_complete`, `session_end` | Session-level summary boundaries |
 
@@ -1236,6 +1238,8 @@ haiku   → haiku   (no further downshift; once at haiku, only HITL/hard-stop re
 ```
 
 Frameworks can replace the hook with their own selector (e.g., a port of `model-selector.sh`'s learning-based selection).
+
+> **Model-deprecation policy (v0.1 stub, #15).** The built-in `DefaultLadder` above hardcodes specific Anthropic model IDs (e.g. `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5`). v0.1 posture: model IDs are **hardcoded constants**; the runtime does **no** deprecation detection and does **not** reject a configured-but-retired model ID — if Anthropic retires an ID, the API call fails and surfaces as a normal `ProviderEvent::Error` (terminal). The hardcoded ladder is maintained by editing the constant + bumping the spec/CLAUDE-md model-identity references in one PR. **Open for v1.0 (product decision, not pinned here):** whether the runtime should (a) detect a deprecated/retired ID at config-load and refuse with a clear remediation message, (b) auto-substitute the nearest successor via a maintained alias table, and how the `DefaultLadder` constants are kept current (manual vs a checked-in model-catalog file). v0.1 deliberately does the simplest correct thing (hardcode + fail-loud-on-API-error); the richer policy is explicitly deferred.
 
 ### Budget events (added to Phase 2 union)
 
@@ -1617,7 +1621,7 @@ The runtime’s job on a gap is to stop cleanly and tell the user exactly what i
 
 ### §4b Detection Mechanisms
 
-Three layers, two ship in v1. Each layer emits `tool_missing` or `skill_missing` events; Phase 4's flow below handles both.
+Three layers, two ship in v1. Each layer emits a gap event of kind `tool | skill | mcp | agent` (the shipped 4-kind set — `mcp` and `agent` reach detection via Layer-2 / M06 dispatch, not Layer-1; see the v0.1 deferral note below); Phase 4's flow below handles all kinds.
 
 #### Layer 1: Static (load-time and spawn-time)
 
@@ -1633,6 +1637,8 @@ When a framework loads or an agent is spawned, the runtime validates every refer
 
 Skill-missing is recoverable (continue without, or fetch from registry). Tool-missing is not (the agent that needs it cannot proceed).
 
+> **v0.1 `mcp_missing` deferral (M05/M06 pin).** The shipped gap schema reserves an `mcp_missing` variant (the gap kind set is 4-kind: `tool | skill | mcp | agent`), but v0.1 framework JSON declares no MCP-server reference field, so **Layer-1 static validation never emits `mcp_missing`** — there is nothing to statically validate against. In v0.1 the `mcp` kind reaches gap detection only via the Layer-2 `request_capability` path (M05) and the M06 MCP-dispatch path. Layer-1 `mcp_missing` rows are deferred to a future milestone that adds an MCP-server reference to framework JSON.
+
 #### Layer 2: `request_capability` meta-tool
 
 The runtime auto-injects `request_capability` into every agent's tool list. The model uses it when it realizes mid-task that it needs something not in its toolset.
@@ -1647,7 +1653,7 @@ The runtime auto-injects `request_capability` into every agent's tool list. The 
     type: "object",
     properties: {
       capability_name: { type: "string", description: "Best guess at the name of the missing capability." },
-      capability_kind: { type: "string", enum: ["tool", "skill"], description: "tool = callable, skill = instructional context" },
+      capability_kind: { type: "string", enum: ["tool", "skill", "mcp", "agent"], description: "tool = callable, skill = instructional context, mcp = MCP-server capability (M06+), agent = sub-agent" },
       reason:          { type: "string", description: "Why you need it — what task it would unlock." },
       example_input:   { type: "object", description: "If a tool, an example input you would provide.", nullable: true }
     },
@@ -1656,7 +1662,7 @@ The runtime auto-injects `request_capability` into every agent's tool list. The 
 }
 ```
 
-A `request_capability` call translates to `tool_missing` or `skill_missing` based on `capability_kind`. The agent's tool result stays unresolved until the gap is closed (or the user dismisses it). GapNode appears with the agent's stated `reason`.
+A `request_capability` call translates to a gap event of the kind named by `capability_kind` (`tool | skill | mcp | agent` — the shipped 4-kind set; the `capability_requested` / `gap_resolved` events and the renderer GapNode kind union carry the same four). The agent's tool result stays unresolved until the gap is closed (or the user dismisses it). GapNode appears with the agent's stated `reason`.
 
 System prompt addition (added to every agent): *"If you need a capability you don't have, call `request_capability` rather than improvising."*
 
@@ -1792,12 +1798,14 @@ Hook firing points (in `framework.hooks`):
 }
 ```
 
-### Hook events (added to Phase 2 union)
+### Verify events (added to Phase 2 union)
+
+Event `type` strings are `verify_*` (the shipped schema/Rust/TS/renderer; spec reconciled from the historical `hook_*` per the post-M05/M06 docs(spec) PR — the `Hook*` type-alias names below are spec-internal and unchanged).
 
 ```typescript
-| { type: 'hook_started'; hook_id: string; category: HookCategory; firing_point: string; ref: HookRef }
-| { type: 'hook_passed';  hook_id: string; duration_ms: number; output_preview?: string }
-| { type: 'hook_failed';  hook_id: string; duration_ms: number; error: string; on_failure: 'block' | 'warn' | 'rollback' }
+| { type: 'verify_started'; hook_id: string; category: HookCategory; firing_point: string; ref: HookRef }
+| { type: 'verify_passed';  hook_id: string; duration_ms: number; output_preview?: string }
+| { type: 'verify_failed';  hook_id: string; duration_ms: number; error: string; on_failure: 'block' | 'warn' | 'rollback' }
 ```
 
 ### Rails primitive
@@ -1937,6 +1945,8 @@ Multi-Server
   - Per-server auth config (stored in secrets vault, not in session state)
 ```
 
+> **v0.1 implementation pin (M06 — Health Monitoring architecture, #10).** The "Drone pings MCP servers on heartbeat cycle" framing above is the **v1.0** target. v0.1 ships health monitoring **in-crate**: `runtime-mcp::spawn_health_pinger` (30 s default interval) owned by the MCP client, **not** a drone-driven heartbeat ping — v0.1 has no drone↔MCP path (the drone is the signal/snapshot system-of-record; MCP lifecycle lives in `runtime-mcp`). Explicitly **v1.0**: "auto-retry with backoff" and "configurable retry policy per server" — v0.1 relies on the `rmcp` transport's default reconnect behavior only. The graph still shows the connection status; the *mechanism* is the in-crate pinger.
+
 ### §5a Tool Namespace Resolution
 
 > **Locked (2026-04-18, WI-11).** Algorithm for resolving tool names across multiple connected MCP servers.
@@ -1951,8 +1961,8 @@ Multi-Server
    }
    ```
    Aliases override short-name ambiguity errors.
-4. **Server name constraints:** server names cannot contain `__`. Tools may contain `__`; the parser splits on the first `__` from the left.
-5. **Re-resolution on connect/disconnect:** when an MCP connects/disconnects, runtime re-evaluates short-name uniqueness. Newly-ambiguous short names emit a `tool_alias_ambiguous` warning event so frameworks can pin via `mcp_aliases`.
+4. **Server name constraints:** server names cannot contain `__`. Tools may contain `__`; the parser splits on the first `__` from the left. **Exact charset (v0.1, M06 pin):** the shipped `schemas/mcp.v1.json` `McpServerName` constrains a server name to `^[a-z0-9][a-z0-9-]*$` (lowercase alphanumeric and hyphen, must start alphanumeric, length 1–64). This both enforces "no `__`" structurally and keeps server names URL/CLI-safe; it is the authoritative charset (the prose constraint is the *why*, this pattern is the *what*).
+5. **Re-resolution on connect/disconnect:** when an MCP connects/disconnects, runtime re-evaluates short-name uniqueness. Newly-ambiguous short names emit a `tool_alias_ambiguous` warning event so frameworks can pin via `mcp_aliases`. **v0.1 scope (M06 pin, #11):** v0.1 emits `tool_alias_ambiguous` only on the **dispatch-time `Ambiguous` outcome** (a tool call resolves to >1 candidate). The full **connect/disconnect re-resolution driver** (re-evaluating *all* short names on every connection change and emitting ambiguities proactively) is an **M07 carry-forward — ADR-0011(b)**; M07.V Wire trace #6 is its spec endpoint. v0.1 frameworks pin via `mcp_aliases` as today; the proactive driver only changes *when* the warning fires, not the resolution algorithm.
 
 Example:
 - Connected: `pdf-mcp` (exposes `extract_text`), `image-mcp` (exposes `extract_text`)
@@ -1969,6 +1979,8 @@ MCPNode shows:
   - Tool call count and avg latency (hover detail)
   - Error rate (color shifts amber/red if degraded)
 ```
+
+> **v0.1 implementation pin (M06 — MCPNode field scope, #13).** v0.1 ships the **live-status subset only**: server name/URL, connection status (live indicator), and active tool calls (animated edges). The **hover-detail aggregates — tool-call count, avg latency, error rate (amber/red degradation)** — are **v1.0** (they require per-server call-history aggregation the v0.1 renderer does not maintain). The v0.1 node still color-shifts on connection *status*, not on an error-*rate* threshold.
 
 -----
 
@@ -2291,6 +2303,12 @@ Before any operation is dispatched to a tool or sandbox:
 - Shell access (via Bash) → check `shell == true`.
 - Agent spawn → check `spawn_agents` includes the target.
 
+> **v0.1 implementation pins (M05 L1/L2a — `CapabilityEnforcer` + `narrow`).**
+> - **Layer numbering.** The shipped runtime calls the application-level check the **L1 enforcer** (`crates/runtime-main/src/capability/enforcer.rs`); it is this spec's **L2a**. "L2a narrowing" in the runtime is the `narrow(parent, proposed)` Agent→Agent capability intersection. Spec L-numbers and runtime L-names are a fixed mapping, not a contradiction.
+> - **Enforcer denial reasons (#4).** `CapabilityError::Denied` discriminates two distinct reasons: `NoDeclarations` (the agent id is absent from the grant map) vs `NoMatchingGrant` (declared, but no grant matches the requested capability). Both surface as a `capability_violation`; the distinction is preserved for diagnostics.
+> - **v0.1 streaming-only enforcement timing (#5).** The v0.1 SDK is streaming-only — Anthropic dispatches tools server-side, so `ProviderEvent::ToolUse` is a *post-dispatch report*, not a pre-dispatch hook. The production L1-enforcer + L2a-narrow wire-up therefore lands at **M06 Stage A** (`event_pipeline.rs` translation + `agent_sdk.rs` framework-loader walk), recorded and waived in **ADR-0009** (SATISFIED at M06). Pre-M06 the primitive exists and is unit-tested; the production call sites are the M06.A deliverable.
+> - **Cross-variant scope containment (#6).** `narrow`/`check` containment is exactly: `glob ⊇ glob` iff equal; `glob ⊇ path` iff the path matches the glob; `domain ⊇ domain` iff equal **or** the parent is a leading-`.` suffix of the child; `path ⊇ path` iff equal **or** a separator-terminated prefix. The only permitted **cross-variant** containment is `glob ⊇ path`; all other cross-variant pairs never contain.
+
 **L2b — OS-level enforcement (Tauri allowlist + sandbox process)**
 
 The runtime exploits the Tauri + Rust + per-artifact-sandbox stack to enforce capabilities at the OS boundary, not just in application code:
@@ -2325,6 +2343,8 @@ Drone spawns a dedicated sandbox process for validation. Validator runs:
 
 Validator output is attached to the artifact as `validation_report` and surfaced in the Builder UI.
 
+> **v0.1 implementation pin (M05 L3 — `runtime-sandbox` install order, #7).** The sandbox installs its fences in a fixed order: **landlock (filesystem) → seccomp (syscall allowlist) → `ipc::serve` (bind)**. Because `ipc::serve` `bind()`s its control socket *inside* the fence, the seccomp allowlist MUST include `socket` / `bind` / `listen` / `accept4` / `unlink` / `mkdirat`, and the landlock ruleset MUST allow read+write under the socket's parent directory. Installing seccomp before landlock, or fencing the socket directory read-only, deadlocks the sandbox at startup — the order above is load-bearing, not incidental.
+
 ##### L4: Tiered Human Gate
 
 Three tiers. User starts at Novice; promotion requires explicit opt-in with warning.
@@ -2342,6 +2362,8 @@ Promotion is sticky but reversible. Tier changes are audit-logged (L5).
 - Auto-install of an artifact whose declared capabilities exceed what the validator could verify.
 - Bypassing L2 enforcement at runtime.
 
+> **v0.1 implementation pin (M05 L4 — runtime-time gate + promotion path, #8).** The spec text above frames L4 as an *install-time* review. The shipped v0.1 runtime is stronger: a **runtime-time tier gate filters every dispatch** by the active tier, not only the install. Install-time auto-accept (MVP-v0.1 §M5) still holds transitively because runtime-time enforcement is strictly stronger than install-time. **Tier promotion** goes through a **renderer-side confirmation UX + an authoritative Tauri command — NOT the runtime `HitlSeam`** (M05.D Decision D7; avoids a 10th `HitlTrigger` variant and keeps promotion a deliberate out-of-band user action, not an in-loop interrupt). v0.1 ships Novice + Promoted only; Operator is v1.0 (§0d).
+
 ##### L5: Provenance & Audit
 
 Every generated artifact carries a `provenance` block in frontmatter:
@@ -2358,7 +2380,7 @@ provenance:
   signature: "ed25519:..."                            # runtime-signed; key per-installation
 ```
 
-Every install / reject / uninstall / capability-violation / tier-change is appended to `.aria-runtime/skills.audit.jsonl`:
+Every install / reject / uninstall / capability-violation / tier-change is appended to `.aria-runtime/skills.audit.jsonl`. **Audit `kind` enumeration (v0.1).** The shipped `kind` values are: `install`, `reject`, `uninstall`, `capability_violation`, `tier_changed`, and — added at **M06 (#14 pin)** — the four MCP-specific kinds **`mcp_installed`**, **`mcp_uninstalled`**, **`mcp_auth_granted`**, **`mcp_request_blocked`**. This is the authoritative kind set for the v0.1 minimal JSONL shape (§8.security L5 pin below).
 
 ```json
 {
@@ -2378,6 +2400,8 @@ Every install / reject / uninstall / capability-violation / tier-change is appen
 ```
 
 Audit log is append-only, hash-chained (each entry includes the hash of the previous entry). Redaction rule: prompts and tool inputs containing detected secrets are replaced with `[REDACTED:<reason>]` before logging; original kept in encrypted local-only store accessible from Builder.
+
+> **v0.1 implementation pin (M05 L5 — minimal JSONL audit shape, #9).** The rich entry above (per-field `provenance` block, ISO-8601 timestamps, hash-chaining, writer-side secret redaction, encrypted secret store) is the **v1.0** target. v0.1 ships the **minimal append-only JSONL shape** `{ timestamp_unix_ms, session_id, kind, details }` (`crates/runtime-main/src/audit/`). Explicitly **v1.0+**: hash-chaining, ISO-8601 timestamps, the encrypted original-secret store. v0.1 specifics (M05.E Decision E1): secret redaction is enforced **at the call site**, not in the writer (the writer is dumb and never sees raw secrets); audit growth is **unbounded** in v0.1 (log rotation is post-v0.1). The authoritative `kind` enumeration (incl. the four M06 MCP kinds) is the list immediately above this subsection.
 
 #### Threat Model
 
