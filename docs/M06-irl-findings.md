@@ -85,3 +85,189 @@ Clicking the budget bar opens a settings panel that accepts a saved amount, but 
 - **🟡-1..4 → M07 Stage A** `<read_prior_milestones>` carry-forward (M06-IRL → M07.A, mirroring M04-IRL → M05.A).
 - **🟢-1..3 → `docs/tech-debt.md`.** 🟢-4, 🟢-5 → fixed in `docs/M06-irl-test-plan.md` in this PR.
 - This document is the M07 Stage A gating input. M07.A does not start until 🔴-1 and 🔴-2 are fixed and their cards re-tested green.
+
+---
+
+## Resolution (M06.5 fix cycle)
+
+> **Appended by M06.5 Stage C.fix** (2026-05-18). Prior sections above are
+> **unmodified** — this section is append-only (the file is not the
+> `docs/gap-analysis.md` append-only ledger, but the same audit-trail
+> discipline applies; mirrors the M04-irl → M05.A precedent). The M06.5
+> fix cycle (`docs/build-prompts/M06.5-irl-fix.md`) **code-resolved** the
+> two 🔴 cards on branch `claude/m06.5-irl-fix` (commits `7fc3277` /
+> `9653718`; ADR-0012 / ADR-0013) with **automated assembled-composition
+> regression tests as the interim verification of record**. The
+> **real-app IRL re-confirmation is deferred-and-tracked to the post-M07
+> IRL pass** per the between-milestone IRL model (maintainer-directed,
+> 2026-05-18) — gotcha #23 (a Tauri 2.x window cannot be driven/observed
+> from the agent side) is *why* the real-app step cannot run in-stage;
+> the disposition is **deferred, not closed**.
+
+### 🔴-1 — MCP registry write resolves to a stray DB → **CODE-RESOLVED (interim verification of record); real-app IRL re-confirmation deferred to post-M07 IRL pass**
+
+- **Fix:** M06.5 Stage A.fix, impl commit **`7fc3277`** (red `68b45ed`).
+  `open_mcp_client` and the drone now resolve the session DB through one
+  shared path-agnostic seam `session_db::session_db_path` +
+  `SESSION_DB_FILENAME` constant (`src-tauri/src/session_db.rs`, new);
+  the independent `dir.join("mcp.sqlite")` is gone. The `Registry` stays
+  path-agnostic (untouched). **ADR-0012** (single source-of-truth
+  session DB; registry shares it via a second WAL connection) flipped
+  `Proposed → Accepted` in this cycle.
+- **Interim verification of record (durable, automated — the Stage-V
+  blind spot, now pinned):** three assembled-path regression tests in
+  `src-tauri/src/session_db.rs`, green in the full v1.6 canonical CI
+  suite (`cargo test --workspace --features runtime-mcp/test-helpers`,
+  the `cargo-test` job in `.github/workflows/ci.yml`). These exercise
+  the assembled `src-tauri` composition (not the isolated `Registry`
+  Stage-V verified) and stand as the **interim** verification until the
+  post-M07 real-app IRL pass re-confirms:
+  - `registry_path_equals_drone_session_db_path` — the path
+    `open_mcp_client` resolves is byte-identical to the path
+    `resolve_db_path` gives the drone (the assertion Stage-V
+    structurally lacked).
+  - `add_server_then_list_round_trips_through_the_same_store` —
+    add→list across a *separately-opened* connection at the resolved
+    path (ADR-0012's two-connection invariant; the
+    drone-reads-what-the-UI-wrote contract).
+  - `no_stray_mcp_sqlite_path_literal_constructed` — regression pin
+    against re-introducing a divergent registry filename.
+- **Real-app IRL re-confirmation (Scenario B4/B5/B7) — DEFERRED to the
+  post-M07 IRL pass (tracked, not closed).** gotcha #23: a Tauri 2.x
+  window cannot be programmatically driven or observed from the agent
+  side, so the real-app UI re-run cannot execute in-stage; per the
+  between-milestone IRL model (maintainer-directed 2026-05-18) it is
+  deferred to the post-M07 real-app IRL pass and tracked in the
+  carry-forward below — **the code fix + the interim automated tests
+  unblock M07.A; the real-app card is not marked closed until that
+  pass re-confirms it.** Recorded **before** (verbatim, this document
+  §🔴-1): *"Three DB files in `%LOCALAPPDATA%\dev.aria-runtime.app\`:
+  the row landed in `mcp.sqlite` (4 KB, stale 12:49); the **live drone
+  DB is `session.sqlite`** (3 MB, actively written, `mcp_servers` empty
+  there); plus a 0-byte stray `mcp_servers.sqlite`. Three divergent
+  path resolutions; the system reads `session.sqlite` → server
+  invisible and (downstream) unusable."* — and *"audit shows
+  `mcp_installed` → **MCP Servers panel still says "No MCP servers
+  installed."**"* The code fix makes both call sites resolve the one
+  `session.sqlite` and the round-trip test proves cross-connection
+  visibility in that single file; the post-M07 IRL pass re-runs the
+  real-app repro to confirm the observable user-facing behavior.
+
+### 🔴-2 — Agent signal stream not persisted to the live drone DB → **CODE-RESOLVED (signals; interim verification of record); real-app IRL re-confirmation deferred to post-M07 IRL pass; `token_usage` carries as a distinct finding**
+
+- **Fix:** M06.5 Stage B.fix, impl commit **`9653718`** (red
+  `fdd0c8e`; labelled follow-up `f1129e4` — test composition-model +
+  mechanical clippy/fmt + the `signal_kind` unit test). A private
+  `persist_signal` at the single `AgentSdk::emit` choke point
+  (`crates/runtime-main/src/sdk/agent_sdk.rs`) now persists every
+  signal-bearing `AgentEvent` to the drone via the **existing**
+  `DroneClient::write_signal` → `DroneCommand::WriteSignal` → drone
+  `handle_write_signal` (which also runs the VDR + plan projectors),
+  under the run's `SessionId`, additive to the unchanged
+  `event_tx.send`, best-effort (a transient drone-IPC failure is
+  logged, never aborts the run). No new field / constructor /
+  IPC-protocol change.
+- **Second necessary condition (surfaced + maintainer-approved during
+  the assembled-app regression build; the phase doc diagnosed only the
+  missing emission):** `signals.session_id` is a FK into `sessions(id)`
+  under `PRAGMA foreign_keys=ON`, and the drone seeds exactly one
+  `sessions` row = its `--session-id`; `DroneLifecycle::spawn` minted a
+  `Uuid` independent of `run_smoke_session`'s `SessionId::new()`, so
+  every signal was silently FK-rejected even with the emission wired.
+  `DroneLifecycle::sdk_session_id()` now exposes the seeded id; it is
+  managed state; `run_smoke_session[_with]` builds the `AgentSdk` with
+  that shared `SessionId` (`src-tauri/src/{drone_lifecycle,main,commands}.rs`
+  — composition-layer fix parallel to 🔴-1/ADR-0012, no drone/IPC
+  change). Recorded as **ADR-0013** (cross-process run identity; the
+  drone-seeded session id is canonical, the in-process SDK adopts it),
+  `Proposed → Accepted` in this cycle — the 🔴-2 sibling to ADR-0012.
+- **Interim verification of record (durable, automated — the Stage-V
+  blind spot, now pinned; stands until the post-M07 real-app IRL pass
+  re-confirms):** assembled real-drone-subprocess regression in
+  `crates/runtime-main/tests/smoke_signal_persistence.rs`, green in the
+  full v1.6 canonical CI suite (same `cargo-test` job). Drives
+  `AgentSdk::run_agent` (the exact path `run_smoke_session_with` wraps)
+  against a real drone subprocess with a stub provider (no live
+  Anthropic) — **not** a manual `client.write_signal()` like the
+  existing-green `recovery_lifecycle.rs` (the Stage-V blind spot):
+  - `smoke_session_persists_signals_to_live_drone_db` — signals land
+    under the run's session id.
+  - `smoke_session_signal_count_matches_emitted_event_count` — wiring
+    complete, not partial.
+  - `transient_signal_write_failure_does_not_abort_run` — drone killed
+    mid-run → run still `Ok`, renderer sink intact.
+  - plus the `signal_kind_maps_each_coarse_category` unit test pinning
+    the `AgentEvent → signals.type` mapping.
+- **`token_usage = 0` — DISTINCT OPEN FINDING, carries to M07.A (NOT
+  resolved by B.fix).** The IRL ground truth had **both** `signals = 0`
+  *and* `token_usage = 0`. B.fix closes the signal stream; it does
+  **not** populate `token_usage`, because **no production code writes
+  `token_usage` anywhere** — the sole `INSERT` is `#[cfg(test)]` in
+  `crates/runtime-drone/src/vdr.rs`, and `handle_write_signal` runs
+  only the VDR + plan projectors, neither of which targets
+  `token_usage` (`command_handler.rs` projector set;
+  `vdr.rs` `is_projection_eligible` = `decision|verify`). This is a
+  *separate missing-projector defect*, not part of 🔴-2's
+  missing-emission, and was maintainer-approved as out of B.fix scope.
+  It carries to **M07 Stage A** alongside 🟡-1..4 (a new distinct
+  finding, tracked here so M07.A absorbs it; severity: persistence
+  completeness for budget/recovery in M07's live loop — to be
+  triaged at M07.A intake).
+- **Real-app IRL re-confirmation (Scenario A6 + C-7) — DEFERRED to the
+  post-M07 IRL pass (tracked, not closed)**, same disposition as 🔴-1:
+  gotcha #23 is why the real-app re-run cannot execute in-stage; per
+  the between-milestone IRL model (maintainer-directed 2026-05-18) it
+  is deferred to the post-M07 real-app IRL pass and tracked in the
+  carry-forward below. The code fix + the interim automated tests
+  unblock M07.A; the real-app card is not closed until that pass
+  re-confirms. Recorded **before** (verbatim, this document §🔴-2):
+  *"`session.sqlite`: `signals = 0`, `token_usage = 0` — while
+  `heartbeats = 15155` and `snapshots = 14` in the *same* DB. The
+  drone is alive and persisting (heartbeats/snapshots) to the correct
+  file, but the **agent signal stream lands nothing**. Signals exist
+  in none of the three DBs."* The code fix makes the assembled smoke
+  path persist signals under the run's (now shared) session id;
+  `token_usage` remains `0` by the distinct open finding above; the
+  post-M07 IRL pass re-runs the real-app repro to confirm the
+  observable behavior.
+
+### Disposition update (M07.A gate)
+
+- **🔴-1, 🔴-2 → CODE-RESOLVED with automated assembled-composition
+  tests as the interim verification of record.** The code fixes
+  (`7fc3277` / `9653718`; ADR-0012 / ADR-0013) plus the durable
+  automated regression tests above (which exercise the assembled
+  composition Stage-V could not see) are the **interim** verification.
+  **The two 🔴 no longer block M07 Stage A start.** The **real-app IRL
+  re-confirmation is deferred-and-tracked to the post-M07 IRL pass**
+  per the between-milestone IRL model (maintainer-directed) — gotcha
+  #23 is why it cannot run in-stage; the cards are **deferred, not
+  closed**, until that pass re-confirms the observable behavior.
+- **Post-M07 real-app IRL carry-forward list** (the between-milestone
+  IRL pass after M07 re-runs these against the built app):
+  - **🔴-1 + 🔴-2 real-app IRL re-confirmation** — Scenario B4/B5/B7
+    (registry add→list visible in the MCP Servers panel + the
+    `session.sqlite` `mcp_servers` row) and Scenario A6 + C-7
+    (`session.sqlite` `signals > 0` under the run session id). Code is
+    resolved + interim-automated-verified; this is the deferred
+    real-app observable confirmation.
+  - **`token_usage = 0`** — a distinct missing-projector finding (no
+    production `token_usage` writer; sole `INSERT` is `#[cfg(test)]` in
+    `runtime-drone/vdr.rs`).
+  - **🟡-1..4** — HITL `ui_variant` not honored; `npx` Windows `.cmd`
+    shim; stale Test error banner; budget settings not state-wired.
+    Untouched by this fix cycle, per scope lock.
+- **🟡-1..4 also carry to M07 Stage A `<read_prior_milestones>`
+  unchanged** (M06-IRL → M07.A, mirroring M04-IRL → M05.A), in addition
+  to the post-M07 real-app IRL re-run above.
+- **🟢-1..5 → unchanged** (🟢-1..3 in `docs/tech-debt.md`; 🟢-4/-5
+  fixed in `docs/M06-irl-test-plan.md`).
+- Per CLAUDE.md §20, this fix cycle adds **no `docs/gap-analysis.md`
+  entry**; the resolution of 🔴-1/🔴-2 (and the new `token_usage`
+  carry) flows into **M07's gap-analysis Carry-forward** section.
+- The assembled-app-regression mandate (each fix's regression test must
+  exercise the assembled running-app path, not the isolated component
+  that already passes its Stage-V unit test) is recorded as the
+  empirical input for **Cycle 2 (M06.6)** to graduate into a permanent
+  verification stage — recorded only; this cycle changed no protocol
+  artifact.
