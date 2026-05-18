@@ -3,6 +3,7 @@
 mod commands;
 mod drone_lifecycle;
 mod sandbox_lifecycle;
+mod session_db;
 
 use std::path::PathBuf;
 use std::sync::Arc;
