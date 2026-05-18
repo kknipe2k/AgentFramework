@@ -519,10 +519,88 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
     }
 
     async fn emit(&self, event: AgentEvent) -> Result<(), SdkError> {
+        // Persist BEFORE the renderer send so a slow/full renderer
+        // channel cannot starve the drone signal sink. Additive: the
+        // unchanged `event_tx.send` below is the in-mem-bus / renderer
+        // sink (spec §11); `persist_signal` restores the drone /
+        // signals+VDR / plan-projector sinks (M06.5 IRL 🔴-2).
+        self.persist_signal(&event).await;
         self.event_tx
             .send(event)
             .await
             .map_err(|_| SdkError::EventChannelClosed)
+    }
+
+    /// Persist one `AgentEvent` to the drone `signals` table via the
+    /// existing [`DroneClient::write_signal`] IPC, under the run's
+    /// [`SessionId`].
+    ///
+    /// Best-effort by contract: a transient drone-IPC failure is logged
+    /// and swallowed so it never aborts the agent run (M06.5 IRL 🔴-2;
+    /// the renderer sink — the unchanged `event_tx.send` in
+    /// [`Self::emit`] — keeps working through a drone blip). The drone's
+    /// `handle_write_signal` runs the VDR + plan projectors in the same
+    /// transaction, so this single call site restores three of spec
+    /// §11's four sinks; the fourth (in-mem bus) is `event_tx.send`.
+    ///
+    /// The `AgentEvent → (signal_id, kind, event, context_type, payload)`
+    /// mapping is derived from the established `write_signal` call sites
+    /// (`crates/runtime-main/tests/recovery_lifecycle.rs:142-191`) + the
+    /// `signals` table columns
+    /// (`crates/runtime-drone/migrations/000_initial.sql`), not invented:
+    /// `payload` is the serde-tagged event object (`AgentEvent` is
+    /// `#[serde(tag = "type")]`, matching recovery's
+    /// `json!({"type": …, …})` shape); `event` is that tag; `kind` is
+    /// the coarse `signals.type` category; `session_id` is the run's id
+    /// (same value carried by `AgentSpawned`, gotcha: a mismatched
+    /// session id is as broken as no signal for recovery/replay).
+    async fn persist_signal(&self, event: &AgentEvent) {
+        let payload = match serde_json::to_value(event) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(error = %e, "signal payload serialize failed; skipping persist");
+                return;
+            }
+        };
+        let event_name = payload
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        if let Err(e) = self
+            .drone_client
+            .write_signal(
+                Uuid::new_v4().to_string(),
+                self.session_id.as_string(),
+                signal_kind(&event_name).to_string(),
+                event_name,
+                "agent_loop".to_string(),
+                payload,
+            )
+            .await
+        {
+            tracing::warn!(error = %e, "write_signal failed; continuing agent run");
+        }
+    }
+}
+
+/// Coarse `signals.type` category for an `AgentEvent`'s serde tag.
+///
+/// Mirrors the kinds the established `write_signal` call sites use
+/// (`tests/recovery_lifecycle.rs`: `tool_invoked`→`"tool"`,
+/// `plan_created`/`task_started`→`"agent"`, `decision`→`"decision"`)
+/// and what `runtime_drone::vdr::is_projection_eligible` keys on
+/// (`decision` | `verify` project to the VDR; everything else is a
+/// plain signal). Derived, not invented.
+fn signal_kind(event_name: &str) -> &'static str {
+    if event_name.starts_with("tool_") {
+        "tool"
+    } else if event_name.starts_with("decision") {
+        "decision"
+    } else if event_name.starts_with("verify_") {
+        "verify"
+    } else {
+        "agent"
     }
 }
 

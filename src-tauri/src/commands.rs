@@ -113,12 +113,18 @@ where
 pub async fn run_smoke_session(
     app: AppHandle,
     drone: tauri::State<'_, Arc<DroneClient>>,
+    session: tauri::State<'_, SessionId>,
 ) -> Result<(), CmdError> {
     let api_key = read_api_key().inspect_err(|e| {
         tracing::error!(error = %e, "run_smoke_session: read_api_key failed");
     })?;
     let provider = AnthropicProvider::new(api_key.clone());
     let drone_client = Arc::clone(&drone);
+    // M06.5 🔴-2: write signals under the drone's seeded session id
+    // (managed at setup from DroneLifecycle::sdk_session_id) — a
+    // SessionId::new() here would never match the signals→sessions FK
+    // and every signal would be silently rejected.
+    let session_id = session.inner().clone();
     let (tx, rx) = mpsc::channel::<AgentEvent>(64);
     let app_clone = app.clone();
     let forwarder = tokio::spawn(forward_events(rx, app_clone));
@@ -129,7 +135,8 @@ pub async fn run_smoke_session(
     // construction + a live agent-loop exercise are the M07
     // carry-forward; the `*_with` injection seam below is what M06.F
     // delivers + mock-tests.
-    let result = run_smoke_session_with(provider, tx, drone_client, smoke_config(), None).await;
+    let result =
+        run_smoke_session_with(provider, tx, drone_client, smoke_config(), None, session_id).await;
     drop(api_key);
     // Wait for the forwarder to drain any final events before returning.
     let _ = forwarder.await;
@@ -151,6 +158,12 @@ pub async fn run_smoke_session(
 /// concrete `McpDispatcher` construction is the M07 carry-forward per
 /// ADR-0011); the M06.F seam test injects a mock.
 ///
+/// `session_id` is the drone's seeded session id (managed at setup
+/// from [`crate::drone_lifecycle::DroneLifecycle::sdk_session_id`]).
+/// The SDK writes every signal under it so the `signals → sessions`
+/// FK accepts the row; an independent `SessionId::new()` here would
+/// make the assembled signal sink dead (M06.5 IRL 🔴-2).
+///
 /// # Errors
 ///
 /// Same as [`run_smoke_session`] minus the keychain-read step.
@@ -160,9 +173,10 @@ pub async fn run_smoke_session_with<P: LLMProvider + 'static>(
     drone: Arc<DroneClient>,
     config: AgentConfig,
     mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
+    session_id: SessionId,
 ) -> Result<(), CmdError> {
     tracing::info!("run_smoke_session starting");
-    let mut sdk = AgentSdk::new(Arc::new(provider), event_tx, drone, SessionId::new());
+    let mut sdk = AgentSdk::new(Arc::new(provider), event_tx, drone, session_id);
     if let Some(dispatch) = mcp_dispatch {
         sdk = sdk.with_mcp_dispatch(dispatch);
     }
@@ -1021,12 +1035,13 @@ mod tests {
         // The testable seam runs the SDK against a stub provider and
         // pushes events to a caller-owned channel. This exercises the
         // command-body equivalent of `run_smoke_session` without a Tauri
-        // AppHandle (which is environment-bound). The seam now also takes
-        // an `Arc<DroneClient>` per M04 Stage A2 — tests inject `noop`.
+        // AppHandle (which is environment-bound). The seam takes an
+        // `Arc<DroneClient>` (M04 Stage A2) + a `SessionId` (M06.5 🔴-2)
+        // — tests inject `noop` (no FK) + a fresh SessionId.
         let (tx, mut rx) = mpsc::channel(8);
         let drone = Arc::new(DroneClient::noop());
         let config = smoke_config();
-        run_smoke_session_with(StubProvider, tx, drone, config, None)
+        run_smoke_session_with(StubProvider, tx, drone, config, None, SessionId::new())
             .await
             .expect("run_smoke_session_with");
 
@@ -1135,6 +1150,7 @@ mod tests {
             drone,
             smoke_config(),
             Some(Arc::new(InvokingMcpDispatch) as Arc<dyn McpToolDispatch>),
+            SessionId::new(),
         )
         .await
         .expect("run_smoke_session_with(Some(dispatch))");
@@ -1213,7 +1229,15 @@ mod tests {
         // into CmdError::Provider per the existing translation.
         let (tx, _rx) = mpsc::channel(8);
         let drone = Arc::new(DroneClient::noop());
-        let result = run_smoke_session_with(FailingProvider, tx, drone, smoke_config(), None).await;
+        let result = run_smoke_session_with(
+            FailingProvider,
+            tx,
+            drone,
+            smoke_config(),
+            None,
+            SessionId::new(),
+        )
+        .await;
         let err = result.expect_err("expected provider error");
         assert!(
             matches!(err, CmdError::Provider(_)),

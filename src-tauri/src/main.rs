@@ -14,7 +14,7 @@ use runtime_main::audit::{audit_path, AuditWriter};
 use runtime_main::drone_ipc::DroneClient;
 use runtime_main::hitl::HitlSeam;
 use runtime_main::sandbox_ipc::SandboxClient;
-use runtime_main::sdk::ApprovalSeam;
+use runtime_main::sdk::{ApprovalSeam, SessionId};
 use runtime_main::tier::{load_tier, Tier};
 use runtime_mcp::client::{
     InMemorySecretStore, KeyringSecretStore, McpClient, Registry, SecretStore,
@@ -134,6 +134,14 @@ fn main() {
                     Ok(lifecycle) => {
                         let client: Arc<DroneClient> = Arc::clone(&lifecycle.client);
                         app_handle.manage(client);
+                        // M06.5 🔴-2: the SDK MUST write signals under
+                        // the drone's seeded session id or the
+                        // signals→sessions FK rejects every row. Manage
+                        // it so run_smoke_session builds the AgentSdk
+                        // with the matching SessionId (single
+                        // source-of-truth, parallel to 🔴-1/ADR-0012).
+                        let sdk_session: SessionId = lifecycle.sdk_session_id();
+                        app_handle.manage(sdk_session);
                         let managed: ManagedLifecycle = Mutex::new(Some(lifecycle));
                         app_handle.manage(managed);
                     }
