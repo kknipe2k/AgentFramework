@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed — `CLAUDE.md` size reduction (coverage-policy extraction + §3 staleness fix)
+
+- `CLAUDE.md` 70.8k → ~57k chars (was >40k perf threshold). Lossless: the §5 coverage-thresholds ledger (per-module baselines, per-milestone exclusion history, carry-forwards, Codecov/Tauri-patch-gate mechanism detail) extracted to new `docs/coverage-policy.md` — the unbounded-growth blob that drove the bloat.
+- §5 keeps the enforced rule + the four exclusion-category names + a mandatory pointer; §6 keeps the `cargo llvm-cov` commands **byte-identical** (CI-parity) with the comment-essays collapsed; new §6 subsection "Coverage policy: source of truth & change protocol" names the four-mirror sync rule.
+- §3 "Project state" de-staled: the per-milestone "next/shipped" snapshot (said "Next milestone: M3") replaced with the invariant locks + pointers to the always-current sources (`MVP-v0.1.md`, retrospectives, `gap-analysis.md`, `CHANGELOG`, git) — it no longer rots per milestone.
+- Governance wiring so the extracted ledger is read/maintained as if inline: `CLAUDE.md` §2 read-first + §17 index rows; `STAGE-PROMPT-PROTOCOL.md` closeout `<deliverables>` adds required `<coverage_policy_reconciliation>`; `SUMMARY-TEMPLATE.md` adds the mandatory coverage-policy reconciliation check. (Optional CI path-coupling guard deferred — separate review.)
+
 ### Fixed — M06.5 Stage C.fix (IRL fix-cycle close — M07 Stage A gate reconciled)
 
 - Closes the M06.5 IRL fix cycle (`docs/build-prompts/M06.5-irl-fix.md`).

@@ -109,6 +109,11 @@ If total ratio >2.0, the parent-milestone estimation method is off. Note correct
 
 Drives `CLAUDE.md` / `TEMPLATE.md` / per-milestone-prompt updates that landed (or should land) before M[NN+1].1's session opens.
 
+### Coverage-policy reconciliation (mandatory check — per `CLAUDE.md` §6)
+
+- [ ] Coverage thresholds/exclusions: **unchanged this milestone** — nothing to reconcile; OR
+- [ ] **Changed this milestone** → confirm all four mirrors are byte-consistent and the ledger appended: `docs/coverage-policy.md` §C milestone entry (+ §B baseline if a module entered a gate); `CLAUDE.md` §5 category list; `CLAUDE.md` §6 `cargo llvm-cov` commands; `codecov.yml`. Drift = a release-blocking bug.
+
 ### `CLAUDE.md` updates carrying forward
 
 - [Specific change applied or pending]

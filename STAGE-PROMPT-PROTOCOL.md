@@ -826,10 +826,18 @@ Required. The closeout produces three artifacts (four from v1.6 onward — the `
 <deliverables>
   <milestone_summary>retrospectives/M01-summary.md (aggregates per-stage retrospectives, scores axes across stages, marks verdict)</milestone_summary>
   <gap_analysis_entry>docs/gap-analysis.md (append new entry; six required sections, none optional)</gap_analysis_entry>
+  <coverage_policy_reconciliation>If any coverage threshold/exclusion changed this milestone: docs/coverage-policy.md §C milestone entry appended (+ §B baseline if a module entered a gate), and the CLAUDE.md §5 category list, §6 llvm-cov commands, and codecov.yml verified byte-consistent. If nothing changed, state "no coverage change this milestone". Per CLAUDE.md §6 "Coverage policy: source of truth & change protocol".</coverage_policy_reconciliation>
   <simplify_pass>...</simplify_pass>
   <pr_description>draft only; do not open PR until explicitly asked</pr_description>
 </deliverables>
 ```
+
+`<coverage_policy_reconciliation>` is a required child of closeout
+`<deliverables>` from this version onward: the closeout is the
+single point that verifies the four coverage mirrors
+(`docs/coverage-policy.md`, CLAUDE.md §5 categories, §6 commands,
+`codecov.yml`) did not drift during the milestone. A "no coverage
+change this milestone" statement satisfies it when nothing changed.
 
 ### `<simplify_pass>` (v1.6, required child of closeout `<deliverables>`)
 
