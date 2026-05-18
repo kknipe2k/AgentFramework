@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed — M07 Stage A (M06 carry-forward absorption + ADR-0011 construction-graph groundwork)
+
+- **TD-005 / gotcha #56 structural close** — the runtime-main `cargo llvm-cov` gate is now Windows-local-measurable for the first time. The six integration test files that spawn the `runtime-drone` subprocess (`drone_ipc_loopback`, `drone_reconnect_events`, `plan_lifecycle`, `plan_recovery`, `recovery_lifecycle`, `smoke_signal_persistence`) carried a byte-identical broken nested-`cargo build` helper; de-duplicated onto a shared `crates/runtime-main/tests/common/mod.rs` fixture that builds the drone into a dedicated `target/drone-fixture` dir (no parent build-lock contention) with the workspace manifest + package pinned (CWD-independent) and the llvm-cov instrumentation env stripped. Gate command/regex/threshold unchanged; measured 95.73% line ≥ 95 (exit 0).
+- **TD-002** — `read_signals` + `recover_session` per-method twice-in-sequence tests added to `drone_ipc/client.rs` (M04.V finding #4 belt-and-suspenders multi-call invariant).
+- **M04 🟡 drone_ipc coverage** — `read_signals` Codec-on-rejection-alert error-branch test (previously uncovered).
+- **M05 🟡 enforcer** — `audit_check_result` `TierForbidden` arm test (`audit_smoke.rs`); lifts `capability/enforcer.rs` 94.24% within the runtime-main ≥95 gate.
+- **M06.V 🟡 #2 X.2 truth-up** — corrected the M06 phase doc's mislabelled `mcp_dispatch_integration.rs` crate/path (it shipped in `runtime-mcp` with `--features test-helpers`; the `runtime-main` counterpart is `mcp_dispatch_wire.rs`) at 6 locations (M05.V-#3 precedent — path/crate-scope only, no behaviour change).
+- **TD-006** — dropped the stray `|src.key_store\.rs` from the M06 phase doc's runtime-main coverage regex (6 occurrences) to match the canonical CLAUDE.md §6 form; the four canonical mirrors were already consistent (no mirror change). `docs/coverage-policy.md` §C M07.A entry records both reconciles.
+- **A.3.1 descope (maintainer-decided)** — the M04 🟡 `plan_loop.rs` driver / `HitlContext::BudgetThreshold`→`BudgetWarn` item ships **no Stage-A code**: the phase doc's "schema-generated variant rename" premise is factually wrong (`HitlContext` is a hand-written enum in `hitl/policy.rs`; no `hitl_context` in `schemas/event.v1.json`; `BudgetWarn` already exists as a distinct correctly-named `AgentEvent` variant — the real budget item is the §2a `budget_warn`→`budget_warning` v1.0 `event.v1.1.json` task) and the driver's inputs are unreachable at Stage A (framework loader = M07.B/C, agent execution = M07.D2). Tracked as a D2 carry-forward via the M07.A retrospective's `<construction_reachability_check>` + `<scope_change>`; phase-doc wording fix deferred (M06.D/E grandfathering precedent).
+
 ### Changed — STAGE-PROMPT-PROTOCOL v1.7 → v1.8 (M06.6 protocol iteration)
 
 - Enacts the 5 M06 graduated protocol mechanisms the M06 gap-analysis routed here (`docs/gap-analysis.md` lines 1897/1901; the other 3 of 8 graduations landed mid-M06 via PR #76 + CLAUDE.md §6 — not re-landed) + the M06.5-summary "To Cycle 2 (M06.6)" recorded input. Through-line: `<phase_doc_inventory_audit verified="true">` proves a symbol *exists*, not that it is reachable / correctly-shaped / ADR-current / exercised in the assembled app.

@@ -76,7 +76,7 @@ Default to (1) for v0.1; revisit (2) when M05+ adds Playwright suite expansions 
 **Found by:** Stage V verifier run M04.V (finding #4)
 **Pass that surfaced it:** Multi-call invariants
 **Category:** observability (test-coverage gap: per-method multi-call invariants)
-**Resolution status:** open
+**Resolution status:** **resolved** (M07.A red/test commit `348d1ef`) — `read_signals_succeeds_twice_in_sequence` + `recover_session_succeeds_twice_in_sequence` added to `crates/runtime-main/src/drone_ipc/client.rs` in-source `mod tests`, mirroring `query_session_db_succeeds_twice_in_sequence`. Entry retained for audit trail.
 
 ### Description
 
@@ -139,7 +139,7 @@ Add a "Choosing `<scope_to_verify>`" subsection to `docs/build-prompts/STAGE-V-V
 **Found by:** Stage V verifier run M06.V (finding #3)
 **Pass that surfaced it:** Behavior
 **Category:** observability (CI-parity: per-crate coverage gate not locally executable on Windows)
-**Resolution status:** open
+**Resolution status:** **resolved** (M07.A red/test commit `348d1ef`) — structural close via recommended approach (b): the six runtime-main integration test files that spawn `runtime-drone` were de-duplicated onto a shared `crates/runtime-main/tests/common/mod.rs` fixture that builds the drone once into a dedicated `target/drone-fixture` dir (never the parent run's target dir → no build-lock contention) with the workspace manifest + package pinned (CWD-independent; closes the `no bin target named runtime-drone` resolution failure) and the llvm-cov instrumentation env stripped. Measured Windows-local at M07.A: runtime-main 95.73% line ≥ 95 (exit 0); previously the gate aborted before any measurement. Not a local-only `--test-threads` flag — CI-parity-safe. Entry retained for audit trail.
 
 ### Description
 
@@ -159,7 +159,7 @@ Make `ensure_drone_built()` robust under llvm-cov: either (a) build the instrume
 **Found by:** Stage V verifier run M06.V (finding #4)
 **Pass that surfaced it:** Behavior
 **Category:** cosmetic (gate-definition drift across canonical sources)
-**Resolution status:** open
+**Resolution status:** **resolved** (this M07.A impl/green commit) — the stray `|src.key_store\.rs` token was dropped from all 6 runtime-main `--ignore-filename-regex` occurrences in `docs/build-prompts/M06-mcp-basic.md` so the M06 phase doc matches the canonical CLAUDE.md §6 form. The four canonical mirrors (`docs/coverage-policy.md` §A, CLAUDE.md §5 + §6, `codecov.yml`) were already byte-consistent and never carried the token — only the non-mirror phase-doc copy had drifted, so the v1.8 four-mirror sync rule is satisfied vacuously (no mirror value change). `docs/coverage-policy.md` §C M07.A entry records the reconcile. Entry retained for audit trail.
 
 ### Description
 

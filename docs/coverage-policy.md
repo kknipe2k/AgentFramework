@@ -231,6 +231,34 @@ History is immutable (a measurement true for M0X stays true for M0X).
   coverage craters). Added the `cargo llvm-cov clean`-before-measure
   rule (gotcha #81 — M06.C wasted ~10 min chasing a false 92.07%
   that was truly 96.64%); now canonical in CLAUDE.md §6 step 4.
+- **M07.A** — no exclusion or threshold change. Two reconciles:
+  (1) **TD-006** (M06.V finding #4): the M06 phase doc
+  (`docs/build-prompts/M06-mcp-basic.md`) V.3/A.4.4 runtime-main
+  `--ignore-filename-regex` carried a stray `|src.key_store\.rs`
+  token (6 occurrences) the four canonical mirrors never had. The
+  four mirrors (§A above line 74, CLAUDE.md §5 category list, CLAUDE.md
+  §6 command, `codecov.yml`) were **already byte-consistent and
+  canonical** — `key_store.rs` is the OS-keychain holdout that is
+  *not* in the regex because no production `key_store.rs` line is
+  reached by the gated tests (§A note already explains this). The
+  drift was solely the M06 phase doc (a non-mirror surface);
+  M07.A dropped all 6 stray tokens so the phase doc matches the
+  canonical form. **No four-mirror value change** — the v1.8
+  four-mirror sync rule is satisfied vacuously (the mirrors were
+  never inconsistent with each other; only a downstream phase-doc
+  copy drifted). (2) **TD-005** (M06.V finding #3): the runtime-main
+  `cargo llvm-cov` gate is now Windows-local-measurable for the
+  first time — the six integration test files that spawn the
+  `runtime-drone` subprocess were de-duplicated onto a shared
+  `crates/runtime-main/tests/common/mod.rs` fixture that builds the
+  drone into a dedicated `target/drone-fixture` dir (no parent
+  build-lock contention) with the workspace manifest + package
+  pinned (CWD-independent) and the llvm-cov instrumentation env
+  stripped. The gate command, regex, and threshold are **unchanged**;
+  only the test harness was made robust. Measured Windows-local at
+  M07.A: runtime-main 95.73% line ≥ 95 (exit 0) — previously the
+  gate aborted before any measurement (the gotcha #56 nested-build
+  break).
 
 ---
 
