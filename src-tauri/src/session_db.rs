@@ -20,22 +20,14 @@ use std::path::{Path, PathBuf};
 /// Canonical session-DB filename (ADR-0012). One constant so a divergent
 /// registry filename cannot be silently re-introduced (IRL 🔴-1 was
 /// `mcp.sqlite`).
-#[allow(
-    dead_code,
-    reason = "M06.5.A.fix red phase — consumed by session_db_path in the green/impl commit"
-)]
-pub(crate) const SESSION_DB_FILENAME: &str = "session.sqlite";
+pub const SESSION_DB_FILENAME: &str = "session.sqlite";
 
 /// Resolve the single source-of-truth session database path under `dir`.
 ///
 /// Both the drone (`resolve_db_path`) and the MCP registry
 /// (`open_mcp_client`) call this so the resolved path is byte-identical.
-#[allow(
-    dead_code,
-    reason = "M06.5.A.fix red phase — wired into main.rs in the green/impl commit"
-)]
-pub(crate) fn session_db_path(_dir: &Path) -> PathBuf {
-    unimplemented!("M06.5.A.fix red phase — session_db_path not yet implemented")
+pub fn session_db_path(dir: &Path) -> PathBuf {
+    dir.join(SESSION_DB_FILENAME)
 }
 
 #[cfg(test)]

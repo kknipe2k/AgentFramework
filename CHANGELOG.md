@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed — M06.5 Stage A.fix (IRL 🔴-1 — single source-of-truth session DB path)
+
+- **`src-tauri/src/main.rs`** — `open_mcp_client` resolved the MCP
+  registry at a stray `<app_local_data_dir>/mcp.sqlite` while
+  `resolve_db_path` gave the drone `<app_local_data_dir>/session.sqlite`
+  (the file the runtime reads). An added MCP server was audited
+  (`mcp_installed`) yet invisible to the MCP Servers panel and
+  (downstream, M07) undispatchable — `docs/M06-irl-findings.md` 🔴-1.
+  Both call sites now resolve through one shared
+  `session_db::session_db_path` seam, so the registry shares the
+  canonical drone session DB (ADR-0012, **Accepted** in this PR; safe
+  per `db::init` WAL + `busy_timeout=5000` + idempotent migrations).
+- **`src-tauri/src/session_db.rs`** *(new)* — the path-agnostic
+  single-source-of-truth resolver seam + `SESSION_DB_FILENAME`
+  constant; assembled-path regression tests (the Stage-V blind spot):
+  `registry_path_equals_drone_session_db_path`,
+  `add_server_then_list_round_trips_through_the_same_store` (ADR-0012
+  two-connection invariant), `no_stray_mcp_sqlite_path_literal_constructed`.
+- **`docs/adr/0012-single-source-session-db-path.md`** — Status flipped
+  `Proposed → Accepted` (CLAUDE.md §11).
+
 ### Added — M06 closeout (Stage G — gap-analysis + parent-milestone summary + first `<simplify_pass>`)
 
 - **`docs/gap-analysis.md`** — appended the immutable M06 entry

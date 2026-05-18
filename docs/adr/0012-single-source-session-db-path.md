@@ -1,6 +1,6 @@
 # ADR-0012: Single source-of-truth session DB path (MCP registry shares the drone session DB)
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-05-17
 **Deciders:** @kknipe2k
 **Tags:** persistence, ipc-adjacent, scope

@@ -238,7 +238,11 @@ fn open_audit_writer<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<Arc
 
 /// Open the M06.C `McpClient` at app startup.
 ///
-/// Resolves `<app_local_data_dir>/mcp.sqlite` for the registry, opens a
+/// Resolves the registry path through the single source-of-truth
+/// [`session_db::session_db_path`] (ADR-0012) — the **same**
+/// `<app_local_data_dir>/session.sqlite` the drone uses via
+/// [`resolve_db_path`], so an added MCP server is visible to the runtime
+/// (closes `docs/M06-irl-findings.md` 🔴-1). Opens a
 /// [`KeyringSecretStore`] for per-server auth secrets, and (optionally)
 /// wires the existing M05.E `AuditWriter` so MCP install/uninstall/auth
 /// events land in the same `skills.audit.jsonl` as capability + tier
@@ -260,7 +264,7 @@ fn open_mcp_client<R: tauri::Runtime>(
     if let Err(e) = std::fs::create_dir_all(&dir) {
         tracing::warn!(error = %e, "MCP registry dir create failed");
     }
-    let path = dir.join("mcp.sqlite");
+    let path = session_db::session_db_path(&dir);
     let registry = match Registry::open(&path) {
         Ok(r) => Arc::new(r),
         Err(e) => {
@@ -299,7 +303,7 @@ fn open_mcp_client<R: tauri::Runtime>(
 fn resolve_db_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<PathBuf> {
     let dir = app.path().app_local_data_dir()?;
     std::fs::create_dir_all(&dir).map_err(tauri::Error::Io)?;
-    Ok(dir.join("session.sqlite"))
+    Ok(session_db::session_db_path(&dir))
 }
 
 /// Initialize the global `tracing` subscriber for the Tauri main process.
