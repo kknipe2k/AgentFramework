@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed — STAGE-PROMPT-PROTOCOL v1.7 → v1.8 (M06.6 protocol iteration)
+
+- Enacts the 5 M06 graduated protocol mechanisms the M06 gap-analysis routed here (`docs/gap-analysis.md` lines 1897/1901; the other 3 of 8 graduations landed mid-M06 via PR #76 + CLAUDE.md §6 — not re-landed) + the M06.5-summary "To Cycle 2 (M06.6)" recorded input. Through-line: `<phase_doc_inventory_audit verified="true">` proves a symbol *exists*, not that it is reachable / correctly-shaped / ADR-current / exercised in the assembled app.
+- `STAGE-PROMPT-PROTOCOL.md` — three additive optional `<work_stage_prompt>` slots (`<construction_reachability_check>` M06.D/F; `<wire_signature_audit>` M06.E; `<wire_trace_vs_adr_reconcile>` M06.V Dec 6) + a `shape=` attribute extension to `<phase_doc_inventory_audit>` `type="store_slot"` claims (M06.E); §10 stable-child-names + tag-ordering cluster updated; §11 v1.8 lean pass-through note; §15 v1.8 changelog (10 items incl. the §G maintainer-decision record). Lean-validator pattern continued (v1.3/1.4/1.5/1.6/1.7) — structural pass-through, honor-system, cross-checks deferred to v1.9+.
+- `STAGE-V-VERIFIER-PROMPT-TEMPLATE.md` — codified M06.V Decision 6 (delivered+tested / driver-absent / root = accepted-ADR carry-forward → 🟡 + mandatory enumeration, not 🔴, not silent) in the Wire pass + Decision 7 (from M07.V the Behavior pass MUST run the `--features integration` reference-MCP-server smoke) in the Behavior pass + a standing-rules authoring subsection. `VERIFIER-RETROSPECTIVE-TEMPLATE.md` — matching non-scored compliance record lines.
+- `CLAUDE.md` §6 — assembled-app-regression mandate (the regression test exercises the assembled running-app path; the phase-doc root cause is a falsifiable hypothesis it must disprove, not a premise) + the binary-crate seam-test invariant variant; §17 reference-index protocol-version bumped v1.5 → v1.8.
+- `bin/validate-stage-prompts.mjs` — documentation-only comment recording the v1.8 lean pass-through set (no enforcement logic added; the §G `<tdd_discipline>`-coupling validator-promotion stays deferred to v1.9 per the recorded maintainer decision). `docs/gotchas.md` — gotcha #82.
+- No source changes; no `docs/gap-analysis.md` entry (protocol iteration is process, not product — CLAUDE.md §20); M01–M06.5 phase docs grandfathered (slots apply M07+). Validator PASS pre+post (additive/recognizing, not breaking).
+
 ### Changed — `CLAUDE.md` size reduction (coverage-policy extraction + §3 staleness fix)
 
 - `CLAUDE.md` 70.8k → ~57k chars (was >40k perf threshold). Lossless: the §5 coverage-thresholds ledger (per-module baselines, per-milestone exclusion history, carry-forwards, Codecov/Tauri-patch-gate mechanism detail) extracted to new `docs/coverage-policy.md` — the unbounded-growth blob that drove the bloat.

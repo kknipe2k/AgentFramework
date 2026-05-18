@@ -526,6 +526,22 @@ Example (M05.B + D shape — would have surfaced D1 + the C-retrospective filena
 
 Pairs naturally with v1.6's new `<scope_change>` slot — when an authoring-time claim verifies false, the resolution is often to descope and surface via `<scope_change>` so the next stage and Stage V's bias-guarded read can see the intentional carry-forward.
 
+#### v1.8 extension — store-slot / wrapper-param shape audit
+
+The v1.6 `<claim type="...">` children verify a symbol *exists*. M06.E proved existence is insufficient at the renderer/IPC wire: phase-doc pseudocode modeled `currentMcpServers` as a `Map` with a `.tools` member while the shipped store slot was `Record<string, McpServerStatusRecord>`, and modeled `mcp_test_connection {config}` while the actual Tauri command took `{name}` — five such shape drifts at one stage, none catchable by an existence check. v1.8 adds an optional `shape="..."` attribute to `<claim>` for store-slot (and analogous typed-surface) claims: the author pins the **actual** TS/Rust type at authoring time, not just the symbol name.
+
+- `<claim type="store_slot" path="..." symbol="..." shape="<actual TS type>" verified="true"/>` — verify the store slot exists AND its declared type matches `shape`. `shape` is the literal type string (e.g. `Record<string, McpServerStatusRecord>`); a mismatch surfaces as "phase-doc shape drift" at pre-flight, before any renderer pseudocode is authored against the wrong shape.
+
+Backward-compatible: `shape=` is optional; existing `<claim>` children without it are unchanged. The validator (v1.8 lean) does not enforce `shape` structurally — it is honor-system attestation, same treatment as `verified=`; promote to a generated-type cross-check at v1.9+ once usage stabilizes. Pairs with the new `<wire_signature_audit>` slot below (which pins the IPC wrapper params the same way `shape=` pins the store slot).
+
+Example (M06.E shape — would have surfaced the `Map`-vs-`Record` drift at authoring time):
+
+```xml
+<phase_doc_inventory_audit>
+  <claim type="store_slot" path="src/state/graphStore.ts" symbol="currentMcpServers" shape="Record&lt;string, McpServerStatusRecord&gt;" verified="true"/>
+</phase_doc_inventory_audit>
+```
+
 ### `<coverage_gate>` (v1.6)
 
 Optional. Names the exact `--ignore-filename-regex` argument the stage's `cargo llvm-cov` invocation will use, replacing prose enumeration of "plumbing files" / "OS-signal holdouts" / "the new module". The slot eliminates the prose-vs-regex translation step that recurred at 7 stages of M05 (A/B/C1/C2/D/E/F) — M05.C1's "plumbing files" phrase took 4 attempts to land the correct argument; M05.C2 hit the same when lifting `ipc.rs` into the gate.
@@ -807,6 +823,69 @@ Example (M06.C final form — the empirical reference implementation):
 
 The audit-surface invariant is the load-bearing property: any reviewer can run one `git diff` command and confirm the implementation did not tamper with the contract the red phase pinned. This is the structural defense the TDAD research identifies as the difference between TDD-that-works and TDD-prompting-that-backfires. Different from `<execution_steps>` alone (which names the sequence): `<tdd_discipline>` declares the *contract* the sequence must satisfy + the verifiable invariant the green-phase commit must state.
 
+### `<construction_reachability_check>` (v1.8)
+
+Optional. For every phase-doc deliverable phrased as "wire / inject / construct X into/through Y", the author traces the **construction graph** at authoring time: does Y's constructor (in the assembled composition the phase doc targets) actually receive X, and are X's constructor inputs reachable at that call site? The discriminator from `<phase_doc_inventory_audit>`: that slot proves the symbol *exists*; this slot proves the symbol is *constructible where the deliverable claims it is wired*. Bit M06.D (the construction-reachability carry-forward generalizing the M06.D `<dependency_cycle_check>`) + M06.F (the "MCP dispatch end-to-end in the running app" mandate over-reached — no `impl ConnectionResolver for McpClient`, no shell ctor inputs for the concrete dispatcher, the only `AgentSdk` construction is the no-tools smoke path; `M06.F-retrospective.md:31,77,116,121`).
+
+Children: `<wire>` elements with `claim="<inject X into Y>"`, `constructor="<Y::new at file:line>"`, `inputs_reachable="<true|false — narrative>"`, `resolution="<scope to M0N / descope via <scope_change>>"`.
+
+Validator behavior (v1.8 lean): structural — error if the tag appears outside a work-stage prompt; warning if `<wire>` children lack `claim` or `constructor`. Honor-system at v1.8 (same lean treatment as the nine v1.6 optional slots + v1.7 `<tdd_discipline>`); promote to a validator cross-check at v1.9+ once 2+ milestones show clean signal.
+
+Schema: work-stage only.
+
+Example (M06.F shape — would have caught "no shell ctor inputs for the concrete dispatcher" at authoring):
+
+```xml
+<construction_reachability_check>
+  <wire claim="inject Arc&lt;dyn McpToolDispatch&gt; into AgentSdk run loop"
+        constructor="AgentSdk::new (src-tauri/src/commands.rs:NNN)"
+        inputs_reachable="false — no shell McpDispatcher ctor; only the no-tools smoke path constructs AgentSdk"
+        resolution="scope to M07 / descope via &lt;scope_change&gt;"/>
+</construction_reachability_check>
+```
+
+Pairs with `<scope_change>` (v1.6) — when `inputs_reachable="false"`, the resolution is typically a descope surfaced via `<scope_change>` so the next stage and Stage V's bias-guarded read see the authorized carry-forward. Different from `<architecture_check>` (v1.4: verifies a HOW-claim about existing structure via grep): `<construction_reachability_check>` traces whether a *planned* wire's constructor inputs are reachable in the assembled composition the deliverable targets.
+
+### `<wire_signature_audit>` (v1.8)
+
+Optional. Renderer/IPC-stage convention. Before authoring any renderer pseudocode or IPC-wrapper call, the author pins the wrapper to the **actual** Tauri command params. Bit M06.E — phase-doc pseudocode modeled `mcp_test_connection {config}` while the shipped Tauri command took `{name}` (`M06.E-retrospective.md:118,183`; five such drifts at E). Companion to the v1.8 `<phase_doc_inventory_audit shape=...>` extension: that pins the store slot's type; this pins the IPC wrapper's params.
+
+Children: `<wrapper>` elements with `ipc_command="<command name>"`, `actual_params="<the real param object shape>"`, `phase_doc_assumed="<what the phase doc pseudocode assumed>"`.
+
+Validator behavior (v1.8 lean): structural — error if the tag appears outside a work-stage prompt; warning if `<wrapper>` children lack `ipc_command` or `actual_params`. Honor-system at v1.8; promote at v1.9+ per the lean-validator pattern.
+
+Schema: work-stage only.
+
+Example:
+
+```xml
+<wire_signature_audit>
+  <wrapper ipc_command="mcp_test_connection" actual_params="{ name: string }" phase_doc_assumed="{ config }"/>
+</wire_signature_audit>
+```
+
+### `<wire_trace_vs_adr_reconcile>` (v1.8)
+
+Optional. Work-stage AND verifier-relevant (Stage V's bias-guarded `<read_first>` consumes it, same mechanism as `<scope_change>`). At phase-doc-authoring time, every Wire trace is reconciled against accepted ADRs: does any accepted ADR supersede the architecture the trace assumes? Bit M06.V Decision 6 — V.3 Wire trace #6 expected `McpClient` to drive namespace re-resolution; ADR-0010 (accepted, read after the trace was authored) had moved the resolver into `McpDispatcher`. The inconsistency should have been caught at phase-doc-authoring, not at V (`M06.V-retrospective.md:76`).
+
+Children: `<trace>` elements with `id="<trace number>"`, `assumes="<architecture the trace assumes>"`, `adr_checked="<ADR-NNNN>"`, `superseded="<true|false — what moved>"`, `resolution="<rewrite trace N against the current architecture before authoring>"`.
+
+Validator behavior (v1.8 lean): structural — error if the tag appears outside a work-stage prompt; warning if `<trace>` children lack `id` or `adr_checked`. Honor-system at v1.8; promote at v1.9+ per the lean-validator pattern.
+
+Schema: work-stage only (consumed by Stage V's read-list, like `<scope_change>`).
+
+Example (M06.V Decision 6 shape — would have caught trace #6 at authoring):
+
+```xml
+<wire_trace_vs_adr_reconcile>
+  <trace id="6" assumes="McpClient drives namespace re-resolution"
+         adr_checked="ADR-0010" superseded="true — resolver moved to McpDispatcher"
+         resolution="rewrite trace #6 against McpDispatcher before authoring"/>
+</wire_trace_vs_adr_reconcile>
+```
+
+Pairs with `<scope_change>` (v1.6) for the V-read mechanism: both are work-stage slots whose content Stage V's `<read_first>` deliberately consumes (the verifier prompt template at `docs/build-prompts/STAGE-V-VERIFIER-PROMPT-TEMPLATE.md` carries the inline note). Different from `<interpretation_declarations>` (v1.6: declares a spec-section reading): this slot reconciles a *Wire trace's assumed architecture* against *accepted ADRs*.
+
 ## 8. Closeout-only tags
 These tags are valid only inside `<closeout_stage_prompt>`.
 ### `<cumulative_reads>`
@@ -970,9 +1049,9 @@ One stage per fenced block. Don't combine stages. The Phase doc may have many fe
 No foreign tags. Every tag inside a stage prompt must be in this protocol. Adding a new tag means updating this doc first (and bumping the protocol version per Part 13). Drift is a bug.
 No HTML escaping inside `<context>` or prose tags unless required. XML inside fenced markdown blocks parses cleanly with literal angle brackets in attribute values via `&lt;` and `&gt;`. Use them only when the text contains XML-meaningful characters (e.g., "<30 min").
 Self-closing for reference tags. When a tag points at an external file with no inline body, use the self-closing form: `<gates milestone="M01"/>` not `<gates milestone="M01"></gates>`.
-Stable child element names. Within `<deliverable>`, every child is `<item>`. Within `<scope_locks>`, every child is `<lock>`. Within `<acceptance_criteria>`, every child is `<criterion>`. Within `<execution_steps>`, every child is `<step>`. Within `<read_reference>`, every child is `<file>`. Within `<execution_warnings>`, every child is `<warning>`. Within `<gotchas_graduation>`, every child is `<stage_review>`. Within v1.6 additions: `<coverage_gate>` children are `<gate>`; `<schema_ref_audit>` children are `<ref>`; `<api_breaking_change_audit>` children are `<change>`; `<existing_pattern_audit>` children are `<pattern>`; `<interpretation_declarations>` children are `<adopt>`; `<scope_change>` children are `<descope>` or `<expand>`; `<zustand_selector_audit>` children are `<selector>`; `<test_isolation_audit>` children are `<persistent_slot>`; `<phase_doc_inventory_audit>` v1.6 extensions stay `<claim>` (new `type=` values); `<dependency_audit_check>` v1.6 extension adds a `<feature_interdependency>` sibling to the existing `<dep>` children. Within v1.7 additions: `<tdd_discipline>` children are `<red_phase>` and `<green_phase>`. This consistency makes validation and aggregation simple.
+Stable child element names. Within `<deliverable>`, every child is `<item>`. Within `<scope_locks>`, every child is `<lock>`. Within `<acceptance_criteria>`, every child is `<criterion>`. Within `<execution_steps>`, every child is `<step>`. Within `<read_reference>`, every child is `<file>`. Within `<execution_warnings>`, every child is `<warning>`. Within `<gotchas_graduation>`, every child is `<stage_review>`. Within v1.6 additions: `<coverage_gate>` children are `<gate>`; `<schema_ref_audit>` children are `<ref>`; `<api_breaking_change_audit>` children are `<change>`; `<existing_pattern_audit>` children are `<pattern>`; `<interpretation_declarations>` children are `<adopt>`; `<scope_change>` children are `<descope>` or `<expand>`; `<zustand_selector_audit>` children are `<selector>`; `<test_isolation_audit>` children are `<persistent_slot>`; `<phase_doc_inventory_audit>` v1.6 extensions stay `<claim>` (new `type=` values); `<dependency_audit_check>` v1.6 extension adds a `<feature_interdependency>` sibling to the existing `<dep>` children. Within v1.7 additions: `<tdd_discipline>` children are `<red_phase>` and `<green_phase>`. Within v1.8 additions: `<construction_reachability_check>` children are `<wire>`; `<wire_signature_audit>` children are `<wrapper>`; `<wire_trace_vs_adr_reconcile>` children are `<trace>`; `<phase_doc_inventory_audit>` v1.8 extension stays `<claim>` (new optional `shape=` attribute on `type="store_slot"` claims). This consistency makes validation and aggregation simple.
 Order tags consistently across milestones. The recommended order:
-For work stages: `<context>` → `<read_first>` → `<read_reference>` (opt) → `<read_prior_milestones>` (Stage A only when applicable) → `<read_prior_stages>` (B+) → `<interpretation_declarations>` (opt, v1.6) → `<deliverable>` → `<test_plan_required>` → `<tdd_discipline>` (opt, v1.7; immediately before `<execution_steps>` because it governs the execution shape) → `<execution_steps>` → `<acceptance_criteria>` → `<scope_locks>` → `<scope_change>` (opt, v1.6) → `<gates>` → `<coverage_gate>` (opt, v1.6) → `<self_correction_budget>` → `<adr_triggers>` (opt) → `<gotchas>` (opt) → `<execution_warnings>` (opt) → `<pre_flight_check>` / `<schema_drift_check>` / `<fan_out_grep>` / `<dependency_audit_check>` / `<runtime_environment>` / `<architecture_check>` / `<schema_audit>` / `<schema_root_check>` / `<phase_doc_inventory_audit>` (opt; cluster these v1.3 + v1.4 + v1.6 authoring-time audit tags together) → `<schema_ref_audit>` / `<api_breaking_change_audit>` / `<existing_pattern_audit>` / `<zustand_selector_audit>` / `<playwright_warmup_recipe>` / `<test_isolation_audit>` (opt, v1.6 authoring-time audit cluster) → `<time_box>` (opt) → `<dependencies>` (opt) → `<retrospective_requirements>` → `<commit_protocol>` → `<commit_message>` → `<approval_surface>`.
+For work stages: `<context>` → `<read_first>` → `<read_reference>` (opt) → `<read_prior_milestones>` (Stage A only when applicable) → `<read_prior_stages>` (B+) → `<interpretation_declarations>` (opt, v1.6) → `<deliverable>` → `<test_plan_required>` → `<tdd_discipline>` (opt, v1.7; immediately before `<execution_steps>` because it governs the execution shape) → `<execution_steps>` → `<acceptance_criteria>` → `<scope_locks>` → `<scope_change>` (opt, v1.6) → `<gates>` → `<coverage_gate>` (opt, v1.6) → `<self_correction_budget>` → `<adr_triggers>` (opt) → `<gotchas>` (opt) → `<execution_warnings>` (opt) → `<pre_flight_check>` / `<schema_drift_check>` / `<fan_out_grep>` / `<dependency_audit_check>` / `<runtime_environment>` / `<architecture_check>` / `<schema_audit>` / `<schema_root_check>` / `<phase_doc_inventory_audit>` (opt; cluster these v1.3 + v1.4 + v1.6 authoring-time audit tags together) → `<schema_ref_audit>` / `<api_breaking_change_audit>` / `<existing_pattern_audit>` / `<zustand_selector_audit>` / `<playwright_warmup_recipe>` / `<test_isolation_audit>` (opt, v1.6 authoring-time audit cluster) → `<construction_reachability_check>` / `<wire_signature_audit>` / `<wire_trace_vs_adr_reconcile>` (opt, v1.8 authoring-time audit cluster; cluster these with the v1.3/v1.4/v1.6 audit tags above) → `<time_box>` (opt) → `<dependencies>` (opt) → `<retrospective_requirements>` → `<commit_protocol>` → `<commit_message>` → `<approval_surface>`.
 For closeout stages: `<context>` → `<read_first>` → `<read_reference>` (opt) → `<read_prior_milestones>` (rare for closeout; included only if absorbing additional carry-forward) → `<cumulative_reads>` → `<deliverables>` (now includes required `<simplify_pass>` child from v1.6) → `<gap_analysis_requirements>` (with required `<gotchas_graduation>`) → `<append_only_verification>` → `<three_artifact_review>` → `<scope_locks>` → `<gates>` → `<self_correction_budget>` → `<adr_triggers>` (opt) → `<gotchas>` (opt) → `<execution_warnings>` (opt) → `<time_box>` (opt) → `<retrospective_requirements>` → `<commit_protocol>` → `<commit_message>` → `<approval_surface>`.
 Consistent ordering makes diffs across milestones immediately scannable.
 Reference-first **strict** for content-heavy tags (v1.2 hardening). Tags that support both inline and reference forms — currently `<deliverable>`, `<acceptance_criteria>`, `<scope_locks>`, `<commit_message>`, `<gap_analysis_requirements>` — **must use the reference form when the corresponding Phase doc section exists**. The Phase doc's `X.2 Files to Change`, `X.3 Detailed Changes`, `X.4 Tests`, `X.6 Commit Message`, and milestone-level `Key constraints` sections are the canonical locations for content; the prompt references rather than restates them.
@@ -1012,6 +1091,7 @@ A validation script lives at `scripts/validate-stage-prompts.py` (or your prefer
 - v1.6: `<simplify_pass>` must appear inside a closeout-stage prompt (the validator's `REQUIRED_BY_ROOT.closeout_stage_prompt` list includes `simplify_pass` from v1.6 onward; phase docs landing under v1.6 must include it)
 - v1.6 tags `<coverage_gate>`, `<schema_ref_audit>`, `<api_breaking_change_audit>`, `<existing_pattern_audit>`, `<interpretation_declarations>`, `<scope_change>`, `<zustand_selector_audit>`, `<playwright_warmup_recipe>`, `<test_isolation_audit>` must appear inside a work-stage prompt only — appearing in a closeout-stage prompt is a structural error
 - v1.7 tag `<tdd_discipline>` must appear inside a work-stage prompt only — appearing in a closeout- or verifier-stage prompt is a structural error. The `<tdd_discipline strict="true">` → two-commit `<execution_steps>` coupling (the stage's `<execution_steps>` must contain `red_phase_commit` + `surface_for_red_approval` + `green_phase_commit` + `surface_for_final_approval` steps when `<tdd_discipline strict="true">` is present) is an authoring-discipline rule, NOT code-enforced at the v1.7 lean validator level — promote to a validator cross-check at v1.8+ once 2+ milestones show clean signal (lean-validator pattern continued from v1.3/v1.4/v1.5/v1.6; the validator passes the optional tag through structurally without allowlisting, exactly as it does for the nine v1.6 optional slots)
+- v1.8 tags `<construction_reachability_check>`, `<wire_signature_audit>`, `<wire_trace_vs_adr_reconcile>` must appear inside a work-stage prompt only — appearing in a closeout-stage prompt is a structural error. All three are structural pass-through + honor-system at v1.8 (the validator's regex parser passes them through without allowlisting, identical lean treatment to the nine v1.6 optional slots + v1.7 `<tdd_discipline>`); their child-body content (`<wire>` / `<wrapper>` / `<trace>` attributes) and the v1.8 `<phase_doc_inventory_audit shape=...>` extension are NOT code-enforced — promote to a validator cross-check at v1.9+ once 2+ milestones show clean signal. **Per the §15 v1.8 changelog §G maintainer decision, the deferred v1.7 `<tdd_discipline strict="true">` → two-commit coupling promotion stays deferred to v1.9 as well** (M06 + the M06.5 fix-cycle is ~1 milestone of clean signal, short of the stated "2+ milestones" bar; M07 supplies the second).
 **Warnings (surface in PR output, don't block):**
 - Confirms ordering matches the recommended order
 - Cross-checks: every retrospective referenced in `<read_prior_stages>` exists; every milestone in `<read_prior_milestones>` has the named gap-analysis section + summary section; every file in `<read_first>` and `<read_reference>` exists; every `section="..."` value on a reference tag resolves to a real Phase doc heading via markdown-AST lookup; the milestone in `<gates milestone="...">` matches the Phase doc's milestone
@@ -1462,6 +1542,28 @@ Validation rules change (e.g., a previously-warning becomes an error)
 Substantive changes get clear `docs(stage-prompt-protocol): ...` commit messages and a CHANGELOG entry. The commit history of this file is itself an audit of how stage prompts evolved.
 If this protocol disagrees with `BUILD-PLAYBOOK.md`, the playbook wins. This protocol is the schema; the playbook is the authority on what stages are and how they run.
 ### Changelog
+
+v1.8 — Three additive optional tags in `<work_stage_prompt>` (`<construction_reachability_check>`, `<wire_signature_audit>`, `<wire_trace_vs_adr_reconcile>`) + a `shape=` extension to `<phase_doc_inventory_audit>` + two `STAGE-V-VERIFIER-PROMPT-TEMPLATE.md` codifications + a CLAUDE.md §6 assembled-app-regression mandate, enacting the 5 M06 graduated mechanisms the M06 gap-analysis routed here (`docs/gap-analysis.md` lines 1897/1901; the other 3 of 8 graduations landed mid-M06 via PR #76 + CLAUDE.md §6 — not re-landed) plus the M06.5-summary "To Cycle 2 (M06.6)" recorded input. The through-line: `<phase_doc_inventory_audit verified="true">` proves a symbol *exists*, not that it is *reachable / correctly-shaped / ADR-current / exercised in the assembled app*. Lean-validator pattern continued from v1.3/v1.4/v1.5/v1.6/v1.7 (structural-only; the three optional tags + the `shape=` extension pass through without allowlisting; cross-checks deferred to v1.9+):
+
+1. **New optional slot `<construction_reachability_check>`** in work stages. Children: `<wire claim="..." constructor="..." inputs_reachable="..." resolution="..."/>`. For every "wire / inject / construct X into Y" deliverable, traces the construction graph at authoring time — Y's constructor receives X AND X's ctor inputs are reachable at that call site. Generalizes the M06.D `<dependency_cycle_check>`/construction-reachability carry-forward; would have caught M06.F's "MCP dispatch end-to-end" over-reach (no shell ctor inputs for the concrete dispatcher; only the no-tools `AgentSdk` smoke path; `M06.F-retrospective.md:31,77,116,121`). Discriminator from `<phase_doc_inventory_audit>`: that proves existence, this proves constructible-where-wired.
+
+2. **New optional slot `<wire_signature_audit>`** in work stages (renderer/IPC convention). Children: `<wrapper ipc_command="..." actual_params="..." phase_doc_assumed="..."/>`. Pins IPC-wrapper params to the actual Tauri command before authoring renderer pseudocode. Bit M06.E `mcp_test_connection {config}`-vs-`{name}` drift (`M06.E-retrospective.md:118,183`; five such drifts at E).
+
+3. **Extension to existing `<phase_doc_inventory_audit>`** (v1.4 tag, v1.6-extended). v1.8 adds an optional `shape="<actual TS/Rust type>"` attribute to `<claim>` for `type="store_slot"` claims — verifies the slot's *type*, not just its symbol. Bit M06.E `currentMcpServers` `Map`+`.tools`-vs-`Record<string, McpServerStatusRecord>` drift. Backward-compatible; `shape=` is honor-system (same as `verified=`).
+
+4. **New optional slot `<wire_trace_vs_adr_reconcile>`** in work stages (work-stage AND verifier-relevant — Stage V's bias-guarded `<read_first>` consumes it, same mechanism as `<scope_change>`). Children: `<trace id="..." assumes="..." adr_checked="..." superseded="..." resolution="..."/>`. Reconciles every Wire trace against accepted ADRs at phase-doc-authoring time. Bit M06.V Decision 6 — V.3 trace #6 assumed `McpClient` drives re-resolution; ADR-0010 had moved the resolver into `McpDispatcher` (`M06.V-retrospective.md:76`).
+
+5. **Verifier-template codification (M06.V Decision 6 second half).** `STAGE-V-VERIFIER-PROMPT-TEMPLATE.md` gains a standing rule: "primitive delivered + unit-tested, but the production driver is absent, and the root cause is an already-accepted ADR's named carry-forward → classify 🟡 with mandatory carry-forward enumeration (name the ADR + the exact carry-forward clause + the next milestone/stage that owns it); NOT 🔴, NOT silent." Stops V re-deriving this each milestone (it reasoned correctly from ADR-0011 at M06.V, but unaided). Matching record line added to `VERIFIER-RETROSPECTIVE-TEMPLATE.md`.
+
+6. **Verifier-template codification (M06.V Decision 7).** From M07.V onward the Behavior pass MUST run the `--features integration` reference-MCP-server smoke (a real dispatch path exists by M07; mock-only Behavior cannot rule out rmcp wire-format correctness — the `transport/stdio.rs`+`http.rs` excluded holdout, attributed to the `tests/integration.rs` smoke that ran 0/0 at M06.V; `M06.V-retrospective.md:77`). Documented as the explicit M06.V→M07.V protocol carry-forward; matching `VERIFIER-RETROSPECTIVE-TEMPLATE.md` record line ("integration smoke executed: N/M, not 0/0").
+
+7. **CLAUDE.md §6 assembled-app-regression mandate (M06.5-summary "To Cycle 2" recorded input).** A work stage's regression test must exercise the assembled running-app path (real composition / real subprocess), not the isolated component that already passes its unit test; the phase-doc root cause is a falsifiable hypothesis the assembled regression test must disprove, not a premise. Plus the binary-crate variant: when the target crate is binary-only and `git diff <red>..<impl> -- '**/tests/**'` is vacuously empty, the strict-TDD invariant is satisfied instead by proving the in-source `#[cfg(test)]` block byte-identical red→impl (the M06.5.A.fix precedent). Long-form in CLAUDE.md §6; this protocol's `<construction_reachability_check>` + the verifier-template codifications are the authoring-time and verification-time surfaces of the same through-line.
+
+8. **Validator extension: none (lean continued).** The three new optional tags + the `shape=` extension pass through the regex parser without allowlisting — identical lean treatment to the nine v1.6 optional slots (v1.6 changelog #13) and v1.7 `<tdd_discipline>` (v1.7 changelog #4). A documentation-only comment block in `bin/validate-stage-prompts.mjs` records the v1.8 pass-through set; no enforcement logic added.
+
+9. **§G validator-promotion decision (maintainer call).** The v1.7 changelog deferred promoting the `<tdd_discipline strict="true">`→two-commit coupling to a validator cross-check "at v1.8+ once 2+ milestones show clean signal." Signal so far: v1.7 shipped at M06 (PR #76, before M06.D); M06.D/E/F + M06.5 A.fix/B.fix ran strict two-commit with the `**/tests/**`-empty invariant held cleanly — ~1 milestone + 1 fix-cycle, short of the "2+ milestones" bar. Recorded maintainer decision: keep the three new v1.8 slots lean (pass-through, honor-system) AND defer the `<tdd_discipline>` coupling promotion to v1.9 (M07 supplies the second milestone of signal). §11 carries the deferral.
+
+10. **No source changes; no gap-analysis entry; M01–M06.5 phase docs grandfathered.** Protocol iteration is process, not product (CLAUDE.md §20 — not a parent milestone). The v1.8 slots apply M07+ only (v1.6-established grandfathering, M06.D/E-confirmed). Validator PASS pre+post (the change is additive/recognizing, not breaking).
 
 v1.7 — One additive optional tag in `<work_stage_prompt>` (`<tdd_discipline>`) + four new recognized `<execution_steps>` step names + CLAUDE.md §6 `cargo llvm-cov clean` note + the two-commit pattern documented as the v1.7 recommended default + three graduated gotchas, informed by M06 friction (M06.A's TDD-discipline lapse failing hard-gate G5 + maintainer override; M06.C's empirical validation of the strict pattern) + web evidence (Nagappan et al. 2009; TDAD arXiv:2603.17973; Anthropic Claude Code TDD docs). Lean-validator pattern continued from v1.3/v1.4/v1.5/v1.6 (structural-only; the optional tag passes through without allowlisting; cross-checks deferred to v1.8+):
 
