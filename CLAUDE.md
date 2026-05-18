@@ -45,6 +45,7 @@ In a fresh session, read these in order before writing any code or making decisi
 | 6 | `docs/adr/` | ADRs by topic; at minimum 0001 (archetype), 0002 (Tauri), 0003 (charter), 0004 (code-signing) |
 | 7 | `schemas/*.v1.json` | When touching framework JSON or artifact shapes |
 | 8 | `examples/aria/` | Reference framework reconstruction (the archetype proof) |
+| 9 | `docs/coverage-policy.md` | When touching any coverage gate / exclusion / threshold — the append-only ledger + change protocol behind §5/§6 (mandatory before altering an exclusion) |
 
 **Rule:** if the spec, MVP doc, an ADR, and this file disagree, surface the contradiction and ask. Don't pick. The spec is the contract; this file is the execution protocol; both are intended to be consistent. Drift is a bug.
 
@@ -52,13 +53,21 @@ In a fresh session, read these in order before writing any code or making decisi
 
 ## 3. Project state (current, as of last update)
 
+**Invariants (don't go stale — these are the locks):**
+
 - **Stack locked:** Tauri + Rust + TS/React (ADR-0002).
 - **Scope locked:** §0d Release Scope Matrix in spec. v0.1 is Windows-only, single-session, Novice + Promoted tiers, STANDARD mode hardcoded, `fresh_context_per_task` loop policy, Anthropic-only.
-- **Next milestone:** M3 Live Graph — React Flow v12 + Zustand v5 + 11 node types per spec §3 + VDR projection + Tauri 2.x desktop-shell E2E (tauri-driver + WebdriverIO). Detailed prompt at `docs/build-prompts/M03-live-graph.md`. First milestone authored on the v1.2 XML stage-prompt protocol per `STAGE-PROMPT-PROTOCOL.md`.
-- **What's shipped (M01 + M02):** Cargo workspace + 5 crates (`runtime-core`, `runtime-main`, `runtime-drone`, `runtime-sandbox`, `xtask`); type-generation pipeline (typify) for Rust types from `schemas/*.v1.json`; drone Phase 1 (heartbeat + snapshot + IPC + signal handling, ≥95% coverage); `LLMProvider` trait + `AnthropicProvider` (direct HTTP+SSE) per spec §2c; `AgentSdk` generic over provider; main↔drone IPC client (Unix socket / Windows named pipe with reconnect); Tauri 2.x shell with capability lockdown; React 18 + TypeScript + Vite skeleton renderer with `set_api_key` + `run_smoke_session` Tauri commands; OS-keychain API key storage; CI green on Linux/macOS/Windows × stable + MSRV; Codecov delta gating; full dev-logging discipline (spec §13.5); `mcp_servers` SQLite table; `signal::ContextType` scaffold; ADRs 0001–0006; M01 + M02 retrospectives + summaries + cumulative `gap-analysis.md` ledger; v1.2 XML stage-prompt protocol at `STAGE-PROMPT-PROTOCOL.md`. The runtime binary builds and the M02 smoke test calls Anthropic live and streams events back to the renderer.
-- **What's NOT authored yet (M3+):** React Flow live graph (M3); plan + verify + HITL + budget primitives (M4); gap detection + capability enforcement (M5); MCP basic (M6); registry import (M7); Workbench Builder Canvas (M8); Generators (M9); first-run + polish (M10); ship-prep + signed installer (M11); headless `agent-runtime-cli` (post-M11, per §15 share matrix); Share It module (M08+, per §15e).
+- Each milestone produces real code, tests, and CI changes; doc-only work continues only if a session uncovers a spec gap that must close before code can land.
 
-The implication: M01 + M02 took ~13–15h of code execution (calibrated). Subsequent milestones build on this foundation. Each milestone produces real code, tests, and CI changes; documentation-only work continues only if a session uncovers a spec gap that must be closed before code can land.
+**Live state — do NOT snapshot it here** (a hardcoded "next milestone /
+what's shipped" list rots every milestone and misinforms fresh
+sessions). Read the always-current sources instead:
+
+- `docs/MVP-v0.1.md` — milestones M1–M11 + acceptance criteria; which milestone is next.
+- `docs/build-prompts/retrospectives/` — the latest `M[NN]-summary.md` / `M[NN].*-retrospective.md` = what shipped + verdicts.
+- `docs/gap-analysis.md` — cumulative product↔spec ledger + carry-forwards.
+- `CHANGELOG.md` `[Unreleased]` — what landed since the last release.
+- `git log --oneline main` + open PRs — authoritative build state.
 
 ---
 
@@ -103,50 +112,17 @@ A micro-cycle should take 5–15 minutes. If a cycle is longer, the test is too 
 
 ### Coverage thresholds (per §12)
 
-- **≥80% line coverage** on all new code (Rust: `cargo-llvm-cov`; TS: `vitest --coverage`). Workspace gate excludes generated code and binary stubs: `--ignore-filename-regex "src.main\.rs|generated"`.
-- **≥95% line on safety primitives** with documented exclusions: drone (`crates/runtime-drone/`), provider/SSE pipeline (`crates/runtime-main/`), capability enforcer (`crates/runtime-main/src/capability/`), plan state machine, snapshot/recovery code paths, **sandbox (`crates/runtime-sandbox/`)** and **sandbox IPC client (`crates/runtime-main/src/sandbox_ipc/`)**. The drone gate excludes `lib.rs` and `shutdown.rs` (OS-signal orchestrators wrapping testable `_inner`/`_with` variants — exercised end-to-end by the Unix subprocess integration test in `crates/runtime-drone/tests/integration.rs`). The runtime-main gate excludes `src/providers/anthropic.rs` (the production reqwest+SSE wrapper that constructs `reqwest::Client` and POSTs to `https://api.anthropic.com`; structurally untestable cross-platform) plus `src/drone_ipc/connection.rs` and **`src/sandbox_ipc/connection.rs`** (cfg-platform `open()` OS-call wrappers; testable seams `Connection::from_streams` + `Connection::send_with_reconnect` + `Connection::next_event`/`next_response` are unit-tested via `tokio::io::duplex` plus end-to-end via the subprocess integration tests). The runtime-sandbox gate (added M05 Stage C1; lifted at C2) excludes only `src/main.rs` (binary stub) + `src/lib.rs` (run/run_inner OS-signal orchestrator). M05 Stage C2 lifted `src/ipc.rs` into the gate per the C1 carry-forward and added the OS-isolation files: `seccomp.rs` + `landlock.rs` (`cfg(target_os = "linux")`); `job_objects.rs` (`cfg(windows)`, measured on CI Windows / Windows-local). M05 PR #70 CI surfaced that `seccomp.rs` + `landlock.rs` cannot meet the ≥95% gate from in-process unit tests because their `install()` bodies install OS fences on the calling process (seccomp's `KillProcess` BPF filter; landlock's `restrict_self` thread restriction) — running them in unit tests would poison the test runner. Excluded from the gate as the OS-signal-class holdout for the sandbox crate, parallel to drone's `lib.rs` + `shutdown.rs` exclusion. Coverage attribution for these files is via the subprocess integration tests in `tests/integration.rs` (behavioral verification — `/proc/$pid/status` on Linux + `IsProcessInJob` on Windows), not a per-line gate. The gate measures `validator.rs` + `protocol.rs` + `error.rs` + `ipc.rs` + `job_objects.rs` (on Windows; seam-decomposed at M05.C2) at ≥95%. **Carry-forward to M06+:** seam decomposition (`seccomp::install_with(load_fn: impl FnOnce(&ScmpFilterContext) -> Result<()>)` + `landlock::install_with(restrict_fn: impl FnOnce(RulesetCreated) -> Result<RulesetStatus>)`) would lift these modules back into the gate by separating the OS-call line from the rest of the install logic; matches the `*_with` testable-seam archetype used throughout the workspace. Wire-format logic lives in `src/providers/anthropic_sse.rs` and is exercised end-to-end by `tests/anthropic_wiremock.rs` (8 tests covering happy path, auth, rate limit, tool use, thinking, server-emitted error, malformed bytes skipped, and partial-chunk reassembly). Per-module baseline (M01.C measured): `snapshot.rs` 100%, `db.rs` 98.82%, `heartbeat.rs` 98.59%, `command_handler.rs` 97.94%, `ipc.rs` 84.70% (platform-cfg variants). Sandbox per-module baseline: `validator.rs` 96.30% line / 100% region (M05.C1), `protocol.rs` 100% (M05.C1), `ipc.rs` baseline 92.58% line / 94.01% region (M05.C1; lifted into the gate at C2 — must improve to ≥95% on Linux CI), `seccomp.rs` 80.56% line / 72.09% region (M05.C2 expected ≥95% on Linux CI; M05 PR #70 first Linux measurement was 80.56% — install() body untestable in-process; **excluded from gate at M05 PR #70 post-merge per the OS-signal-class holdout rationale above**), `landlock.rs` 76.25% line / 75.74% region (same story — M05 PR #70 first measurement; **excluded from gate**), `job_objects.rs` 95.12% line / 93.81% region (M05.C2; baseline measured on Windows CI — stays in the gate via the seam-decomposed `create_job` / `apply_limits` / `assign_process` / `win32_failure` test surface). M05 Stage D added the tier system (`crates/runtime-main/src/tier/`) — no exclusions; pure data + path-agnostic persistence make the surface fully testable. Tier per-module baseline (M05.D measured Windows-local): `evaluator.rs` 100% line / 100% region, `matrix.rs` 100% line / 100% region, `persistence.rs` 97.45% line / 100% region (the 4 uncovered lines are the `now_unix_ms` system-clock fallback path that can't fire post-epoch), `error.rs` data-only (no executable lines beyond thiserror derives). The Stage D L4 + Stage B L1+L2a layering is exercised end-to-end by `crates/runtime-main/tests/tier_smoke.rs` (10 tests pinning layer ordering, scope-conditional Network, persistence round-trip, demotion invalidation). M05 Stage E added the audit log (`crates/runtime-main/src/audit/`) + tier transition primitive (`crates/runtime-main/src/tier/transition.rs`) — no new exclusions; the writer is mutex-guarded `tokio::fs::File` + path-agnostic, fully testable with `tempfile`-backed audit paths. Audit + transition per-module baseline (M05.E measured Windows-local): `audit/writer.rs` 100% line / 98.43% region, `audit/entry.rs` 99.39% line / 97.50% region (the 1 uncovered line is the `Value::_ => Map::new()` fallback that's structurally unreachable since `json!()` always produces `Value::Object`), `audit/file_path.rs` 100% line / 100% region, `audit/error.rs` data-only, `tier/transition.rs` 99.24% line / 99.05% region (the 1 uncovered line is the `tracing::error!` branch fired only on underlying audit write failure — hard to trigger from a freshly-opened tempfile). The Stage E §8.security L5 wiring is exercised end-to-end by `crates/runtime-main/tests/audit_smoke.rs` (7 tests covering capability_granted, capability_denied, capability_check_ok-no-audit, tier_transition, framework_loaded, gap_detected, end-to-end multi-seam scenario, plus no-writer silent no-op). `crates/runtime-main/src/capability/enforcer.rs` baseline drops from 100% (M05.B + D) to 94.24% with the new `audit_grant` + `audit_check_result` + `audit_log` helper branches — the TierForbidden audit branch in `audit_check_result` isn't exercised by audit_smoke (Stage F may add a tier_violation-then-audit test path to lift this). Still within the runtime-main 95% gate at 96.56% workspace-wide. **M06 Stage B added the `runtime-mcp` gate (`crates/runtime-mcp/`)** — excludes `src/main.rs` (no binary; N/A), `src/lib.rs` (pub-mod declarations + re-exports — parallel to runtime-sandbox `lib.rs`), `src/transport/stdio.rs` + `src/transport/http.rs` (rmcp-wrapper `connect()` happy paths require a real MCP-protocol peer — subprocess speaking JSON-RPC for stdio, full `initialize` handshake for HTTP; OS-call holdouts parallel to runtime-main `providers/anthropic.rs`; the rmcp wire-format logic lives in the upstream crate, not ours; coverage credit via `build_command`/pure-helper unit tests + connect-failure-path tests + the feature-gated `tests/integration.rs` smoke). **M06 Stage C added the `client/*` lifecycle surface + two more OS-call-holdout exclusions:** `src/client/auth_keyring.rs` (`KeyringSecretStore` wraps `keyring::Entry` — every method touches the real OS keychain: Linux Secret Service via D-Bus / macOS Keychain Services / Windows Credential Manager; structurally untestable on CI cells without a session bus or signed-in user; parallel to runtime-main `key_store.rs` + the M02.C `anthropic.rs` precedent; coverage attribution via the `#[ignore]`-gated round-trip test in the module) and `src/client/lifecycle.rs` (`spawn_health_pinger[_with_interval]` returns a `tokio::spawn`'d infinite-loop `JoinHandle`; the loop body delegates to `McpClient::run_health_pass` which IS in-gate and exercised by the health-pass integration tests; the spawn wrapper itself is structurally untestable cross-platform — parallel to drone's `lib.rs` run()-wraps-run_inner exclusion). The runtime-mcp gate REQUIRES `--features test-helpers` (M06.C's `client_lifecycle.rs` integration tests are `#![cfg(feature = "test-helpers")]`-gated). runtime-mcp per-module baseline (M06.C measured Windows-local, after `cargo llvm-cov clean`): `client/auth.rs` 100% line / 100% region, `client/error.rs` 100% line / 100% region, `client/mod.rs` 94.64% line / 90.95% region (15 uncovered lines in `add_server`/`remove_server` error-path branches the MockTransport surface can't easily reach), `client/registry.rs` 94.12% line / 86.52% region (7 uncovered lines in `insert`/`list`/`update_last_alive` error-path branches), `transport/mod.rs` 95.35% line, `transport/mock.rs` 99.50% line, `error.rs` 100% line; in-gate aggregate **96.64% line ≥95%**. Carry-forward to M06.D+: the `client/mod.rs` + `client/registry.rs` error-path branches could be lifted via an injectable-failure SecretStore/Registry seam (the `*_with` archetype) if a future stage needs the extra coverage. Subsequent milestones must not regress any module below its baseline without a retro entry recording the reason. Same pattern (≥95% overall + documented per-module baseline) applies as future safety primitives land — document the exclusion list and rationale here when adding them. (History: M01.C retrospective + M01-foundation.md Stage D §D.3 "Coverage gate semantics"; M02.C added the runtime-main exclusion + wiremock coverage path; M05.C1 added the runtime-sandbox gate; M05.C2 lifted `ipc.rs` into the gate and added the OS-isolation modules; M05.D added the tier per-module baseline without new exclusions; M05.E added the audit + tier::transition per-module baseline without new exclusions, with the capability/enforcer.rs drop documented above; M05 PR #70 post-merge excluded `seccomp.rs` + `landlock.rs` from the runtime-sandbox gate after their first Linux CI measurement (80.56% + 76.25% line) confirmed `install()` bodies are structurally untestable in-process — matches drone's lib.rs+shutdown.rs OS-signal-class exclusion precedent; seam-decomposition lift carry-forward to M06+; M06.B added the runtime-mcp gate with the lib.rs + transport/stdio.rs + transport/http.rs OS-call-holdout exclusions; M06.C added client/auth_keyring.rs + client/lifecycle.rs OS-call-holdout exclusions + the client/* per-module baseline + the `cargo llvm-cov clean`-before-measurement note in §6.)
-- Coverage drops vs prior `main` block PR merge. CI computes the delta.
+- **≥80% line** on all new code (Rust `cargo-llvm-cov`; TS `vitest --coverage`). Workspace gate excludes generated code + binary stubs.
+- **≥95% line on safety primitives**: `runtime-drone`, `runtime-main` (provider/SSE, capability enforcer, plan state machine, snapshot/recovery, `sandbox_ipc/`), `runtime-sandbox`, `runtime-mcp`.
+- **Coverage must not drop vs the prior `main` block PR merge.** CI computes the delta (Codecov, below).
 
-**Coverage delta gating (from M02 onward) — Codecov-enforced.** M01 used
-absolute thresholds (workspace ≥80%, drone ≥95%) because no baseline
-existed. Starting M02, every PR also passes a delta-gate via Codecov:
-project + patch coverage thresholds set in `codecov.yml` (`target: auto`,
-`threshold: 0.5%`, `base: auto`). Codecov pulls the LCOV uploaded by the
-existing `cargo-llvm-cov` step in `.github/workflows/ci.yml`, compares
-to `main`'s last green build, and fails the PR check if any gated crate
-regresses by >0.5 percentage points (absolute) OR if patch coverage on
-the changed lines drops below the project floor.
+The **exact `cargo llvm-cov` commands + the current `--ignore-filename-regex` exclusion list** are in §6 (those are byte-identical to `codecov.yml` and CI — drift is a bug). Every exclusion's "why" is one of four named categories: **binary stub**, **OS-signal-class holdout** (body installs an OS fence / wraps an OS-signal future / spawns an infinite loop — poisons the test runner; covered via subprocess integration tests), **seam-vs-wrapper / OS-call holdout** (thin real-OS/network wrapper paired with a unit-tested `*_with` seam), **pub-mod `lib.rs`**.
 
-Codecov was advisory in M01 (commit `c04aac5`); M02 Stage A flips
-required-on for the project + patch checks via:
-- New `codecov.yml` at repo root with the project + patch rules.
-- `.github/workflows/ci.yml` keeps the existing upload step plus
-  per-crate flag uploads (`workspace`, `runtime-drone`, `runtime-main`);
-  the `informational: false` flag in `codecov.yml` makes the check
-  blocking and `fail_ci_if_error: true` reds the build on upload failure.
-- The absolute-threshold gates (`cargo llvm-cov --fail-under-lines`)
-  remain authoritative for hard floors; Codecov gates the *delta*.
-- No custom bash scripts to maintain.
+> **Full per-module baselines, per-milestone exclusion history + carry-forwards, and the Codecov/Tauri-patch-gate mechanism detail live in `docs/coverage-policy.md`** (the append-only ledger). It is a mandatory read (§2, §17, stage-prompt `<read_first>`) before adding or changing any exclusion or threshold. **`docs/coverage-policy.md` is the single source of truth for coverage rationale + history; the §6 commands, the §5 category list, and `codecov.yml` are its enforced mirrors — any coverage change syncs all four in one PR and appends a `docs/coverage-policy.md` §C milestone entry (the closeout stage owns this reconciliation — §6, `SUMMARY-TEMPLATE.md`, `STAGE-PROMPT-PROTOCOL.md` closeout `<deliverables>`).**
 
-Pre-M01 carry-forward; resolved per the M01 gap-analysis Important
-"Coverage delta gating mechanism" item.
+**Coverage delta gating (M02 onward — Codecov-enforced).** `codecov.yml` sets project + patch thresholds (`target: auto`, `threshold: 0.5%`, `base: auto`); Codecov pulls the LCOV from the existing `cargo-llvm-cov` CI step, compares to `main`'s last green build, and fails the PR if any gated crate regresses >0.5pp or patch coverage drops below the project floor. The absolute `--fail-under-lines` gates remain authoritative for hard floors; Codecov gates the *delta*. Mechanism + history: `docs/coverage-policy.md` §D.
 
-**Tauri shell patch-gate exception (PR #45 / M02 post-merge).** The
-`src-tauri/src/commands.rs` wrapper functions (`set_api_key`,
-`run_smoke_session`, `forward_events`) call real OS APIs (keychain via
-`keyring`, Tauri `AppHandle::emit`, `AnthropicProvider::new` against
-the real network) and are structurally untestable on CI Linux without
-a platform keychain or a Tauri runtime. The `*_with` testable seams
-in the same file (`set_api_key_with`, `run_smoke_session_with`) ARE
-unit-tested. To honor the seam-vs-wrapper split honestly, `codecov.yml`
-defines a `tauri-shell` patch gate at 50% (target) covering
-`src-tauri/**`, and the default 80% patch gate excludes that path.
-Same architectural rationale as the runtime-main exclusions
-(`providers/anthropic.rs`, `key_store.rs`, `drone_ipc/connection.rs`)
-— all OS-call holdouts wrapped by testable seams. M03+ work that
-adds non-wrapper logic to `src-tauri/src/` must re-evaluate whether
-the 50% target stays appropriate; document any change here with a
-retro entry.
+**Tauri-shell patch-gate exception.** `src-tauri/src/commands.rs` OS-API wrappers are untestable on CI Linux; `codecov.yml` defines a `tauri-shell` patch gate at 50% covering `src-tauri/**`, and the default 80% patch gate excludes that path. Rationale + the seam-vs-wrapper split: `docs/coverage-policy.md` §D. Work adding **non-wrapper** logic to `src-tauri/src/` must re-evaluate the 50% target and append a `docs/coverage-policy.md` §C entry.
 
 ### Test types and when they apply
 
@@ -186,9 +162,9 @@ Before any commit lands, **all** of these must pass locally and on CI. No except
 3. `cargo clippy --workspace --all-targets -- -D warnings` — final verification. The remaining findings after steps 1+2 are real lint debt requiring judgment.
 4. Remaining gates (test, doc, audit, deny, llvm-cov, frontend gates per the lists below). **Before the `cargo llvm-cov` gates**, run `cargo llvm-cov clean --workspace` if any prior `cargo llvm-cov` invocation ran this session — `llvm-cov` merges `.profraw` across runs, and stale data from a prior (especially failing) run produces phantom coverage numbers (gotcha #81 — M06.C wasted ~10 min chasing a false 92.07% that was truly 96.64%).
 
-**Strict TDD two-commit ordering (v1.7 — `<tdd_discipline>`).** For any work stage carrying `<tdd_discipline strict="true">` (the recommended default from M06.D onward per `STAGE-PROMPT-PROTOCOL.md` §7 + the §15 v1.7 changelog), the cycle is two commits on the same branch: (1) write all failing tests → commit as a standalone `test(M0X.Y): ...` commit → surface for red-phase approval; (2) implement WITHOUT modifying the test files → run the gate ordering above → commit as the impl commit whose body states the verifiable invariant `git diff <red-sha>..<impl-sha> -- '**/tests/**'` is EMPTY → surface for final approval. Net-new additive tests + mechanical test-file formatting go in a SEPARATE labelled follow-up commit. Evidence basis: Nagappan et al. 2009 (industrial TDD 60–90% defect reduction); TDAD arXiv:2603.17973 (TDD prompting WITHOUT structural enforcement INCREASES regressions 9.94%; structural enforcement drops them 70%); Anthropic Claude Code TDD docs (commit-tests-before-impl is the safety net against the agent silently rewriting tests to pass). M06.A's TDD lapse (hard-gate G5 failure + documented maintainer override) is the negative case; M06.C is the empirical reference implementation (~10% time overhead; structural defense against gotcha #66 "tests-pass-but-contract-fails").
+**Strict TDD two-commit ordering (v1.7 — `<tdd_discipline>`).** For any work stage carrying `<tdd_discipline strict="true">` (the recommended default from M06.D onward per `STAGE-PROMPT-PROTOCOL.md` §7 + the §15 v1.7 changelog), the cycle is two commits on the same branch: (1) write all failing tests → commit as a standalone `test(M0X.Y): ...` commit → surface for red-phase approval; (2) implement WITHOUT modifying the test files → run the gate ordering above → commit as the impl commit whose body states the verifiable invariant `git diff <red-sha>..<impl-sha> -- '**/tests/**'` is EMPTY → surface for final approval. Net-new additive tests + mechanical test-file formatting go in a SEPARATE labelled follow-up commit. (Evidence basis — Nagappan 2009, TDAD arXiv:2603.17973, Anthropic TDD docs — and the M06.A negative case / M06.C reference implementation: see `STAGE-PROMPT-PROTOCOL.md` §7 + the §15 v1.7 changelog.)
 
-The autofix step (2) before final verification (3) eliminates 6–15 mechanical lints per stage. Pattern bit M03 graduated gotcha #34 (fmt first); M04 graduated gotcha #64 (clippy `--fix` second); M05 confirmed at 6 stages of recurrence (B + C1 + C2 + D + E + light at A) that the ordering should be canonical execution discipline, not per-stage gotcha citation. STAGE-PROMPT-PROTOCOL.md §10 v1.6 hardening encodes the same rule at the protocol layer.
+The autofix step (2) before final verification (3) eliminates 6–15 mechanical lints per stage. `STAGE-PROMPT-PROTOCOL.md` §10 encodes the same ordering at the protocol layer.
 
 ### Rust gates
 
@@ -201,72 +177,51 @@ RUSTDOCFLAGS="-D missing_docs" cargo doc --workspace --no-deps
 cargo audit
 cargo deny check
 
-# Workspace coverage — generated code + binary stubs excluded.
+# Coverage gates. Commands are byte-identical to codecov.yml + CI —
+# CI-parity is a hard rule, do NOT alter flags. The exclusion regexes
+# and their per-category rationale + per-milestone history live in
+# docs/coverage-policy.md (§A current set, §B baselines, §C history).
+# Run `cargo llvm-cov clean --workspace` first if any prior llvm-cov
+# ran this session (gotcha #81 — stale .profraw merges produce phantom
+# numbers).
 cargo llvm-cov --workspace \
     --ignore-filename-regex "src.main\.rs|generated" \
     --fail-under-lines 80
 
-# Drone safety-primitive coverage — additionally exclude OS-signal
-# orchestrators (lib.rs + shutdown.rs) per CLAUDE.md §5 + M01-foundation.md
-# Stage D §D.3 "Coverage gate semantics".
 cargo llvm-cov --package runtime-drone \
     --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.shutdown\.rs" \
     --fail-under-lines 95
 
-# runtime-main safety-primitive coverage — additionally exclude (a) the
-# real-network reqwest+SSE wrapper (providers/anthropic.rs) and (b) the
-# cfg-platform open() OS-call wrapper (drone_ipc/connection.rs). Both are
-# OS-signal-class holdouts. Wire-format logic lives in
-# providers/anthropic_sse.rs (wiremock-covered); the drone-IPC testable
-# seam Connection::send_with_reconnect is exercised by both unit tests
-# (tokio::io::duplex) and the loopback integration test. Per CLAUDE.md
-# §5 + M02-event-pipeline.md Stages C/D.
 cargo llvm-cov --package runtime-main \
     --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs" \
     --fail-under-lines 95
 
-# runtime-sandbox safety-primitive coverage (M05 Stage C2 added the
-# OS-isolation modules; PR #70 post-merge excluded seccomp.rs +
-# landlock.rs). Excluded: (a) main.rs (binary stub), (b) lib.rs
-# (run wrapping run_inner with the OS-signal future — parallel to
-# drone's lib.rs exclusion), (c) seccomp.rs + landlock.rs
-# (`cfg(target_os = "linux")` modules whose `install()` bodies
-# install OS fences on the calling process — structurally untestable
-# from in-process unit tests; coverage attribution is via the
-# subprocess integration tests in `tests/integration.rs`). In-gate:
-# validator.rs + protocol.rs + error.rs + ipc.rs (cross-platform) +
-# job_objects.rs on `cfg(windows)` (seam-decomposed at M05.C2 via
-# create_job / apply_limits / assign_process / win32_failure test
-# surface). Carry-forward to M06+: seam decomposition for seccomp +
-# landlock install() would lift them back into the gate.
 cargo llvm-cov --package runtime-sandbox \
     --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.seccomp\.rs|src.landlock\.rs" \
     --fail-under-lines 95
 
-# runtime-mcp safety-primitive coverage (M06 Stage B added the gate;
-# Stage C added the client/* lifecycle surface + 2 OS-call holdouts).
-# `--features test-helpers` is REQUIRED — M06.C's client_lifecycle.rs
-# integration tests are `#![cfg(feature = "test-helpers")]`-gated;
-# without it client/ coverage craters. Excluded: (a) main.rs (no
-# binary; N/A), (b) lib.rs (pub-mod + re-exports — parallel to
-# runtime-sandbox lib.rs), (c) transport/stdio.rs + transport/http.rs
-# (rmcp-wrapper connect() happy paths need a real MCP peer; OS-call
-# holdouts parallel to runtime-main providers/anthropic.rs — M06.B),
-# (d) client/auth_keyring.rs (KeyringSecretStore touches the real OS
-# keychain; parallel to runtime-main key_store.rs — M06.C),
-# (e) client/lifecycle.rs (spawn_health_pinger tokio-spawn'd infinite
-# loop; loop body delegates to the in-gate McpClient::run_health_pass;
-# parallel to drone lib.rs — M06.C). Per CLAUDE.md §5 +
-# M06-mcp-basic.md Stage B/C. NOTE: run `cargo llvm-cov clean` first
-# if a prior llvm-cov invocation (esp. a failing one) ran this session
-# — stale merged .profraw data produces falsely-low numbers (gotcha
-# from M06.C; ~10 min lost to a phantom 92% vs true 96.64%).
+# runtime-mcp REQUIRES --features test-helpers (M06.C client_lifecycle
+# integration tests are cfg-gated; without it client/ coverage craters).
 cargo llvm-cov --package runtime-mcp --features test-helpers \
     --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs|src.transport.stdio\.rs|src.transport.http\.rs|src.client.auth_keyring\.rs|src.client.lifecycle\.rs" \
     --fail-under-lines 95
 ```
 
 CI runs all of these on Linux/macOS/Windows × stable + MSRV.
+
+#### Coverage policy: source of truth & change protocol
+
+`docs/coverage-policy.md` is the single source of truth for coverage
+*rationale + history*. The enforced mirrors are: (1) the §6 `cargo
+llvm-cov` commands above, (2) the §5 exclusion-category list, (3)
+`codecov.yml`. **Any change to a threshold or an exclusion must, in the
+same PR:** update all three mirrors byte-consistently, and append a
+dated milestone entry to `docs/coverage-policy.md` §C (and a §B
+baseline if a new module entered a gate). The closeout stage owns
+verifying this reconciliation happened (`SUMMARY-TEMPLATE.md` →
+"Decisions to apply"; `STAGE-PROMPT-PROTOCOL.md` closeout
+`<deliverables>`). Drift between the four = a bug, caught at the point
+of change, not later.
 
 ### Frontend gates (active from M02 Stage E)
 
@@ -725,13 +680,14 @@ This checklist is the orientation before TDD's "Red" phase. Skip it and you'll d
 | Tech-debt ledger (Stage V 🟢 findings; append-only) | `docs/tech-debt.md` |
 | Per-stage retrospectives | `docs/build-prompts/retrospectives/` |
 | Cumulative gap analysis (append-only) | `docs/gap-analysis.md` (per §20) |
+| Coverage policy ledger (baselines, exclusion history, change protocol) | `docs/coverage-policy.md` (per §5/§6) |
 | Persistence architecture (HLA) | `docs/persistence-architecture.md` |
 | Architecture decisions | `docs/adr/` |
 | Schemas (source of truth) | `schemas/*.v1.json` |
 | Reference framework (archetype proof) | `examples/aria/` |
 | Sibling framework (Ralph) | `examples/ralph/` |
 | Style and naming conventions | `docs/style.md` |
-| Common gotchas (20 traps) | `docs/gotchas.md` |
+| Common gotchas (numbered, growing — see §15) | `docs/gotchas.md` |
 | Engineering charter | `agent-runtime-spec.md` §12 |
 | Privacy & telemetry | `agent-runtime-spec.md` §13 |
 | First-run UX | `agent-runtime-spec.md` §14 |
@@ -793,18 +749,7 @@ Full protocol (per-stage workflow steps, scoring rubric, threshold gates, outcom
 
 ### Stage V (Verifier) — fresh-context contract-fidelity check (M05+, per ADR-0008)
 
-Between the last work stage and the closeout, every milestone M05 onward runs a **Stage V** verifier session. V is structurally separate from work + closeout stages — fresh CLI session, deliberately omits prior retros / summary / gap-analysis from its read-list, runs four passes (Inventory + Wire + Behavior + Multi-call invariants) against the milestone's deliverables. The clear-and-paste session pattern is the bias guard.
-
-V's role: catch the **implementation-tests-green, contract-tests-missing** bug class — code that passes its own unit tests but fails when a user exercises it. M04 shipped five such bugs (drone IPC single-use, AgentNode wrong-field, Budget CSS missing, "untitled" nodes, viewport sizing); V's protocol is structured to catch every one going forward.
-
-- **Schema variant**: `<verifier_stage_prompt>` in `STAGE-PROMPT-PROTOCOL.md` §14.
-- **Parameterized prompt template**: `docs/build-prompts/STAGE-V-VERIFIER-PROMPT-TEMPLATE.md`.
-- **Outcomes** (`merge_gate` per ADR-0008):
-  - 🔴 findings block merge → trigger a D.fix stage (scoped to the cited findings; max 2 iterations before maintainer escalation).
-  - 🟡 findings carry forward to next milestone's Stage A.
-  - 🟢 findings log to `docs/tech-debt.md` (append-only).
-  - Interpretation disputes → build agent files an ADR-class waiver (`docs/adr/NNNN-waiver-M[NN]-finding-N.md`); maintainer adjudicates.
-- **Grandfathering**: M01–M04 predate V; their gap-analysis entries stand (per §20 append-only). M04 receives a retroactive V run as the protocol's first real-world test; findings land in `docs/build-prompts/retrospectives/M04.V-retrospective.md` (no prior gap-analysis edit; resolution flows through M05's Carry-forward).
+Between the last work stage and closeout, every milestone M05+ runs a **Stage V** verifier: a fresh CLI session that deliberately omits prior retros / summary / gap-analysis from its read-list (the bias guard) and runs four passes (Inventory + Wire + Behavior + Multi-call invariants) against the deliverables. Its job is the **implementation-tests-green, contract-tests-missing** bug class (M04 shipped five). Schema `<verifier_stage_prompt>` (`STAGE-PROMPT-PROTOCOL.md` §14); prompt template `docs/build-prompts/STAGE-V-VERIFIER-PROMPT-TEMPLATE.md`; retro shape `VERIFIER-RETROSPECTIVE-TEMPLATE.md`. `merge_gate` outcomes (ADR-0008): 🔴 blocks → scoped D.fix (max 2 iterations); 🟡 → next milestone Stage A; 🟢 → `docs/tech-debt.md`; interpretation disputes → build agent files an ADR-class waiver, maintainer adjudicates. Grandfathering, the M04 retroactive run, and full pass mechanics: ADR-0008 + `STAGE-PROMPT-PROTOCOL.md` §14.
 
 ---
 
