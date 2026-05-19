@@ -2,12 +2,12 @@
 //! M06.5 `token_usage = 0` open finding).
 //!
 //! Mirrors `vdr_projection.rs`: exercises
-//! `runtime_drone::token_usage::project_signal` against a temp SQLite
-//! DB seeded with synthetic signals. Per spec §2c.3 + §937 the
-//! `token_usage` signal carries `{ input, output, model, cost_usd }`;
-//! the projector is the third drone projector (parallel to vdr +
-//! plan_projector — same `handle_write_signal` transaction, NOT a new
-//! DroneCommand).
+//! `runtime_drone::token_usage::project_signal` against a temp
+//! `SQLite` DB seeded with synthetic signals. Per spec §2c.3 + §937
+//! the `token_usage` signal carries `{ input, output, model,
+//! cost_usd }`; the projector is the third drone projector (parallel
+//! to `vdr` + `plan_projector` — same `handle_write_signal`
+//! transaction, NOT a new `DroneCommand`).
 
 use runtime_drone::db;
 use runtime_drone::token_usage::project_signal;

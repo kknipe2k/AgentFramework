@@ -87,7 +87,7 @@ fn resolver_with(pairs: &[(&str, &[&str])]) -> Arc<RwLock<NamespaceResolver>> {
     Arc::new(RwLock::new(NamespaceResolver::new(connected)))
 }
 
-fn no_aliases() -> BTreeMap<String, String> {
+const fn no_aliases() -> BTreeMap<String, String> {
     BTreeMap::new()
 }
 

@@ -293,6 +293,12 @@ fn cfg() -> AgentConfig {
 /// under the run's session id. `token_usage > 0` is the falsifiable
 /// hypothesis (M06.5 lines 156–173).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one coherent end-to-end assembled scenario (real drone + \
+              concrete dispatcher + multi-turn loop); splitting the \
+              harness setup across fns would fragment the regression"
+)]
 async fn agent_with_tools_loop_persists_signals_and_token_usage() {
     ensure_drone_built();
     let dir = TempDir::new().expect("tempdir");
@@ -423,7 +429,7 @@ async fn agent_with_tools_loop_persists_signals_and_token_usage() {
 /// Two connected servers expose the same short tool name; the §5a
 /// re-resolution driver (`on_server_connected`) reports the new
 /// ambiguity, and dispatching the SHORT name through the assembled loop
-/// emits `AgentEvent::ToolAliasAmbiguous` (ConnectionResolver
+/// emits `AgentEvent::ToolAliasAmbiguous` (`ConnectionResolver`
 /// re-resolves on connect, collision surfaces — ADR-0011 b).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn connect_collision_reresolves_and_emits_tool_alias_ambiguous() {
@@ -452,14 +458,14 @@ async fn connect_collision_reresolves_and_emits_tool_alias_ambiguous() {
 
     // A second server connecting with a colliding `read` makes the
     // short name ambiguous (§5a step 5).
-    {
+    let new_amb = {
         let mut r = resolver.write().await;
-        let new_amb = r.connect_server("other", vec!["read".to_string()]);
-        assert!(
-            !new_amb.is_empty(),
-            "a colliding short name must surface a NewAmbiguity"
-        );
-    }
+        r.connect_server("other", vec!["read".to_string()])
+    };
+    assert!(
+        !new_amb.is_empty(),
+        "a colliding short name must surface a NewAmbiguity"
+    );
 
     let provider = Arc::new(MultiTurnStub::new(vec![
         vec![ProviderEvent::ToolUse {
@@ -504,7 +510,7 @@ async fn connect_collision_reresolves_and_emits_tool_alias_ambiguous() {
 /// empty-`agent_id` branch cannot be reached from production. This test
 /// pins that `RenderableOutcome::{Blocked,Ambiguous}` map to the same
 /// renderer events the legacy non-Invoked arms produced, and the run
-/// loop's Invoked path still emits a NON-empty agent_id.
+/// loop's Invoked path still emits a NON-empty `agent_id`.
 #[test]
 fn renderable_outcome_maps_blocked_and_ambiguous_without_invoked() {
     let blocked = apply_renderable(
