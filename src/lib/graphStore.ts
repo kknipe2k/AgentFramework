@@ -1579,15 +1579,18 @@ export const useGraphStore = create<GraphState>((set) => ({
 
         // No-op variants — stream_text + decision_record + token_usage
         // feed the inspector, not the graph; session_end + tool_error +
-        // mode_changed are graph-no-op by design. The exhaustive default
-        // below is the forcing function: any new variant added to the
-        // schema breaks the compile until handled.
+        // mode_changed are graph-no-op by design. artifact_hash_mismatch
+        // (M07 Stage B, spec §2214) is backend-emitted on skills.lock
+        // drift; its Reinstall / Remove prompt is wired in M07 Stage E —
+        // graph-no-op here so the exhaustiveness forcing function below
+        // stays satisfied without pre-empting Stage E's UI scope.
         case 'session_end':
         case 'tool_error':
         case 'mode_changed':
         case 'stream_text':
         case 'decision_record':
         case 'token_usage':
+        case 'artifact_hash_mismatch':
           return state;
 
         default: {

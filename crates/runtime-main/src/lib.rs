@@ -73,6 +73,22 @@ pub mod recovery;
 /// unchanged.
 pub mod sandbox_ipc;
 pub mod sdk;
+/// `skills.lock` artifact-integrity primitive — spec §2181-2216 (M07
+/// Stage B; ADR-0014).
+///
+/// Path-agnostic SRI-encoded SHA-256 content hashing + the
+/// per-framework `skills.lock` read/write + verify-on-load. A recomputed
+/// hash that no longer matches the locked hash returns
+/// `skills_lock::LockError::HashMismatch`, which the load path maps to
+/// the schema-faithful `AgentEvent::ArtifactHashMismatch` and BLOCKS the
+/// artifact's use (integrity > availability). Canonical (sorted-key,
+/// stable-field-order) serialization makes the lock byte-identical
+/// across machines for reproducible installs (spec §2204/§2216). The
+/// module takes `&Path`; the Tauri shell resolves
+/// `<framework_root>/skills.lock` (CLAUDE.md §9 path-agnostic
+/// archetype). Safety primitive: ≥95% per-module coverage (CLAUDE.md
+/// §5).
+pub mod skills_lock;
 /// Tier system — spec §8.security L4 (M05 Stage D).
 ///
 /// Two-tier evaluator (Novice + Promoted per §0d) that sits BEFORE the

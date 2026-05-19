@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M07 Stage B (`skills.lock` artifact-integrity primitive — ADR-0014)
+
+- **`schemas/skills-lock.v1.json`** (new, ADR-0014) — the per-framework
+  lock: `{ version: 1, installed: { "name@version" → { kind, source,
+  content_hash, installed_at, tier_at_install, validation_report_id } } }`.
+  Spec-faithful `installed` key (spec §2200; maintainer-decided
+  2026-05-18 over the early phase-doc `entries` draft). `content_hash`
+  is an SRI-encoded SHA-256 (`sha256-<base64>`, pattern-enforced) — a
+  deliberate, ADR-0014-recorded tightening of the spec sketch's
+  `sha256:<hex>` for algorithm agility. `source` is a v0.1 URL|file
+  union (no `source_commit`/upstream — that is the v1.0 trust chain per
+  MVP §M7). Rust types generated via `cargo xtask regenerate-types`
+  (typify; `#[path]` snake_case module for the hyphenated schema file).
+- **`artifact_hash_mismatch` event** added to `schemas/event.v1.json`
+  (regenerated Rust + TS; mirrored into the curated
+  `runtime_core::event::AgentEvent`). `SriHash`/`ArtifactRef` mirrored
+  as local `SriHashRef`/`ArtifactRef` `$defs` per the M04.D
+  cross-schema-`$ref`-mirror pattern (event.v1.json's
+  json-schema-to-typescript target resolves local `$defs` only — not
+  the phase-doc B.3.2 literal cross-schema `$ref`).
+- **`runtime_main::skills_lock`** (new, path-agnostic per CLAUDE.md §9):
+  `content_hash` (SRI SHA-256, cross-platform deterministic),
+  `read`/`write_entry` (create-when-absent, in-place replace, canonical
+  sorted-key + stable-field-order serialization → byte-identical
+  cross-machine lock per spec §2204/§2216), `verify` (happy → `Ok`;
+  drift → `LockError::HashMismatch` mapping 1:1 to
+  `AgentEvent::ArtifactHashMismatch` and BLOCKING the load —
+  integrity > availability; unknown artifact → `LockError::NotFound`).
+  New `base64` runtime dependency (MIT/Apache-2.0, `cargo deny`-clean)
+  alongside the existing `sha2`.
+- **ADR-0014** (`Proposed`; → `Accepted` in the M07 PR) — the lock
+  format, hash-blocks-load posture, SRI/`installed`/`source` decisions,
+  canonical-serialization reproducibility invariant, and the staged
+  threat model (Sigstore/SLSA/upstream provenance deferred to v1.0, not
+  missed).
+- New ≥95% per-module coverage gate on `runtime_main::skills_lock`
+  (safety primitive, CLAUDE.md §5) — recorded for the M07 closeout
+  `<coverage_policy_reconciliation>` four-mirror sync.
+
 ### Fixed — M07 Stage A (M06 carry-forward absorption + ADR-0011 construction-graph groundwork)
 
 - **TD-005 / gotcha #56 structural close** — the runtime-main `cargo llvm-cov` gate is now Windows-local-measurable for the first time. The six integration test files that spawn the `runtime-drone` subprocess (`drone_ipc_loopback`, `drone_reconnect_events`, `plan_lifecycle`, `plan_recovery`, `recovery_lifecycle`, `smoke_signal_persistence`) carried a byte-identical broken nested-`cargo build` helper; de-duplicated onto a shared `crates/runtime-main/tests/common/mod.rs` fixture that builds the drone into a dedicated `target/drone-fixture` dir (no parent build-lock contention) with the workspace manifest + package pinned (CWD-independent) and the llvm-cov instrumentation env stripped. Gate command/regex/threshold unchanged; measured 95.73% line ≥ 95 (exit 0).

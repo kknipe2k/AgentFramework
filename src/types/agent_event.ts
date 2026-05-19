@@ -68,7 +68,8 @@ export type AgentEvent =
   | TierTransition
   | TokenUsage
   | ToolAliasAmbiguous
-  | McpRequestBlocked;
+  | McpRequestBlocked
+  | ArtifactHashMismatch;
 /**
  * One short, human-readable description of a parent capability that the L2a narrowing seam considered when computing a child's narrowed grants. Format is emitter-defined (e.g., `read:src:glob:src/**`); renderer surfaces verbatim. Per gotcha #43 (typify-friendly extraction): inline-validated strings inside oneOf variants must be extracted to $defs with a title or typify panics.
  */
@@ -178,6 +179,14 @@ export type BlockedMcpTool = string;
  * Human-readable reason the MCP tool dispatch was denied — the rendered capability-deny cause. Renderer surfaces verbatim on the MCPNode + capability-violation modal. Per gotcha #43 (typify-friendly extraction).
  */
 export type McpBlockReason = string;
+/**
+ * The `name@version` of the artifact whose content hash drifted on load (spec §2214, M07 Stage B). Per gotcha #43 (typify-friendly extraction): validated inline strings inside oneOf variants are extracted to $defs with a title.
+ */
+export type ArtifactRef = string;
+/**
+ * SRI-style algorithm-prefixed base64 SHA-256 digest (`sha256-<base64>`) — the M07 skills.lock content hash (spec §2181-2214; ADR-0014). Mirrors skills-lock.v1.json#/$defs/SriHash via a LOCAL $def rather than a cross-schema $ref: typify does not support cross-schema $ref and event.v1.json's json-schema-to-typescript target resolves local $defs only; per-schema $defs duplication is the established M04.D mirror pattern (CapabilityKindRef, McpServerNameRef, TierRef, HitlTriggerRef). Pattern kept identical to the skills-lock.v1.json source of truth.
+ */
+export type SriHashRef = string;
 
 export interface SessionStart {
   type: "session_start";
@@ -607,4 +616,13 @@ export interface McpRequestBlocked {
   server: McpServerNameRef;
   tool: BlockedMcpTool;
   reason: McpBlockReason;
+}
+/**
+ * Spec §2214 (M07 Stage B) — emitted when `skills_lock::verify` detects that an installed artifact's recomputed SRI content hash no longer matches the hash locked in `skills.lock`. The load path BLOCKS the artifact's use and surfaces a Reinstall / Remove prompt (M07 Stage E); the artifact does not run with drifted bytes (integrity > availability — ADR-0014). `artifact_ref` is the `name@version`; `expected` is the locked SRI hash; `actual` is the SRI hash of the bytes on disk now. SriHash mirrored locally via SriHashRef per the M04.D cross-schema-$ref-mirror pattern.
+ */
+export interface ArtifactHashMismatch {
+  type: "artifact_hash_mismatch";
+  artifact_ref: ArtifactRef;
+  expected: SriHashRef;
+  actual: SriHashRef;
 }
