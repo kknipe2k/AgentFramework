@@ -1,5 +1,5 @@
 //! M07 Stage C — import-pipeline backend (spec Phase 7 §2152–2211;
-//! MVP §M7; ADR-0005 share_provenance; §15c/§15d metadata).
+//! MVP §M7; ADR-0005 `share_provenance`; §15c/§15d metadata).
 //!
 //! Behavioral contract tests for the path-agnostic `import` pipeline:
 //! capability-gated URL / local-file fetch → schema validation (the
@@ -9,7 +9,7 @@
 //! write (reuse the M07.B `skills_lock` module) → `Installed`.
 //! `compatible_os` mismatch is a BLOCKING `OsMismatch` checked BEFORE
 //! the expensive L3 (spec §15c). `share_provenance` round-trips
-//! export→import, runtime-to-runtime only (rebake_changes always `[]`,
+//! export→import, runtime-to-runtime only (`rebake_changes` always `[]`,
 //! ADR-0005). MCP-server-config import routes into the injected
 //! `McpRegistry` seam (the M06 MCP Manager — dependency-inverted to
 //! avoid the `runtime-mcp → runtime-main` Cargo cycle, the
@@ -92,7 +92,7 @@ fn valid_mcp_bytes() -> Vec<u8> {
 /// gate applies regardless of artifact kind (absent → schema default
 /// `["windows","macos","linux"]` → never blocks).
 fn framework_value(compatible_os: serde_json::Value) -> serde_json::Value {
-    json!({
+    let mut v = json!({
         "name": "demo",
         "version": "1.0.0",
         "description": "demo framework",
@@ -101,9 +101,10 @@ fn framework_value(compatible_os: serde_json::Value) -> serde_json::Value {
         "skills": [],
         "agents": [],
         "session_root_agent": "root",
-        "compatible_os": compatible_os,
         "requires_secrets": ["GITHUB_TOKEN"]
-    })
+    });
+    v["compatible_os"] = compatible_os;
+    v
 }
 
 // ── injected seam fakes ─────────────────────────────────────────────
@@ -549,7 +550,7 @@ async fn mcp_server_config_import_lands_in_the_m06_registry() {
     .await
     .expect("mcp-server-config import succeeds");
 
-    let upserts = reg.upserts.lock().unwrap();
+    let upserts = reg.upserts.lock().unwrap().clone();
     assert_eq!(upserts.len(), 1, "exactly one registry upsert");
     assert_eq!(upserts[0].name, "pdf-mcp");
     assert_eq!(upserts[0].transport, "stdio");
