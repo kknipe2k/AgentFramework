@@ -135,15 +135,31 @@ pub async fn run_smoke_session(
     let (tx, rx) = mpsc::channel::<AgentEvent>(64);
     let app_clone = app.clone();
     let forwarder = tokio::spawn(forward_events(rx, app_clone));
-    // Per ADR-0011, the production wrapper passes `None`: the concrete
-    // `McpDispatcher` is not constructible in-shell (no
-    // `impl ConnectionResolver for McpClient`; no shell enforcer) and
-    // the no-tools smoke prompt emits no `ProviderEvent::ToolUse`. The
-    // construction + a live agent-loop exercise are the M07
-    // carry-forward; the `*_with` injection seam below is what M06.F
-    // delivers + mock-tests.
-    let result =
-        run_smoke_session_with(provider, tx, drone_client, smoke_config(), None, session_id).await;
+    // ADR-0011 (a)-(c) discharged at M07.D1: the concrete
+    // `McpDispatcher` is now constructible in-shell
+    // (`build_mcp_dispatcher`), so the production wrapper threads
+    // `Some(dispatcher)` instead of M06.F's `None`. The dispatcher is
+    // built only when the `McpClient` opened at startup (best-effort
+    // per spec §13.5 — without it the no-tools smoke still runs). The
+    // no-tools smoke prompt emits no `ProviderEvent::ToolUse`, so the
+    // dispatcher is constructed-but-not-exercised here; D2's
+    // agent-with-tools loop is what drives it.
+    let mcp_dispatch: Option<Arc<dyn McpToolDispatch>> =
+        app.try_state::<Arc<McpClient>>().map(|client| {
+            let audit = app
+                .try_state::<Arc<runtime_main::audit::AuditWriter>>()
+                .map(|w| w.inner().clone());
+            build_mcp_dispatcher(client.inner().clone(), audit, &session_id)
+        });
+    let result = run_smoke_session_with(
+        provider,
+        tx,
+        drone_client,
+        smoke_config(),
+        mcp_dispatch,
+        session_id,
+    )
+    .await;
     drop(api_key);
     // Wait for the forwarder to drain any final events before returning.
     let _ = forwarder.await;
@@ -161,9 +177,10 @@ pub async fn run_smoke_session(
 /// `mcp_dispatch` is the M06.F (ADR-0010 + ADR-0011) composition-root
 /// injection seam: when `Some`, it is composed onto the SDK via
 /// [`AgentSdk::with_mcp_dispatch`] so the run loop intercepts
-/// `ProviderEvent::ToolUse` through it. Production passes `None` (the
-/// concrete `McpDispatcher` construction is the M07 carry-forward per
-/// ADR-0011); the M06.F seam test injects a mock.
+/// `ProviderEvent::ToolUse` through it. As of M07.D1 production threads
+/// `Some(build_mcp_dispatcher(..))` (ADR-0011 (a)-(c) discharged); the
+/// seam test injects a mock and the construction test injects the
+/// concrete dispatcher.
 ///
 /// `session_id` is the drone's seeded session id (managed at setup
 /// from [`crate::drone_lifecycle::DroneLifecycle::sdk_session_id`]).
@@ -197,6 +214,50 @@ pub async fn run_smoke_session_with<P: LLMProvider + 'static>(
         tracing::info!("run_smoke_session succeeded");
     }
     result
+}
+
+/// ADR-0011 (c) — construct the concrete `McpDispatcher` in the shell.
+///
+/// Closes the M07.A-mapped construction graph: M06.F's production
+/// `run_smoke_session` passed `None` because neither the
+/// `CapabilityEnforcer` nor the `NamespaceResolver` had a `src-tauri`
+/// construction site (ADR-0011 Context #2/#3). All three are now
+/// reachable in-shell:
+///
+/// - the §5a `NamespaceResolver` starts empty —
+///   `NamespaceResolver::new(BTreeMap::new())`; it is populated by the
+///   §5a re-resolution driver (`McpDispatcher::on_server_connected`,
+///   ADR-0011 (b)) as servers connect, not at construction.
+/// - the L1 `CapabilityEnforcer` is the empty default; the v0.1
+///   no-tools smoke grants nothing, so the dispatcher is
+///   constructed-but-not-exercised here (D2's agent-with-tools loop is
+///   what builds the framework-/tier-wired enforcer and drives it).
+/// - `Arc<McpClient>` (Tauri-managed, opened at startup) is injected as
+///   `Arc<dyn ConnectionResolver>` (ADR-0011 (a)).
+///
+/// `CapabilityEnforcer` construction is CODEOWNERS-flagged (Hard Rule
+/// 8); the M07.D1 construction-reachability map + this function are the
+/// surfaced plan.
+fn build_mcp_dispatcher(
+    mcp_client: Arc<McpClient>,
+    audit: Option<Arc<runtime_main::audit::AuditWriter>>,
+    session_id: &SessionId,
+) -> Arc<dyn McpToolDispatch> {
+    use runtime_main::capability::CapabilityEnforcer;
+    use runtime_mcp::{ConnectionResolver, McpDispatcher, NamespaceResolver};
+    use std::collections::BTreeMap;
+    use tokio::sync::RwLock;
+
+    let resolver = Arc::new(RwLock::new(NamespaceResolver::new(BTreeMap::new())));
+    let enforcer = Arc::new(CapabilityEnforcer::new());
+    let connections: Arc<dyn ConnectionResolver> = mcp_client;
+    Arc::new(McpDispatcher::new(
+        resolver,
+        enforcer,
+        connections,
+        audit,
+        session_id.as_string(),
+    ))
 }
 
 async fn forward_events(mut rx: mpsc::Receiver<AgentEvent>, app: AppHandle) {
@@ -1049,7 +1110,9 @@ impl McpRegistry for RegistryAdapter {
             cwd: cfg.cwd.clone(),
             url: cfg.url.clone(),
             auth_secret_ref: cfg.auth_secret_ref.clone(),
-            status: "configured".to_string(),
+            // CQ-6 — a freshly-imported MCP-config server is
+            // `disconnected` until the first health pass / connect.
+            status: runtime_mcp::ServerStatus::Disconnected,
         };
         self.0.remove(&cfg.name).map_err(|e| e.to_string())?;
         self.0.insert(&record).map_err(|e| e.to_string())

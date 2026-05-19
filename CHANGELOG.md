@@ -6,6 +6,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M07 Stage D1 (ADR-0011 (a)-(c) concrete dispatch construction + CQ-6/EFF-4)
+
+- **`impl ConnectionResolver for McpClient`** (ADR-0011 (a);
+  `crates/runtime-mcp/src/client/connection_resolver.rs`) — the M06
+  trait had no production impl (only a test mock), so a concrete
+  `McpDispatcher` was not constructible in the shell. `McpClient` now
+  resolves a server name → persisted registry record → rebuilt
+  transport → cached `get_connection`, mapping `LifecycleError` onto
+  the dispatch-facing `McpError`. The live-connect happy path is the
+  mandatory Stage V `--features integration` reference-server smoke
+  (the seam↔concrete OS-call holdout per ADR-0011's named consequence).
+- **`McpDispatcher::on_server_connected` / `on_server_disconnected`**
+  (ADR-0011 (b); the §5a re-resolution-on-connect production driver
+  M06.V 🟡 #1 named "no production driver"). Authored against
+  `McpDispatcher` — where the `NamespaceResolver` lives per ADR-0010 —
+  **not** `McpClient` (which only *impls* `ConnectionResolver`): the
+  M06.V Dec-6 `<wire_trace_vs_adr_reconcile>` #6 reconciliation made
+  concrete. Snapshots a connected server's tools into the resolver and
+  returns newly-ambiguous short names (D2's loop emits
+  `tool_alias_ambiguous` per entry).
+- **`build_mcp_dispatcher`** (ADR-0011 (c); `src-tauri/src/commands.rs`)
+  — constructs the concrete `McpDispatcher` (empty `NamespaceResolver`
+  populated by (b) on connect; empty L1 `CapabilityEnforcer`;
+  `Arc<McpClient>` injected as `Arc<dyn ConnectionResolver>`) and
+  `run_smoke_session` threads `Some(..)` (was M06.F's `None`). Closes
+  the M07.A-mapped construction graph. The no-tools smoke emits no
+  `ProviderEvent::ToolUse`, so the dispatcher is
+  constructed-but-not-exercised; D2's agent-with-tools loop drives it.
+  `CapabilityEnforcer` construction is CODEOWNERS-flagged (Hard Rule 8)
+  — the M07.D1 construction-reachability map is the surfaced plan.
+
+### Changed — M07 Stage D1 (CQ-6 / EFF-4)
+
+- **CQ-6** — `McpServerRecord.status` / `McpServerSummary.status`:
+  `String` → the schema-generated `runtime_core::generated::mcp::
+  McpServerStatus` (re-exported `runtime_mcp::ServerStatus`; Hard Rule
+  5). The `SQLite` TEXT column round-trips via the generated
+  `Display`/`FromStr`; a freshly-added server is `Disconnected` (schema
+  transition). Migration **003_mcp_server_status.sql** realigns the
+  `mcp_servers.status` CHECK constraint (table rebuild — SQLite cannot
+  ALTER a CHECK) from the pre-schema vocabulary
+  (`configured|connected|errored|disabled|failed`) to the
+  M06.B-shipped `mcp.v1.json::McpServerStatus` enum
+  (`connected|disconnected|health_pending|error`), remapping existing
+  rows (`errored`/`failed`→`error`, else `disconnected`). DB-mirror
+  realignment to an already-accepted schema — no `schemas/*.json`
+  change, no ADR trigger.
+- **EFF-4** — `McpClient::run_health_pass` now persists the whole pass
+  in ONE batched `Registry::update_health_batch` transaction (was K
+  sequential `update_last_alive` calls with no status write) and writes
+  the CQ-6 status (`Connected` on ping ok, `Error` on ping fail) so the
+  multi-server registry is updated atomically.
+
 ### Added — M07 Stage C (import-pipeline backend — spec Phase 7 §2152-2211 / MVP §M7)
 
 - **`runtime_main::import`** (new module) — the artifact import

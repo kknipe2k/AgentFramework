@@ -73,6 +73,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "mcp_servers",
         sql: include_str!("../migrations/002_mcp_servers.sql"),
     },
+    Migration {
+        version: 3,
+        name: "mcp_server_status",
+        sql: include_str!("../migrations/003_mcp_server_status.sql"),
+    },
 ];
 
 /// Open or create the drone's `SQLite` database at `path`, configure
