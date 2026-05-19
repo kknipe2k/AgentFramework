@@ -166,6 +166,17 @@ pub struct SseState {
     /// Surfaced on the `MessageStop` translation so downstream code can
     /// attach the count to `AgentEvent::AgentComplete.tokens_total`.
     cumulative_tokens: Option<u64>,
+    /// Separate input/output accumulation (M07.D2). Anthropic reports
+    /// them independently (`message_start.usage.input_tokens` +
+    /// `message_delta.usage.output_tokens`); surfaced as
+    /// [`ProviderEvent::Usage`] just before the terminal `MessageStop`
+    /// so the SDK can persist a real `token_usage` row (closes M06.5).
+    input_tokens: u64,
+    output_tokens: u64,
+    /// One buffered event (the `MessageStop` deferred behind the
+    /// `Usage` it co-occurs with on the terminal `message_delta`).
+    /// Drained by [`stream_events`] before the next SSE frame.
+    pending: Option<ProviderEvent>,
 }
 
 #[derive(Debug)]
@@ -254,12 +265,30 @@ impl SseState {
                 if let Some(u) = usage.as_ref() {
                     self.add_usage(u);
                 }
-                delta
-                    .stop_reason
-                    .map(|stop_reason| ProviderEvent::MessageStop {
+                delta.stop_reason.map(|stop_reason| {
+                    let stop = ProviderEvent::MessageStop {
                         stop_reason,
                         total_tokens: self.cumulative_tokens,
-                    })
+                    };
+                    // M07.D2 — when usage was reported, surface a
+                    // ProviderEvent::Usage FIRST (the production
+                    // token-bearing signal the drone `token_usage`
+                    // projector persists), deferring MessageStop. model
+                    // / cost_usd are filled by the AnthropicProvider
+                    // wrapper that owns the pricing table; the SSE
+                    // layer cannot price.
+                    if self.input_tokens == 0 && self.output_tokens == 0 {
+                        stop
+                    } else {
+                        self.pending = Some(stop);
+                        ProviderEvent::Usage {
+                            input_tokens: self.input_tokens,
+                            output_tokens: self.output_tokens,
+                            model: String::new(),
+                            cost_usd: 0.0,
+                        }
+                    }
+                })
             }
 
             SseEvent::Error { error } => Some(ProviderEvent::Error {
@@ -270,6 +299,8 @@ impl SseState {
     }
 
     fn add_usage(&mut self, usage: &SseUsage) {
+        self.input_tokens = self.input_tokens.saturating_add(usage.input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(usage.output_tokens);
         let delta = usage.input_tokens.saturating_add(usage.output_tokens);
         if delta == 0 {
             return;
@@ -311,6 +342,11 @@ where
     futures::stream::unfold(
         (event_stream, SseState::new()),
         |(mut es, mut state)| async move {
+            // M07.D2 — drain a deferred event (the MessageStop buffered
+            // behind the Usage it co-occurs with) before the next frame.
+            if let Some(buffered) = state.pending.take() {
+                return Some((buffered, (es, state)));
+            }
             while let Some(event_result) = es.next().await {
                 let Ok(event) = event_result else {
                     continue;

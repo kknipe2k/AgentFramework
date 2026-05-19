@@ -175,6 +175,80 @@ pub fn apply_mcp_dispatch(outcome: McpDispatchOutcome, input: Value) -> Vec<Agen
     }
 }
 
+/// The renderable subset of [`McpDispatchOutcome`] (CQ-2, M07.D2).
+///
+/// M06.V CQ-2/reuse-5 — "surgical, type-level" maintainer decision.
+/// The subset the SDK run loop actually maps through
+/// [`apply_renderable`]: `Blocked` + `Ambiguous` only. It
+/// structurally CANNOT represent the
+/// `Invoked` success path — the run loop emits the agent_id-correct
+/// `ToolInvoked`/`ToolResult` for `Invoked` itself (gotcha #68), so the
+/// dead empty-`agent_id` `Invoked` branch in [`apply_mcp_dispatch`]
+/// (the D-frozen wire-test contract, kept byte-stable for the ADR-0011
+/// D-freeze) is unreachable from production. The run loop's match over
+/// [`McpDispatchOutcome`] is exhaustive with NO catch-all, so a future
+/// fourth variant is a compile error rather than a silently-dropped
+/// outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RenderableOutcome {
+    /// Tool resolved but L1+L4 denied it (the dispatcher already wrote
+    /// the `mcp_request_blocked` audit line). Routes the existing
+    /// `on_capability_violation` HITL trigger.
+    Blocked {
+        /// Agent whose dispatch was rejected.
+        agent_id: String,
+        /// Resolved MCP server name.
+        server: String,
+        /// Resolved MCP tool name.
+        tool: String,
+        /// Human-readable deny cause.
+        reason: String,
+    },
+    /// The short name resolved to >1 candidate (spec §5a step 5).
+    Ambiguous {
+        /// The ambiguous short tool name.
+        name: String,
+        /// The ≥2 canonical `<server>__<tool>` candidates.
+        candidates: Vec<String>,
+    },
+}
+
+/// Map a [`RenderableOutcome`] to the `AgentEvent` sequence.
+///
+/// CQ-2's dead-`Invoked`-free counterpart of [`apply_mcp_dispatch`]'s
+/// non-`Invoked` arms — byte-equivalent event shapes, but the input
+/// type cannot express `Invoked`, so the empty-`agent_id` branch
+/// cannot regress into production.
+#[must_use]
+pub fn apply_renderable(outcome: RenderableOutcome, input: Value) -> Vec<AgentEvent> {
+    match outcome {
+        RenderableOutcome::Blocked {
+            agent_id,
+            server,
+            tool,
+            reason,
+        } => apply_mcp_dispatch(
+            McpDispatchOutcome::Blocked {
+                agent_id,
+                server,
+                tool,
+                reason,
+            },
+            input,
+        ),
+        RenderableOutcome::Ambiguous { name, candidates } => {
+            apply_mcp_dispatch(McpDispatchOutcome::Ambiguous { name, candidates }, input)
+        }
+    }
+}
+
+/// True iff this renderable outcome routes the existing HITL trigger
+/// (mirrors [`outcome_needs_hitl`] for the [`RenderableOutcome`] subset).
+#[must_use]
+pub const fn renderable_needs_hitl(outcome: &RenderableOutcome) -> bool {
+    matches!(outcome, RenderableOutcome::Blocked { .. })
+}
+
 /// Map a [`McpDispatchError`] to the `AgentEvent` the renderer
 /// consumes — a `ToolError` carrying the transport/config failure so
 /// the renderer paints the failure rather than silently dropping it.

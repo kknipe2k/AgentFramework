@@ -143,6 +143,24 @@ impl EventPipeline {
                     tokens_total: total_tokens,
                 });
             }
+            ProviderEvent::Usage {
+                input_tokens,
+                output_tokens,
+                model,
+                cost_usd,
+            } => {
+                // M07.D2 — the production token-bearing signal. Flush
+                // any buffered text first so token usage lands after the
+                // text it accounts for, then emit the TokenUsage the
+                // drone `token_usage` projector persists.
+                self.flush_text_buffer(&mut output);
+                output.push(AgentEvent::TokenUsage {
+                    input: input_tokens,
+                    output: output_tokens,
+                    model,
+                    cost_usd,
+                });
+            }
             ProviderEvent::Error { code, message } => {
                 self.flush_text_buffer(&mut output);
                 output.push(AgentEvent::AgentError {

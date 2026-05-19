@@ -15,6 +15,13 @@ pub mod ipc;
 pub mod plan_projector;
 pub mod shutdown;
 pub mod snapshot;
+/// `token_usage` projection — drone-internal continuous projector.
+///
+/// Consumes `token_usage` signals (the multi-turn agent-with-tools
+/// loop's per-turn usage report) and INSERTs `token_usage` rows.
+/// Parallel to [`vdr`] + [`plan_projector`] (M07.D2, ADR-0011 d;
+/// closes the M06.5 `token_usage = 0` finding).
+pub mod token_usage;
 pub mod vdr;
 
 use std::future::Future;

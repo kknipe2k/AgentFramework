@@ -129,7 +129,38 @@ impl LLMProvider for AnthropicProvider {
             });
         }
 
-        Ok(anthropic_sse::stream_events(response.bytes_stream()).boxed())
+        // M07.D2 — the SSE layer emits ProviderEvent::Usage with empty
+        // model / zero cost (it cannot price). This wrapper owns the
+        // pricing table (estimate_cost), so it rewrites those fields
+        // here. anthropic.rs is the coverage-excluded production
+        // wrapper (CLAUDE.md §5 OS-call holdout), so the closure is
+        // covered by the wiremock integration path, not the ≥95% gate.
+        let model = config.model.clone();
+        Ok(anthropic_sse::stream_events(response.bytes_stream())
+            .map(move |event| match event {
+                ProviderEvent::Usage {
+                    input_tokens,
+                    output_tokens,
+                    ..
+                } => {
+                    let cost_usd = self.estimate_cost(
+                        &CostBreakdown {
+                            input_tokens,
+                            output_tokens,
+                            ..CostBreakdown::default()
+                        },
+                        &model,
+                    );
+                    ProviderEvent::Usage {
+                        input_tokens,
+                        output_tokens,
+                        model: model.clone(),
+                        cost_usd,
+                    }
+                }
+                other => other,
+            })
+            .boxed())
     }
 
     /// Real `POST /v1/messages/count_tokens` call per spec §2c.3 (added
