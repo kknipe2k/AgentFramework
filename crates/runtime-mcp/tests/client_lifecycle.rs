@@ -25,8 +25,8 @@ use runtime_core::generated::mcp::{
 use runtime_main::audit::AuditWriter;
 use runtime_mcp::client::{InMemorySecretStore, McpClient, Registry, SecretStore};
 use runtime_mcp::error::McpError;
-use runtime_mcp::ServerStatus;
 use runtime_mcp::transport::{MockTransport, Transport};
+use runtime_mcp::ServerStatus;
 use serde_json::json;
 use tempfile::TempDir;
 

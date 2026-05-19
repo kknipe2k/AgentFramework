@@ -469,7 +469,11 @@ async fn on_server_connected_twice_for_same_server_is_idempotent() {
         .on_server_connected("img-mcp")
         .await
         .expect("c2 again");
-    assert_eq!(amb1.len(), 1, "first img-mcp connect surfaces the ambiguity");
+    assert_eq!(
+        amb1.len(),
+        1,
+        "first img-mcp connect surfaces the ambiguity"
+    );
     assert!(
         amb2.is_empty(),
         "re-connecting the same server with the same tools is not *newly* ambiguous, got {amb2:?}"

@@ -187,7 +187,11 @@ fn registry_round_trips_server_status_enum() {
         .iter()
         .find(|r| r.name == "statusful")
         .expect("present in list");
-    assert_eq!(row.status, ServerStatus::Connected, "list() also enum-typed");
+    assert_eq!(
+        row.status,
+        ServerStatus::Connected,
+        "list() also enum-typed"
+    );
 }
 
 #[test]

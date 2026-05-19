@@ -138,7 +138,10 @@ mod tests {
         r.args_json = Some(r#"["hello","world"]"#.to_string());
         r.env_json = Some(r#"{"FOO":"bar"}"#.to_string());
         r.cwd = Some("/tmp".to_string());
-        assert!(record_to_transport(&r).is_ok(), "full stdio row → transport");
+        assert!(
+            record_to_transport(&r).is_ok(),
+            "full stdio row → transport"
+        );
     }
 
     #[test]
@@ -152,7 +155,7 @@ mod tests {
     #[test]
     fn record_to_transport_stdio_without_command_errs_connect_failed() {
         let r = rec("stdio"); // command is None
-        // `Arc<dyn Transport>` is not Debug, so don't `{:?}` the Ok arm.
+                              // `Arc<dyn Transport>` is not Debug, so don't `{:?}` the Ok arm.
         match record_to_transport(&r) {
             Err(McpError::ConnectFailed(m)) => assert!(m.contains("no command")),
             Err(other) => panic!("expected ConnectFailed(no command), got {other:?}"),

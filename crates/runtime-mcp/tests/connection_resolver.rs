@@ -39,9 +39,8 @@ async fn mcp_client_is_usable_as_a_dyn_connection_resolver() {
     // Object-safe + reachable through the trait object (not just the
     // inherent `get_connection`). `Arc<dyn Connection>` is not `Debug`,
     // so unwrap via `match` rather than `expect_err`.
-    let err = match resolver.connection("ghost").await {
-        Ok(_) => panic!("an unregistered server cannot yield a connection"),
-        Err(e) => e,
+    let Err(err) = resolver.connection("ghost").await else {
+        panic!("an unregistered server cannot yield a connection");
     };
     // Registry `NotFound` must surface as a stable `McpError` (the
     // dispatch path only knows `McpError`, not `LifecycleError`), and
@@ -55,9 +54,8 @@ async fn mcp_client_is_usable_as_a_dyn_connection_resolver() {
 #[tokio::test]
 async fn connection_for_unregistered_server_maps_registry_not_found_to_connect_failed() {
     let (_dir, client) = client_over_empty_registry();
-    let err = match client.connection("never-added").await {
-        Ok(_) => panic!("missing registry row must not yield a connection"),
-        Err(e) => e,
+    let Err(err) = client.connection("never-added").await else {
+        panic!("missing registry row must not yield a connection");
     };
     // A missing server is a connect-time failure class (it is not a
     // mid-session transport blip) so Stage C lifecycle's retry-vs-
@@ -76,5 +74,8 @@ async fn connection_twice_in_sequence_both_err_without_poisoning() {
     let first = client.connection("ghost").await;
     let second = client.connection("ghost").await;
     assert!(first.is_err(), "call #1 errs");
-    assert!(second.is_err(), "call #2 errs identically (no poisoned cache)");
+    assert!(
+        second.is_err(),
+        "call #2 errs identically (no poisoned cache)"
+    );
 }
