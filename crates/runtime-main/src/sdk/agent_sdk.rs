@@ -246,7 +246,7 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
     /// the provider is stateless, the conversation lives in
     /// [`AgentConfig::messages`], so no new `LLMProvider` method is
     /// needed) and the loop re-streams. It terminates when a turn
-    /// requests no tool (the model stopped) or [`MAX_AGENT_TURNS`] is
+    /// requests no tool (the model stopped) or `MAX_AGENT_TURNS` is
     /// hit. The smoke / no-tools path is the degenerate one-turn case.
     ///
     /// # Errors

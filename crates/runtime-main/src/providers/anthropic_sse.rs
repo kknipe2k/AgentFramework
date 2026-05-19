@@ -437,9 +437,13 @@ mod tests {
 
     #[test]
     fn cumulative_tokens_attached_to_message_stop() {
-        // Stage D: SseState accumulates input + output tokens across
-        // message_start + message_delta and surfaces the running total
-        // on the MessageStop translation.
+        // Stage D + M07.D2: SseState accumulates input + output tokens
+        // across message_start + message_delta. The terminal
+        // message_delta now surfaces the per-direction split as
+        // ProviderEvent::Usage FIRST (the production token-bearing
+        // signal the drone token_usage projector persists), DEFERRING
+        // MessageStop to `pending` (drained next by stream_events).
+        // MessageStop still carries the running total_tokens.
         let mut state = SseState::new();
         // message_start carries initial usage.
         let _ = state.translate(SseEvent::MessageStart {
@@ -452,8 +456,8 @@ mod tests {
                 },
             },
         });
-        // message_delta with usage adds to the running total and triggers
-        // the MessageStop translation.
+        // message_delta with usage adds to the running totals; with
+        // usage present it emits Usage and pends MessageStop.
         let out = state.translate(SseEvent::MessageDelta {
             delta: SseMessageDelta {
                 stop_reason: Some("end_turn".into()),
@@ -465,10 +469,23 @@ mod tests {
             }),
         });
         match out {
+            Some(ProviderEvent::Usage {
+                input_tokens,
+                output_tokens,
+                ..
+            }) => {
+                assert_eq!(input_tokens, 25, "accumulated input across start+delta");
+                assert_eq!(output_tokens, 16, "accumulated output across start+delta");
+            }
+            other => panic!("expected Usage with the token split, got {other:?}"),
+        }
+        // MessageStop is deferred behind the Usage, carrying the running
+        // total (25 + 1 + 0 + 15 = 41).
+        match state.pending {
             Some(ProviderEvent::MessageStop { total_tokens, .. }) => {
                 assert_eq!(total_tokens, Some(41));
             }
-            other => panic!("expected MessageStop with total_tokens, got {other:?}"),
+            ref other => panic!("expected pending MessageStop(total=41), got {other:?}"),
         }
     }
 
