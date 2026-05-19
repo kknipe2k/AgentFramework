@@ -13,6 +13,7 @@
 //! don't require a pre-spawned drone.
 
 use runtime_mcp::client::{LifecycleError, McpServerRecord, Registry};
+use runtime_mcp::ServerStatus;
 use tempfile::TempDir;
 
 fn temp_db_path() -> (TempDir, std::path::PathBuf) {
@@ -31,7 +32,11 @@ fn stdio_record(name: &str) -> McpServerRecord {
         cwd: None,
         url: None,
         auth_secret_ref: None,
-        status: "configured".to_string(),
+        // CQ-6: a freshly-added server is `disconnected` per the
+        // schema transition (`disconnected → health_pending →
+        // connected on add`); "configured" was never a valid
+        // McpServerStatus enum value (Hard Rule 5 — schema is truth).
+        status: ServerStatus::Disconnected,
     }
 }
 
@@ -45,7 +50,7 @@ fn http_record(name: &str, url: &str) -> McpServerRecord {
         cwd: None,
         url: Some(url.to_string()),
         auth_secret_ref: Some(format!("mcp.{name}")),
-        status: "configured".to_string(),
+        status: ServerStatus::Disconnected,
     }
 }
 
@@ -157,6 +162,32 @@ fn registry_update_last_alive_persists_timestamp() {
     // method returns Ok and a subsequent get still succeeds.
     let row = registry.get("pinged").expect("get after update");
     assert_eq!(row.name, "pinged");
+}
+
+#[test]
+fn registry_round_trips_server_status_enum() {
+    // CQ-6: `McpServerRecord.status` is the generated `McpServerStatus`
+    // enum, not a bare String. Persisting then reading back must
+    // preserve a non-default variant exactly (the SQL boundary
+    // round-trips via the generated Display/FromStr, no migration).
+    let (_dir, path) = temp_db_path();
+    let registry = Registry::open(&path).expect("open");
+    let mut rec = stdio_record("statusful");
+    rec.status = ServerStatus::Connected;
+    registry.insert(&rec).expect("insert");
+
+    let got = registry.get("statusful").expect("get");
+    assert_eq!(
+        got.status,
+        ServerStatus::Connected,
+        "status enum must survive the SQLite round-trip unchanged"
+    );
+    let listed = registry.list().expect("list");
+    let row = listed
+        .iter()
+        .find(|r| r.name == "statusful")
+        .expect("present in list");
+    assert_eq!(row.status, ServerStatus::Connected, "list() also enum-typed");
 }
 
 // gotcha #69 — multi-call invariants.

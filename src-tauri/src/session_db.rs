@@ -34,6 +34,7 @@ pub fn session_db_path(dir: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use runtime_mcp::client::{McpServerRecord, Registry};
+    use runtime_mcp::ServerStatus;
     use tempfile::tempdir;
 
     // Mirror src-tauri/src/main.rs: both `resolve_db_path` (the drone DB,
@@ -79,7 +80,7 @@ mod tests {
                 cwd: None,
                 url: None,
                 auth_secret_ref: None,
-                status: "configured".to_string(),
+                status: ServerStatus::Disconnected,
             })
             .expect("insert server");
         drop(writer);

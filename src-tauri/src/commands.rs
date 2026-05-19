@@ -1375,6 +1375,83 @@ mod tests {
         );
     }
 
+    // ── ADR-0011 (c) — concrete McpDispatcher constructed in src-tauri ──
+    //
+    // M06.F's production `run_smoke_session` passed `None` because the
+    // concrete `McpDispatcher` was not constructible in-shell (ADR-0011
+    // Context #2/#3 — no `NamespaceResolver`/`CapabilityEnforcer` ctor
+    // site). D1 adds `build_mcp_dispatcher`, closing the A-mapped
+    // construction graph. CapabilityEnforcer construction is
+    // CODEOWNERS-flagged (Hard Rule 8) — the construction-reachability
+    // map + this seam test is the surfaced plan.
+
+    fn mcp_client_over_tempdir() -> (tempfile::TempDir, Arc<McpClient>) {
+        use runtime_mcp::client::{InMemorySecretStore, SecretStore};
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let registry =
+            Arc::new(Registry::open(&dir.path().join("mcp.sqlite")).expect("open registry"));
+        let secret_store: Arc<dyn SecretStore> = Arc::new(InMemorySecretStore::new());
+        let client = Arc::new(McpClient::new(registry, secret_store, "sess-build"));
+        (dir, client)
+    }
+
+    #[tokio::test]
+    async fn build_mcp_dispatcher_yields_the_concrete_dispatcher_not_a_mock() {
+        // The constructed value must behave as the concrete
+        // `McpDispatcher`: an empty `NamespaceResolver` resolves an
+        // unknown tool to §5a `NotFound` ⇒ `dispatch_if_mcp` returns
+        // `None` (fall-through). A mock (e.g. `InvokingMcpDispatch`)
+        // returns `Some(Invoked)` — so `None` here proves it is the
+        // real concrete impl threaded through, not a stand-in.
+        let (_dir, client) = mcp_client_over_tempdir();
+        let dispatcher = build_mcp_dispatcher(client, None, &SessionId::new());
+        let outcome = dispatcher
+            .dispatch_if_mcp(
+                "worker",
+                "definitely_not_an_mcp_tool",
+                serde_json::json!({}),
+                &std::collections::BTreeMap::new(),
+            )
+            .await;
+        assert!(
+            outcome.is_none(),
+            "concrete McpDispatcher with an empty resolver must fall through (None); got {outcome:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_smoke_session_with_threads_the_concrete_built_dispatcher() {
+        // The assembled path (the §6/v1.8 assembled-regression mandate):
+        // the shell ctor output threads through the real
+        // `run_smoke_session_with` seam. The no-tools smoke emits no
+        // `ProviderEvent::ToolUse`, so the dispatcher is
+        // constructed-but-not-exercised here (D2's agent-with-tools loop
+        // is what exercises it) — but construction + threading must not
+        // break the existing smoke path.
+        let (_dir, client) = mcp_client_over_tempdir();
+        let dispatcher = build_mcp_dispatcher(client, None, &SessionId::new());
+        let (tx, mut rx) = mpsc::channel(8);
+        let drone = Arc::new(DroneClient::noop());
+        run_smoke_session_with(
+            StubProvider,
+            tx,
+            drone,
+            smoke_config(),
+            Some(dispatcher),
+            SessionId::new(),
+        )
+        .await
+        .expect("smoke path still succeeds with the concrete dispatcher injected");
+        let mut events = Vec::new();
+        while let Some(e) = rx.recv().await {
+            events.push(e);
+        }
+        assert!(
+            !events.is_empty(),
+            "the no-tools smoke still produces its events with the dispatcher threaded"
+        );
+    }
+
     /// Stub provider whose `stream()` returns a `ProviderError` so the
     /// `run_smoke_session_with` error-path tracing branch is exercised.
     struct FailingProvider;

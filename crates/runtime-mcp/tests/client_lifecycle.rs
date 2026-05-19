@@ -25,6 +25,7 @@ use runtime_core::generated::mcp::{
 use runtime_main::audit::AuditWriter;
 use runtime_mcp::client::{InMemorySecretStore, McpClient, Registry, SecretStore};
 use runtime_mcp::error::McpError;
+use runtime_mcp::ServerStatus;
 use runtime_mcp::transport::{MockTransport, Transport};
 use serde_json::json;
 use tempfile::TempDir;
@@ -489,4 +490,66 @@ async fn health_pass_emits_mcp_missing_for_failed_ping_and_drops_cache() {
     // load-bearing observable behavior; cache-drop is the implementation
     // mechanism that lets the next get_connection reconnect cleanly.
     let _: Duration = Duration::from_millis(1); // keep Duration import live without lint noise
+}
+
+// ── EFF-4 (batched run_health_pass) + CQ-6 (ServerStatus enum) ────────
+
+#[tokio::test]
+async fn health_pass_persists_connected_and_error_status_per_server() {
+    // EFF-4: `run_health_pass` writes every server's outcome in ONE
+    // batched registry transaction (was K sequential update_last_alive
+    // calls, no status write at all). CQ-6: the persisted value is the
+    // generated `ServerStatus` enum. Observable contract: after a pass,
+    // a server whose ping succeeded is `Connected`; one whose ping
+    // failed is `Error` — both updated atomically across the pass.
+    let dir = tempfile::tempdir().unwrap();
+    let registry = open_registry(&dir);
+    let secret_store: Arc<dyn SecretStore> = Arc::new(InMemorySecretStore::new());
+    let audit = open_audit(&dir).await;
+    let client = McpClient::new_with_audit(
+        Arc::clone(&registry),
+        Arc::clone(&secret_store),
+        Arc::clone(&audit),
+        SESSION_ID,
+    );
+
+    let healthy: Arc<dyn Transport> = Arc::new(MockTransport::new());
+    let unhealthy: Arc<dyn Transport> =
+        Arc::new(MockTransport::new().with_ping_error(McpError::Timeout { timeout_ms: 250 }));
+    client
+        .add_server(stdio_config("alive"), None, Arc::clone(&healthy))
+        .await
+        .expect("add alive");
+    client
+        .add_server(stdio_config("dead"), None, Arc::clone(&unhealthy))
+        .await
+        .expect("add dead");
+    // Freshly added → schema default `disconnected` (CQ-6).
+    assert_eq!(
+        registry.get("alive").expect("get alive").status,
+        ServerStatus::Disconnected,
+        "a freshly added server is `disconnected` until the first pass"
+    );
+
+    let _ = client
+        .get_connection("alive", Arc::clone(&healthy))
+        .await
+        .expect("prime alive");
+    let _ = client
+        .get_connection("dead", Arc::clone(&unhealthy))
+        .await
+        .expect("prime dead");
+
+    client.run_health_pass(|_| {}).await;
+
+    assert_eq!(
+        registry.get("alive").expect("get alive").status,
+        ServerStatus::Connected,
+        "a server whose ping succeeded must be persisted Connected"
+    );
+    assert_eq!(
+        registry.get("dead").expect("get dead").status,
+        ServerStatus::Error,
+        "a server whose ping failed must be persisted Error"
+    );
 }

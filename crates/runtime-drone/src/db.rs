@@ -455,22 +455,25 @@ mod tests {
         let conn = init(&path).expect("init");
         insert_stdio(&conn, "srv-status").expect("insert");
 
-        conn.execute(
-            "UPDATE mcp_servers SET status='connected' WHERE name='srv-status'",
-            [],
-        )
-        .expect("transition to connected");
-        conn.execute(
-            "UPDATE mcp_servers SET status='errored', last_error='boom' WHERE name='srv-status'",
-            [],
-        )
-        .expect("transition to errored");
+        // CQ-6 / migration 003 — the status vocabulary is now the
+        // mcp.v1.json::McpServerStatus enum
+        // (connected|disconnected|health_pending|error).
+        for s in ["connected", "health_pending", "error", "disconnected"] {
+            conn.execute(
+                "UPDATE mcp_servers SET status=?1 WHERE name='srv-status'",
+                [s],
+            )
+            .unwrap_or_else(|e| panic!("transition to {s} must be accepted: {e}"));
+        }
 
         let bad = conn.execute(
-            "UPDATE mcp_servers SET status='gone' WHERE name='srv-status'",
+            "UPDATE mcp_servers SET status='errored' WHERE name='srv-status'",
             [],
         );
-        assert!(bad.is_err(), "invalid status string must be rejected");
+        assert!(
+            bad.is_err(),
+            "the pre-schema 'errored' value must now be rejected by the realigned CHECK"
+        );
     }
 
     #[test]
@@ -508,7 +511,10 @@ mod tests {
                 },
             )
             .expect("query defaults");
-        assert_eq!(status, "configured");
+        // CQ-6 / migration 003 — DEFAULT realigned from the pre-schema
+        // 'configured' to the schema enum's 'disconnected' (a freshly
+        // added server is disconnected until the first health pass).
+        assert_eq!(status, "disconnected");
         assert_eq!(enabled, 1);
         assert_eq!(scope, "user");
         assert_eq!(retry, 0);
