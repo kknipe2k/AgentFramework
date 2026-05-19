@@ -3530,6 +3530,7 @@ dependencies = [
  "reqwest",
  "runtime-core",
  "runtime-drone",
+ "runtime-mcp",
  "runtime-sandbox",
  "rusqlite",
  "secrecy",
