@@ -64,6 +64,34 @@ fn valid_skill_bytes() -> Vec<u8> {
     .unwrap()
 }
 
+/// Schema-valid skill with a NON-trivial declared `capabilities` block
+/// (M07.E / ADR-0015 — the §M7 review screen's disclosure source). The
+/// pipeline's `capability_summary` reads `tools_called` / `network` /
+/// `spawn_agents` (str arrays) + `shell` (bool); this fixture populates
+/// each so the enriched return carries a real, non-empty disclosure
+/// extracted from the artifact (NOT a mocked review payload — the
+/// condition-2 anti-false-green anchor). `requires_secrets` is a
+/// framework-schema field (§15d), NOT a skill-schema field; the skill
+/// disclosure exercise here intentionally omits it (the secrets-notice
+/// path is exercised by the framework-shaped `requires_secrets` test
+/// `validate_extracts_15d_metadata_with_schema_defaults` above).
+fn skill_with_caps_bytes() -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "name": "fs-test",
+        "version": "2.0.0",
+        "description": "A skill that touches tools, network, and spawns.",
+        "capabilities": {
+            "tools_called": ["Read", "Write"],
+            "skills_loaded": [],
+            "file_access": { "read": [], "write": [] },
+            "network": ["api.example.com"],
+            "shell": true,
+            "spawn_agents": ["sub-agent"]
+        }
+    }))
+    .unwrap()
+}
+
 /// Schema-INVALID skill — `capabilities` is required by
 /// `schemas/skill.v1.json`. The generated type must reject it.
 fn invalid_skill_bytes() -> Vec<u8> {
@@ -610,5 +638,131 @@ fn read_share_provenance_is_none_when_absent() {
     assert!(
         import::read_share_provenance(&fw).is_none(),
         "no provenance block → None (not a synthesized empty block)"
+    );
+}
+
+// ── M07.E / ADR-0015 — enriched return for the §M7 review screen ─────
+//
+// The shipped Stage C `Installed` discarded the capability disclosure +
+// L3 report + share_provenance the spec'd review screen requires. These
+// tests drive the REAL `import_artifact_with` pipeline (real fetch seam
+// → real validate → real Sandbox seam → real install) and assert the
+// ENRICHED return carries them — extracted from the real artifact, NOT
+// a mocked review payload (the condition-2 anti-false-green anchor;
+// ADR-0015 Decision/Consequences).
+
+#[tokio::test]
+async fn enriched_install_carries_real_capability_disclosure() {
+    // capability_summary runs over the artifact's REAL `capabilities`
+    // block (skill_with_caps_bytes) — the disclosure the renderer shows
+    // is the artifact's own declaration, surfaced verbatim.
+    let dir = tempfile::tempdir().unwrap();
+    let lp = lock_path(&dir);
+    let installed = import::import_artifact_with(
+        ImportSource::Url("https://raw.githubusercontent.com/o/r/main/fs.json".into()),
+        ArtifactKind::Skill,
+        Tier::Novice,
+        "windows",
+        &lp,
+        &AllowGate,
+        &FakeFetcher {
+            body: skill_with_caps_bytes(),
+        },
+        &OkSandbox,
+        &PanicRegistry,
+        &FixedClock,
+    )
+    .await
+    .expect("happy-path import succeeds");
+
+    assert_eq!(installed.lock_key, "fs-test@2.0.0");
+    // Real extraction from the artifact's declared capabilities — order
+    // follows capability_summary's key walk (tools_called, network,
+    // spawn_agents, then shell).
+    assert_eq!(
+        installed.capabilities,
+        vec![
+            "tools_called: Read".to_string(),
+            "tools_called: Write".to_string(),
+            "network: api.example.com".to_string(),
+            "spawn_agents: sub-agent".to_string(),
+            "shell: true".to_string(),
+        ],
+        "the enriched return must carry the artifact's REAL declared \
+         capability disclosure (ADR-0015)"
+    );
+}
+
+#[tokio::test]
+async fn enriched_install_carries_l3_report_and_present_provenance() {
+    // L3Report is already built by the pipeline; the enriched return
+    // exposes it. share_provenance is surfaced when the imported
+    // artifact carries an exported block (ADR-0005 round-trip).
+    let dir = tempfile::tempdir().unwrap();
+    let lp = lock_path(&dir);
+    let mut fw = framework_value(json!(["windows", "macos", "linux"]));
+    import::export_with_provenance(&mut fw, Utc.with_ymd_and_hms(2026, 5, 18, 9, 0, 0).unwrap());
+    let p = dir.path().join("fw.json");
+    std::fs::write(&p, serde_json::to_vec(&fw).unwrap()).unwrap();
+
+    let installed = import::import_artifact_with(
+        ImportSource::File(p),
+        ArtifactKind::Agent,
+        Tier::Novice,
+        "windows",
+        &lp,
+        &AllowGate,
+        &FakeFetcher { body: vec![] },
+        &OkSandbox,
+        &PanicRegistry,
+        &FixedClock,
+    )
+    .await
+    .expect("provenance-carrying framework imports");
+
+    assert!(installed.report.passed, "L3 cleared → report.passed");
+    assert!(
+        installed.report.reasons.is_empty(),
+        "a passing L3 report carries no reasons"
+    );
+    let prov = installed
+        .share_provenance
+        .as_ref()
+        .expect("an exported artifact surfaces share_provenance (ADR-0005)");
+    assert_eq!(
+        prov["rebake_changes"],
+        json!([]),
+        "v0.1 is runtime-to-runtime — rebake_changes is ALWAYS [] (ADR-0005)"
+    );
+    assert_eq!(prov["exported_by"], json!(import::SHARE_IT_ID));
+}
+
+#[tokio::test]
+async fn enriched_install_provenance_is_none_when_artifact_unexported() {
+    // No export block on the artifact → share_provenance is None (not a
+    // synthesized empty block); the renderer renders the "no provenance"
+    // state, never fabricated data.
+    let dir = tempfile::tempdir().unwrap();
+    let lp = lock_path(&dir);
+    let installed = import::import_artifact_with(
+        ImportSource::Url("https://raw.githubusercontent.com/o/r/main/s.json".into()),
+        ArtifactKind::Skill,
+        Tier::Promoted,
+        "windows",
+        &lp,
+        &AllowGate,
+        &FakeFetcher {
+            body: skill_with_caps_bytes(),
+        },
+        &OkSandbox,
+        &PanicRegistry,
+        &FixedClock,
+    )
+    .await
+    .expect("unexported import succeeds");
+
+    assert!(
+        installed.share_provenance.is_none(),
+        "an unexported artifact has no share_provenance — None, not {{}}"
     );
 }

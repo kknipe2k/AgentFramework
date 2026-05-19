@@ -1239,6 +1239,79 @@ mod tests {
         assert!(matches!(e, CmdError::SetupRequired), "got {e:?}");
     }
 
+    #[test]
+    fn import_outcome_serializes_the_enriched_review_wire_for_the_renderer() {
+        // M07.E / ADR-0015 — the cross-language wire anchor (condition
+        // 2). The Stage E renderer's hand-mirrored `ImportOutcome`
+        // interface (src/lib/ipc.ts, the McpTool/ResumePlan precedent)
+        // pattern-matches THIS exact serialized shape. Pinning the snake
+        // _case keys here is what makes the renderer fixture provably
+        // the real bridge contract, not a fabricated mock. The
+        // `runtime-main` integration suite proves a REAL import produces
+        // an enriched `Installed`; this proves the command maps it to
+        // the JSON the renderer consumes.
+        let outcome = ImportOutcome {
+            lock_key: "fs-test@2.0.0".to_string(),
+            review_required: true,
+            requires_secrets: vec!["OPENAI_API_KEY".to_string()],
+            capabilities: vec![
+                "network: api.example.com".to_string(),
+                "shell: true".to_string(),
+            ],
+            l3_report: runtime_main::import::L3Report {
+                report_id: "vr-1".to_string(),
+                passed: true,
+                reasons: vec![],
+            },
+            share_provenance: Some(serde_json::json!({
+                "exported_by": "share-it@0.1.0",
+                "rebake_changes": []
+            })),
+        };
+        let v = serde_json::to_value(&outcome).unwrap();
+        assert_eq!(v["lock_key"], serde_json::json!("fs-test@2.0.0"));
+        assert_eq!(v["review_required"], serde_json::json!(true));
+        assert_eq!(
+            v["requires_secrets"],
+            serde_json::json!(["OPENAI_API_KEY"])
+        );
+        assert_eq!(
+            v["capabilities"],
+            serde_json::json!(["network: api.example.com", "shell: true"]),
+            "the renderer's plain-English disclosure reads `capabilities`"
+        );
+        assert_eq!(
+            v["l3_report"],
+            serde_json::json!({ "report_id": "vr-1", "passed": true, "reasons": [] }),
+            "the L3 report crosses the bridge as a nested object"
+        );
+        assert_eq!(
+            v["share_provenance"]["rebake_changes"],
+            serde_json::json!([]),
+            "share_provenance surfaces verbatim (None serializes to null)"
+        );
+    }
+
+    #[test]
+    fn import_outcome_serializes_absent_provenance_as_null() {
+        // The renderer renders the "no provenance" state from `null`,
+        // never a synthesized empty block (ADR-0005 / ADR-0015).
+        let outcome = ImportOutcome {
+            lock_key: "x@1.0.0".to_string(),
+            review_required: false,
+            requires_secrets: vec![],
+            capabilities: vec![],
+            l3_report: runtime_main::import::L3Report {
+                report_id: "r".to_string(),
+                passed: true,
+                reasons: vec![],
+            },
+            share_provenance: None,
+        };
+        let v = serde_json::to_value(&outcome).unwrap();
+        assert_eq!(v["share_provenance"], serde_json::Value::Null);
+    }
+
     /// In-process stub provider used by `run_smoke_session_with` tests.
     struct StubProvider;
 
