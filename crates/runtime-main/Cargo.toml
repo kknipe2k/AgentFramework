@@ -38,6 +38,8 @@ tempfile           = { workspace = true }
 rusqlite           = { workspace = true, features = ["bundled"] }
 runtime-drone      = { workspace = true }
 uuid               = { workspace = true, features = ["v4", "serde"] }
+async-trait        = { workspace = true }
+chrono             = { version = "0.4", default-features = false, features = ["serde"] }
 
 [features]
 default     = []
