@@ -190,6 +190,58 @@ fn registry_round_trips_server_status_enum() {
     assert_eq!(row.status, ServerStatus::Connected, "list() also enum-typed");
 }
 
+#[test]
+fn registry_update_health_batch_persists_status_per_server() {
+    // EFF-4 — the batched health-pass write applies each server's
+    // (name, status, ts) in one transaction; per-row status lands.
+    let (_dir, path) = temp_db_path();
+    let registry = Registry::open(&path).expect("open");
+    registry.insert(&stdio_record("alive")).expect("a");
+    registry.insert(&stdio_record("dead")).expect("b");
+    registry
+        .update_health_batch(&[
+            (
+                "alive".to_string(),
+                ServerStatus::Connected,
+                1_700_000_000_001,
+            ),
+            ("dead".to_string(), ServerStatus::Error, 1_700_000_000_002),
+        ])
+        .expect("batch update");
+    assert_eq!(
+        registry.get("alive").expect("get alive").status,
+        ServerStatus::Connected
+    );
+    assert_eq!(
+        registry.get("dead").expect("get dead").status,
+        ServerStatus::Error
+    );
+}
+
+#[test]
+fn registry_update_health_batch_empty_slice_is_ok() {
+    let (_dir, path) = temp_db_path();
+    let registry = Registry::open(&path).expect("open");
+    registry
+        .update_health_batch(&[])
+        .expect("empty batch is a no-op Ok");
+}
+
+#[test]
+fn registry_update_health_batch_unknown_name_is_noop_not_error() {
+    // A server removed mid-pass: the UPDATE matches zero rows; the
+    // batch must still commit Ok (no row is created, no error).
+    let (_dir, path) = temp_db_path();
+    let registry = Registry::open(&path).expect("open");
+    registry
+        .update_health_batch(&[("ghost".to_string(), ServerStatus::Connected, 1)])
+        .expect("unknown name is a silent no-op");
+    assert!(
+        registry.get("ghost").is_err(),
+        "no row should have been created for an unknown name"
+    );
+}
+
 // gotcha #69 — multi-call invariants.
 
 #[test]
