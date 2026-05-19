@@ -6,6 +6,78 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M07 Stage E (ADR-0015 enriched import-review wire + Builder Import panel)
+
+- **ADR-0015 — `import_artifact` IPC return enrichment for the §M7
+  review screen** (`docs/adr/0015-import-review-ipc-return-enrichment.md`,
+  Proposed). The v1.8 `<wire_signature_audit>` falsified the Stage-E
+  "no new backend" assumption against the shipped Stage C wire: the
+  declared `capabilities`, `L3Report`, and ADR-0005 `share_provenance`
+  the §M7 review screen requires are already computed by
+  `import_artifact_with` and discarded at the command boundary, and
+  `skills.lock` (closed 6-field integrity ledger) carries no
+  `capabilities`. ADR-0015 additively enriches the existing
+  `Installed` → `ImportOutcome` return with the data the pipeline
+  already produces — no new fetch / no new IPC command / no schema
+  bump (hand-mirrored serde bridge structs per the `McpTool` /
+  `ResumePlan` precedent — verified before authoring).
+- **Backend (`crates/runtime-main/src/import/mod.rs` +
+  `src-tauri/src/commands.rs`)** — `L3Report` derives `Serialize`;
+  `Installed` adds `capabilities: Vec<String>` +
+  `share_provenance: Option<Value>` (and drops `Eq` because
+  `serde_json::Value` is not `Eq` — `PartialEq` preserved);
+  `import_artifact_with` carries them through; `ImportOutcome` adds
+  matching fields and the command maps them.
+- **Builder Import panel renderer (`src/components/ImportPanel.tsx`)** —
+  paste-GitHub-raw-URL + kind select; on import, the Tauri command
+  returns the enriched outcome; Novice (`review_required: true`) sees
+  the §M7 disclosure modal with capability disclosure + L3 report +
+  ADR-0005 trust line ("runtime-to-runtime — no rebaking" vs "No
+  provenance") + §15d secrets notice + Install / Reject; Promoted
+  auto-installs (L4 pass-through). The `artifact_hash_mismatch` event
+  (Stage B, spec §2214) transitions a record to `'blocked'` and the
+  panel surfaces the Reinstall / Remove prompt; integrity > availability
+  (ADR-0014).
+- **`src/lib/ipc.ts`** — `importArtifact(sourceKind, location,
+  artifactKind)` wrapper + hand-mirrored `ImportOutcome` interface.
+  Params PINNED to the shipped Stage C command (three flat camelCased
+  args), NOT the phase-doc-assumed `{ src, kind }` (the
+  wire-signature-audit drift).
+- **`src/lib/graphStore.ts`** — new `imports: Record<string,
+  ImportRecord>` slot with `phase: 'review' | 'installed' | 'blocked'`;
+  `recordImport` maps the snake_case outcome into camelCase at the
+  boundary; `confirmImport` / `dismissImport` actions; the
+  `artifact_hash_mismatch` reducer branch moved out of the no-op
+  cluster into a real handler. Slot preserved across `clear()`
+  (install/integrity state, parallels `currentMcpServers` /
+  `currentTier`).
+- **Strict v1.8 TDD two-commit invariant.** `git diff <red>..<impl>
+  -- '**/tests/**'` is EMPTY; the `src-tauri/src/commands.rs` in-source
+  `#[cfg(test)]` block stays byte-identical red→impl (binary-crate
+  variant per CLAUDE.md v1.8 + the M06.5.A.fix precedent). No
+  Co-Authored-By; DCO `-s`; session-URL footer.
+
+### Deferred (M07.E carry-forward — Stage V / gap-analysis)
+
+- Local-file picker via `@tauri-apps/plugin-dialog` (needs a new npm
+  + Rust dependency + capability registration — out of this stage's
+  no-new-backend scope). The wrapper already accepts `'file'`
+  sources; the panel UI lands when the picker does.
+- `Reinstall` button needs the original import source round-tripped
+  through `Installed` (Stage C did not persist it). The panel
+  surface emits the affordance; closing the loop is a follow-up.
+
+### Recorded — grandfathered phase-doc defect (M07 Stage E)
+
+- The Stage-E phase-doc pseudocode (E.3) was authored against an
+  assumed `ImportOutcome` shape (phases, `L3Report`,
+  `ShareProvenance`, capabilities, native file dialog) that the
+  shipped Stage C wire does NOT provide. The v1.8
+  `<wire_signature_audit>` caught six drift points before any
+  pseudocode. Recorded here + in the M07.E retrospective; the
+  cumulative M07 `docs/gap-analysis.md` entry lands at Stage G
+  closeout per CLAUDE.md §20 (append-only / closeout-owned).
+
 ### Added — M07 Stage D1 (ADR-0011 (a)-(c) concrete dispatch construction + CQ-6/EFF-4)
 
 - **`impl ConnectionResolver for McpClient`** (ADR-0011 (a);

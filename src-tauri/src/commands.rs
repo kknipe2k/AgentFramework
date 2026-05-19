@@ -1013,6 +1013,16 @@ fn smoke_config() -> AgentConfig {
 }
 
 /// Outcome of [`import_artifact`] surfaced to the renderer (Stage E).
+///
+/// Enriched at M07.E per ADR-0015 with the §M7 review primitive: the
+/// declared `capabilities` disclosure, the `l3_report` body, and the
+/// ADR-0005 `share_provenance` trust block — all already computed by
+/// the import pipeline (`import_artifact_with` → `Installed`) and
+/// previously discarded at the command boundary. Hand-mirrored on the
+/// renderer side in `src/lib/ipc.ts` (the `McpTool` / `ResumePlan`
+/// hand-mirror precedent — not schema-generated). Serde defaults emit
+/// `snake_case` keys; the renderer's `ImportOutcome` interface mirrors
+/// them verbatim.
 #[derive(Debug, serde::Serialize)]
 pub struct ImportOutcome {
     /// The `name@version` written into `skills.lock`.
@@ -1023,6 +1033,17 @@ pub struct ImportOutcome {
     pub review_required: bool,
     /// Secrets the artifact needs before first run (spec §15d notice).
     pub requires_secrets: Vec<String>,
+    /// Plain-English declared-capability summary the §M7 disclosure
+    /// renders (ADR-0015). Source-of-truth = the artifact's declared
+    /// `capabilities` block, extracted via `capability_summary`.
+    pub capabilities: Vec<String>,
+    /// The L3 sandbox report (ADR-0015). Rides as a nested object so
+    /// the renderer can show `passed` + `reasons` without re-parsing.
+    pub l3_report: runtime_main::import::L3Report,
+    /// The ADR-0005 trust block when the imported artifact carries one;
+    /// `null` when unexported. The renderer renders the "No provenance"
+    /// state from `null`, never a synthesized empty block.
+    pub share_provenance: Option<serde_json::Value>,
 }
 
 /// L1 network gate over the M05 `CapabilityEnforcer` — import egress is
@@ -1194,6 +1215,9 @@ pub async fn import_artifact(
         lock_key: installed.lock_key,
         review_required: matches!(tier, Tier::Novice),
         requires_secrets: installed.requires_secrets,
+        capabilities: installed.capabilities,
+        l3_report: installed.report,
+        share_provenance: installed.share_provenance,
     })
 }
 
@@ -1271,10 +1295,7 @@ mod tests {
         let v = serde_json::to_value(&outcome).unwrap();
         assert_eq!(v["lock_key"], serde_json::json!("fs-test@2.0.0"));
         assert_eq!(v["review_required"], serde_json::json!(true));
-        assert_eq!(
-            v["requires_secrets"],
-            serde_json::json!(["OPENAI_API_KEY"])
-        );
+        assert_eq!(v["requires_secrets"], serde_json::json!(["OPENAI_API_KEY"]));
         assert_eq!(
             v["capabilities"],
             serde_json::json!(["network: api.example.com", "shell: true"]),

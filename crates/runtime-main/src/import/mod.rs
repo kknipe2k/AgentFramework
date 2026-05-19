@@ -152,7 +152,12 @@ impl ValidatedArtifact {
 }
 
 /// L3 sandbox outcome for the imported artifact.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Serialize` is derived so the §M7 review screen's L3 sub-object
+/// rides verbatim inside the enriched `ImportOutcome` Tauri-bridge
+/// shape (ADR-0015). The crate-internal `PartialEq`/`Eq` semantics for
+/// in-process comparisons are unaffected.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct L3Report {
     /// Opaque report id recorded in the lock (`validation_report_id`).
     pub report_id: String,
@@ -175,6 +180,15 @@ pub struct TierReview {
 }
 
 /// A completed install.
+///
+/// Enriched at M07.E per ADR-0015 with the §M7 review fields the
+/// pipeline already computes: `capabilities` (`capability_summary` over
+/// the artifact's declared `capabilities` block) and `share_provenance`
+/// (the ADR-0005 trust block, when the artifact was exported). The
+/// `report` is the same `L3Report` `install_with` recorded. `Eq` is
+/// dropped because `serde_json::Value` is `PartialEq` but not `Eq`
+/// (its `Number` variant can hold a non-totally-ordered float);
+/// `PartialEq` (used by `assert_eq!`) is preserved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Installed {
     /// The `name@version` written into `skills.lock`.
@@ -183,6 +197,13 @@ pub struct Installed {
     pub report: L3Report,
     /// Secrets the artifact needs before first run (for the E notice).
     pub requires_secrets: Vec<String>,
+    /// Plain-English declared-capability summary extracted by
+    /// `capability_summary` for the §M7 disclosure (ADR-0015).
+    pub capabilities: Vec<String>,
+    /// The `share_provenance` trust block (ADR-0005) when the imported
+    /// artifact carries one; `None` when unexported (the renderer
+    /// renders "No provenance" rather than synthesizing an empty block).
+    pub share_provenance: Option<Value>,
 }
 
 /// A normalized MCP-server-config import handed to the [`McpRegistry`]
@@ -619,10 +640,22 @@ pub async fn import_artifact_with(
 
     install_with(&art, &src, &report, tier, lock, clock)?;
 
+    // Surface the §M7 review fields the pipeline already computes
+    // (ADR-0015 / M07.E enriched return). `capability_summary` reads
+    // the same `art.raw` block the validator parsed; `share_provenance`
+    // is the ADR-0005 trust block the validator parsed into
+    // `ArtifactMeta`; both ride the bridge alongside the existing
+    // `report` (L3) + `requires_secrets` (§15d).
+    let capabilities = capability_summary(&art.raw);
+    let lock_key = art.name_at_version();
+    let requires_secrets = art.meta.requires_secrets;
+    let share_provenance = art.meta.share_provenance;
     Ok(Installed {
-        lock_key: art.name_at_version(),
+        lock_key,
         report,
-        requires_secrets: art.meta.requires_secrets,
+        requires_secrets,
+        capabilities,
+        share_provenance,
     })
 }
 

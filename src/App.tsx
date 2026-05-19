@@ -6,6 +6,7 @@ import { GraphCanvas } from './components/GraphCanvas';
 import { HITLModal } from './components/HITLModal';
 import { HITLPanel } from './components/HITLPanel';
 import { HITLToast } from './components/HITLToast';
+import { ImportPanel } from './components/ImportPanel';
 import { InspectorPanel } from './components/InspectorPanel';
 import { MCPServerSettings } from './components/MCPServerSettings';
 import { RecoveryDialog } from './components/RecoveryDialog';
@@ -122,6 +123,7 @@ export function App(): JSX.Element {
         <HITLPanel />
         <GapPanel />
         <MCPServerSettings />
+        <ImportPanel />
       </div>
       <HITLModal />
       <HITLToast />

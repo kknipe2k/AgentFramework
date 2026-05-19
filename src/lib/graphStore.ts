@@ -13,6 +13,7 @@ import type {
   RailPolicy,
   TierRef,
 } from '../types/agent_event';
+import type { ImportOutcome } from './ipc';
 
 /**
  * Status field shared by Agent / Tool / MCP / Hook / Framework / Verify
@@ -354,6 +355,37 @@ export interface CapabilityViolationRecord {
 }
 
 /**
+ * Spec §M7 (M07 Stage E; ADR-0015): one imported artifact's review +
+ * install + integrity state, keyed by `ref` (the `lock_key` for a
+ * successful import, or the `artifact_ref` for a hash-mismatch). The
+ * boundary mapping from the snake_case wire (`ImportOutcome`) lives in
+ * `recordImport`; the renderer reads camelCase here.
+ *
+ * `phase` semantics:
+ * - `'review'` — Novice (`review_required: true`) sees the disclosure
+ *   modal before the artifact surfaces. Promoted-within-bounds is
+ *   `'installed'` directly (L4 auto-accept; the backend installed
+ *   atomically — confirm-before-use is a renderer concern).
+ * - `'installed'` — the artifact is live in the framework; the panel
+ *   shows it as a simple row.
+ * - `'blocked'` — `artifact_hash_mismatch` fired (spec §2214); the
+ *   panel surfaces the Reinstall / Remove prompt; the artifact does
+ *   NOT run with drifted bytes.
+ */
+export interface ImportRecord {
+  ref: string;
+  phase: 'review' | 'installed' | 'blocked';
+  capabilities: string[];
+  requiresSecrets: string[];
+  l3Report: { reportId: string; passed: boolean; reasons: string[] } | null;
+  /** ADR-0005 trust block when present; `null` when unexported. `unknown` covers `null` for ESLint's redundancy rule. */
+  shareProvenance: unknown;
+  error?: string;
+  expected?: string;
+  actual?: string;
+}
+
+/**
  * Spec §8.security L2a (M05 Stage B): one row of the capability-grant
  * log. Append-only. Driven by `capability_grant` events emitted by the
  * framework loader (root grants; `parentAgentId` absent) and by the
@@ -502,6 +534,16 @@ interface GraphState {
    * deliberately. Test files still reset it in `beforeEach`.
    */
   activeMcpCalls: Record<string, string>;
+  /**
+   * Spec §M7 (M07 Stage E; ADR-0015): import review + install +
+   * integrity state, keyed by the artifact ref. `recordImport` maps a
+   * successful `import_artifact` outcome in; the `artifact_hash_mismatch`
+   * reducer branch transitions an artifact to `'blocked'`. The
+   * ImportPanel renders directly from this slot. Preserved across
+   * `clear()` (parallels currentMcpServers / currentTier —
+   * installation/integrity state, not per-session graph state).
+   */
+  imports: Record<string, ImportRecord>;
 
   /**
    * Single entry point for translating AgentEvent into node + edge
@@ -531,6 +573,19 @@ interface GraphState {
    * UncertaintyPrompt after a successful respond_uncertainty IPC).
    */
   resolveUncertainInvocation: (invocationId: string) => void;
+
+  /**
+   * M07.E: map a successful `import_artifact` outcome into the
+   * `imports` slot. `review_required: true` → `'review'`; otherwise
+   * `'installed'`. Snake_case wire keys are mapped to camelCase here.
+   */
+  recordImport: (outcome: ImportOutcome) => void;
+
+  /** M07.E: promote a `'review'` record to `'installed'` (user Install). */
+  confirmImport: (ref: string) => void;
+
+  /** M07.E: drop a record (user Reject on review, or Remove on blocked). */
+  dismissImport: (ref: string) => void;
 }
 
 const AGENT_X_STRIDE = 220;
@@ -701,6 +756,7 @@ export const useGraphStore = create<GraphState>((set) => ({
   currentMcpServers: {},
   toolAliasWarnings: [],
   activeMcpCalls: {},
+  imports: {},
 
   applyEvent: (event) =>
     set((state) => {
@@ -1577,20 +1633,42 @@ export const useGraphStore = create<GraphState>((set) => ({
           };
         }
 
+        case 'artifact_hash_mismatch': {
+          // Spec §2214 (M07 Stage B → Stage E): an installed artifact's
+          // recomputed SRI hash drifted from the locked hash. Block the
+          // artifact's use and surface the Reinstall / Remove prompt;
+          // the artifact does NOT run with drifted bytes (integrity >
+          // availability — ADR-0014). The panel reads `phase==='blocked'`
+          // + the drift detail; clear() preserves the slot so a blocked
+          // artifact stays blocked until the user reinstalls or removes.
+          return {
+            ...state,
+            imports: {
+              ...state.imports,
+              [event.artifact_ref]: {
+                ref: event.artifact_ref,
+                phase: 'blocked',
+                capabilities: [],
+                requiresSecrets: [],
+                l3Report: null,
+                shareProvenance: null,
+                error: `hash mismatch — expected ${event.expected}, got ${event.actual}`,
+                expected: event.expected,
+                actual: event.actual,
+              },
+            },
+          };
+        }
+
         // No-op variants — stream_text + decision_record + token_usage
         // feed the inspector, not the graph; session_end + tool_error +
-        // mode_changed are graph-no-op by design. artifact_hash_mismatch
-        // (M07 Stage B, spec §2214) is backend-emitted on skills.lock
-        // drift; its Reinstall / Remove prompt is wired in M07 Stage E —
-        // graph-no-op here so the exhaustiveness forcing function below
-        // stays satisfied without pre-empting Stage E's UI scope.
+        // mode_changed are graph-no-op by design.
         case 'session_end':
         case 'tool_error':
         case 'mode_changed':
         case 'stream_text':
         case 'decision_record':
         case 'token_usage':
-        case 'artifact_hash_mismatch':
           return state;
 
         default: {
@@ -1627,6 +1705,10 @@ export const useGraphStore = create<GraphState>((set) => ({
       // (unlike currentMcpServers): an in-flight glow must not leak into
       // a new session.
       activeMcpCalls: {},
+      // imports is install/integrity state (M07.E / ADR-0015) —
+      // preserved across session clears so a blocked-by-hash-mismatch
+      // artifact stays blocked until the user reinstalls or removes.
+      imports: state.imports,
     })),
 
   selectNode: (id) => set({ selectedNodeId: id }),
@@ -1649,4 +1731,48 @@ export const useGraphStore = create<GraphState>((set) => ({
         (u) => u.invocationId !== invocationId,
       ),
     })),
+
+  recordImport: (outcome) =>
+    set((state) => ({
+      ...state,
+      imports: {
+        ...state.imports,
+        [outcome.lock_key]: {
+          ref: outcome.lock_key,
+          // Promoted-within-bounds skips the disclosure modal (L4
+          // auto-accept); Novice always gets the review modal.
+          phase: outcome.review_required ? 'review' : 'installed',
+          capabilities: outcome.capabilities,
+          requiresSecrets: outcome.requires_secrets,
+          l3Report: {
+            reportId: outcome.l3_report.report_id,
+            passed: outcome.l3_report.passed,
+            reasons: outcome.l3_report.reasons,
+          },
+          shareProvenance: outcome.share_provenance,
+        },
+      },
+    })),
+
+  confirmImport: (ref) =>
+    set((state) => {
+      const existing = state.imports[ref];
+      if (!existing) {
+        return state;
+      }
+      return {
+        ...state,
+        imports: { ...state.imports, [ref]: { ...existing, phase: 'installed' } },
+      };
+    }),
+
+  dismissImport: (ref) =>
+    set((state) => {
+      if (!(ref in state.imports)) {
+        return state;
+      }
+      const next = { ...state.imports };
+      delete next[ref];
+      return { ...state, imports: next };
+    }),
 }));
