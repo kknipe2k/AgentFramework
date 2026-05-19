@@ -49,6 +49,19 @@ pub mod hitl;
 /// Hook executor + `JSONLogic`-evaluated rails + globset-backed
 /// don't-touch matcher + cross-platform shell wrapper.
 pub mod hooks;
+/// Import-pipeline backend — spec Phase 7 §2152-2211 (M07 Stage C).
+///
+/// Composes the artifact import flow over already-shipped primitives
+/// (no rebuild): capability-gated fetch → schema validation (the
+/// generated type is the enforced schema, CLAUDE.md §14) → L3 sandbox
+/// (reuse `runtime-sandbox`) → L4 tier-gate (reuse `tier`) → install +
+/// M07.B `skills.lock` write. §15c `compatible_os` mismatch is a
+/// BLOCKING error checked before L3; `share_provenance` round-trips
+/// export→import runtime-to-runtime only (ADR-0005, no rebake).
+/// MCP-server-config import routes into the M06 MCP Manager via the
+/// `import::McpRegistry` dependency-inversion seam. The real reqwest
+/// fetcher is the `src/import/fetch.rs` OS-call-holdout (CLAUDE.md §6).
+pub mod import;
 pub mod key_store;
 /// Plan + Task primitive — spec §3a (M04 Stage B).
 pub mod plan;

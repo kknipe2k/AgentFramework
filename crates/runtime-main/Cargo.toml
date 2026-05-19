@@ -26,6 +26,7 @@ base64             = { workspace = true }
 tokio              = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util", "process"] }
 tokio-util         = { workspace = true, features = ["codec"] }
 uuid               = { workspace = true, features = ["v4", "serde"] }
+chrono             = { version = "0.4", default-features = false, features = ["serde", "clock", "std"] }
 thiserror          = { workspace = true }
 tracing            = { workspace = true }
 globset            = { workspace = true }

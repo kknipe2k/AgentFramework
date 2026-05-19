@@ -195,7 +195,7 @@ cargo llvm-cov --package runtime-drone \
     --fail-under-lines 95
 
 cargo llvm-cov --package runtime-main \
-    --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs" \
+    --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs|src.import.fetch\.rs" \
     --fail-under-lines 95
 
 cargo llvm-cov --package runtime-sandbox \

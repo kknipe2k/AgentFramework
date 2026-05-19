@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M07 Stage C (import-pipeline backend — spec Phase 7 §2152-2211 / MVP §M7)
+
+- **`runtime_main::import`** (new module) — the artifact import
+  pipeline composed over already-shipped primitives (no rebuild):
+  `fetch_with` (local-file read / capability-gated URL GET — egress
+  gated through the M05 L1 `NetworkGate`, Hard Rule 4: only the
+  user-supplied URL is hit) → `validate` (the generated typify type IS
+  the enforced schema, CLAUDE.md §14; skill/tool/mcp_server schema-gated,
+  agent identity+metadata-gated with the agent graph deferred to
+  `framework_loader` at load) → §15c `compatible_os` BLOCKING gate
+  (checked **before** L3) → L3 (`Sandbox` seam over `runtime-sandbox`,
+  reused) → L4 `tier_gate` (reuse M05 `Tier`: Novice →
+  `TierReviewRequired`, Promoted → pass-through) → MCP-server-config
+  upsert via the `McpRegistry` dependency-inversion seam (the M06 MCP
+  Manager — concrete adapter in the Tauri shell to avoid the
+  `runtime-mcp → runtime-main` Cargo cycle) → install + M07.B
+  `skills.lock` write (`ImportSource` serializes to B's discriminated
+  `Source` shape; `content_hash` is B's SRI over the fetched bytes so a
+  later `skills_lock::verify` of the same bytes passes).
+- **`import::export_with_provenance` / `read_share_provenance`**
+  (ADR-0005) — framework export populates `share_provenance`, import
+  surfaces it. v0.1 is **runtime-to-runtime only**: `rebake_changes`
+  is always `[]` (no Share It module, no rebake — the Sigstore/SLSA/TUF
+  layer attaches at this same seam in v1.0).
+- **`import::fetch::HttpFetcher`** — the real `reqwest` artifact GET;
+  the new runtime-main OS-call-holdout coverage exclusion
+  `src.import.fetch.rs` (seam-tested via `fetch_with` + injected
+  `Fetcher`; behaviourally smoke-tested against a local `wiremock`
+  server — no live network in the gate). Four-mirror sync done this
+  commit (CLAUDE.md §6 + `docs/coverage-policy.md` §A/§C; CLAUDE.md §5
+  category 3 + `codecov.yml` need no change — the
+  `providers/anthropic.rs` precedent).
+- **`import_artifact` Tauri command** (the §5 shell holdout) — thin
+  wrapper over `import_artifact_with`, wiring the real fetcher + M05
+  L1/L3 + the M06 registry adapter + wall-clock; `Arc<Registry>` is
+  now also managed standalone so the import path reuses the same M06
+  registry DB.
+- New dev-/dep: `chrono` (`serde`+`clock`; already in-tree via
+  `runtime-core`, deny-clean) — `Clock` seam returns
+  `DateTime<Utc>`, type-matching the generated
+  `skills_lock::LockEntry.installed_at`.
+
 ### Added — M07 Stage B (`skills.lock` artifact-integrity primitive — ADR-0014)
 
 - **`schemas/skills-lock.v1.json`** (new, ADR-0014) — the per-framework

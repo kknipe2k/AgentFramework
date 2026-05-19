@@ -58,7 +58,9 @@ of these — name the category in the milestone entry when adding one):
    `cfg`-platform `open()`), paired with a `*_with` / `from_streams`
    testable seam that IS unit-tested. (runtime-main
    `providers/anthropic.rs`, `key_store.rs`,
-   `drone_ipc/connection.rs`, `sandbox_ipc/connection.rs`; mcp
+   `drone_ipc/connection.rs`, `sandbox_ipc/connection.rs`,
+   `import/fetch.rs` (M07.C — the real `reqwest` artifact GET,
+   seam-tested via `fetch_with` + injected `Fetcher`); mcp
    `transport/stdio.rs`+`http.rs`, `client/auth_keyring.rs`;
    src-tauri shell wrappers — §D Tauri patch-gate.)
 4. **Pub-mod / re-export `lib.rs`** — declarations + re-exports only
@@ -71,7 +73,7 @@ of these — name the category in the milestone entry when adding one):
 |---|---|---|
 | workspace | `src.main\.rs\|generated` | 80 |
 | runtime-drone | `src.main\.rs\|generated\|src.lib\.rs\|src.shutdown\.rs` | 95 |
-| runtime-main | `src.main\.rs\|generated\|src.providers.anthropic\.rs\|src.drone_ipc.connection\.rs\|src.sandbox_ipc.connection\.rs` | 95 |
+| runtime-main | `src.main\.rs\|generated\|src.providers.anthropic\.rs\|src.drone_ipc.connection\.rs\|src.sandbox_ipc.connection\.rs\|src.import.fetch\.rs` | 95 |
 | runtime-sandbox | `src.main\.rs\|generated\|src.lib\.rs\|src.seccomp\.rs\|src.landlock\.rs` | 95 |
 | runtime-mcp (`--features test-helpers`) | `src.main\.rs\|generated\|src.lib\.rs\|src.transport.stdio\.rs\|src.transport.http\.rs\|src.client.auth_keyring\.rs\|src.client.lifecycle\.rs` | 95 |
 
@@ -259,6 +261,34 @@ History is immutable (a measurement true for M0X stays true for M0X).
   M07.A: runtime-main 95.73% line ≥ 95 (exit 0) — previously the
   gate aborted before any measurement (the gotcha #56 nested-build
   break).
+- **M07.C** — added `|src.import.fetch\.rs` to the **runtime-main 95**
+  gate regex. Category 3 (seam-vs-wrapper / OS-call holdout):
+  `crates/runtime-main/src/import/fetch.rs` is the real `reqwest`
+  `HttpFetcher` — the ONLY outbound HTTP for an artifact import (Hard
+  Rule 4: it GETs exactly the user-supplied URL, no phone-home). The
+  capability gate + the whole pipeline are unit-tested through the
+  injected `Fetcher` / `NetworkGate` / `Sandbox` / `McpRegistry`
+  seams (`fetch_with` + `import_artifact_with`); `HttpFetcher` itself
+  is exercised behaviourally against a local `wiremock` server (no
+  live network in the gate) — the `--features integration` live
+  smoke is the optional real-endpoint check, exactly the
+  `providers/anthropic.rs` precedent. **Four-mirror sync done in the
+  M07.C commit**: §A category-3 list + §A table row (above) +
+  CLAUDE.md §6 runtime-main command updated byte-consistently.
+  `codecov.yml` requires **no change** — exactly as for the
+  `providers/anthropic.rs` / `key_store.rs` / `*_connection.rs`
+  runtime-main holdouts: the per-file runtime-main exclusions are
+  enforced by the §6 absolute-floor `cargo llvm-cov --fail-under-lines
+  95` command, not by `codecov.yml`'s global `ignore:` (whose only
+  entries are generated / `main.rs` / `build.rs` / the sandbox
+  OS-signal files). Codecov's `project.runtime-main` flag gate (target
+  95%, threshold 0.5%) legitimately still counts `import/fetch.rs`
+  via the `wiremock` behavioural coverage — the same delta-vs-floor
+  asymmetry the §A `anthropic_sse.rs` note documents. CLAUDE.md §5
+  needs no edit (it names the four exclusion *categories*
+  generically, not files; `import/fetch.rs` is category 3, already
+  described). No threshold moved; no new §B baseline (the excluded
+  file has no gated lines by construction).
 
 ---
 

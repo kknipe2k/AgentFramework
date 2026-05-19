@@ -40,6 +40,11 @@ use runtime_core::event::AgentEvent;
 use runtime_core::CmdError;
 use runtime_main::drone_ipc::{DroneClient, RecoveredSession};
 use runtime_main::hitl::{HitlChoice, HitlError, HitlSeam};
+use runtime_main::import::fetch::HttpFetcher;
+use runtime_main::import::{
+    self, ArtifactKind, ImportError, ImportSource, McpRegistry, McpServerImport, NetworkGate,
+    Sandbox, SystemClock,
+};
 use runtime_main::key_store::{read_api_key, write_api_key, KeyStoreError};
 use runtime_main::providers::anthropic::AnthropicProvider;
 use runtime_main::providers::{AgentConfig, ContentBlock, LLMProvider, Message, MessageRole};
@@ -47,11 +52,13 @@ use runtime_main::recovery::{
     request_resume_with, respond_uncertainty_with, ResumeError, ResumePlan, UncertaintyError,
     UncertaintyResolution,
 };
+use runtime_main::sandbox_ipc::SandboxClient;
 use runtime_main::sdk::{
     replay_signals_to_events, AgentSdk, ApprovalDecision, ApprovalError, ApprovalSeam,
     McpToolDispatch, SessionId,
 };
 use runtime_main::tier::{save_tier, Tier, TierPersistenceError};
+use runtime_mcp::client::registry::{McpServerRecord, Registry};
 use runtime_mcp::client::{McpClient, McpServerSummary};
 use runtime_mcp::transport::McpTool;
 use serde_json::Value;
@@ -942,6 +949,189 @@ fn smoke_config() -> AgentConfig {
         system_prompt: None,
         tools: vec![],
     }
+}
+
+/// Outcome of [`import_artifact`] surfaced to the renderer (Stage E).
+#[derive(Debug, serde::Serialize)]
+pub struct ImportOutcome {
+    /// The `name@version` written into `skills.lock`.
+    pub lock_key: String,
+    /// Whether the Novice capability-disclosure review applies — the
+    /// renderer renders the disclosure modal for Novice (the L4 outcome
+    /// is decided here, the renderer just renders it; spec §M7 / E.3.4).
+    pub review_required: bool,
+    /// Secrets the artifact needs before first run (spec §15d notice).
+    pub requires_secrets: Vec<String>,
+}
+
+/// L1 network gate over the M05 `CapabilityEnforcer` — import egress is
+/// constrained to the user-supplied host (default-deny + domain scope;
+/// Hard Rule 4 — no phone-home, only the URL the user pasted is hit).
+struct EnforcerGate;
+
+impl NetworkGate for EnforcerGate {
+    fn check(&self, host: &str) -> Result<(), String> {
+        use runtime_core::generated::capability::{
+            CapabilityDeclaration, CapabilityKind, CapabilityScope, DomainPattern, ResourceName,
+            SideEffectClass,
+        };
+        use runtime_main::capability::CapabilityEnforcer;
+        use std::str::FromStr as _;
+
+        let decl = CapabilityDeclaration {
+            kind: CapabilityKind::Network,
+            resource: ResourceName::from_str(host).map_err(|e| e.to_string())?,
+            scope: CapabilityScope::Domain(
+                DomainPattern::from_str(host).map_err(|e| e.to_string())?,
+            ),
+            side_effect_class: SideEffectClass::NetworkEgress,
+        };
+        let mut enforcer = CapabilityEnforcer::new();
+        enforcer.grant("import-fetch", decl.clone());
+        enforcer
+            .check("import-fetch", &decl)
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// L3 adapter over the M05 sandbox subprocess (`runtime-sandbox`,
+/// reused — not rebuilt). v0.1 import L3 uses a conservative
+/// `Read`/`Pure` declaration: any write / network / spawn / exec token
+/// the validator detects in the artifact rejects the install
+/// (sandbox-before-trust; ADR-0014 threat model).
+struct SandboxAdapter(Arc<SandboxClient>);
+
+#[async_trait::async_trait]
+impl Sandbox for SandboxAdapter {
+    async fn validate(&self, code: &str) -> Result<Vec<String>, String> {
+        use runtime_core::generated::capability::{
+            CapabilityDeclaration, CapabilityKind, CapabilityScope, GlobPattern, ResourceName,
+            SideEffectClass,
+        };
+        use runtime_main::sandbox_ipc::ValidationResult;
+        use std::str::FromStr as _;
+
+        let conservative = CapabilityDeclaration {
+            kind: CapabilityKind::Read,
+            resource: ResourceName::from_str("*").expect("`*` is a valid ResourceName"),
+            scope: CapabilityScope::Glob(
+                GlobPattern::from_str("*").expect("`*` is a valid GlobPattern"),
+            ),
+            side_effect_class: SideEffectClass::Pure,
+        };
+        match self
+            .0
+            .validate(code.to_string(), conservative)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            ValidationResult::Ok => Ok(Vec::new()),
+            ValidationResult::Reject { reasons } => Ok(reasons),
+        }
+    }
+}
+
+/// MCP Manager registry adapter (ADR-0010 dependency inversion — the
+/// concrete `runtime_mcp::Registry` is wrapped HERE in the shell, never
+/// depended on by `runtime-main`, to avoid the `runtime-mcp →
+/// runtime-main` Cargo cycle). `upsert` = idempotent remove-then-insert
+/// so a re-import replaces the prior config.
+struct RegistryAdapter(Arc<Registry>);
+
+impl McpRegistry for RegistryAdapter {
+    fn upsert(&self, cfg: &McpServerImport) -> Result<(), String> {
+        let record = McpServerRecord {
+            name: cfg.name.clone(),
+            transport: cfg.transport.clone(),
+            command: cfg.command.clone(),
+            args_json: cfg.args_json.clone(),
+            env_json: cfg.env_json.clone(),
+            cwd: cfg.cwd.clone(),
+            url: cfg.url.clone(),
+            auth_secret_ref: cfg.auth_secret_ref.clone(),
+            status: "configured".to_string(),
+        };
+        self.0.remove(&cfg.name).map_err(|e| e.to_string())?;
+        self.0.insert(&record).map_err(|e| e.to_string())
+    }
+}
+
+fn import_err_to_cmd(e: &ImportError) -> CmdError {
+    CmdError::internal(e.to_string())
+}
+
+/// Import an artifact (skill / tool / agent / MCP-server config) by
+/// GitHub-raw URL or local file — M07 Stage C (spec Phase 7 §2152-2211;
+/// MVP §M7).
+///
+/// Thin §5 shell wrapper over the unit-tested `import_artifact_with`
+/// seam. Resolves the framework-root `skills.lock` path
+/// (path-agnostic — CLAUDE.md §9), wires the real reqwest fetcher + the
+/// M05 L1/L3 + the M06 registry adapter + wall-clock, and records the
+/// current tier as `tier_at_install`. The Novice capability-disclosure
+/// review is rendered by the Stage E review screen via the
+/// `import::tier_gate` seam (E.3.4 — "the renderer renders the
+/// outcome"); `review_required` carries that decision to the renderer.
+///
+/// # Errors
+///
+/// - [`CmdError::Internal`] for any pipeline failure (fetch / schema /
+///   L3 reject / OS mismatch / lock / registry), the message naming the
+///   stage.
+#[tauri::command]
+pub async fn import_artifact(
+    app: AppHandle,
+    source_kind: String,
+    location: String,
+    artifact_kind: String,
+    sandbox: tauri::State<'_, Arc<SandboxClient>>,
+    registry: tauri::State<'_, Arc<Registry>>,
+    tier_state: tauri::State<'_, CurrentTierState>,
+) -> Result<ImportOutcome, CmdError> {
+    let dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| CmdError::internal(format!("app_local_data_dir: {e}")))?;
+    let lock = dir.join("skills.lock");
+
+    let src = match source_kind.as_str() {
+        "url" => ImportSource::Url(location),
+        "file" => ImportSource::File(location.into()),
+        other => return Err(CmdError::internal(format!("unknown source_kind: {other}"))),
+    };
+    let kind = match artifact_kind.as_str() {
+        "skill" => ArtifactKind::Skill,
+        "tool" => ArtifactKind::Tool,
+        "agent" => ArtifactKind::Agent,
+        "mcp_server" => ArtifactKind::McpServer,
+        other => {
+            return Err(CmdError::internal(format!(
+                "unknown artifact_kind: {other}"
+            )))
+        }
+    };
+    let tier = *tier_state.lock().await;
+
+    let installed = import::import_artifact_with(
+        src,
+        kind,
+        tier,
+        std::env::consts::OS,
+        &lock,
+        &EnforcerGate,
+        &HttpFetcher::new(),
+        &SandboxAdapter(Arc::clone(sandbox.inner())),
+        &RegistryAdapter(Arc::clone(registry.inner())),
+        &SystemClock,
+    )
+    .await
+    .map_err(|e| import_err_to_cmd(&e))?;
+
+    Ok(ImportOutcome {
+        lock_key: installed.lock_key,
+        review_required: matches!(tier, Tier::Novice),
+        requires_secrets: installed.requires_secrets,
+    })
 }
 
 #[cfg(test)]
