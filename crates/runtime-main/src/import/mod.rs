@@ -4,13 +4,17 @@
 //! Composes the artifact import flow over already-shipped primitives —
 //! it builds NOTHING that M05/M06/M07.B already provide:
 //!
-//! - **fetch** — local-file read or capability-gated URL GET. Egress is
-//!   gated through the M05 L1 `NetworkGate` (the `CapabilityEnforcer`
-//!   in production); only the user-supplied URL is hit, no phone-home
-//!   (Hard Rule 4). The real `reqwest` impl is `fetch::HttpFetcher` —
-//!   the new runtime-main OS-call-holdout coverage exclusion
-//!   `src.import.fetch.rs` (seam-tested via `fetch_with` + injected
-//!   fakes; behaviourally smoke-tested against a local `wiremock`).
+//! - **fetch** — local-file read or SSRF-hardened URL GET. URL egress
+//!   is gated through the pure `import::egress` module (ADR-0018):
+//!   `https`-only, every resolved IP classified against the non-public
+//!   ranges, the connection DNS-pinned, and every redirect hop
+//!   re-validated. Only the user-supplied URL (and any public redirect
+//!   target) is hit, no phone-home (Hard Rule 4). The real `reqwest`
+//!   impl is `fetch::HttpFetcher` + `fetch::SystemResolver` — the
+//!   runtime-main OS-call-holdout coverage exclusion
+//!   `src.import.fetch.rs`; the egress decision logic is the pure,
+//!   fully-tested `egress` module, only the socket + DNS syscalls are
+//!   the holdout.
 //! - **validate** — the schema is the source of truth (CLAUDE.md §14):
 //!   skill / tool / mcp_server are gated by deserializing into their
 //!   generated typify type. Identity (`name`/`version`) + the §15c/§15d
@@ -52,6 +56,12 @@
 /// The real `reqwest` `Fetcher` — the `src.import.fetch.rs` OS-call
 /// holdout (seam-tested; behaviourally smoke-tested via `wiremock`).
 pub mod fetch;
+
+/// Import-fetch egress security — the SSRF-hardened egress gate.
+///
+/// `classify_ip` / `check_url` / `validate_egress` (ADR-0018) — pure
+/// decision logic, fully tested to the runtime-main ≥95 gate.
+pub mod egress;
 
 use std::path::{Path, PathBuf};
 
@@ -326,28 +336,19 @@ pub enum ImportError {
     Registry(String),
 }
 
-/// Fetch transport seam — the real impl is [`fetch::HttpFetcher`]
-/// (`reqwest`); tests inject a fake. Async because the real path is a
-/// network round-trip.
+/// Fetch transport seam — the real impl is [`fetch::HttpFetcher`];
+/// tests inject a fake. One hop: a body, or a redirect for
+/// [`fetch_with`] to re-validate (M07.5 / ADR-0018 — the SSRF-hardened
+/// fetch path).
 #[async_trait::async_trait]
 pub trait Fetcher: Send + Sync {
-    /// GET `url`, returning the response body bytes.
+    /// Issue one GET to the validated, DNS-pinned `target`.
     ///
     /// # Errors
     ///
-    /// Any transport / HTTP-status failure, stringified.
-    async fn get(&self, url: &str) -> Result<Vec<u8>, String>;
-}
-
-/// L1 network capability gate seam — the real impl wraps the M05
-/// `CapabilityEnforcer`; tests inject allow / deny.
-pub trait NetworkGate: Send + Sync {
-    /// Authorize egress to `host`.
-    ///
-    /// # Errors
-    ///
-    /// The deny reason when the network capability is not granted.
-    fn check(&self, host: &str) -> Result<(), String>;
+    /// Any transport / HTTP-status / body-cap failure, stringified.
+    async fn fetch_hop(&self, target: &egress::ValidatedTarget)
+        -> Result<egress::FetchHop, String>;
 }
 
 /// L3 sandbox seam — the real impl wraps `sandbox_ipc::SandboxClient`
@@ -392,46 +393,38 @@ impl Clock for SystemClock {
     }
 }
 
-/// Extract the host of a URL for the capability check. Deliberately
-/// minimal — `reqwest` performs the authoritative parse on the real
-/// GET; this only needs the authority for the L1 gate.
-fn host_of(url: &str) -> Result<String, String> {
-    let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
-    let authority = after_scheme
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or(after_scheme);
-    let host = authority.rsplit('@').next().unwrap_or(authority);
-    let host = host.split(':').next().unwrap_or(host);
-    if host.is_empty() {
-        Err(format!("cannot determine host from URL: {url}"))
-    } else {
-        Ok(host.to_string())
-    }
-}
-
 /// Fetch the artifact bytes.
 ///
-/// File reads skip the network gate; URL fetches are capability-gated
-/// through the M05 L1 enforcer BEFORE any GET (Hard Rule 4 — only the
-/// user-supplied URL is ever hit).
+/// File reads are local. URL fetches are SSRF-hardened (ADR-0018): each
+/// hop — the initial URL and every redirect target — is re-validated
+/// through [`egress::validate_egress`] (`https`-only, public-address-
+/// only, DNS-pinned) before the GET. The redirect chain is bounded by
+/// [`egress::MAX_REDIRECTS`].
 ///
 /// # Errors
 ///
-/// [`ImportError::Fetch`] for a missing file, a denied network
-/// capability, or any transport/HTTP failure.
+/// [`ImportError::Fetch`] for a missing file, an egress rejection, a
+/// transport failure, or a redirect chain past the cap.
 pub async fn fetch_with(
     src: &ImportSource,
-    gate: &dyn NetworkGate,
     get: &dyn Fetcher,
+    resolver: &dyn egress::Resolver,
 ) -> Result<Vec<u8>, ImportError> {
     match src {
         ImportSource::File(p) => std::fs::read(p).map_err(|e| ImportError::Fetch(e.to_string())),
         ImportSource::Url(u) => {
-            let host = host_of(u).map_err(ImportError::Fetch)?;
-            gate.check(&host)
-                .map_err(|e| ImportError::Fetch(format!("network capability denied: {e}")))?;
-            get.get(u).await.map_err(ImportError::Fetch)
+            let mut current = u.clone();
+            for _ in 0..=egress::MAX_REDIRECTS {
+                let target = egress::validate_egress(&current, resolver).await?;
+                match get.fetch_hop(&target).await.map_err(ImportError::Fetch)? {
+                    egress::FetchHop::Body(bytes) => return Ok(bytes),
+                    egress::FetchHop::Redirect(next) => current = next,
+                }
+            }
+            Err(ImportError::Fetch(format!(
+                "too many redirects (max {})",
+                egress::MAX_REDIRECTS
+            )))
         }
     }
 }
@@ -694,13 +687,13 @@ pub async fn import_artifact_with(
     tier: Tier,
     host_os: &str,
     lock: &Path,
-    gate: &dyn NetworkGate,
     get: &dyn Fetcher,
     sb: &dyn Sandbox,
     reg: &dyn McpRegistry,
+    resolver: &dyn egress::Resolver,
     clock: &dyn Clock,
 ) -> Result<ImportOutcome, ImportError> {
-    let bytes = fetch_with(&src, gate, get).await?;
+    let bytes = fetch_with(&src, get, resolver).await?;
     let art = validate(kind, &bytes)?;
 
     // §15c — BLOCKING, and BEFORE the expensive L3 (cheap reject).
@@ -816,19 +809,6 @@ pub fn read_share_provenance(artifact_json: &Value) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn host_of_extracts_authority() {
-        assert_eq!(
-            host_of("https://raw.githubusercontent.com/o/r/main/x.json").unwrap(),
-            "raw.githubusercontent.com"
-        );
-        assert_eq!(
-            host_of("https://user@h.example.com:8443/p").unwrap(),
-            "h.example.com"
-        );
-        assert!(host_of("https:///nohost").is_err());
-    }
 
     #[test]
     fn system_clock_is_post_2024() {

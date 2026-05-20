@@ -40,10 +40,10 @@ use runtime_core::event::AgentEvent;
 use runtime_core::CmdError;
 use runtime_main::drone_ipc::{DroneClient, RecoveredSession};
 use runtime_main::hitl::{HitlChoice, HitlError, HitlSeam};
-use runtime_main::import::fetch::HttpFetcher;
+use runtime_main::import::fetch::{HttpFetcher, SystemResolver};
 use runtime_main::import::{
-    self, ArtifactKind, ImportError, ImportSource, McpRegistry, McpServerImport, NetworkGate,
-    Sandbox, SystemClock,
+    self, ArtifactKind, ImportError, ImportSource, McpRegistry, McpServerImport, Sandbox,
+    SystemClock,
 };
 use runtime_main::key_store::{read_api_key, write_api_key, KeyStoreError};
 use runtime_main::providers::anthropic::AnthropicProvider;
@@ -1108,36 +1108,6 @@ impl PendingImportState {
     }
 }
 
-/// L1 network gate over the M05 `CapabilityEnforcer` — import egress is
-/// constrained to the user-supplied host (default-deny + domain scope;
-/// Hard Rule 4 — no phone-home, only the URL the user pasted is hit).
-struct EnforcerGate;
-
-impl NetworkGate for EnforcerGate {
-    fn check(&self, host: &str) -> Result<(), String> {
-        use runtime_core::generated::capability::{
-            CapabilityDeclaration, CapabilityKind, CapabilityScope, DomainPattern, ResourceName,
-            SideEffectClass,
-        };
-        use runtime_main::capability::CapabilityEnforcer;
-        use std::str::FromStr as _;
-
-        let decl = CapabilityDeclaration {
-            kind: CapabilityKind::Network,
-            resource: ResourceName::from_str(host).map_err(|e| e.to_string())?,
-            scope: CapabilityScope::Domain(
-                DomainPattern::from_str(host).map_err(|e| e.to_string())?,
-            ),
-            side_effect_class: SideEffectClass::NetworkEgress,
-        };
-        let mut enforcer = CapabilityEnforcer::new();
-        enforcer.grant("import-fetch", decl.clone());
-        enforcer
-            .check("import-fetch", &decl)
-            .map_err(|e| e.to_string())
-    }
-}
-
 /// L3 adapter over the M05 sandbox subprocess (`runtime-sandbox`,
 /// reused — not rebuilt). v0.1 import L3 uses a conservative
 /// `Read`/`Pure` declaration: any write / network / spawn / exec token
@@ -1270,10 +1240,10 @@ pub async fn import_artifact(
         tier,
         std::env::consts::OS,
         &lock,
-        &EnforcerGate,
         &HttpFetcher::new(),
         &SandboxAdapter(Arc::clone(sandbox.inner())),
         &RegistryAdapter(Arc::clone(registry.inner())),
+        &SystemResolver,
         &SystemClock,
     )
     .await
@@ -1497,15 +1467,21 @@ mod tests {
     struct ImportFetcherFake(Vec<u8>);
     #[async_trait]
     impl import::Fetcher for ImportFetcherFake {
-        async fn get(&self, _url: &str) -> Result<Vec<u8>, String> {
-            Ok(self.0.clone())
+        async fn fetch_hop(
+            &self,
+            _target: &import::egress::ValidatedTarget,
+        ) -> Result<import::egress::FetchHop, String> {
+            Ok(import::egress::FetchHop::Body(self.0.clone()))
         }
     }
 
-    struct ImportGateAllow;
-    impl import::NetworkGate for ImportGateAllow {
-        fn check(&self, _host: &str) -> Result<(), String> {
-            Ok(())
+    struct ImportResolverAllow;
+    #[async_trait]
+    impl import::egress::Resolver for ImportResolverAllow {
+        async fn resolve(&self, _host: &str) -> Result<Vec<std::net::IpAddr>, String> {
+            Ok(vec![std::net::IpAddr::V4(std::net::Ipv4Addr::new(
+                93, 184, 216, 34,
+            ))])
         }
     }
 
@@ -1553,10 +1529,10 @@ mod tests {
             Tier::Novice,
             std::env::consts::OS,
             &dir.path().join("skills.lock"),
-            &ImportGateAllow,
             &ImportFetcherFake(novice_skill_json()),
             &ImportSandboxOk,
             &ImportRegistryNoop,
+            &ImportResolverAllow,
             &SystemClock,
         )
         .await
