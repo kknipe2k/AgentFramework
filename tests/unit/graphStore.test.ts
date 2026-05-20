@@ -1592,19 +1592,31 @@ describe('graphStore.applyEvent', () => {
   });
 });
 
-// M07.E / ADR-0015 — the import slot + the artifact_hash_mismatch
+// M07.5 / ADR-0017 — the import slot + the artifact_hash_mismatch
 // reducer + the review confirm/dismiss actions. The slot is the single
 // source of truth the ImportPanel renders from; recordImport maps the
-// SHIPPED enriched ImportOutcome wire (snake_case) into the store's
-// camelCase ImportRecord at the boundary.
-describe('graphStore imports (M07.E)', () => {
-  const enriched: ImportOutcome = {
+// A.fix-shipped discriminated ImportOutcome wire (snake_case,
+// `status: 'pending' | 'installed'`) into the store's camelCase
+// ImportRecord at the boundary. A 'pending' outcome carries the
+// pending_review_id the review modal echoes back to the backend.
+describe('graphStore imports (M07.5)', () => {
+  const pendingOutcome: ImportOutcome = {
+    status: 'pending',
+    pending_review_id: 'pri-1',
     lock_key: 'fs-test@2.0.0',
-    review_required: true,
     requires_secrets: ['OPENAI_API_KEY'],
     capabilities: ['network: api.example.com', 'shell: true'],
     l3_report: { report_id: 'vr-1', passed: true, reasons: [] },
     share_provenance: { exported_by: 'share-it@0.1.0', rebake_changes: [] },
+  };
+
+  const installedOutcome: ImportOutcome = {
+    status: 'installed',
+    lock_key: 'x@1.0.0',
+    requires_secrets: [],
+    capabilities: ['read: *'],
+    l3_report: { report_id: 'vr-2', passed: true, reasons: [] },
+    share_provenance: null,
   };
 
   beforeEach(() => {
@@ -1615,11 +1627,11 @@ describe('graphStore imports (M07.E)', () => {
   });
 
   it('recordImport_maps_enriched_outcome_into_a_review_record', () => {
-    useGraphStore.getState().recordImport(enriched);
+    useGraphStore.getState().recordImport(pendingOutcome);
     const rec = useGraphStore.getState().imports['fs-test@2.0.0'];
     expect(rec).toBeDefined();
     expect(rec?.ref).toBe('fs-test@2.0.0');
-    expect(rec?.phase).toBe('review'); // review_required === true
+    expect(rec?.phase).toBe('review'); // status === 'pending'
     expect(rec?.capabilities).toEqual(['network: api.example.com', 'shell: true']);
     expect(rec?.requiresSecrets).toEqual(['OPENAI_API_KEY']);
     expect(rec?.l3Report).toEqual({ reportId: 'vr-1', passed: true, reasons: [] });
@@ -1629,21 +1641,30 @@ describe('graphStore imports (M07.E)', () => {
     });
   });
 
-  it('recordImport_phase_is_installed_when_review_not_required', () => {
-    useGraphStore
-      .getState()
-      .recordImport({ ...enriched, lock_key: 'x@1.0.0', review_required: false });
-    expect(useGraphStore.getState().imports['x@1.0.0']?.phase).toBe('installed');
+  it('recordImport_maps_pending_and_installed', () => {
+    // M07.5 / ADR-0017: recordImport discriminates on the wire `status`,
+    // not the removed `review_required` boolean. A 'pending' outcome is
+    // a held Novice review carrying the pending_review_id; an 'installed'
+    // outcome is terminal and carries no review id.
+    const store = useGraphStore.getState();
+    store.recordImport(pendingOutcome);
+    store.recordImport(installedOutcome);
+    const pending = useGraphStore.getState().imports['fs-test@2.0.0'];
+    const installed = useGraphStore.getState().imports['x@1.0.0'];
+    expect(pending?.phase).toBe('review');
+    expect(pending?.pendingReviewId).toBe('pri-1');
+    expect(installed?.phase).toBe('installed');
+    expect(installed?.pendingReviewId).toBeUndefined();
   });
 
   it('confirmImport_promotes_a_review_record_to_installed', () => {
-    useGraphStore.getState().recordImport(enriched);
+    useGraphStore.getState().recordImport(pendingOutcome);
     useGraphStore.getState().confirmImport('fs-test@2.0.0');
     expect(useGraphStore.getState().imports['fs-test@2.0.0']?.phase).toBe('installed');
   });
 
   it('dismissImport_removes_the_record', () => {
-    useGraphStore.getState().recordImport(enriched);
+    useGraphStore.getState().recordImport(pendingOutcome);
     useGraphStore.getState().dismissImport('fs-test@2.0.0');
     expect(useGraphStore.getState().imports['fs-test@2.0.0']).toBeUndefined();
   });
@@ -1668,7 +1689,7 @@ describe('graphStore imports (M07.E)', () => {
     // Integrity/install state (parallels currentMcpServers / currentTier
     // — preserved across session clear() so a blocked artifact stays
     // blocked until the user reinstalls or removes it).
-    useGraphStore.getState().recordImport(enriched);
+    useGraphStore.getState().recordImport(pendingOutcome);
     useGraphStore.getState().clear();
     expect(useGraphStore.getState().imports['fs-test@2.0.0']).toBeDefined();
   });

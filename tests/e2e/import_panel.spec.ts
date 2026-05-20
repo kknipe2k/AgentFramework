@@ -1,14 +1,15 @@
 import { test, expect, type Page } from '@playwright/test';
 
-// M07.E / ADR-0015 — renderer-level Playwright for the Builder Import
+// M07.5 / ADR-0017 — renderer-level Playwright for the Builder Import
 // panel. Module mocking across the @tauri-apps/api ESM boundary does NOT
-// work in Playwright (only Vitest) — so the paste-URL → invoke linkage +
-// the enriched-ImportOutcome → disclosure render are covered by the
-// Vitest suites (ImportPanel.test.tsx, against the Rust-proven shape).
-// This spec asserts the state-injection → panel-render contract that
-// only renders correctly inside a real browser layout, via the
-// App.tsx `window.__graphStore` affordance (gotcha #54). Full
-// Tauri-shell E2E remains the gotcha #23 carry-forward.
+// work in Playwright (only Vitest) — so the Install/Reject → invoke
+// linkage (Reject → cancel_pending_import; the M07.V 🔴 #1 closure) is
+// covered by the Vitest ImportPanel suite. This spec asserts the
+// state-injection → panel-render contract that only renders correctly
+// inside a real browser layout, via the App.tsx `window.__graphStore`
+// affordance (gotcha #54), driving recordImport with the A.fix-shipped
+// discriminated `pending` ImportOutcome wire. Full Tauri-shell E2E
+// remains the gotcha #23 carry-forward.
 
 interface HashMismatch {
   type: 'artifact_hash_mismatch';
@@ -31,14 +32,17 @@ async function emitHashMismatch(page: Page, ev: HashMismatch): Promise<void> {
 
 async function injectReview(page: Page): Promise<void> {
   // Drive the store through the same recordImport boundary the panel
-  // uses post-invoke, with the Rust-proven enriched ImportOutcome shape.
+  // uses post-invoke, with the A.fix-shipped discriminated `pending`
+  // ImportOutcome shape (M07.5 / ADR-0017). A `pending` outcome carries
+  // the pending_review_id and maps to a `'review'`-phase record.
   await page.evaluate(() => {
     const w = window as unknown as {
       __graphStore?: { getState: () => { recordImport: (o: unknown) => void } };
     };
     w.__graphStore?.getState().recordImport({
+      status: 'pending',
+      pending_review_id: 'pri-e2e-1',
       lock_key: 'fs-test@2.0.0',
-      review_required: true,
       requires_secrets: ['OPENAI_API_KEY'],
       capabilities: ['network: api.example.com', 'shell: true'],
       l3_report: { report_id: 'vr-1', passed: true, reasons: [] },

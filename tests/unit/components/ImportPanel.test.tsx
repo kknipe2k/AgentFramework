@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// M07.E / ADR-0015 — ImportPanel renderer tests. The invoke boundary is
-// mocked at @tauri-apps/api/core returning the EXACT enriched
-// ImportOutcome shape the Rust anchor proves (commands.rs
-// `import_outcome_serializes_the_enriched_review_wire_for_the_renderer`
-// + the runtime-main `enriched_install_*` integration tests drive the
-// REAL pipeline). The fixture here is therefore the Rust-proven bridge
-// contract, not a fabricated mock (the condition-2 anti-false-green
-// linkage; the cross-language window itself is gotcha #23).
+// M07.5 / ADR-0017 — ImportPanel renderer tests. The invoke boundary is
+// mocked at @tauri-apps/api/core. `import_artifact` returns the
+// discriminated ImportOutcome the A.fix Rust anchor proves (commands.rs
+// `ImportOutcome` — `#[serde(tag = "status")]`; the in-source
+// `import_outcome_*` tests pin the JSON keys). A Novice import resolves
+// to a `pending` outcome carrying the `pending_review_id` the review
+// modal echoes back to `complete_import_artifact` / `cancel_pending_import`
+// (the M07.V 🔴 #1 renderer wiring). The Install/Reject tests assert the
+// BACKEND invoke fires — not merely the local store transition.
 
 const invokeMock = vi.fn(async (..._args: unknown[]) => undefined as unknown);
 
@@ -22,9 +23,12 @@ import { useGraphStore } from '../../../src/lib/graphStore';
 import type { ImportOutcome } from '../../../src/lib/ipc';
 import type { AgentEvent } from '../../../src/types/agent_event';
 
-const enriched: ImportOutcome = {
+// A held Novice import — the A.fix `pending` wire arm. `pending_review_id`
+// is the `PendingImportState` key the modal echoes to the backend.
+const pendingOutcome: ImportOutcome = {
+  status: 'pending',
+  pending_review_id: 'pri-1',
   lock_key: 'fs-test@2.0.0',
-  review_required: true,
   requires_secrets: ['OPENAI_API_KEY'],
   capabilities: ['network: api.example.com', 'shell: true'],
   l3_report: { report_id: 'vr-1', passed: true, reasons: [] },
@@ -47,7 +51,7 @@ describe('ImportPanel', () => {
   });
 
   it('pasting_a_url_and_importing_invokes_import_artifact_with_pinned_args', async () => {
-    invokeMock.mockResolvedValueOnce(enriched);
+    invokeMock.mockResolvedValueOnce(pendingOutcome);
     render(<ImportPanel />);
 
     await userEvent.type(
@@ -67,7 +71,7 @@ describe('ImportPanel', () => {
   });
 
   it('review_modal_renders_disclosure_l3_provenance_and_secrets', async () => {
-    invokeMock.mockResolvedValueOnce(enriched);
+    invokeMock.mockResolvedValueOnce(pendingOutcome);
     render(<ImportPanel />);
     await userEvent.type(screen.getByTestId('import-url'), 'https://x/y.json');
     await userEvent.click(screen.getByTestId('import-submit'));
@@ -87,7 +91,7 @@ describe('ImportPanel', () => {
   });
 
   it('trust_line_says_no_provenance_when_share_provenance_is_null', async () => {
-    invokeMock.mockResolvedValueOnce({ ...enriched, share_provenance: null });
+    invokeMock.mockResolvedValueOnce({ ...pendingOutcome, share_provenance: null });
     render(<ImportPanel />);
     await userEvent.type(screen.getByTestId('import-url'), 'https://x/y.json');
     await userEvent.click(screen.getByTestId('import-submit'));
@@ -95,8 +99,29 @@ describe('ImportPanel', () => {
     expect(trust).toHaveTextContent(/no provenance/i);
   });
 
+  it('install_invokes_complete_import_artifact', async () => {
+    // M07.5 / ADR-0017 — Install at the tier-gate review must run the
+    // backend install half the A.fix pipeline held back. The load-bearing
+    // assertion is the BACKEND invoke, not merely the store transition.
+    invokeMock.mockResolvedValueOnce(pendingOutcome);
+    render(<ImportPanel />);
+    await userEvent.type(screen.getByTestId('import-url'), 'https://x/y.json');
+    await userEvent.click(screen.getByTestId('import-submit'));
+    await screen.findByTestId('import-review-modal');
+
+    await userEvent.click(screen.getByTestId('import-install'));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('complete_import_artifact', {
+        pendingReviewId: 'pri-1',
+      }),
+    );
+    await waitFor(() =>
+      expect(useGraphStore.getState().imports['fs-test@2.0.0']?.phase).toBe('installed'),
+    );
+  });
+
   it('install_confirms_the_review_and_closes_the_modal', async () => {
-    invokeMock.mockResolvedValueOnce(enriched);
+    invokeMock.mockResolvedValueOnce(pendingOutcome);
     render(<ImportPanel />);
     await userEvent.type(screen.getByTestId('import-url'), 'https://x/y.json');
     await userEvent.click(screen.getByTestId('import-submit'));
@@ -109,8 +134,28 @@ describe('ImportPanel', () => {
     expect(useGraphStore.getState().imports['fs-test@2.0.0']?.phase).toBe('installed');
   });
 
+  it('reject_invokes_cancel_pending_import', async () => {
+    // M07.V 🔴 #1 closure. The prior reject_dismisses_the_import_record
+    // (below) asserted ONLY that the local store record was deleted —
+    // never that the backend was told to drop the held PendingImport.
+    // That store-only check was the precise Stage-V blind spot. This
+    // test pins the BACKEND command fire.
+    invokeMock.mockResolvedValueOnce(pendingOutcome);
+    render(<ImportPanel />);
+    await userEvent.type(screen.getByTestId('import-url'), 'https://x/y.json');
+    await userEvent.click(screen.getByTestId('import-submit'));
+    await screen.findByTestId('import-review-modal');
+
+    await userEvent.click(screen.getByTestId('import-reject'));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('cancel_pending_import', {
+        pendingReviewId: 'pri-1',
+      }),
+    );
+  });
+
   it('reject_dismisses_the_import_record', async () => {
-    invokeMock.mockResolvedValueOnce(enriched);
+    invokeMock.mockResolvedValueOnce(pendingOutcome);
     render(<ImportPanel />);
     await userEvent.type(screen.getByTestId('import-url'), 'https://x/y.json');
     await userEvent.click(screen.getByTestId('import-submit'));
