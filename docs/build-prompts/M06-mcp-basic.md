@@ -325,7 +325,7 @@ async fn tool_dispatch_with_valid_grant_twice_in_sequence_both_succeed() { /* ..
 - [ ] `cargo test -p runtime-main --tests sdk_narrowing_integration` — all 4 tests pass
 - [ ] `cargo test -p runtime-main --tests capability_enforcer_smoke` — all existing tests still pass (no regression)
 - [ ] `cargo test -p runtime-main --lib capability` — all unit tests still pass; `enforcer.rs` line coverage ≥95% (M05.E baseline preserved or improved)
-- [ ] `cargo llvm-cov --package runtime-main --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs|src.key_store\.rs" --fail-under-lines 95` — runtime-main gate holds
+- [ ] `cargo llvm-cov --package runtime-main --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs" --fail-under-lines 95` — runtime-main gate holds
 - [ ] `cargo xtask regenerate-types --check` — no schema drift after `narrowed_from` addition
 - [ ] `npm run test` + `npx tsc --noEmit` — no regression in TS-side
 - [ ] M05.V Finding #3 truth-up: `docs/build-prompts/M05-gap-capability.md` C1.2 + E.2 tables updated per A.3.5
@@ -524,7 +524,7 @@ Paste the XML block below into a fresh Claude Code session as the opening messag
   <coverage_gate>
     <gate scope="workspace" target_lines="80" ignore_filename_regex="src.main\.rs|generated"/>
     <gate scope="package" name="runtime-drone" target_lines="95" ignore_filename_regex="src.main\.rs|generated|src.lib\.rs|src.shutdown\.rs"/>
-    <gate scope="package" name="runtime-main" target_lines="95" ignore_filename_regex="src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs|src.key_store\.rs"/>
+    <gate scope="package" name="runtime-main" target_lines="95" ignore_filename_regex="src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs"/>
     <gate scope="package" name="runtime-sandbox" target_lines="95" ignore_filename_regex="src.main\.rs|generated|src.lib\.rs|src.seccomp\.rs|src.landlock\.rs"/>
   </coverage_gate>
 
@@ -1162,7 +1162,7 @@ Same disposition as M02's `anthropic_smoke.rs` — manual gate; CI doesn't run b
   <coverage_gate>
     <gate scope="workspace" target_lines="80" ignore_filename_regex="src.main\.rs|generated"/>
     <gate scope="package" name="runtime-mcp" target_lines="95" ignore_filename_regex="src.main\.rs|generated|src.lib\.rs"/>
-    <gate scope="package" name="runtime-main" target_lines="95" ignore_filename_regex="src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs|src.key_store\.rs"/>
+    <gate scope="package" name="runtime-main" target_lines="95" ignore_filename_regex="src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs"/>
   </coverage_gate>
 
   <runtime_environment os="windows" note="Build agent on Windows 11; rmcp's stdio transport uses tokio::process which works on Windows (named-pipes-under-the-hood); http transport uses reqwest which is platform-agnostic. No platform-specific cfg expected in Stage B; if any appears, cite gotcha #74."/>
@@ -1884,7 +1884,8 @@ Not in this stage:
 | `src/types/framework.ts` (if exists) OR equivalent | exists/check | Regenerated |
 | `src/lib/graphStore.ts` | exists | Edit: applyEvent branches for `mcp_installed` / `mcp_uninstalled` / `mcp_auth_granted` / `mcp_request_blocked` / `tool_alias_ambiguous`; new `currentMcpServers` store slot (map of name → ServerStatus) |
 | `tests/unit/graphStore.test.ts` | exists | Edit: tests for the 5 new applyEvent branches + idempotence |
-| `crates/runtime-main/tests/mcp_dispatch_integration.rs` | **new** | End-to-end MCP dispatch through L1+L2a gates + audit |
+| `crates/runtime-mcp/tests/mcp_dispatch_integration.rs` | **new** | End-to-end MCP dispatch through the §5a resolver + L1+L4 gates + audit (`#![cfg(feature = "test-helpers")]`). [M07.A X.2 truth-up — M05.V-#3 precedent: shipped in `runtime-mcp`, not `runtime-main`; landed M06.D `17aeb9b`] |
+| `crates/runtime-main/tests/mcp_dispatch_wire.rs` | **new** | The `runtime-main` counterpart: the `McpDispatchOutcome` → `AgentEvent` mapping the SDK run loop applies after the injected dispatch returns. [M07.A X.2 truth-up — the `runtime-main`-side test the D.2 row originally mislabelled] |
 | `crates/runtime-mcp/tests/namespace_resolution.rs` | **new** | Resolution edge cases (ambiguous + reconfigure post-connect/disconnect) |
 | `CHANGELOG.md` | exists | Edit |
 | `docs/build-prompts/retrospectives/M06.D-retrospective.md` | **new** | Stage D retrospective |
@@ -2091,7 +2092,7 @@ Cross-schema $refs to `mcp.v1.json#/$defs/McpServerName` (Stage B introduced) �
 - `re_evaluate_short_names_returns_empty_when_no_new_ambiguity`
 - `resolve_twice_in_sequence_both_succeed` (multi-call)
 
-#### D.4.2 MCP dispatch integration tests (`mcp_dispatch_integration.rs`)
+#### D.4.2 MCP dispatch integration tests (`runtime-mcp/tests/mcp_dispatch_integration.rs`)
 
 - `mcp_tool_dispatch_with_valid_grant_succeeds_and_emits_tool_invoked`
 - `mcp_tool_dispatch_missing_grant_emits_capability_violation_and_mcp_request_blocked`
@@ -2117,7 +2118,7 @@ Cross-schema $refs to `mcp.v1.json#/$defs/McpServerName` (Stage B introduced) �
 #### D.4.5 Acceptance criteria
 
 - [ ] `cargo test -p runtime-mcp --tests namespace_resolution` all pass
-- [ ] `cargo test -p runtime-main --tests mcp_dispatch_integration` all pass
+- [ ] `cargo test -p runtime-mcp --features test-helpers --test mcp_dispatch_integration` all pass (runtime-main counterpart: `cargo test -p runtime-main --test mcp_dispatch_wire`) [M07.A X.2 truth-up]
 - [ ] `npm run test -- graphStore.test.ts` — 5 new tests pass
 - [ ] `cargo llvm-cov` runtime-mcp + runtime-main per-crate gates hold (≥95%)
 - [ ] `cargo xtask regenerate-types --check` passes
@@ -2284,7 +2285,7 @@ Cross-schema $refs to `mcp.v1.json#/$defs/McpServerName` (Stage B introduced) �
   <coverage_gate>
     <gate scope="workspace" target_lines="80" ignore_filename_regex="src.main\.rs|generated"/>
     <gate scope="package" name="runtime-mcp" target_lines="95" ignore_filename_regex="src.main\.rs|generated|src.lib\.rs"/>
-    <gate scope="package" name="runtime-main" target_lines="95" ignore_filename_regex="src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs|src.key_store\.rs"/>
+    <gate scope="package" name="runtime-main" target_lines="95" ignore_filename_regex="src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs"/>
   </coverage_gate>
 
   <existing_pattern_audit>
@@ -2390,7 +2391,7 @@ Renderer (graphStore branches; Stage E wires components):
 Tests:
 - crates/runtime-mcp/tests/namespace_resolution.rs: 10 tests covering
   canonical / short / alias / ambiguous / re-evaluation / multi-call.
-- crates/runtime-main/tests/mcp_dispatch_integration.rs: 7 end-to-end
+- crates/runtime-mcp/tests/mcp_dispatch_integration.rs: 7 end-to-end [M07.A X.2 truth-up — runtime-mcp, not runtime-main]
   tests covering valid-grant + missing-grant + ambiguous + alias +
   fall-through + audit + multi-call.
 - tests/unit/graphStore.test.ts: 5 new applyEvent branch tests +
@@ -3030,7 +3031,7 @@ Acceptance: all four run-loop tests + the seam test pass; `cargo llvm-cov -p run
 
   <coverage_gate>
     <gate scope="workspace" target_lines="80" ignore_filename_regex="src.main\.rs|generated"/>
-    <gate scope="package" name="runtime-main" target_lines="95" ignore_filename_regex="src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs|src.key_store\.rs"/>
+    <gate scope="package" name="runtime-main" target_lines="95" ignore_filename_regex="src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs"/>
   </coverage_gate>
 
   <self_correction_budget>3</self_correction_budget>
@@ -3203,11 +3204,12 @@ npx vitest run tests/unit/nodes/MCPNode.test.tsx tests/unit/components/MCPServer
 cargo test -p runtime-mcp --lib
 cargo test -p runtime-mcp --tests
 cargo test -p runtime-main --lib capability --lib sdk
-cargo test -p runtime-main --tests sdk_capability_integration sdk_narrowing_integration mcp_dispatch_integration mcp_dispatch_runloop
+cargo test -p runtime-main --tests sdk_capability_integration sdk_narrowing_integration mcp_dispatch_wire mcp_dispatch_runloop
+cargo test -p runtime-mcp --features test-helpers --test mcp_dispatch_integration  # [M07.A X.2 truth-up] integration test is runtime-mcp + test-helpers; mcp_dispatch_wire is the runtime-main counterpart
 
 :: Coverage gates (the per-crate ≥95% gates for runtime-mcp + runtime-main)
 cargo llvm-cov --package runtime-mcp --ignore-filename-regex "src.main\.rs|generated|src.lib\.rs" --fail-under-lines 95
-cargo llvm-cov --package runtime-main --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs|src.key_store\.rs" --fail-under-lines 95
+cargo llvm-cov --package runtime-main --ignore-filename-regex "src.main\.rs|generated|src.providers.anthropic\.rs|src.drone_ipc.connection\.rs|src.sandbox_ipc.connection\.rs" --fail-under-lines 95
 
 :: Playwright
 npm run test:e2e -- mcp_server_add.spec.ts
@@ -3225,7 +3227,7 @@ For each public API/IPC method/Tauri command M06 adds:
 |---|---|---|
 | `NamespaceResolver::resolve` | `namespace::tests::resolve_twice_in_sequence_both_succeed` (Stage D) | Both calls return Ok with same ResolvedTool |
 | `McpClient::add_server` | `client_lifecycle::add_server_twice_in_sequence_with_distinct_names_both_succeed` (Stage C) | Both add_server calls succeed with distinct names |
-| `mcp_dispatch::dispatch_if_mcp` | `mcp_dispatch_integration::dispatch_twice_in_sequence_both_succeed` (Stage D) | Both dispatches succeed with distinct call IDs |
+| `mcp_dispatch::dispatch_if_mcp` | `mcp_dispatch_integration` (runtime-mcp, `--features test-helpers`)`::dispatch_twice_in_sequence_both_succeed` (Stage D) | Both dispatches succeed with distinct call IDs [M07.A X.2 truth-up] |
 | `StdioTransport::invoke_tool` | `stdio_invoke_tool_twice_in_sequence_both_succeed` (Stage B) | Both invocations succeed |
 | `HttpTransport::invoke_tool` | `http_invoke_tool_twice_in_sequence_both_succeed` (Stage B) | Both invocations succeed |
 | `Registry::open` | `registry::tests::open_twice_in_sequence_does_not_re_run_migrations` (Stage C) | Migration idempotent |

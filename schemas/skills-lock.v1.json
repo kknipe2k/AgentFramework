@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aria-runtime.dev/skills-lock.v1.json",
+  "title": "SkillsLock",
+  "description": "Per-framework artifact integrity ledger — spec §2181-2216 (M07 Stage B; ADR-0014). One `skills.lock` at the framework root maps `name@version` → a lock entry recording the artifact's SRI content hash, its import source, the install timestamp, the user tier at install, and the L1-L5 validation report id. The runtime recomputes the content hash on every artifact load and blocks the load with an `artifact_hash_mismatch` event on drift (spec §2214). The file is checked into the user's framework repo alongside the framework JSON (spec §2216); canonical (sorted-key, stable-field-order) serialization makes two installs of the same set byte-identical for reproducible cross-machine installs (spec §2204). v0.1 import sources are URL or local file only (MVP §M7 — Anthropic-upstream search + its `source_commit` trust chain is the v1.0 layer, deliberately out of scope here).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "installed"],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Lock-format version. Pinned to 1 for v0.1; a format change is a major schema bump (new schemas/skills-lock.v2.json + ADR) per schemas/README.md versioning policy."
+    },
+    "installed": {
+      "type": "object",
+      "description": "Map of `name@version` → lock entry. The key name `installed` is the spec §2200 contract (the lock is a user-VCS-committed artifact; the wire key is durable). Serialized with sorted keys for reproducibility (spec §2204).",
+      "additionalProperties": { "$ref": "#/$defs/LockEntry" }
+    }
+  },
+  "$defs": {
+    "LockEntry": {
+      "type": "object",
+      "title": "LockEntry",
+      "description": "One installed artifact's integrity + provenance record (spec §2201-2209).",
+      "additionalProperties": false,
+      "required": ["kind", "source", "content_hash", "installed_at", "tier_at_install", "validation_report_id"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/ArtifactKind" },
+        "source": { "$ref": "#/$defs/Source" },
+        "content_hash": { "$ref": "#/$defs/SriHash" },
+        "installed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC 3339 / ISO 8601 UTC timestamp the artifact was installed."
+        },
+        "tier_at_install": { "$ref": "#/$defs/TierAtInstall" },
+        "validation_report_id": { "$ref": "#/$defs/ValidationReportId" }
+      }
+    },
+    "ArtifactKind": {
+      "type": "string",
+      "title": "ArtifactKind",
+      "description": "The artifact primitive this entry locks. `mcp_server` is the M06 MCP Manager install target. Per gotcha #43 (typify-friendly extraction): enum extracted to $defs with title.",
+      "enum": ["skill", "tool", "agent", "mcp_server"]
+    },
+    "TierAtInstall": {
+      "type": "string",
+      "title": "TierAtInstall",
+      "description": "User tier (spec §8.security L4 / §0d) at the moment the artifact was installed — surfaced so a reviewer can see whether a promoted-tier-only artifact entered the framework while promoted. Two-tier v0.1 per §0d. Per gotcha #43.",
+      "enum": ["novice", "promoted"]
+    },
+    "ValidationReportId": {
+      "type": "string",
+      "title": "ValidationReportId",
+      "description": "Identifier of the L1-L5 validation report produced at install time (spec §2207 + Phase 8 §8.security). Non-empty. Per gotcha #43 (validated inline string extracted to $defs with title).",
+      "minLength": 1
+    },
+    "Source": {
+      "title": "Source",
+      "description": "Where the artifact was imported from. v0.1 supports URL import (capability-gated GitHub-raw / HTTPS fetch) and local-file import only (MVP §M7). Discriminated by the `type` field per gotcha #26 (struct-shape variants required for serde(tag)).",
+      "oneOf": [
+        {
+          "type": "object",
+          "title": "UrlSource",
+          "additionalProperties": false,
+          "required": ["type", "url"],
+          "properties": {
+            "type": { "type": "string", "enum": ["url"] },
+            "url": { "$ref": "#/$defs/SourceUrl" }
+          }
+        },
+        {
+          "type": "object",
+          "title": "FileSource",
+          "additionalProperties": false,
+          "required": ["type", "path"],
+          "properties": {
+            "type": { "type": "string", "enum": ["file"] },
+            "path": { "$ref": "#/$defs/SourcePath" }
+          }
+        }
+      ]
+    },
+    "SourceUrl": {
+      "type": "string",
+      "title": "SourceUrl",
+      "description": "The import URL (GitHub raw / HTTPS). Per gotcha #43 (validated inline string inside a oneOf variant extracted to $defs with title or typify panics).",
+      "format": "uri",
+      "minLength": 1
+    },
+    "SourcePath": {
+      "type": "string",
+      "title": "SourcePath",
+      "description": "The local file path the artifact was imported from. Per gotcha #43 (validated inline string inside a oneOf variant extracted to $defs with title).",
+      "minLength": 1
+    },
+    "SriHash": {
+      "type": "string",
+      "title": "SriHash",
+      "description": "SRI-style algorithm-prefixed base64 SHA-256 digest of the canonical artifact bytes: `sha256-<standard-base64>`. The `sha256-` prefix makes the algorithm self-describing and swappable without a schema break (npm/SRI convention; ADR-0014). The pattern enforces the prefix at the schema level so a bare hex digest (the spec §2205 sketch's `sha256:<hex>` form) fails validation — ADR-0014 deliberately tightened this.",
+      "pattern": "^sha256-[A-Za-z0-9+/]+={0,2}$"
+    }
+  }
+}

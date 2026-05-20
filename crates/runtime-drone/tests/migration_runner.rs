@@ -27,8 +27,10 @@ fn fresh_init_applies_all_migrations() {
         .unwrap()
         .map(Result::unwrap)
         .collect();
-    // M06.C added migration 002 (mcp_servers schema alignment).
-    assert_eq!(versions, vec![0, 1, 2]);
+    // M06.C added migration 002 (mcp_servers schema alignment);
+    // M07.D1 added 003 (mcp_servers.status CHECK realigned to the
+    // mcp.v1.json::McpServerStatus enum — CQ-6).
+    assert_eq!(versions, vec![0, 1, 2, 3]);
 }
 
 #[test]
@@ -42,13 +44,14 @@ fn re_init_is_idempotent_no_extra_migration_rows() {
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM _migrations", [], |r| r.get(0))
         .unwrap();
-    // M06.C: three registered migrations (000_initial, 001_plans_tasks,
-    // 002_mcp_servers). Re-init MUST NOT re-apply 002 — its ALTER
-    // TABLE / RENAME COLUMN statements are NOT idempotent on their own;
-    // the version-skip in `_migrations` is the sole idempotency
-    // guarantee. This assertion is meaningful post-002 in a way it was
-    // NOT pre-002 (when every migration was CREATE IF NOT EXISTS-only).
-    assert_eq!(count, 3, "each migration should appear exactly once");
+    // Four registered migrations (000_initial, 001_plans_tasks,
+    // 002_mcp_servers, 003_mcp_server_status). Re-init MUST NOT
+    // re-apply 002/003 — 002's ALTER/RENAME and 003's DROP+RENAME
+    // table-rebuild are NOT idempotent on their own; the version-skip
+    // in `_migrations` is the sole idempotency guarantee. This
+    // assertion is meaningful post-002/003 in a way it was NOT pre-002
+    // (when every migration was CREATE IF NOT EXISTS-only).
+    assert_eq!(count, 4, "each migration should appear exactly once");
 }
 
 #[test]
@@ -63,14 +66,17 @@ fn migration_table_records_name_and_applied_at() {
         .unwrap()
         .map(Result::unwrap)
         .collect();
-    // M06.C added migration 002 (mcp_servers schema alignment).
-    assert_eq!(rows.len(), 3);
+    // M06.C added 002 (mcp_servers); M07.D1 added 003
+    // (mcp_server_status — CQ-6 CHECK realignment).
+    assert_eq!(rows.len(), 4);
     assert_eq!(rows[0].1, "initial");
     assert_eq!(rows[1].1, "plans_tasks");
     assert_eq!(rows[2].1, "mcp_servers");
+    assert_eq!(rows[3].1, "mcp_server_status");
     assert!(rows[0].2 > 0, "applied_at must be a real unix ms timestamp");
     assert!(rows[1].2 >= rows[0].2);
     assert!(rows[2].2 >= rows[1].2);
+    assert!(rows[3].2 >= rows[2].2);
 }
 
 #[test]
@@ -129,10 +135,11 @@ fn run_migrations_on_existing_connection_is_idempotent() {
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM _migrations", [], |r| r.get(0))
         .unwrap();
-    // M06.C: three registered migrations (000_initial, 001_plans_tasks,
-    // 002_mcp_servers). Same idempotency-meaningfulness note as
+    // Four registered migrations (000_initial, 001_plans_tasks,
+    // 002_mcp_servers, 003_mcp_server_status). Same
+    // idempotency-meaningfulness note as
     // re_init_is_idempotent_no_extra_migration_rows above.
-    assert_eq!(count, 3);
+    assert_eq!(count, 4);
 }
 
 #[test]

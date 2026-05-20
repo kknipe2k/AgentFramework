@@ -42,8 +42,8 @@ use uuid::Uuid;
 
 use super::event_pipeline::{EnforcementContext, EventPipeline};
 use super::mcp_dispatch::{
-    apply_mcp_dispatch, mcp_dispatch_error_event, outcome_needs_hitl, McpDispatchOutcome,
-    McpToolDispatch,
+    apply_renderable, mcp_dispatch_error_event, renderable_needs_hitl, McpDispatchOutcome,
+    McpToolDispatch, RenderableOutcome,
 };
 use crate::capability::{narrow, CapabilityEnforcer};
 use crate::drone_ipc::{DroneClient, DroneIpcError};
@@ -52,7 +52,10 @@ use crate::framework_loader::{
     parent_grants_for_agent, FrameworkRef,
 };
 use crate::hitl::HitlSeam;
-use crate::providers::{AgentConfig, LLMProvider, ProviderError, ProviderEvent};
+use crate::providers::{
+    AgentConfig, ContentBlock, LLMProvider, Message, MessageRole, ProviderError, ProviderEvent,
+    ToolResultContent,
+};
 
 /// Default wait for HITL responses on capability / tier violations
 /// surfaced by the L1 wire-up. Long enough that a user can read the
@@ -60,6 +63,38 @@ use crate::providers::{AgentConfig, LLMProvider, ProviderError, ProviderEvent};
 /// the SDK loop indefinitely. Matches the M04.E `HitlSeam` default
 /// budgets used elsewhere.
 const HITL_DEFAULT_WAIT: Duration = Duration::from_secs(3600);
+
+/// Safety cap on the multi-turn agent-with-tools loop (M07.D2,
+/// ADR-0011 d). Each turn that dispatches ≥1 MCP tool feeds the result
+/// back and re-streams; a well-behaved model converges in a handful of
+/// turns. This bounds a pathological tool-loop (model that never stops
+/// requesting tools) so a session cannot spin unbounded. v0.1
+/// single-session; generous enough to never clip a real workflow.
+const MAX_AGENT_TURNS: usize = 16;
+
+/// One MCP tool the run loop dispatched this turn, captured so the
+/// multi-turn driver can feed the result back as the next turn's
+/// `tool_result` (Anthropic message-history continuation — no new
+/// `LLMProvider` trait method; the provider is stateless and the
+/// conversation lives in [`AgentConfig::messages`]).
+struct DispatchedTool {
+    /// The provider-assigned `tool_use` id the result must reference.
+    id: String,
+    /// Resolved tool name (for the assistant `tool_use` block).
+    name: String,
+    /// Original call arguments (ride into the assistant `tool_use`).
+    input: serde_json::Value,
+    /// The MCP server's structured result (the user `tool_result`).
+    value: serde_json::Value,
+}
+
+/// Tools dispatched during one provider-stream turn. Non-empty ⇒ the
+/// multi-turn driver feeds these back and re-streams; empty ⇒ the model
+/// stopped requesting tools and the session ends.
+#[derive(Default)]
+struct TurnFeedback {
+    dispatched: Vec<DispatchedTool>,
+}
 
 /// Newtype wrapping a session UUID. Cheap to clone; serializes as a
 /// hyphenated UUID string.
@@ -203,37 +238,99 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
         }
     }
 
-    /// Production entry point. Constructs the provider stream and delegates
-    /// to [`Self::run_agent_with_provider_stream`].
+    /// Production entry point — the multi-turn agent-with-tools loop
+    /// (M07.D2, ADR-0011 d). Runs the session prelude ONCE, then streams
+    /// the provider; when a turn dispatched ≥1 MCP tool through D1's
+    /// concrete `McpDispatcher`, the results are fed back as the next
+    /// turn's `tool_result` (Anthropic message-history continuation —
+    /// the provider is stateless, the conversation lives in
+    /// [`AgentConfig::messages`], so no new `LLMProvider` method is
+    /// needed) and the loop re-streams. It terminates when a turn
+    /// requests no tool (the model stopped) or `MAX_AGENT_TURNS` is
+    /// hit. The smoke / no-tools path is the degenerate one-turn case.
     ///
     /// # Errors
     ///
-    /// Returns [`SdkError::Provider`] if the provider's `stream` call
-    /// fails; otherwise propagates errors from
-    /// [`Self::run_agent_with_provider_stream`].
-    pub async fn run_agent(&self, config: AgentConfig) -> Result<(), SdkError> {
-        let stream = self.provider.stream(config).await?;
-        self.run_agent_with_provider_stream(stream).await
+    /// Returns [`SdkError::Provider`] if any turn's `stream` call fails;
+    /// otherwise propagates errors from the prelude / stream drive.
+    pub async fn run_agent(&self, mut config: AgentConfig) -> Result<(), SdkError> {
+        let (agent_id, mut pipeline) = self.session_prelude().await?;
+        for _turn in 0..MAX_AGENT_TURNS {
+            let stream = self.provider.stream(config.clone()).await?;
+            let feedback = self.drive_stream(stream, &mut pipeline, &agent_id).await?;
+            if feedback.dispatched.is_empty() {
+                // Model requested no tool this turn → it has stopped.
+                break;
+            }
+            // Feed the dispatched tools' results back as the next turn:
+            // one assistant message carrying every `tool_use`, then one
+            // user message carrying the matching `tool_result`s (the
+            // Anthropic continuation contract).
+            let assistant_blocks = feedback
+                .dispatched
+                .iter()
+                .map(|d| ContentBlock::ToolUse {
+                    id: d.id.clone(),
+                    name: d.name.clone(),
+                    input: d.input.clone(),
+                })
+                .collect();
+            let user_blocks = feedback
+                .dispatched
+                .iter()
+                .map(|d| ContentBlock::ToolResult {
+                    tool_use_id: d.id.clone(),
+                    content: ToolResultContent::Text(d.value.to_string()),
+                    is_error: None,
+                })
+                .collect();
+            config.messages.push(Message {
+                role: MessageRole::Assistant,
+                content: assistant_blocks,
+            });
+            config.messages.push(Message {
+                role: MessageRole::User,
+                content: user_blocks,
+            });
+        }
+        for agent_event in pipeline.flush() {
+            self.emit(agent_event).await?;
+        }
+        Ok(())
     }
 
-    /// Test-seam variant. Accepts any pre-built `ProviderEvent` stream.
-    ///
-    /// Emits an `AgentSpawned` first, then drives the pipeline until the
-    /// stream ends, flushes any buffered text, and returns. The drone
-    /// receives one `SnapshotNow` at the start.
-    ///
-    /// When constructed via [`Self::with_capability_wiring`], also walks
-    /// the framework's inline sub-agents at session start (per the
-    /// M06.A L2a wire-up) before the streaming loop begins.
+    /// Test-seam variant. Accepts any pre-built `ProviderEvent` stream
+    /// and drives exactly ONE turn (no multi-turn re-stream — a
+    /// pre-built stream cannot be re-opened). Behaviorally identical to
+    /// the pre-M07.D2 single-pass loop: prelude → drive one stream →
+    /// flush.
     ///
     /// # Errors
     ///
     /// Returns [`SdkError::EventChannelClosed`] if the receiver was
     /// dropped, or [`SdkError::Drone`] if the snapshot trigger failed.
-    pub async fn run_agent_with_provider_stream<S>(&self, mut stream: S) -> Result<(), SdkError>
+    pub async fn run_agent_with_provider_stream<S>(&self, stream: S) -> Result<(), SdkError>
     where
         S: Stream<Item = ProviderEvent> + Unpin,
     {
+        let (agent_id, mut pipeline) = self.session_prelude().await?;
+        let _feedback = self.drive_stream(stream, &mut pipeline, &agent_id).await?;
+        for agent_event in pipeline.flush() {
+            self.emit(agent_event).await?;
+        }
+        Ok(())
+    }
+
+    /// Session prelude (runs ONCE per session, before any turn): derive
+    /// the runtime `agent_id`, emit the root `AgentSpawned`, trigger the
+    /// start-of-session `SnapshotNow`, run the M06.A L2a sub-agent walk,
+    /// and build the (optionally enforcement-wired) `EventPipeline`.
+    ///
+    /// # Errors
+    ///
+    /// [`SdkError::EventChannelClosed`] / [`SdkError::Drone`] as the
+    /// emit / snapshot paths surface.
+    async fn session_prelude(&self) -> Result<(String, EventPipeline), SdkError> {
         // M06.A wire-up: when the framework is present, the runtime
         // agent_id IS the framework's `session_root_agent` id so the
         // enforcer's grants (keyed by framework agent id) match the
@@ -257,8 +354,8 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
         })
         .await?;
 
-        // Trigger a SnapshotNow on task start. M02 single-turn only — one
-        // task per session — so this fires once.
+        // Trigger a SnapshotNow on task start — once per session (the
+        // multi-turn loop reuses this prelude's pipeline across turns).
         self.drone_client
             .send(runtime_core::drone::DroneCommand::SnapshotNow {
                 reason: "task_started".to_string(),
@@ -277,7 +374,7 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
         // The run loop retains `agent_id` (M06.F: the MCP-dispatch
         // interception needs it to emit agent_id-correct events, gotcha
         // #68); the pipeline takes a clone.
-        let mut pipeline = self.capability_wiring.as_ref().map_or_else(
+        let pipeline = self.capability_wiring.as_ref().map_or_else(
             || EventPipeline::new(agent_id.clone()),
             |wiring| {
                 EventPipeline::with_enforcement(
@@ -289,6 +386,28 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
                 )
             },
         );
+        Ok((agent_id, pipeline))
+    }
+
+    /// Drive ONE provider-stream turn through the MCP-dispatch
+    /// interception + the Stage A pipeline, emitting events as it goes.
+    /// Returns the [`TurnFeedback`] (MCP tools dispatched this turn) so
+    /// the multi-turn caller can feed results back; the single-turn
+    /// seam discards it.
+    ///
+    /// # Errors
+    ///
+    /// [`SdkError::EventChannelClosed`] if the receiver dropped.
+    async fn drive_stream<S>(
+        &self,
+        mut stream: S,
+        pipeline: &mut EventPipeline,
+        agent_id: &str,
+    ) -> Result<TurnFeedback, SdkError>
+    where
+        S: Stream<Item = ProviderEvent> + Unpin,
+    {
+        let mut feedback = TurnFeedback::default();
         while let Some(provider_event) = stream.next().await {
             // M06.F (ADR-0010 + ADR-0011): when an MCP-dispatch seam is
             // injected, a `ProviderEvent::ToolUse` is offered to it
@@ -296,11 +415,14 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
             // tool) falls through to the existing Stage A non-MCP L1
             // path below, unchanged.
             if self.mcp_dispatch.is_some() {
-                if let ProviderEvent::ToolUse { name, input, .. } = &provider_event {
-                    if self
-                        .try_mcp_dispatch(&agent_id, name, input.clone())
+                if let ProviderEvent::ToolUse { id, name, input } = &provider_event {
+                    if let Some(dispatched) = self
+                        .try_mcp_dispatch(agent_id, id, name, input.clone())
                         .await?
                     {
+                        if let Some(d) = dispatched {
+                            feedback.dispatched.push(d);
+                        }
                         continue;
                     }
                 }
@@ -319,10 +441,7 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
                 }
             }
         }
-        for agent_event in pipeline.flush() {
-            self.emit(agent_event).await?;
-        }
-        Ok(())
+        Ok(feedback)
     }
 
     /// Walk every inline sub-agent declared in the framework (sessions
@@ -421,33 +540,37 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
     }
 
     /// Offer one `ProviderEvent::ToolUse` to the injected MCP-dispatch
-    /// seam. Returns `Ok(true)` when the call was an MCP tool and the
-    /// run loop fully handled it (the event must NOT also flow through
-    /// the Stage A pipeline); `Ok(false)` when it is not an MCP tool
-    /// (pure fall-through to the existing Stage A non-MCP L1 path).
+    /// seam. Returns:
+    /// - `Ok(None)` — NOT an MCP tool: pure fall-through to the existing
+    ///   Stage A non-MCP L1 path (the caller continues into
+    ///   `pipeline.next_event`).
+    /// - `Ok(Some(Some(DispatchedTool)))` — MCP `Invoked`: the run loop
+    ///   emitted the agent_id-correct `ToolInvoked`/`ToolResult` itself
+    ///   (gotcha #68: `McpDispatchOutcome::Invoked` carries no
+    ///   `agent_id`), and the returned [`DispatchedTool`] is fed back as
+    ///   the next turn's `tool_result` by the multi-turn driver.
+    /// - `Ok(Some(None))` — MCP handled but no tool result to feed back
+    ///   (`Blocked` / `Ambiguous` / transport `Err`).
     ///
-    /// ADR-0010 dependency-inversion seam; ADR-0011 scopes this to the
-    /// SDK side. `dispatch_if_mcp` returning `None` (not an MCP tool) is
-    /// a pure fall-through (`Ok(false)`). `Some(Ok(Invoked))` → the run
-    /// loop emits the success `ToolInvoked`/`ToolResult` itself with the
-    /// `agent_id` it holds (gotcha #68: `McpDispatchOutcome::Invoked`
-    /// carries no `agent_id`; `apply_mcp_dispatch`'s empty-agent_id Invoked
-    /// branch is the D-frozen wire-test contract only, never shipped to
-    /// the renderer). `Some(Ok(Blocked|Ambiguous))` → the D-frozen
-    /// `apply_mcp_dispatch` mapping (Blocked carries its own `agent_id`;
-    /// Ambiguous emits `ToolAliasAmbiguous`, no `agent_id` field — so no
-    /// empty-agent_id reaches the renderer either way), and Blocked
-    /// routes the existing `on_capability_violation` HITL trigger
-    /// (ADR-0007, no new seam — mirrors the Stage A violation routing).
-    /// `Some(Err)` → `mcp_dispatch_error_event` (a `ToolError`).
+    /// CQ-2 (M07.D2 — maintainer-decided "surgical, type-level"; the
+    /// M06.V CQ-2/reuse-5 finding). The match over [`McpDispatchOutcome`]
+    /// is exhaustive with NO catch-all: `Invoked` is handled directly
+    /// (agent_id-correct), `Blocked`/`Ambiguous` map through
+    /// [`apply_renderable`] over a [`RenderableOutcome`] that
+    /// structurally cannot represent `Invoked` — so the dead
+    /// empty-`agent_id` `Invoked` branch in `apply_mcp_dispatch` (the
+    /// D-frozen wire-test contract, kept byte-stable for the ADR-0011
+    /// D-freeze) is unreachable from production, and a future fourth
+    /// variant is a compile error here rather than a silent drop.
     async fn try_mcp_dispatch(
         &self,
         agent_id: &str,
+        tool_use_id: &str,
         tool_name: &str,
         args: serde_json::Value,
-    ) -> Result<bool, SdkError> {
+    ) -> Result<Option<Option<DispatchedTool>>, SdkError> {
         let Some(dispatch) = self.mcp_dispatch.as_ref() else {
-            return Ok(false);
+            return Ok(None);
         };
         // `dispatch_if_mcp` takes the framework's `mcp_aliases`
         // (§5a explicit-alias override). The Framework stores it as a
@@ -471,9 +594,10 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
         else {
             // Not an MCP tool — pure fall-through to the Stage A
             // non-MCP L1 path (caller continues into pipeline.next_event).
-            return Ok(false);
+            return Ok(None);
         };
 
+        // CQ-2: exhaustive, NO `_ =>` catch-all.
         match result {
             Ok(McpDispatchOutcome::Invoked {
                 server,
@@ -485,22 +609,39 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
                     tool_name: tool.clone(),
                     source: ToolSource::Mcp,
                     server: Some(server),
-                    input: args,
+                    input: args.clone(),
                 })
                 .await?;
                 self.emit(AgentEvent::ToolResult {
                     agent_id: agent_id.to_string(),
-                    tool_name: tool,
-                    output: value,
+                    tool_name: tool.clone(),
+                    output: value.clone(),
                     duration_ms: 0,
                     tokens_in: None,
                     tokens_out: None,
                 })
                 .await?;
+                Ok(Some(Some(DispatchedTool {
+                    id: tool_use_id.to_string(),
+                    name: tool,
+                    input: args,
+                    value,
+                })))
             }
-            Ok(outcome) => {
-                let needs_hitl = outcome_needs_hitl(&outcome);
-                for ev in apply_mcp_dispatch(outcome, args) {
+            Ok(McpDispatchOutcome::Blocked {
+                agent_id: blocked_agent,
+                server,
+                tool,
+                reason,
+            }) => {
+                let outcome = RenderableOutcome::Blocked {
+                    agent_id: blocked_agent,
+                    server,
+                    tool,
+                    reason,
+                };
+                let needs_hitl = renderable_needs_hitl(&outcome);
+                for ev in apply_renderable(outcome, args) {
                     self.emit(ev).await?;
                 }
                 if needs_hitl {
@@ -509,13 +650,21 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
                             .await;
                     }
                 }
+                Ok(Some(None))
+            }
+            Ok(McpDispatchOutcome::Ambiguous { name, candidates }) => {
+                for ev in apply_renderable(RenderableOutcome::Ambiguous { name, candidates }, args)
+                {
+                    self.emit(ev).await?;
+                }
+                Ok(Some(None))
             }
             Err(e) => {
                 self.emit(mcp_dispatch_error_event(agent_id, tool_name, &e))
                     .await?;
+                Ok(Some(None))
             }
         }
-        Ok(true)
     }
 
     async fn emit(&self, event: AgentEvent) -> Result<(), SdkError> {

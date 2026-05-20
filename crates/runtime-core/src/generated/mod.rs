@@ -45,6 +45,14 @@ pub mod mcp;
 pub mod plan;
 /// Types generated from `schemas/skill.v1.json`.
 pub mod skill;
+/// Types generated from `schemas/skills-lock.v1.json` — `skills.lock`
+/// per-framework artifact integrity ledger (spec §2181-2216). M07
+/// Stage B authored the schema (ADR-0014) + the path-agnostic
+/// `runtime_main::skills_lock` read/write/verify module. The schema
+/// file is hyphenated per the kebab-case `.json` artifact convention;
+/// the generated Rust module is snake_case via `#[path]`.
+#[path = "skills-lock.rs"]
+pub mod skills_lock;
 /// Types generated from `schemas/task.v1.json` — Task primitive (spec §3a +
 /// §10). M04 Stage B authored the schema + Task FSM + projection.
 pub mod task;

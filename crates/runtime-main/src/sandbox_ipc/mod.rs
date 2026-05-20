@@ -14,3 +14,6 @@ mod connection;
 
 pub use client::SandboxClient;
 pub use connection::SandboxIpcError;
+/// The L3 sandbox decision (`Ok` / `Reject { reasons }`) — re-exported
+/// so shell callers map it without a direct `runtime-sandbox` dep.
+pub use runtime_sandbox::validator::ValidationResult;

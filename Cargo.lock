@@ -3519,7 +3519,9 @@ name = "runtime-main"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "bytes",
+ "chrono",
  "eventsource-stream",
  "futures",
  "globset",
@@ -3528,11 +3530,13 @@ dependencies = [
  "reqwest",
  "runtime-core",
  "runtime-drone",
+ "runtime-mcp",
  "runtime-sandbox",
  "rusqlite",
  "secrecy",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",

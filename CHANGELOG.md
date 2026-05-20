@@ -6,6 +6,298 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed — M07 Stage G (closeout — gap-analysis, summary, coverage-policy reconciliation, simplify pass)
+
+- **M07 milestone closeout.** `docs/build-prompts/retrospectives/M07-summary.md`
+  aggregates Stages A, B, C, D1, D2, E + V (verdict: "Pattern held but
+  with friction"; aggregate Process 37.5/40, Product 37.83/40, Pattern
+  29.33/35). The immutable M07 `docs/gap-analysis.md` entry (six
+  sections + gotchas-graduation A–E + V) records the ADR-0011 (a)–(d)
+  discharge and the M06.5 `token_usage` finding RESOLVED-at-D2.
+- **ADR-0016** (`docs/adr/0016-waiver-M07-tier-gate-deferral.md`,
+  Proposed) waives M07.V 🔴 #1 — `tier_gate` defined but never invoked;
+  a Novice "Reject" does not roll back the install (spec §8.security L4
+  drift) — to a dedicated post-M07 **M07.5 fix-cycle**. The second
+  ADR-0008 waiver (after ADR-0009), first of the fix-cycle-scheduling
+  shape; M07.5 runs before M08 Stage A.
+- **v1.8 `<coverage_policy_reconciliation>`.** `docs/coverage-policy.md`
+  §B per-module baselines (`skills_lock`, `import`, `connection_resolver`,
+  `token_usage`) + a §C M07.G entry appended. No threshold or
+  exclusion-regex value moved this milestone. **CI-parity fix:**
+  `.github/workflows/ci.yml` runtime-main llvm-cov steps carried a
+  stale `key_store.rs` token and lacked the M07.C `import.fetch.rs`
+  exclusion — both corrected to the canonical CLAUDE.md §6 form (a
+  no-op for the measured number; a CI-parity correction).
+- **v1.6 `<simplify_pass>`** — three review agents against `M07.A..HEAD`
+  (verdict: the diff is structurally sound). 17 proposals; the deferred
+  set logged to `docs/tech-debt.md` TD-014..TD-018. One finding the
+  verifier missed — `EnforcerGate::check` is a tautological import-fetch
+  capability gate — promoted to a 🟡 gap-analysis Fix-backlog item
+  (fold into M07.5).
+- ADR-0014, ADR-0015, ADR-0016 flip `Proposed → Accepted` in the M07
+  PR before merge (CLAUDE.md §11).
+
+### Fixed — M07 (post-V deadlock fix)
+
+- **D2-latent multi-turn deadlock in the M06.F injection-seam test**
+  (`8a861cd`). M07.V's gate run surfaced a hang in
+  `run_smoke_session_with_injected_mcp_dispatch_routes_tool_use_through_seam`:
+  M07.D2 switched `run_smoke_session_with` onto the multi-turn loop
+  (re-streams per dispatched tool); the M06.F-era test paired a
+  fixed-`ToolUse` provider with an always-`Invoked` dispatch, so the
+  loop ran toward `MAX_AGENT_TURNS` and filled the test's bounded
+  `mpsc::channel(16)` — `emit()` blocked forever. Production is
+  unaffected (the real path drains the channel concurrently). Fix:
+  made the test provider turn-aware (requests a tool on turn 1, answers
+  on turn 2+). Test-harness-only; zero production lines.
+
+### Added — M07 Stage D2 (ADR-0011 (d) — agent-with-tools loop + `token_usage` projector)
+
+- **Multi-turn agent-with-tools loop** (ADR-0011 (d);
+  `crates/runtime-main/src/sdk/agent_sdk.rs::run_agent`) — replaces the
+  no-tools smoke path with a loop that re-streams the provider after
+  every dispatched MCP tool (message-history re-streaming — no new
+  `LLMProvider` method). Consumes the concrete `McpDispatcher` D1
+  constructs; closes the ADR-0011 (a)–(d) concrete-construction
+  carry-forward.
+- **`token_usage` projector** (`crates/runtime-drone/src/token_usage.rs`)
+  — `ProviderEvent::Usage → AgentEvent::TokenUsage →` a third drone
+  projector in the same `handle_write_signal` transaction as `vdr` +
+  `plan_projector` (no new `DroneCommand`, no §11 ADR; idempotent via
+  PK = the contributing signal id). The first production `token_usage`
+  writer — **closes the M06.5 `token_usage = 0` finding** (the M06.5
+  sole INSERT was `#[cfg(test)]` in `vdr.rs`).
+- **Surgical CQ-2** — `RenderableOutcome` / `apply_renderable` (a
+  `Blocked | Ambiguous` enum that cannot express `Invoked`); the
+  run-loop `match` over `McpDispatchOutcome` is exhaustive with no
+  catch-all. `McpDispatchOutcome` / `apply_mcp_dispatch` byte-untouched
+  (the ADR-0011 D-freeze honored).
+- **Assembled regression** `agent_with_tools_loop_persists_signals_and_token_usage`
+  — drives the real loop + a real `runtime-drone` subprocess + the
+  concrete `McpDispatcher`; asserts `signals > 0` AND `token_usage > 0`
+  (the falsifiable M06.5 hypothesis) — executed and green (50.22 s).
+- **Strict v1.8 two-commit TDD** — red `10dba9f` → impl `ab18302`
+  (`git diff <red>..<impl> -- '**/tests/**'` EMPTY) → style `15694c1`
+  → green-phase fix `90b18ac` (an in-source SSE `#[cfg(test)]` unit
+  test updated to the new Usage-then-MessageStop contract — an adjacent
+  green-phase change, not a red→impl test-file edit).
+
+### Added — M07 Stage E (ADR-0015 enriched import-review wire + Builder Import panel)
+
+- **ADR-0015 — `import_artifact` IPC return enrichment for the §M7
+  review screen** (`docs/adr/0015-import-review-ipc-return-enrichment.md`,
+  Proposed). The v1.8 `<wire_signature_audit>` falsified the Stage-E
+  "no new backend" assumption against the shipped Stage C wire: the
+  declared `capabilities`, `L3Report`, and ADR-0005 `share_provenance`
+  the §M7 review screen requires are already computed by
+  `import_artifact_with` and discarded at the command boundary, and
+  `skills.lock` (closed 6-field integrity ledger) carries no
+  `capabilities`. ADR-0015 additively enriches the existing
+  `Installed` → `ImportOutcome` return with the data the pipeline
+  already produces — no new fetch / no new IPC command / no schema
+  bump (hand-mirrored serde bridge structs per the `McpTool` /
+  `ResumePlan` precedent — verified before authoring).
+- **Backend (`crates/runtime-main/src/import/mod.rs` +
+  `src-tauri/src/commands.rs`)** — `L3Report` derives `Serialize`;
+  `Installed` adds `capabilities: Vec<String>` +
+  `share_provenance: Option<Value>` (and drops `Eq` because
+  `serde_json::Value` is not `Eq` — `PartialEq` preserved);
+  `import_artifact_with` carries them through; `ImportOutcome` adds
+  matching fields and the command maps them.
+- **Builder Import panel renderer (`src/components/ImportPanel.tsx`)** —
+  paste-GitHub-raw-URL + kind select; on import, the Tauri command
+  returns the enriched outcome; Novice (`review_required: true`) sees
+  the §M7 disclosure modal with capability disclosure + L3 report +
+  ADR-0005 trust line ("runtime-to-runtime — no rebaking" vs "No
+  provenance") + §15d secrets notice + Install / Reject; Promoted
+  auto-installs (L4 pass-through). The `artifact_hash_mismatch` event
+  (Stage B, spec §2214) transitions a record to `'blocked'` and the
+  panel surfaces the Reinstall / Remove prompt; integrity > availability
+  (ADR-0014).
+- **`src/lib/ipc.ts`** — `importArtifact(sourceKind, location,
+  artifactKind)` wrapper + hand-mirrored `ImportOutcome` interface.
+  Params PINNED to the shipped Stage C command (three flat camelCased
+  args), NOT the phase-doc-assumed `{ src, kind }` (the
+  wire-signature-audit drift).
+- **`src/lib/graphStore.ts`** — new `imports: Record<string,
+  ImportRecord>` slot with `phase: 'review' | 'installed' | 'blocked'`;
+  `recordImport` maps the snake_case outcome into camelCase at the
+  boundary; `confirmImport` / `dismissImport` actions; the
+  `artifact_hash_mismatch` reducer branch moved out of the no-op
+  cluster into a real handler. Slot preserved across `clear()`
+  (install/integrity state, parallels `currentMcpServers` /
+  `currentTier`).
+- **Strict v1.8 TDD two-commit invariant.** `git diff <red>..<impl>
+  -- '**/tests/**'` is EMPTY; the `src-tauri/src/commands.rs` in-source
+  `#[cfg(test)]` block stays byte-identical red→impl (binary-crate
+  variant per CLAUDE.md v1.8 + the M06.5.A.fix precedent). No
+  Co-Authored-By; DCO `-s`; session-URL footer.
+
+### Deferred (M07.E carry-forward — Stage V / gap-analysis)
+
+- Local-file picker via `@tauri-apps/plugin-dialog` (needs a new npm
+  + Rust dependency + capability registration — out of this stage's
+  no-new-backend scope). The wrapper already accepts `'file'`
+  sources; the panel UI lands when the picker does.
+- `Reinstall` button needs the original import source round-tripped
+  through `Installed` (Stage C did not persist it). The panel
+  surface emits the affordance; closing the loop is a follow-up.
+
+### Recorded — grandfathered phase-doc defect (M07 Stage E)
+
+- The Stage-E phase-doc pseudocode (E.3) was authored against an
+  assumed `ImportOutcome` shape (phases, `L3Report`,
+  `ShareProvenance`, capabilities, native file dialog) that the
+  shipped Stage C wire does NOT provide. The v1.8
+  `<wire_signature_audit>` caught six drift points before any
+  pseudocode. Recorded here + in the M07.E retrospective; the
+  cumulative M07 `docs/gap-analysis.md` entry lands at Stage G
+  closeout per CLAUDE.md §20 (append-only / closeout-owned).
+
+### Added — M07 Stage D1 (ADR-0011 (a)-(c) concrete dispatch construction + CQ-6/EFF-4)
+
+- **`impl ConnectionResolver for McpClient`** (ADR-0011 (a);
+  `crates/runtime-mcp/src/client/connection_resolver.rs`) — the M06
+  trait had no production impl (only a test mock), so a concrete
+  `McpDispatcher` was not constructible in the shell. `McpClient` now
+  resolves a server name → persisted registry record → rebuilt
+  transport → cached `get_connection`, mapping `LifecycleError` onto
+  the dispatch-facing `McpError`. The live-connect happy path is the
+  mandatory Stage V `--features integration` reference-server smoke
+  (the seam↔concrete OS-call holdout per ADR-0011's named consequence).
+- **`McpDispatcher::on_server_connected` / `on_server_disconnected`**
+  (ADR-0011 (b); the §5a re-resolution-on-connect production driver
+  M06.V 🟡 #1 named "no production driver"). Authored against
+  `McpDispatcher` — where the `NamespaceResolver` lives per ADR-0010 —
+  **not** `McpClient` (which only *impls* `ConnectionResolver`): the
+  M06.V Dec-6 `<wire_trace_vs_adr_reconcile>` #6 reconciliation made
+  concrete. Snapshots a connected server's tools into the resolver and
+  returns newly-ambiguous short names (D2's loop emits
+  `tool_alias_ambiguous` per entry).
+- **`build_mcp_dispatcher`** (ADR-0011 (c); `src-tauri/src/commands.rs`)
+  — constructs the concrete `McpDispatcher` (empty `NamespaceResolver`
+  populated by (b) on connect; empty L1 `CapabilityEnforcer`;
+  `Arc<McpClient>` injected as `Arc<dyn ConnectionResolver>`) and
+  `run_smoke_session` threads `Some(..)` (was M06.F's `None`). Closes
+  the M07.A-mapped construction graph. The no-tools smoke emits no
+  `ProviderEvent::ToolUse`, so the dispatcher is
+  constructed-but-not-exercised; D2's agent-with-tools loop drives it.
+  `CapabilityEnforcer` construction is CODEOWNERS-flagged (Hard Rule 8)
+  — the M07.D1 construction-reachability map is the surfaced plan.
+
+### Changed — M07 Stage D1 (CQ-6 / EFF-4)
+
+- **CQ-6** — `McpServerRecord.status` / `McpServerSummary.status`:
+  `String` → the schema-generated `runtime_core::generated::mcp::
+  McpServerStatus` (re-exported `runtime_mcp::ServerStatus`; Hard Rule
+  5). The `SQLite` TEXT column round-trips via the generated
+  `Display`/`FromStr`; a freshly-added server is `Disconnected` (schema
+  transition). Migration **003_mcp_server_status.sql** realigns the
+  `mcp_servers.status` CHECK constraint (table rebuild — SQLite cannot
+  ALTER a CHECK) from the pre-schema vocabulary
+  (`configured|connected|errored|disabled|failed`) to the
+  M06.B-shipped `mcp.v1.json::McpServerStatus` enum
+  (`connected|disconnected|health_pending|error`), remapping existing
+  rows (`errored`/`failed`→`error`, else `disconnected`). DB-mirror
+  realignment to an already-accepted schema — no `schemas/*.json`
+  change, no ADR trigger.
+- **EFF-4** — `McpClient::run_health_pass` now persists the whole pass
+  in ONE batched `Registry::update_health_batch` transaction (was K
+  sequential `update_last_alive` calls with no status write) and writes
+  the CQ-6 status (`Connected` on ping ok, `Error` on ping fail) so the
+  multi-server registry is updated atomically.
+
+### Added — M07 Stage C (import-pipeline backend — spec Phase 7 §2152-2211 / MVP §M7)
+
+- **`runtime_main::import`** (new module) — the artifact import
+  pipeline composed over already-shipped primitives (no rebuild):
+  `fetch_with` (local-file read / capability-gated URL GET — egress
+  gated through the M05 L1 `NetworkGate`, Hard Rule 4: only the
+  user-supplied URL is hit) → `validate` (the generated typify type IS
+  the enforced schema, CLAUDE.md §14; skill/tool/mcp_server schema-gated,
+  agent identity+metadata-gated with the agent graph deferred to
+  `framework_loader` at load) → §15c `compatible_os` BLOCKING gate
+  (checked **before** L3) → L3 (`Sandbox` seam over `runtime-sandbox`,
+  reused) → L4 `tier_gate` (reuse M05 `Tier`: Novice →
+  `TierReviewRequired`, Promoted → pass-through) → MCP-server-config
+  upsert via the `McpRegistry` dependency-inversion seam (the M06 MCP
+  Manager — concrete adapter in the Tauri shell to avoid the
+  `runtime-mcp → runtime-main` Cargo cycle) → install + M07.B
+  `skills.lock` write (`ImportSource` serializes to B's discriminated
+  `Source` shape; `content_hash` is B's SRI over the fetched bytes so a
+  later `skills_lock::verify` of the same bytes passes).
+- **`import::export_with_provenance` / `read_share_provenance`**
+  (ADR-0005) — framework export populates `share_provenance`, import
+  surfaces it. v0.1 is **runtime-to-runtime only**: `rebake_changes`
+  is always `[]` (no Share It module, no rebake — the Sigstore/SLSA/TUF
+  layer attaches at this same seam in v1.0).
+- **`import::fetch::HttpFetcher`** — the real `reqwest` artifact GET;
+  the new runtime-main OS-call-holdout coverage exclusion
+  `src.import.fetch.rs` (seam-tested via `fetch_with` + injected
+  `Fetcher`; behaviourally smoke-tested against a local `wiremock`
+  server — no live network in the gate). Four-mirror sync done this
+  commit (CLAUDE.md §6 + `docs/coverage-policy.md` §A/§C; CLAUDE.md §5
+  category 3 + `codecov.yml` need no change — the
+  `providers/anthropic.rs` precedent).
+- **`import_artifact` Tauri command** (the §5 shell holdout) — thin
+  wrapper over `import_artifact_with`, wiring the real fetcher + M05
+  L1/L3 + the M06 registry adapter + wall-clock; `Arc<Registry>` is
+  now also managed standalone so the import path reuses the same M06
+  registry DB.
+- New dev-/dep: `chrono` (`serde`+`clock`; already in-tree via
+  `runtime-core`, deny-clean) — `Clock` seam returns
+  `DateTime<Utc>`, type-matching the generated
+  `skills_lock::LockEntry.installed_at`.
+
+### Added — M07 Stage B (`skills.lock` artifact-integrity primitive — ADR-0014)
+
+- **`schemas/skills-lock.v1.json`** (new, ADR-0014) — the per-framework
+  lock: `{ version: 1, installed: { "name@version" → { kind, source,
+  content_hash, installed_at, tier_at_install, validation_report_id } } }`.
+  Spec-faithful `installed` key (spec §2200; maintainer-decided
+  2026-05-18 over the early phase-doc `entries` draft). `content_hash`
+  is an SRI-encoded SHA-256 (`sha256-<base64>`, pattern-enforced) — a
+  deliberate, ADR-0014-recorded tightening of the spec sketch's
+  `sha256:<hex>` for algorithm agility. `source` is a v0.1 URL|file
+  union (no `source_commit`/upstream — that is the v1.0 trust chain per
+  MVP §M7). Rust types generated via `cargo xtask regenerate-types`
+  (typify; `#[path]` snake_case module for the hyphenated schema file).
+- **`artifact_hash_mismatch` event** added to `schemas/event.v1.json`
+  (regenerated Rust + TS; mirrored into the curated
+  `runtime_core::event::AgentEvent`). `SriHash`/`ArtifactRef` mirrored
+  as local `SriHashRef`/`ArtifactRef` `$defs` per the M04.D
+  cross-schema-`$ref`-mirror pattern (event.v1.json's
+  json-schema-to-typescript target resolves local `$defs` only — not
+  the phase-doc B.3.2 literal cross-schema `$ref`).
+- **`runtime_main::skills_lock`** (new, path-agnostic per CLAUDE.md §9):
+  `content_hash` (SRI SHA-256, cross-platform deterministic),
+  `read`/`write_entry` (create-when-absent, in-place replace, canonical
+  sorted-key + stable-field-order serialization → byte-identical
+  cross-machine lock per spec §2204/§2216), `verify` (happy → `Ok`;
+  drift → `LockError::HashMismatch` mapping 1:1 to
+  `AgentEvent::ArtifactHashMismatch` and BLOCKING the load —
+  integrity > availability; unknown artifact → `LockError::NotFound`).
+  New `base64` runtime dependency (MIT/Apache-2.0, `cargo deny`-clean)
+  alongside the existing `sha2`.
+- **ADR-0014** (`Proposed`; → `Accepted` in the M07 PR) — the lock
+  format, hash-blocks-load posture, SRI/`installed`/`source` decisions,
+  canonical-serialization reproducibility invariant, and the staged
+  threat model (Sigstore/SLSA/upstream provenance deferred to v1.0, not
+  missed).
+- New ≥95% per-module coverage gate on `runtime_main::skills_lock`
+  (safety primitive, CLAUDE.md §5) — recorded for the M07 closeout
+  `<coverage_policy_reconciliation>` four-mirror sync.
+
+### Fixed — M07 Stage A (M06 carry-forward absorption + ADR-0011 construction-graph groundwork)
+
+- **TD-005 / gotcha #56 structural close** — the runtime-main `cargo llvm-cov` gate is now Windows-local-measurable for the first time. The six integration test files that spawn the `runtime-drone` subprocess (`drone_ipc_loopback`, `drone_reconnect_events`, `plan_lifecycle`, `plan_recovery`, `recovery_lifecycle`, `smoke_signal_persistence`) carried a byte-identical broken nested-`cargo build` helper; de-duplicated onto a shared `crates/runtime-main/tests/common/mod.rs` fixture that builds the drone into a dedicated `target/drone-fixture` dir (no parent build-lock contention) with the workspace manifest + package pinned (CWD-independent) and the llvm-cov instrumentation env stripped. Gate command/regex/threshold unchanged; measured 95.73% line ≥ 95 (exit 0).
+- **TD-002** — `read_signals` + `recover_session` per-method twice-in-sequence tests added to `drone_ipc/client.rs` (M04.V finding #4 belt-and-suspenders multi-call invariant).
+- **M04 🟡 drone_ipc coverage** — `read_signals` Codec-on-rejection-alert error-branch test (previously uncovered).
+- **M05 🟡 enforcer** — `audit_check_result` `TierForbidden` arm test (`audit_smoke.rs`); lifts `capability/enforcer.rs` 94.24% within the runtime-main ≥95 gate.
+- **M06.V 🟡 #2 X.2 truth-up** — corrected the M06 phase doc's mislabelled `mcp_dispatch_integration.rs` crate/path (it shipped in `runtime-mcp` with `--features test-helpers`; the `runtime-main` counterpart is `mcp_dispatch_wire.rs`) at 6 locations (M05.V-#3 precedent — path/crate-scope only, no behaviour change).
+- **TD-006** — dropped the stray `|src.key_store\.rs` from the M06 phase doc's runtime-main coverage regex (6 occurrences) to match the canonical CLAUDE.md §6 form; the four canonical mirrors were already consistent (no mirror change). `docs/coverage-policy.md` §C M07.A entry records both reconciles.
+- **A.3.1 descope (maintainer-decided)** — the M04 🟡 `plan_loop.rs` driver / `HitlContext::BudgetThreshold`→`BudgetWarn` item ships **no Stage-A code**: the phase doc's "schema-generated variant rename" premise is factually wrong (`HitlContext` is a hand-written enum in `hitl/policy.rs`; no `hitl_context` in `schemas/event.v1.json`; `BudgetWarn` already exists as a distinct correctly-named `AgentEvent` variant — the real budget item is the §2a `budget_warn`→`budget_warning` v1.0 `event.v1.1.json` task) and the driver's inputs are unreachable at Stage A (framework loader = M07.B/C, agent execution = M07.D2). Tracked as a D2 carry-forward via the M07.A retrospective's `<construction_reachability_check>` + `<scope_change>`; phase-doc wording fix deferred (M06.D/E grandfathering precedent).
+
 ### Changed — STAGE-PROMPT-PROTOCOL v1.7 → v1.8 (M06.6 protocol iteration)
 
 - Enacts the 5 M06 graduated protocol mechanisms the M06 gap-analysis routed here (`docs/gap-analysis.md` lines 1897/1901; the other 3 of 8 graduations landed mid-M06 via PR #76 + CLAUDE.md §6 — not re-landed) + the M06.5-summary "To Cycle 2 (M06.6)" recorded input. Through-line: `<phase_doc_inventory_audit verified="true">` proves a symbol *exists*, not that it is reachable / correctly-shaped / ADR-current / exercised in the assembled app.

@@ -1499,6 +1499,32 @@ pub mod error {
 #[doc = "        }"]
 #[doc = "      },"]
 #[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"title\": \"ArtifactHashMismatch\","]
+#[doc = "      \"description\": \"Spec §2214 (M07 Stage B) — emitted when `skills_lock::verify` detects that an installed artifact's recomputed SRI content hash no longer matches the hash locked in `skills.lock`. The load path BLOCKS the artifact's use and surfaces a Reinstall / Remove prompt (M07 Stage E); the artifact does not run with drifted bytes (integrity > availability — ADR-0014). `artifact_ref` is the `name@version`; `expected` is the locked SRI hash; `actual` is the SRI hash of the bytes on disk now. SriHash mirrored locally via SriHashRef per the M04.D cross-schema-$ref-mirror pattern.\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"actual\","]
+#[doc = "        \"artifact_ref\","]
+#[doc = "        \"expected\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"actual\": {"]
+#[doc = "          \"$ref\": \"#/$defs/SriHashRef\""]
+#[doc = "        },"]
+#[doc = "        \"artifact_ref\": {"]
+#[doc = "          \"$ref\": \"#/$defs/ArtifactRef\""]
+#[doc = "        },"]
+#[doc = "        \"expected\": {"]
+#[doc = "          \"$ref\": \"#/$defs/SriHashRef\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"const\": \"artifact_hash_mismatch\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
 #[doc = "    }"]
 #[doc = "  ]"]
 #[doc = "}"]
@@ -1909,6 +1935,13 @@ pub enum AgentEvent {
         server: McpServerNameRef,
         tool: BlockedMcpTool,
     },
+    #[doc = "ArtifactHashMismatch\n\nSpec §2214 (M07 Stage B) — emitted when `skills_lock::verify` detects that an installed artifact's recomputed SRI content hash no longer matches the hash locked in `skills.lock`. The load path BLOCKS the artifact's use and surfaces a Reinstall / Remove prompt (M07 Stage E); the artifact does not run with drifted bytes (integrity > availability — ADR-0014). `artifact_ref` is the `name@version`; `expected` is the locked SRI hash; `actual` is the SRI hash of the bytes on disk now. SriHash mirrored locally via SriHashRef per the M04.D cross-schema-$ref-mirror pattern."]
+    #[serde(rename = "artifact_hash_mismatch")]
+    ArtifactHashMismatch {
+        actual: SriHashRef,
+        artifact_ref: ArtifactRef,
+        expected: SriHashRef,
+    },
 }
 #[doc = "The short tool name that became ambiguous on re-resolution (spec §5a step 5). Per gotcha #43 (typify-friendly extraction): inline-validated strings inside oneOf variants must be extracted to $defs with a title or typify panics."]
 #[doc = r""]
@@ -2052,6 +2085,76 @@ impl ::std::convert::TryFrom<::std::string::String> for ApprovedBy {
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
+    }
+}
+#[doc = "The `name@version` of the artifact whose content hash drifted on load (spec §2214, M07 Stage B). Per gotcha #43 (typify-friendly extraction): validated inline strings inside oneOf variants are extracted to $defs with a title."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"ArtifactRef\","]
+#[doc = "  \"description\": \"The `name@version` of the artifact whose content hash drifted on load (spec §2214, M07 Stage B). Per gotcha #43 (typify-friendly extraction): validated inline strings inside oneOf variants are extracted to $defs with a title.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"minLength\": 1"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct ArtifactRef(::std::string::String);
+impl ::std::ops::Deref for ArtifactRef {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<ArtifactRef> for ::std::string::String {
+    fn from(value: ArtifactRef) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for ArtifactRef {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for ArtifactRef {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ArtifactRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ArtifactRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for ArtifactRef {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
     }
 }
 #[doc = "The MCP tool name whose dispatch the capability check denied (spec §5a + §8.security). Per gotcha #43 (typify-friendly extraction)."]
@@ -3294,6 +3397,80 @@ impl ::std::convert::TryFrom<::std::string::String> for RequestedAction {
     }
 }
 impl<'de> ::serde::Deserialize<'de> for RequestedAction {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "SRI-style algorithm-prefixed base64 SHA-256 digest (`sha256-<base64>`) — the M07 skills.lock content hash (spec §2181-2214; ADR-0014). Mirrors skills-lock.v1.json#/$defs/SriHash via a LOCAL $def rather than a cross-schema $ref: typify does not support cross-schema $ref and event.v1.json's json-schema-to-typescript target resolves local $defs only; per-schema $defs duplication is the established M04.D mirror pattern (CapabilityKindRef, McpServerNameRef, TierRef, HitlTriggerRef). Pattern kept identical to the skills-lock.v1.json source of truth."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"SriHashRef\","]
+#[doc = "  \"description\": \"SRI-style algorithm-prefixed base64 SHA-256 digest (`sha256-<base64>`) — the M07 skills.lock content hash (spec §2181-2214; ADR-0014). Mirrors skills-lock.v1.json#/$defs/SriHash via a LOCAL $def rather than a cross-schema $ref: typify does not support cross-schema $ref and event.v1.json's json-schema-to-typescript target resolves local $defs only; per-schema $defs duplication is the established M04.D mirror pattern (CapabilityKindRef, McpServerNameRef, TierRef, HitlTriggerRef). Pattern kept identical to the skills-lock.v1.json source of truth.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"pattern\": \"^sha256-[A-Za-z0-9+/]+={0,2}$\""]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct SriHashRef(::std::string::String);
+impl ::std::ops::Deref for SriHashRef {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<SriHashRef> for ::std::string::String {
+    fn from(value: SriHashRef) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for SriHashRef {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        static PATTERN: ::std::sync::LazyLock<::regress::Regex> =
+            ::std::sync::LazyLock::new(|| {
+                ::regress::Regex::new("^sha256-[A-Za-z0-9+/]+={0,2}$").unwrap()
+            });
+        if PATTERN.find(value).is_none() {
+            return Err("doesn't match pattern \"^sha256-[A-Za-z0-9+/]+={0,2}$\"".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for SriHashRef {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for SriHashRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SriHashRef {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for SriHashRef {
     fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
     where
         D: ::serde::Deserializer<'de>,

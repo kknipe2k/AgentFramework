@@ -1124,3 +1124,150 @@ p.error {
 .mcp-tool-list__item {
   padding: 0.1rem 0;
 }
+
+/* ── M07.E Import panel + tier-gate review modal (ADR-0015) ────────── */
+
+.import-panel {
+  border: 1px solid var(--node-border, #444);
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  background: var(--node-bg, #1c1c1c);
+}
+.import-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.4rem;
+}
+.import-panel__title {
+  font-size: 14px;
+  margin: 0;
+}
+.import-panel__error {
+  color: #e66;
+  font-size: 12px;
+  margin: 0.2rem 0;
+}
+.import-panel__form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.import-panel__label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 12px;
+}
+.import-panel__reinstall-prompt {
+  margin-top: 0.6rem;
+  padding: 0.5rem;
+  border: 1px solid #c33;
+  border-radius: 4px;
+  background: rgba(204, 51, 51, 0.08);
+}
+.import-panel__reinstall-headline {
+  font-size: 12px;
+  margin: 0 0 0.3rem;
+}
+.import-panel__installed {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+.import-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.2rem 0.3rem;
+  border-bottom: 1px solid var(--node-border, #333);
+  font-size: 12px;
+}
+.import-row--blocked {
+  flex-wrap: wrap;
+}
+.import-row__ref {
+  font-family: monospace;
+}
+.import-row__status {
+  color: #8a8;
+  margin-left: auto;
+}
+.import-row__error {
+  color: #e66;
+  font-size: 11px;
+  width: 100%;
+}
+.import-row__actions {
+  display: flex;
+  gap: 0.3rem;
+  margin-left: auto;
+}
+.import-review-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.import-review-modal {
+  background: var(--node-bg, #1c1c1c);
+  border: 1px solid var(--node-border, #444);
+  border-radius: 6px;
+  padding: 1rem;
+  width: min(560px, 90vw);
+  max-height: 90vh;
+  overflow: auto;
+}
+.import-review-modal__title {
+  margin: 0 0 0.5rem;
+  font-size: 15px;
+}
+.import-review-modal__intro {
+  margin: 0 0 0.6rem;
+  font-size: 12px;
+  color: #bbb;
+}
+.import-review-modal__section {
+  margin-bottom: 0.6rem;
+}
+.import-review-modal__section-title {
+  margin: 0 0 0.2rem;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #aaa;
+}
+.import-review-modal__none {
+  margin: 0;
+  font-size: 12px;
+  color: #888;
+}
+.import-capability-disclosure {
+  list-style: disc inside;
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+}
+.import-capability-disclosure__item {
+  padding: 0.05rem 0;
+}
+.import-l3-report__body {
+  margin: 0;
+  font-size: 12px;
+}
+.import-trust-line {
+  margin: 0.6rem 0;
+  padding: 0.4rem;
+  background: var(--node-bg-alt, #222);
+  border-radius: 4px;
+  font-size: 12px;
+  color: #ccc;
+}
+.import-review-modal__actions {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}

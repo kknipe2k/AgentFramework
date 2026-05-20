@@ -71,6 +71,26 @@ pub enum ProviderEvent {
         #[serde(default)]
         total_tokens: Option<u64>,
     },
+    /// Per-message token usage report (M07.D2 — ADR-0011 d). Emitted
+    /// just before the terminal [`ProviderEvent::MessageStop`] when the
+    /// provider surfaces input/output token counts (Anthropic's
+    /// accumulated `message_start` + `message_delta` usage). The SDK
+    /// event pipeline maps it to `AgentEvent::TokenUsage`, which the
+    /// `runtime-drone` `token_usage` projector persists — the first
+    /// production token-bearing signal source (closes the M06.5
+    /// `token_usage = 0` finding). `model` / `cost_usd` are filled by
+    /// the provider wrapper that knows the pricing table; the SSE layer
+    /// emits zero/empty for those and the wrapper rewrites them.
+    Usage {
+        /// Input tokens consumed across the turn.
+        input_tokens: u64,
+        /// Output tokens produced across the turn.
+        output_tokens: u64,
+        /// Model id the usage was charged against.
+        model: String,
+        /// Estimated cost in USD for this usage.
+        cost_usd: f64,
+    },
     /// Provider-side error during the stream.
     Error {
         /// Error code (e.g., `rate_limit`, `overloaded`).

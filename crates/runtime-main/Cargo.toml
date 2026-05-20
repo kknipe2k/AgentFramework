@@ -21,9 +21,12 @@ secrecy            = { workspace = true }
 keyring            = { workspace = true }
 serde              = { workspace = true, features = ["derive"] }
 serde_json         = { workspace = true }
+sha2               = { workspace = true }
+base64             = { workspace = true }
 tokio              = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util", "process"] }
 tokio-util         = { workspace = true, features = ["codec"] }
 uuid               = { workspace = true, features = ["v4", "serde"] }
+chrono             = { version = "0.4", default-features = false, features = ["serde", "clock", "std"] }
 thiserror          = { workspace = true }
 tracing            = { workspace = true }
 globset            = { workspace = true }
@@ -35,7 +38,14 @@ wiremock           = { workspace = true }
 tempfile           = { workspace = true }
 rusqlite           = { workspace = true, features = ["bundled"] }
 runtime-drone      = { workspace = true }
+# Dev-only cycle (runtime-mcp normal-deps runtime-main; Cargo permits
+# dev-dependency cycles). The M07.D2 assembled regression drives the
+# CONCRETE McpDispatcher (not a mock seam) per the M06.5 / gotcha #66
+# mandate, so it needs runtime-mcp's MockTransport test helper.
+runtime-mcp        = { workspace = true, features = ["test-helpers"] }
 uuid               = { workspace = true, features = ["v4", "serde"] }
+async-trait        = { workspace = true }
+chrono             = { version = "0.4", default-features = false, features = ["serde"] }
 
 [features]
 default     = []

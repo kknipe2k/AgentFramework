@@ -203,6 +203,56 @@ export async function mcpListServers(): Promise<McpServerSummary[]> {
   return await invoke<McpServerSummary[]>('mcp_list_servers');
 }
 
+/**
+ * Outcome of the M07 Stage C `import_artifact` Tauri command, enriched
+ * at M07.E per ADR-0015 with the §M7 review primitive (capability
+ * disclosure + L3 report + ADR-0005 `share_provenance`). Hand-mirrored
+ * from the serde shape in `src-tauri/src/commands.rs::ImportOutcome`
+ * (the `McpTool` / `ResumePlan` precedent — not schema-generated; the
+ * `src-tauri` `import_outcome_serializes_*` in-source tests pin the
+ * JSON keys this interface mirrors).
+ *
+ * Keys are snake_case (serde default; no `rename_all`). `share_provenance`
+ * is `null` when the imported artifact was not exported; the panel
+ * renders the "No provenance" state from `null`, never a synthesized
+ * empty block (ADR-0005).
+ */
+export interface ImportOutcome {
+  lock_key: string;
+  review_required: boolean;
+  requires_secrets: string[];
+  capabilities: string[];
+  l3_report: { report_id: string; passed: boolean; reasons: string[] };
+  /** ADR-0005 trust block when present; `null` when unexported. `unknown` covers `null` for ESLint's redundancy rule. */
+  share_provenance: unknown;
+}
+
+/** `ImportSource::Url` vs `ImportSource::File` — the shipped wire. */
+export type ImportSourceKind = 'url' | 'file';
+
+/** `ArtifactKind` — the shipped `import_artifact` command's third arg. */
+export type ImportArtifactKind = 'skill' | 'tool' | 'agent' | 'mcp_server';
+
+/**
+ * Import an artifact (skill / tool / agent / MCP-server config) by raw
+ * URL or local file path — M07 Stage C `import_artifact`. Params are
+ * PINNED to the SHIPPED command signature at `src-tauri/src/commands.rs`
+ * (three flat camelCased args; Tauri auto-converts snake_case Rust args
+ * to camelCase JS keys), NOT the phase-doc-assumed `{ src, kind }` —
+ * the v1.8 `<wire_signature_audit>` drift caught at Stage E authoring.
+ */
+export async function importArtifact(
+  sourceKind: ImportSourceKind,
+  location: string,
+  artifactKind: ImportArtifactKind,
+): Promise<ImportOutcome> {
+  return await invoke<ImportOutcome>('import_artifact', {
+    sourceKind,
+    location,
+    artifactKind,
+  });
+}
+
 export async function subscribeAgentEvents(
   handler: (event: AgentEvent) => void,
 ): Promise<UnlistenFn> {

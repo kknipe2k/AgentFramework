@@ -18,6 +18,7 @@ use runtime_main::tier::Tier;
 use runtime_mcp::transport::{Connection, MockTransport, Transport};
 use runtime_mcp::{
     mcp_tool_capability, ConnectionResolver, McpDispatcher, McpError, NamespaceResolver,
+    NewAmbiguity,
 };
 use serde_json::json;
 use tempfile::tempdir;
@@ -35,6 +36,44 @@ impl ConnectionResolver for MockResolver {
     }
 }
 
+/// A `ConnectionResolver` mapping each server name to its own scripted
+/// `MockTransport` — exercises the §5a re-resolution driver, which must
+/// snapshot the *per-server* tool list (not one shared transport).
+struct MultiServerResolver {
+    servers: BTreeMap<String, MockTransport>,
+}
+
+#[async_trait]
+impl ConnectionResolver for MultiServerResolver {
+    async fn connection(&self, server: &str) -> Result<Arc<dyn Connection>, McpError> {
+        let t = self
+            .servers
+            .get(server)
+            .ok_or_else(|| McpError::connect_failed(format!("unknown server {server}")))?;
+        Ok(Arc::from(t.connect().await?))
+    }
+}
+
+fn multi(pairs: &[(&str, &[&str])]) -> Arc<MultiServerResolver> {
+    let servers = pairs
+        .iter()
+        .map(|(s, tools)| {
+            let mut t = MockTransport::new();
+            for tool in *tools {
+                t = t
+                    .with_tool(*tool, None, json!({"type": "object"}))
+                    .with_tool_result(*tool, json!({"ok": true}));
+            }
+            ((*s).to_string(), t)
+        })
+        .collect();
+    Arc::new(MultiServerResolver { servers })
+}
+
+fn empty_resolver() -> Arc<RwLock<NamespaceResolver>> {
+    Arc::new(RwLock::new(NamespaceResolver::new(BTreeMap::new())))
+}
+
 fn resolver_with(pairs: &[(&str, &[&str])]) -> Arc<RwLock<NamespaceResolver>> {
     let connected: BTreeMap<String, Vec<String>> = pairs
         .iter()
@@ -48,7 +87,7 @@ fn resolver_with(pairs: &[(&str, &[&str])]) -> Arc<RwLock<NamespaceResolver>> {
     Arc::new(RwLock::new(NamespaceResolver::new(connected)))
 }
 
-fn no_aliases() -> BTreeMap<String, String> {
+const fn no_aliases() -> BTreeMap<String, String> {
     BTreeMap::new()
 }
 
@@ -313,4 +352,130 @@ async fn mcp_tool_dispatch_twice_in_sequence_both_succeed() {
             "call {call} must Invoke"
         );
     }
+}
+
+// ── ADR-0011 (b) — §5a re-resolution-on-connect driver (M06.V 🟡 #1) ──
+//
+// The resolver lives in `McpDispatcher` (ADR-0010), so the §5a step-5
+// re-resolution driver is authored against `McpDispatcher`, NOT
+// `McpClient` (which only *impls* `ConnectionResolver`) — the M06.V
+// Dec-6 `<wire_trace_vs_adr_reconcile>` #6 reconciliation. M06 shipped
+// the `NamespaceResolver` re-resolution primitive delivered + tested but
+// with no production driver; these tests pin the driver `McpDispatcher`
+// now exposes.
+
+#[tokio::test]
+async fn on_server_connected_returns_new_ambiguity_when_two_servers_share_a_short_name() {
+    let mut enforcer = CapabilityEnforcer::new();
+    enforcer.set_tier(Tier::Promoted);
+    enforcer.grant("worker", mcp_tool_capability("pdf-mcp", "read"));
+
+    // Empty resolver: nothing is connected at construction (the
+    // src-tauri ctor builds it `NamespaceResolver::new(BTreeMap::new())`
+    // — the resolver is populated by the connect driver, not the ctor).
+    let dispatcher = McpDispatcher::new(
+        empty_resolver(),
+        Arc::new(enforcer),
+        multi(&[("pdf-mcp", &["read"]), ("img-mcp", &["read"])]),
+        None,
+        "sess-rere",
+    );
+
+    // First connect: no collision yet.
+    let first = dispatcher
+        .on_server_connected("pdf-mcp")
+        .await
+        .expect("connect pdf-mcp");
+    assert!(
+        first.is_empty(),
+        "first server connect cannot be ambiguous, got {first:?}"
+    );
+
+    // Second connect exposing the same short name → newly ambiguous.
+    let second = dispatcher
+        .on_server_connected("img-mcp")
+        .await
+        .expect("connect img-mcp");
+    assert_eq!(
+        second,
+        vec![NewAmbiguity {
+            short_name: "read".to_string(),
+            candidates: vec!["img-mcp__read".to_string(), "pdf-mcp__read".to_string()],
+        }],
+        "the short name 'read' became ambiguous across the two connected servers"
+    );
+
+    // The resolver state actually changed: the short name now resolves
+    // Ambiguous through the live dispatch path.
+    let outcome = dispatcher
+        .dispatch_if_mcp("worker", "read", json!({}), &no_aliases())
+        .await
+        .expect("resolved → Some")
+        .expect("ambiguity is a resolved outcome");
+    assert!(
+        matches!(outcome, McpDispatchOutcome::Ambiguous { ref name, .. } if name == "read"),
+        "post-connect, 'read' must resolve Ambiguous, got {outcome:?}"
+    );
+}
+
+#[tokio::test]
+async fn on_server_disconnected_re_resolves_and_clears_ambiguity() {
+    let mut enforcer = CapabilityEnforcer::new();
+    enforcer.set_tier(Tier::Promoted);
+    enforcer.grant("worker", mcp_tool_capability("pdf-mcp", "read"));
+
+    let dispatcher = McpDispatcher::new(
+        empty_resolver(),
+        Arc::new(enforcer),
+        multi(&[("pdf-mcp", &["read"]), ("img-mcp", &["read"])]),
+        None,
+        "sess-rere",
+    );
+    dispatcher.on_server_connected("pdf-mcp").await.expect("c1");
+    dispatcher.on_server_connected("img-mcp").await.expect("c2");
+
+    // Disconnect one side → the short name is unambiguous again and
+    // dispatch routes to the single remaining server.
+    dispatcher.on_server_disconnected("img-mcp").await;
+
+    let outcome = dispatcher
+        .dispatch_if_mcp("worker", "read", json!({}), &no_aliases())
+        .await
+        .expect("resolved → Some")
+        .expect("dispatch did not error");
+    match outcome {
+        McpDispatchOutcome::Invoked { server, tool, .. } => {
+            assert_eq!(server, "pdf-mcp");
+            assert_eq!(tool, "read");
+        }
+        other => panic!("post-disconnect 'read' must Invoke on pdf-mcp, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn on_server_connected_twice_for_same_server_is_idempotent() {
+    // gotcha #69 multi-call invariant: re-snapshotting the same server
+    // with the same tool list yields no *new* ambiguity the second time.
+    let dispatcher = McpDispatcher::new(
+        empty_resolver(),
+        Arc::new(CapabilityEnforcer::new()),
+        multi(&[("pdf-mcp", &["read"]), ("img-mcp", &["read"])]),
+        None,
+        "sess-rere",
+    );
+    dispatcher.on_server_connected("pdf-mcp").await.expect("c1");
+    let amb1 = dispatcher.on_server_connected("img-mcp").await.expect("c2");
+    let amb2 = dispatcher
+        .on_server_connected("img-mcp")
+        .await
+        .expect("c2 again");
+    assert_eq!(
+        amb1.len(),
+        1,
+        "first img-mcp connect surfaces the ambiguity"
+    );
+    assert!(
+        amb2.is_empty(),
+        "re-connecting the same server with the same tools is not *newly* ambiguous, got {amb2:?}"
+    );
 }

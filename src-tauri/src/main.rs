@@ -70,6 +70,8 @@ fn main() {
             commands::mcp_remove_server,
             commands::mcp_test_connection,
             commands::mcp_list_servers,
+            // M07.C — import pipeline
+            commands::import_artifact,
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();
@@ -288,6 +290,10 @@ fn open_mcp_client<R: tauri::Runtime>(
     } else {
         Arc::new(KeyringSecretStore::new())
     };
+    // Manage the registry Arc standalone too — the M07 Stage C
+    // `import_artifact` command upserts MCP-server-config imports
+    // through the same M06 registry (reuse, not a second DB).
+    app.manage(Arc::clone(&registry));
     let session_id = format!("session-{}", uuid::Uuid::new_v4());
     let client = if let Some(w) = audit {
         McpClient::new_with_audit(registry, secret_store, Arc::clone(w), session_id)

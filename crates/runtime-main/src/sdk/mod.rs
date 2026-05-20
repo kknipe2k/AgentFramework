@@ -40,8 +40,9 @@ pub use agent_sdk::{AgentSdk, CapabilityWiring, SdkError, SessionId};
 pub use approval::{ApprovalDecision, ApprovalError, ApprovalSeam};
 pub use event_pipeline::{EnforcementContext, EventPipeline};
 pub use mcp_dispatch::{
-    apply_mcp_dispatch, mcp_dispatch_error_event, outcome_needs_hitl, McpDispatchError,
-    McpDispatchOutcome, McpToolDispatch,
+    apply_mcp_dispatch, apply_renderable, mcp_dispatch_error_event, outcome_needs_hitl,
+    renderable_needs_hitl, McpDispatchError, McpDispatchOutcome, McpToolDispatch,
+    RenderableOutcome,
 };
 pub use replay::replay_signals_to_events;
 pub use request_capability::{
