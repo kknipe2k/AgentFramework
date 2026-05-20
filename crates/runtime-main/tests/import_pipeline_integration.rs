@@ -611,7 +611,11 @@ async fn complete_import_with_installs_after_a_held_review() {
         "tier_at_install records the Novice tier at the deferred install"
     );
     let upserts = reg.upserts.lock().unwrap().clone();
-    assert_eq!(upserts.len(), 1, "completing a held mcp import upserts once");
+    assert_eq!(
+        upserts.len(),
+        1,
+        "completing a held mcp import upserts once"
+    );
     assert_eq!(upserts[0].name, "pdf-mcp");
 }
 
@@ -642,7 +646,10 @@ async fn promoted_import_installs_inline() {
         matches!(outcome, ImportOutcome::Installed(_)),
         "a Promoted import installs inline, got {outcome:?}"
     );
-    assert!(lp.exists(), "a Promoted import writes the skills.lock entry");
+    assert!(
+        lp.exists(),
+        "a Promoted import writes the skills.lock entry"
+    );
 }
 
 // ── full pipeline happy path — install + skills.lock (B reuse) ──────
