@@ -312,3 +312,103 @@ Both correct; immaterial at v0.1 single-agent single-session node counts. EFF-5'
 ### Recommended approach (when addressed)
 
 EFF-5: add an early-return guard — if `activeMcpCalls` is empty, skip the filter and return the unmodified slice (reference-stable). EFF-6: combine into one `useShallow((s) => ({ connStatus: s.currentMcpServers[name]?..., callActive: s.activeMcpCalls[name] }))`. Roll into the M08 Builder Canvas renderer pass or any M07+ renderer touch; pairs with the M05.F `<test_isolation_audit>` / Zustand-selector gotcha cluster.
+
+## TD-014 — `token_usage` projector at a flat path; third `SignalRow`-shaped struct
+
+**Date logged:** 2026-05-19
+**Found by:** Stage V verifier run M07.V (finding 🟢 #6) + Stage G `<simplify_pass>` (code-reuse RU-M07-2)
+**Pass that surfaced it:** Inventory (V #6); N/A (closeout simplify pass)
+**Category:** structural (cosmetic)
+**Resolution status:** open
+
+### Description
+
+`crates/runtime-drone/src/token_usage.rs` ships at the crate's top level, not under a `projectors/` sub-module — the M07 phase doc D2.3.3 named `projectors/token_usage.rs`. The actual layout is consistent with the crate's established convention (`vdr.rs` and `plan_projector.rs` are also flat); the `projectors/` directory does not exist. Separately, `token_usage.rs` defines its own `SignalRow { event, session_id, timestamp, payload_json }` struct + private `read_signal_row` — the third such definition across `vdr.rs` (4 columns), `plan_projector.rs` (2 columns) and `token_usage.rs` (4 columns). Each projector selects a different column set from `signals`, so the structs cannot share one definition without widening to optional fields.
+
+### Why it's debt not bug
+
+Functional correctness is verified end-to-end (the M07.D2 assembled regression asserts `token_usage > 0`); `command_handler.rs` wires the projector correctly. The layout matches the crate's existing flat convention rather than the phase doc's aspirational `projectors/` sub-module. The `SignalRow` column-set differences are genuine, not copy-paste — no free extraction exists at three callers.
+
+### Recommended approach (when addressed)
+
+When the projector count grows past three, a `projectors/` sub-module pass: collapse `vdr` / `plan_projector` / `token_usage` into `projectors::{vdr,plan,token_usage}` with public re-exports preserved for source compatibility; at that point evaluate a shared `SignalRow` with optional columns. Cosmetic; no behavior change. Natural window: M08+ when a fourth projector lands.
+
+## TD-015 — import-pipeline structural cluster (error erasure, nested-Option, arg count, redundant clones)
+
+**Date logged:** 2026-05-19
+**Found by:** Stage G `<simplify_pass>` (code-quality CQ-M07-2 / CQ-M07-3 / CQ-M07-6, efficiency EFF-M07-9)
+**Pass that surfaced it:** N/A (closeout simplify pass)
+**Category:** structural
+**Resolution status:** open (M07.5 — bundle with the import-lifecycle restructure)
+
+### Description
+
+Four structural items on the M07.C/D2 import path: (a) `import_err_to_cmd` (`src-tauri/src/commands.rs:1143`) collapses every `ImportError` variant — `TierReviewRequired`, `OsMismatch`, `L3`, `Fetch` — to `CmdError::internal(e.to_string())`, discarding the variant signal the renderer could act on. (b) `try_mcp_dispatch` (`crates/runtime-main/src/sdk/agent_sdk.rs:571`) returns `Result<Option<Option<DispatchedTool>>, SdkError>` — a double-`Option` encoding a three-state discriminant (MCP-not-applicable / MCP-handled-no-feedback / MCP-invoked) that should be a named enum. (c) `import_artifact_with` (`crates/runtime-main/src/import/mod.rs:591`) carries `#[allow(clippy::too_many_arguments)]` (10 params). (d) `validate()` (`import/mod.rs:~408`) clones the parsed `serde_json::Value` once per schema variant where only the firing branch needs it.
+
+### Why it's debt not bug
+
+All four are correct today: `import_err_to_cmd` surfaces a usable message (just not a typed variant); the double-`Option` is exhaustively handled at the one call site; the 10-arg seam is injected once; `validate`'s clones are immaterial at v0.1 (import runs once per user action). The cluster is bundled because M07.5 (the V 🔴 #1 fix-cycle) re-opens the import-command surface — `import_artifact_with` must change signature for the `pending_review_id` split anyway, which is the natural moment to land all four.
+
+### Recommended approach (when addressed)
+
+At M07.5: expand `import_err_to_cmd` to a proper variant match (mirror `KeyStoreError → CmdError`); introduce `enum TryMcpResult { NotMcp, Handled, Dispatched(DispatchedTool) }`; group `import_artifact_with`'s injected seams into two builder structs (network-side / install-side) to drop the `#[allow]`; thread the parsed `Value` so `validate` clones at most once. All land in the M07.5 fix-cycle commit cluster.
+
+## TD-016 — `connection_resolver.rs` — `record_to_transport` duplication + malformed-JSON swallowing
+
+**Date logged:** 2026-05-19
+**Found by:** Stage G `<simplify_pass>` (code-reuse RU-M07-1, code-quality CQ-M07-7)
+**Pass that surfaced it:** N/A (closeout simplify pass)
+**Category:** structural + observability
+**Resolution status:** open
+
+### Description
+
+`crates/runtime-mcp/src/client/connection_resolver.rs` `record_to_transport` (≈line 57) re-implements stdio/http transport construction, duplicating the builder chain in `McpClient::transport_from_config` + `config_to_record` (`client/mod.rs`). The two paths are structurally isomorphic but separated because `connection_resolver` reads the flattened `McpServerRecord` row shape while `transport_from_config` reads the typify `McpServerConfig` — a new transport type added to one branch silently misses the other. Separately, `record_to_transport` parses `args_json` / `env_json` with `serde_json::from_str(s).unwrap_or_default()` — a malformed registry row yields an empty `Vec` / `BTreeMap` rather than a connect error.
+
+### Why it's debt not bug
+
+`connection_resolver.rs` ships at ≥95 (in the runtime-mcp gate) and the ADR-0011 (a) `impl ConnectionResolver` is M07.V-verified. The `record_to_transport` divergence is load-bearing (two genuinely different input shapes); a clean fix needs `McpServerRecord` to carry a `to_transport()` method. The `unwrap_or_default()` is not a v0.1 bug — registry rows are written by the runtime's own typed insert path, so a malformed `args_json` cannot occur today; the swallowing only matters if a future external writer or a migration corrupts a row. Returning an error is a behavior change on a Stage-V-verified safety primitive, so it is deliberately not an apply-now closeout refactor.
+
+### Recommended approach (when addressed)
+
+Give `McpServerRecord` a `to_transport()` method and have both `connection_resolver` and (where shapes allow) `McpClient` route through it. Replace `unwrap_or_default()` with `McpError::connect_failed(format!("malformed args_json for '{}': {e}", record.name))`. A `runtime-mcp` internal refactor; roll into any M07+ `runtime-mcp` touch.
+
+## TD-017 — Tier / capability string-mapping duplication growth
+
+**Date logged:** 2026-05-19
+**Found by:** Stage G `<simplify_pass>` (code-reuse RU-M07-3 / RU-M07-4 / RU-M07-5)
+**Pass that surfaced it:** N/A (closeout simplify pass)
+**Category:** structural (extends TD-007)
+**Resolution status:** open
+
+### Description
+
+Three single-site mapping duplications added in M07: (a) `tier_wire(Tier) -> &'static str` (`crates/runtime-main/src/import/mod.rs:~503`) is a third distinct `Tier → string` match (after `tier_to_ref` in `event_pipeline.rs` + `commands.rs` — TD-007), in a third location, mapping to the install-lock wire string. (b) `RegistryAdapter::upsert` (`src-tauri/src/commands.rs:1124`) copies `McpServerImport → McpServerRecord` field-by-field (8 fields) with no `From` impl. (c) `capability_summary` (`import/mod.rs:~466`) iterates a hard-coded capability-key list (`["tools_called", "network", "spawn_agents"]`) that mirrors the `schemas/capability.v1.json` enumeration.
+
+### Why it's debt not bug
+
+All correct and all single-site: `tier_wire` is semantically distinct from the event-wire `TierRef` (different output type); the `McpServerImport → McpServerRecord` conversion has one call site (below the fourth-use abstraction threshold); `capability_summary` is a deliberate best-effort human-facing summary with no generated accessor to reuse. None is a copy of existing code — they are parallel mappings of the same enums.
+
+### Recommended approach (when addressed)
+
+Fold into the TD-007 resolution: when `pub(crate) tier_to_ref` is extracted to `sdk/mod.rs`, move `tier_wire` to `tier/mod.rs` as a `pub(crate)` sibling. Add a `From<&McpServerImport> for McpServerRecord` if a second conversion site appears (a bulk-import path). Leave `capability_summary` until a new capability kind forces a touch. Low priority; no runtime cost.
+
+## TD-018 — M07 efficiency micro-waste (alias-map rebuild, double clone, panel scans, silent timestamp)
+
+**Date logged:** 2026-05-19
+**Found by:** Stage G `<simplify_pass>` (efficiency EFF-M07-7 / EFF-M07-8 / EFF-M07-10, code-quality CQ-M07-5)
+**Pass that surfaced it:** N/A (closeout simplify pass)
+**Category:** scalability + observability
+**Resolution status:** open
+
+### Description
+
+Four low-impact waste sites: (a) `try_mcp_dispatch` (`crates/runtime-main/src/sdk/agent_sdk.rs:~579`) rebuilds the `mcp_aliases` `BTreeMap<String,String>` from the framework on every `ProviderEvent::ToolUse` (warm loop path; aliases are immutable for the run-loop lifetime — the same shape as EFF-1 / TD-012, now also in the M07 `try_mcp_dispatch` wrapper). (b) double `args.clone()` at the `dispatch_if_mcp` call site (`agent_sdk.rs:~592` + `~612`) — `args` feeds both the dispatch call and the `ToolInvoked` event. (c) `ImportPanel.tsx` (≈line 38) runs `Object.values(s.imports)` + `.find` + two `.filter` passes — three O(N) scans in the render body. (d) `token_usage.rs` (≈line 120) does `timestamp.parse::<i64>().unwrap_or(0)` — a corrupt row gets epoch-0 silently rather than a logged warning.
+
+### Why it's debt not bug
+
+All correct; all immaterial at v0.1 scale (single-session, a handful of aliases / imports / servers). (a) is a warm-path constant; (b) is two cheap `serde_json::Value` clones per tool use; (c)'s N is ≤ a handful of imports; (d)'s corrupt-row case cannot occur with the runtime's own typed signal-write path. (b) touches the Stage-V-verified `McpToolDispatch` trait signature, so it is a maintainer's-call refactor, not apply-now.
+
+### Recommended approach (when addressed)
+
+(a) hoist the `aliases` binding out of the event loop (or pass `&HashMap` into `dispatch_if_mcp`) — pairs with EFF-1 / TD-012. (b) construct `ToolInvoked.input` before the dispatch call, or have the trait take `&Value` — bundle with the TD-015 `try_mcp_dispatch` enum work at M07.5. (c) combine into one reduce pass behind a stable `useShallow` selector — pairs with TD-013. (d) add a `tracing::warn!` before `.unwrap_or(0)`, mirroring the `vdr.rs` projector observability pattern. All low priority; roll into the relevant M07+ touch.

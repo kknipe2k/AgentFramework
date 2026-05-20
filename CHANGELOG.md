@@ -6,6 +6,82 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed — M07 Stage G (closeout — gap-analysis, summary, coverage-policy reconciliation, simplify pass)
+
+- **M07 milestone closeout.** `docs/build-prompts/retrospectives/M07-summary.md`
+  aggregates Stages A, B, C, D1, D2, E + V (verdict: "Pattern held but
+  with friction"; aggregate Process 37.5/40, Product 37.83/40, Pattern
+  29.33/35). The immutable M07 `docs/gap-analysis.md` entry (six
+  sections + gotchas-graduation A–E + V) records the ADR-0011 (a)–(d)
+  discharge and the M06.5 `token_usage` finding RESOLVED-at-D2.
+- **ADR-0016** (`docs/adr/0016-waiver-M07-tier-gate-deferral.md`,
+  Proposed) waives M07.V 🔴 #1 — `tier_gate` defined but never invoked;
+  a Novice "Reject" does not roll back the install (spec §8.security L4
+  drift) — to a dedicated post-M07 **M07.5 fix-cycle**. The second
+  ADR-0008 waiver (after ADR-0009), first of the fix-cycle-scheduling
+  shape; M07.5 runs before M08 Stage A.
+- **v1.8 `<coverage_policy_reconciliation>`.** `docs/coverage-policy.md`
+  §B per-module baselines (`skills_lock`, `import`, `connection_resolver`,
+  `token_usage`) + a §C M07.G entry appended. No threshold or
+  exclusion-regex value moved this milestone. **CI-parity fix:**
+  `.github/workflows/ci.yml` runtime-main llvm-cov steps carried a
+  stale `key_store.rs` token and lacked the M07.C `import.fetch.rs`
+  exclusion — both corrected to the canonical CLAUDE.md §6 form (a
+  no-op for the measured number; a CI-parity correction).
+- **v1.6 `<simplify_pass>`** — three review agents against `M07.A..HEAD`
+  (verdict: the diff is structurally sound). 17 proposals; the deferred
+  set logged to `docs/tech-debt.md` TD-014..TD-018. One finding the
+  verifier missed — `EnforcerGate::check` is a tautological import-fetch
+  capability gate — promoted to a 🟡 gap-analysis Fix-backlog item
+  (fold into M07.5).
+- ADR-0014, ADR-0015, ADR-0016 flip `Proposed → Accepted` in the M07
+  PR before merge (CLAUDE.md §11).
+
+### Fixed — M07 (post-V deadlock fix)
+
+- **D2-latent multi-turn deadlock in the M06.F injection-seam test**
+  (`8a861cd`). M07.V's gate run surfaced a hang in
+  `run_smoke_session_with_injected_mcp_dispatch_routes_tool_use_through_seam`:
+  M07.D2 switched `run_smoke_session_with` onto the multi-turn loop
+  (re-streams per dispatched tool); the M06.F-era test paired a
+  fixed-`ToolUse` provider with an always-`Invoked` dispatch, so the
+  loop ran toward `MAX_AGENT_TURNS` and filled the test's bounded
+  `mpsc::channel(16)` — `emit()` blocked forever. Production is
+  unaffected (the real path drains the channel concurrently). Fix:
+  made the test provider turn-aware (requests a tool on turn 1, answers
+  on turn 2+). Test-harness-only; zero production lines.
+
+### Added — M07 Stage D2 (ADR-0011 (d) — agent-with-tools loop + `token_usage` projector)
+
+- **Multi-turn agent-with-tools loop** (ADR-0011 (d);
+  `crates/runtime-main/src/sdk/agent_sdk.rs::run_agent`) — replaces the
+  no-tools smoke path with a loop that re-streams the provider after
+  every dispatched MCP tool (message-history re-streaming — no new
+  `LLMProvider` method). Consumes the concrete `McpDispatcher` D1
+  constructs; closes the ADR-0011 (a)–(d) concrete-construction
+  carry-forward.
+- **`token_usage` projector** (`crates/runtime-drone/src/token_usage.rs`)
+  — `ProviderEvent::Usage → AgentEvent::TokenUsage →` a third drone
+  projector in the same `handle_write_signal` transaction as `vdr` +
+  `plan_projector` (no new `DroneCommand`, no §11 ADR; idempotent via
+  PK = the contributing signal id). The first production `token_usage`
+  writer — **closes the M06.5 `token_usage = 0` finding** (the M06.5
+  sole INSERT was `#[cfg(test)]` in `vdr.rs`).
+- **Surgical CQ-2** — `RenderableOutcome` / `apply_renderable` (a
+  `Blocked | Ambiguous` enum that cannot express `Invoked`); the
+  run-loop `match` over `McpDispatchOutcome` is exhaustive with no
+  catch-all. `McpDispatchOutcome` / `apply_mcp_dispatch` byte-untouched
+  (the ADR-0011 D-freeze honored).
+- **Assembled regression** `agent_with_tools_loop_persists_signals_and_token_usage`
+  — drives the real loop + a real `runtime-drone` subprocess + the
+  concrete `McpDispatcher`; asserts `signals > 0` AND `token_usage > 0`
+  (the falsifiable M06.5 hypothesis) — executed and green (50.22 s).
+- **Strict v1.8 two-commit TDD** — red `10dba9f` → impl `ab18302`
+  (`git diff <red>..<impl> -- '**/tests/**'` EMPTY) → style `15694c1`
+  → green-phase fix `90b18ac` (an in-source SSE `#[cfg(test)]` unit
+  test updated to the new Usage-then-MessageStop contract — an adjacent
+  green-phase change, not a red→impl test-file edit).
+
 ### Added — M07 Stage E (ADR-0015 enriched import-review wire + Builder Import panel)
 
 - **ADR-0015 — `import_artifact` IPC return enrichment for the §M7

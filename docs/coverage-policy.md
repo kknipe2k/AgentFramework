@@ -151,6 +151,37 @@ error-path branches could be lifted via an injectable-failure
 SecretStore/Registry seam (the `*_with` archetype) if a future
 stage needs the extra coverage.
 
+**runtime-main `skills_lock` + `import`** (M07.B/C/E, measured
+Windows-local): `skills_lock/mod.rs` 98.15% line (M07.B; 1 missed =
+the non-`NotFound` read-error branch in `write_entry`, a within-gate
+holdout); `skills_lock/error.rs` is `thiserror`-derive-only (no
+instrumentable lines). `import/mod.rs` 94.77% line at M07.C, within
+the passing runtime-main aggregate (96.65% at C; 95.56% at E after
+`ImportPanel`'s ADR-0015 enrichment exercised additional
+`import_artifact_with` lines); `import/fetch.rs` excluded — Category 3,
+the real `reqwest` artifact GET (§C M07.C entry). The import pipeline
+is exercised end-to-end by
+`crates/runtime-main/tests/import_pipeline_integration.rs`.
+
+**runtime-mcp `connection_resolver`** (M07.D1, measured
+Windows-local): `client/connection_resolver.rs` — the pure helpers
+(`record_to_transport` / `lifecycle_to_mcp`) carry in-source unit
+tests; the `connection()` happy-path delegate is the ADR-0011
+seam↔concrete OS-call holdout (covered by the mandatory Stage V
+`--features integration` reference-MCP-server smoke). runtime-mcp
+in-gate aggregate 95.83% line ≥95 at D1 (91.49% → 95.83% after the
+additive pure-helper tests). `transport/mod.rs` stays 87.50% line —
+the M06.G CQ-1 carry-forward; the aggregate holds ≥95 without
+touching it.
+
+**runtime-drone `token_usage`** (M07.D2, measured Windows-local):
+`crates/runtime-drone/src/token_usage.rs` — the new
+signal→`token_usage` projector, INSIDE the runtime-drone ≥95 gate
+(not excluded); runtime-drone in-gate aggregate 95.73% line (regions
+94.57%, functions 96.84%). Projects in the same `handle_write_signal`
+transaction as `vdr` + `plan_projector`; idempotent via PK = the
+contributing signal id.
+
 ---
 
 ## C. Per-milestone exclusion history & carry-forwards (append-only ledger)
@@ -289,6 +320,55 @@ History is immutable (a measurement true for M0X stays true for M0X).
   generically, not files; `import/fetch.rs` is category 3, already
   described). No threshold moved; no new §B baseline (the excluded
   file has no gated lines by construction).
+- **M07.G (closeout `<coverage_policy_reconciliation>`)** — no
+  threshold or `--ignore-filename-regex` value changed at M07.B / D1 /
+  D2. The only enforced-mirror change this milestone was the
+  `src.import.fetch.rs` runtime-main exclusion, added and
+  four-mirror-synced in the M07.C commit (entry above). The M07.G
+  reconciliation appends the §B per-module baselines above and records,
+  per stage:
+  - **M07.B** — the `skills_lock` module
+    (`crates/runtime-main/src/skills_lock/`) is a new safety primitive
+    (artifact integrity, CLAUDE.md §5) at ≥95%. It is **not** a new
+    `cargo llvm-cov --package` gate — it is a module *inside* the
+    existing runtime-main ≥95 package gate, so no §6 command, no §5
+    category, and no `codecov.yml` change. Baseline `skills_lock/mod.rs`
+    98.15% line; `skills_lock/error.rs` derive-only. §B appended.
+  - **M07.D1** — `transport/mod.rs` stays at the M06.G CQ-1 baseline
+    87.50% line (pre-existing carry-forward). The runtime-mcp ≥95 gate
+    holds at the aggregate (95.83% at D1) **without** touching it —
+    `connection_resolver.rs`'s pure helpers got in-source unit tests;
+    the `connection()` happy-delegate is the ADR-0011 seam↔concrete
+    OS-call holdout covered by the mandatory Stage V `--features
+    integration` smoke. Phase-doc D1 option (b): `transport/mod.rs`
+    87.50% is the same OS-call-holdout class regardless of which
+    transport file `rmcp_tool_to_mcp_tool` lives in. No exclusion
+    added; no four-mirror change. §B appended.
+  - **M07.D2** — `crates/runtime-drone/src/token_usage.rs` (the new
+    `token_usage` projector) is INSIDE the runtime-drone ≥95 gate, NOT
+    excluded; runtime-drone aggregate 95.73% line (measured
+    Windows-local at D2). No exclusion change. §B appended.
+  The four canonical mirrors — CLAUDE.md §5 exclusion-category list,
+  CLAUDE.md §6 `cargo llvm-cov` commands, `codecov.yml`, and §A above —
+  are verified byte-consistent as of M07.G. **One CI-surface drift was
+  found and fixed in this M07.G commit:** `.github/workflows/ci.yml`
+  (the runtime-main `coverage` step ~line 391 + the runtime-main `lcov`
+  step ~line 470) carried the canonical runtime-main regex *minus*
+  `src.import.fetch\.rs` (the M07.C exclusion synced to §6 + §A in the
+  M07.C commit never reached `ci.yml` — flagged by the M07.C retro's
+  CI-workflow drift check as a Stage G item) and *plus* a stray
+  `|src.key_store\.rs` token (the same stray-token class as TD-006 —
+  TD-006's M07.A resolution corrected the M06 phase doc but did not
+  inspect `ci.yml`, and the M07.A CI-drift check asserted consistency
+  without catching it). Both `ci.yml` occurrences were corrected to the
+  canonical CLAUDE.md §6 form
+  (`…|src.sandbox_ipc.connection\.rs|src.import.fetch\.rs`) in this
+  M07.G commit. The correction is a no-op for the measured number
+  (`key_store.rs` has no gated lines per the §A note; `import/fetch.rs`
+  is the Category-3 holdout local runs already exclude) — it is a
+  CI-parity correction so CI measures the same runtime-main surface as
+  the local §6 gate. After this fix all five surfaces — §A, CLAUDE.md
+  §5, CLAUDE.md §6, `codecov.yml`, `ci.yml` — are byte-consistent.
 
 ---
 
