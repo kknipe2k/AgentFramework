@@ -6,6 +6,103 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed — M07.5 Stage A.fix (tier-gate lifecycle — M07.V 🔴 #1, backend)
+
+- **The import pipeline now enforces the Novice tier-gate review.**
+  `import_artifact_with` (`crates/runtime-main/src/import/mod.rs`)
+  validated through `tier_gate` but never called it — it installed and
+  hash-locked every artifact unconditionally, so a Novice "Reject" had
+  no backend effect (M07.V 🔴 #1; spec §8.security L4). Per **ADR-0017**
+  (install-after-confirm — flipped `Proposed → Accepted`),
+  `import_artifact_with` now calls `tier_gate` between L3 and the
+  install half and returns `ImportOutcome::{Installed, Pending}`: a
+  Novice import returns `Pending` and installs / locks / upserts
+  NOTHING; the install half (extracted into `commit_import`, shared
+  with the inline Promoted path) runs only on the renderer's confirm
+  via the new `complete_import_with`. ADR-0014 lock-on-first-install is
+  preserved — the lock is still written exactly once, at true install.
+  The Tauri layer gains `complete_import_artifact` /
+  `cancel_pending_import` commands and a bounded `PendingImportState`;
+  `ImportOutcome` crosses the IPC bridge discriminated on `status`.
+  Backend half only — the renderer rewire is M07.5 Stage C.fix.
+
+### Fixed — M07.5 Stage B.fix (import-fetch SSRF egress hardening — CQ-M07-1)
+
+- **The import-fetch egress is now SSRF-hardened.** The import pipeline
+  fetches a user-supplied URL server-side; `HttpFetcher`
+  (`crates/runtime-main/src/import/fetch.rs`) was `reqwest::Client::new()`
+  — auto-following up to 10 redirects with no scheme, IP, body-size, or
+  timeout limits — and `EnforcerGate` granted itself the capability
+  declaration it then checked (a tautology behind a "default-deny" doc
+  comment; simplify finding CQ-M07-1). Per **ADR-0018** (import-fetch
+  SSRF egress hardening — flipped `Proposed → Accepted`): a new pure
+  `import::egress` module — `classify_ip` rejects every non-public
+  address range (loopback, RFC-1918, link-local, CGNAT, IPv6
+  ULA/link-local, unspecified, multicast/broadcast, documentation, and
+  IPv4-mapped IPv6), `check_url` enforces `https`-only via the
+  `reqwest::Url` WHATWG parser (defeating IP-encoding tricks), and
+  `validate_egress` resolves + classifies every address through an
+  injected `Resolver` seam. `HttpFetcher` is rebuilt: redirects
+  disabled, the connection DNS-pinned to the validated address
+  (`ClientBuilder::resolve` — the DNS-rebinding defense),
+  connect/request timeouts, and a streamed body-size cap. `fetch_with`
+  drives a bounded redirect loop that re-validates EVERY hop. The
+  tautological `NetworkGate` / `EnforcerGate` and the hand-rolled
+  `host_of` URL parser are removed. No new dependency.
+
+### Fixed — M07.5 Stage C.fix (tier-gate review modal wired to the backend — M07.V 🔴 #1, renderer)
+
+- **The Builder Import review modal's Install / Reject buttons now
+  drive the backend.** A.fix shipped the `complete_import_artifact` /
+  `cancel_pending_import` commands, but the renderer's Reject button
+  (`src/components/ImportPanel.tsx`) still only `delete`d the local
+  store record — no Tauri command, no backend effect (the M07.V 🔴 #1
+  renderer half). Per **ADR-0017**: `src/lib/ipc.ts` hand-mirrors the
+  discriminated `ImportOutcome` (`status: 'pending' | 'installed'` —
+  the `McpTool` / `ResumePlan` precedent) and adds the
+  `completeImportArtifact` / `cancelPendingImport` wrappers;
+  `ImportPanel.tsx`'s `handleInstall` / `handleReject` invoke the new
+  commands before the pure `confirmImport` / `dismissImport` store
+  actions; `src/lib/graphStore.ts`'s `recordImport` discriminates on
+  the new wire shape and carries the `pendingReviewId`. The vitest
+  regression `reject_invokes_cancel_pending_import` asserts the Reject
+  button fires `cancel_pending_import` over IPC — the assertion the
+  prior store-only `reject_dismisses_the_import_record` could not make
+  (the M07.V Stage-V blind spot). Closes M07.V 🔴 #1 end-to-end.
+
+### Fixed — M07.5 Stage D.fix (tier-gate fix-cycle close — M08 Stage A gate reconciled)
+
+- **Closes the M07.5 tier-gate fix cycle**
+  (`docs/build-prompts/M07.5-tier-gate-fix.md`). M07.V 🔴 #1
+  (`tier_gate` defined but never invoked — a Novice "Reject" did not
+  reject) and CQ-M07-1 (the unhardened, SSRF-exposed import-fetch
+  egress) are both re-verified RESOLVED in the assembled app.
+  Verification of record: the three assembled-app regression tests
+  green in the full canonical CI gate suite —
+  `reject_rolls_back_lock_and_registry` +
+  `redirect_to_private_address_is_blocked`
+  (`crates/runtime-main/tests/import_pipeline_integration.rs`) and
+  `reject_invokes_cancel_pending_import`
+  (`tests/unit/components/ImportPanel.test.tsx`). They exercise the
+  assembled composition — the real `import_artifact_with` pipeline and
+  the real `ImportPanel` component — not the isolated primitives M07's
+  Stage V verified, the precise gotcha #66/#82 gap the fix cycle
+  exists to close. The real-app manual GUI repro is documented
+  agent-blocked per gotcha #23 (a Tauri 2.x window cannot be driven or
+  observed from the agent side) and deferred-and-tracked to the
+  post-M07.5 / M08 IRL pass (the M06.5 between-milestone IRL
+  precedent).
+- **`docs/build-prompts/retrospectives/M07.5-summary.md`** (new) — the
+  fix-cycle roll-up: four stages, the 🔴 #1 + CQ-M07-1 closure record
+  (A/B/C.fix commit SHAs + regression-test names), ADR-0017 + ADR-0018
+  Accepted, and the M08.A carry-forward.
+- M08 Stage A is **unblocked**: M07.V 🔴 #1 and the import-fetch SSRF
+  hardening are resolved and re-tested green in the assembled app.
+  M07.V 🟡 #2/#3/#4/#5 and the Reinstall source round-trip still carry
+  to M08 (unchanged — out of M07.5 scope). Per CLAUDE.md §20 this fix
+  cycle adds **no `docs/gap-analysis.md` entry**; the 🔴 #1 + CQ-M07-1
+  resolutions flow into M08's gap-analysis Carry-forward.
+
 ### Changed — M07 Stage G (closeout — gap-analysis, summary, coverage-policy reconciliation, simplify pass)
 
 - **M07 milestone closeout.** `docs/build-prompts/retrospectives/M07-summary.md`

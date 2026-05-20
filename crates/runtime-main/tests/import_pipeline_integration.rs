@@ -1,40 +1,40 @@
-//! M07 Stage C — import-pipeline backend (spec Phase 7 §2152–2211;
-//! MVP §M7; ADR-0005 `share_provenance`; §15c/§15d metadata).
+//! M07 Stage C / M07.5 Stage B.fix — import-pipeline backend (spec
+//! Phase 7 §2152–2211; MVP §M7; ADR-0005 `share_provenance`; ADR-0017
+//! validate/commit split; ADR-0018 SSRF egress hardening).
 //!
 //! Behavioral contract tests for the path-agnostic `import` pipeline:
-//! capability-gated URL / local-file fetch → schema validation (the
+//! SSRF-hardened URL / local-file fetch → schema validation (the
 //! generated typify type is the schema's enforced shape, CLAUDE.md §14)
 //! → L3 sandbox (reuse `runtime-sandbox` via the injected `Sandbox`
 //! seam) → tier-gate (reuse the M05 L4 `Tier`) → install + `skills.lock`
-//! write (reuse the M07.B `skills_lock` module) → `Installed`.
-//! `compatible_os` mismatch is a BLOCKING `OsMismatch` checked BEFORE
-//! the expensive L3 (spec §15c). `share_provenance` round-trips
-//! export→import, runtime-to-runtime only (`rebake_changes` always `[]`,
-//! ADR-0005). MCP-server-config import routes into the injected
-//! `McpRegistry` seam (the M06 MCP Manager — dependency-inverted to
-//! avoid the `runtime-mcp → runtime-main` Cargo cycle, the
-//! `sdk::mcp_dispatch` archetype).
+//! write → `ImportOutcome`.
 //!
-//! Every stage takes an injected fake so the pipeline is fully
-//! unit-testable in `runtime-main`; the real reqwest `Fetcher` lives in
-//! `import::fetch` (the new runtime-main OS-call-holdout coverage
-//! exclusion `src.import.fetch.rs`) and is exercised here against a
-//! local `wiremock` server — no live network in the gate (CLAUDE.md
-//! capability-adherence rule; Hard Rule 4).
+//! M07.5 Stage B.fix replaces the tautological `NetworkGate` egress
+//! check with the real `import::egress` gate (ADR-0018): `classify_ip`
+//! rejects every non-public address range, `check_url` is `https`-only,
+//! `validate_egress` resolves + classifies + pins, and `fetch_with`
+//! re-validates every redirect hop. The egress decision logic is
+//! exercised here through the injected `Resolver` seam; the real
+//! `reqwest` `HttpFetcher` + `SystemResolver` are exercised against a
+//! local `wiremock` server — no live network in the gate (Hard Rule 4).
 //!
 //! Strict-TDD (CLAUDE.md §6, v1.8 two-commit): every test here lands in
 //! the red commit; the impl commit touches zero `**/tests/**` files
 //! (`git diff <red>..<impl> -- '**/tests/**'` EMPTY).
 
+use std::collections::{HashMap, VecDeque};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
+use reqwest::Url;
 use runtime_core::generated::skills_lock::SkillsLock;
+use runtime_main::import::egress::{self, EgressReject, FetchHop, Resolver, ValidatedTarget};
 use runtime_main::import::{
-    self, ArtifactKind, Clock, Fetcher, ImportError, ImportSource, L3Report, McpRegistry,
-    McpServerImport, NetworkGate, Sandbox,
+    self, ArtifactKind, Clock, Fetcher, ImportError, ImportOutcome, ImportSource, L3Report,
+    McpRegistry, McpServerImport, Sandbox,
 };
 use runtime_main::skills_lock;
 use runtime_main::tier::Tier;
@@ -137,27 +137,96 @@ fn framework_value(compatible_os: serde_json::Value) -> serde_json::Value {
 
 // ── injected seam fakes ─────────────────────────────────────────────
 
+/// A `Fetcher` that returns the same body in a single hop.
 struct FakeFetcher {
     body: Vec<u8>,
 }
 #[async_trait]
 impl Fetcher for FakeFetcher {
-    async fn get(&self, _url: &str) -> Result<Vec<u8>, String> {
-        Ok(self.body.clone())
+    async fn fetch_hop(&self, _target: &ValidatedTarget) -> Result<FetchHop, String> {
+        Ok(FetchHop::Body(self.body.clone()))
     }
 }
 
-struct AllowGate;
-impl NetworkGate for AllowGate {
-    fn check(&self, _host: &str) -> Result<(), String> {
-        Ok(())
+/// A `Fetcher` that always responds with a redirect to a fixed URL —
+/// drives the `fetch_with` redirect-revalidation loop.
+struct RedirectingFetcher {
+    to: String,
+}
+#[async_trait]
+impl Fetcher for RedirectingFetcher {
+    async fn fetch_hop(&self, _target: &ValidatedTarget) -> Result<FetchHop, String> {
+        Ok(FetchHop::Redirect(self.to.clone()))
     }
 }
 
-struct DenyGate;
-impl NetworkGate for DenyGate {
-    fn check(&self, host: &str) -> Result<(), String> {
-        Err(format!("capability denied for {host}"))
+/// A `Fetcher` replaying a scripted sequence of hops — one entry
+/// consumed per `fetch_hop` call.
+struct ScriptedFetcher {
+    hops: Mutex<VecDeque<FetchHop>>,
+}
+impl ScriptedFetcher {
+    fn new(hops: Vec<FetchHop>) -> Self {
+        Self {
+            hops: Mutex::new(hops.into()),
+        }
+    }
+}
+#[async_trait]
+impl Fetcher for ScriptedFetcher {
+    async fn fetch_hop(&self, _target: &ValidatedTarget) -> Result<FetchHop, String> {
+        self.hops
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| "ScriptedFetcher: no scripted hop remaining".to_string())
+    }
+}
+
+/// A `Resolver` mapping every host to a public address (an IP-literal
+/// host resolves to itself, mirroring the real resolver). Used by the
+/// import-pipeline happy-path tests, where egress must always pass.
+struct PublicResolver;
+#[async_trait]
+impl Resolver for PublicResolver {
+    async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, String> {
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            return Ok(vec![ip]);
+        }
+        Ok(vec![IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))])
+    }
+}
+
+/// A `Resolver` backed by an explicit host → addresses map. An
+/// IP-literal host resolves to itself; an unmapped named host is an
+/// error — each SSRF / redirect test configures exactly the mappings
+/// it needs.
+struct MapResolver {
+    map: HashMap<String, Vec<IpAddr>>,
+}
+impl MapResolver {
+    fn new(entries: &[(&str, &[&str])]) -> Self {
+        let mut map = HashMap::new();
+        for (host, addrs) in entries {
+            let parsed = addrs
+                .iter()
+                .map(|a| a.parse::<IpAddr>().expect("a test IP literal parses"))
+                .collect();
+            map.insert((*host).to_string(), parsed);
+        }
+        Self { map }
+    }
+}
+#[async_trait]
+impl Resolver for MapResolver {
+    async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, String> {
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            return Ok(vec![ip]);
+        }
+        self.map
+            .get(host)
+            .cloned()
+            .ok_or_else(|| format!("MapResolver: no mapping for {host}"))
     }
 }
 
@@ -220,7 +289,19 @@ fn lock_path(dir: &tempfile::TempDir) -> PathBuf {
     dir.path().join("skills.lock")
 }
 
-// ── fetch_with: file + URL happy paths + capability gate ────────────
+/// A `ValidatedTarget` pointing at a local `wiremock` server — lets the
+/// `HttpFetcher` holdout tests exercise `fetch_hop` directly (wiremock
+/// serves HTTP; the `https`-only `validate_egress` gate is exercised
+/// separately through the `Resolver` seam).
+fn wiremock_target(server: &MockServer, path: &str) -> ValidatedTarget {
+    ValidatedTarget {
+        url: Url::parse(&format!("{}/{path}", server.uri())).unwrap(),
+        host: "127.0.0.1".to_string(),
+        addr: *server.address(),
+    }
+}
+
+// ── fetch_with: file + URL happy paths ──────────────────────────────
 
 #[tokio::test]
 async fn fetch_with_file_source_reads_local_bytes() {
@@ -229,8 +310,8 @@ async fn fetch_with_file_source_reads_local_bytes() {
     std::fs::write(&p, b"local-artifact-bytes").unwrap();
     let bytes = import::fetch_with(
         &ImportSource::File(p),
-        &AllowGate,
         &FakeFetcher { body: vec![] },
+        &PublicResolver,
     )
     .await
     .expect("file fetch reads bytes");
@@ -242,8 +323,8 @@ async fn fetch_with_missing_file_is_fetch_error() {
     let dir = tempfile::tempdir().unwrap();
     let err = import::fetch_with(
         &ImportSource::File(dir.path().join("nope.json")),
-        &AllowGate,
         &FakeFetcher { body: vec![] },
+        &PublicResolver,
     )
     .await
     .expect_err("missing file must error, not pass");
@@ -251,61 +332,380 @@ async fn fetch_with_missing_file_is_fetch_error() {
 }
 
 #[tokio::test]
-async fn fetch_with_url_source_returns_body_when_capability_allowed() {
+async fn fetch_with_url_source_returns_body_when_egress_allowed() {
     let bytes = import::fetch_with(
         &ImportSource::Url("https://raw.githubusercontent.com/o/r/main/skill.json".into()),
-        &AllowGate,
         &FakeFetcher {
             body: b"remote-bytes".to_vec(),
         },
+        &PublicResolver,
     )
     .await
-    .expect("allowed URL fetch returns body");
+    .expect("an egress-allowed URL fetch returns the body");
     assert_eq!(bytes, b"remote-bytes");
 }
 
+// ── M07.5 / ADR-0018 — the SSRF egress gate ─────────────────────────
+//
+// `classify_ip` + `check_url` are PURE; `validate_egress` + the
+// `fetch_with` redirect loop are exercised through the injected
+// `Resolver` seam — no live network. The exhaustive classifier matrix
+// IS the security assurance (ADR-0018 — the hand-rolled classifier's
+// correctness comes from this matrix, not a crate's reputation).
+
+#[test]
+fn classify_ip_rejects_every_internal_and_special_range() {
+    // Every non-public range, both families. 169.254.169.254 is the
+    // cloud-metadata address; 100.64.0.1 is CGNAT shared space; the
+    // ::ffff: pair is the IPv4-mapped-IPv6 SSRF bypass.
+    let blocked = [
+        "127.0.0.1",
+        "10.0.0.1",
+        "172.16.0.1",
+        "192.168.1.1",
+        "169.254.169.254",
+        "100.64.0.1",
+        "0.0.0.0",
+        "255.255.255.255",
+        "::1",
+        "fe80::1",
+        "fc00::1",
+        "fd00::1",
+        "ff02::1",
+        "::",
+        "::ffff:127.0.0.1",
+        "::ffff:10.0.0.1",
+    ];
+    for raw in blocked {
+        let ip: IpAddr = raw.parse().unwrap();
+        assert!(
+            egress::classify_ip(ip).is_err(),
+            "{raw} must be rejected as a non-public address"
+        );
+    }
+}
+
+#[test]
+fn classify_ip_accepts_public_addresses() {
+    for raw in ["8.8.8.8", "1.1.1.1", "2606:4700::1111"] {
+        let ip: IpAddr = raw.parse().unwrap();
+        assert!(
+            egress::classify_ip(ip).is_ok(),
+            "{raw} is a public address and must be accepted"
+        );
+    }
+}
+
+#[test]
+fn classify_ip_unwraps_ipv4_mapped_ipv6_before_classifying() {
+    // ::ffff:a.b.c.d smuggles a v4 address inside a v6 — classify_ip
+    // MUST unwrap it via to_ipv4_mapped(), or a mapped private address
+    // passes as an opaque (public-looking) v6.
+    let mapped: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+    assert!(matches!(mapped, IpAddr::V6(_)), "parsed as a v6 address");
+    assert_eq!(
+        egress::classify_ip(mapped),
+        Err(EgressReject::PrivateAddress("127.0.0.1".parse().unwrap())),
+        "the mapped loopback is rejected as the v4 address it really is"
+    );
+}
+
+#[test]
+fn check_url_rejects_non_https_schemes() {
+    for raw in [
+        "http://example.com/x.json",
+        "file:///etc/passwd",
+        "ftp://ftp.example.com/x",
+    ] {
+        match egress::check_url(raw) {
+            Err(EgressReject::Scheme(_)) => {}
+            other => panic!("{raw} must be rejected as a bad scheme, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn check_url_rejects_an_unparseable_url() {
+    match egress::check_url("not a url at all") {
+        Err(EgressReject::Parse(_)) => {}
+        other => panic!("a non-URL must be a Parse rejection, got {other:?}"),
+    }
+}
+
+#[test]
+fn check_url_accepts_an_https_url() {
+    let url = egress::check_url("https://raw.githubusercontent.com/o/r/main/x.json")
+        .expect("a well-formed https URL passes");
+    assert_eq!(url.scheme(), "https");
+}
+
 #[tokio::test]
-async fn fetch_with_url_is_blocked_when_network_capability_denied() {
-    // Hard Rule 4 — egress is capability-gated through the M05 L1
-    // enforcer; a denied capability blocks the fetch BEFORE any GET.
-    let err = import::fetch_with(
-        &ImportSource::Url("https://evil.example.com/x.json".into()),
-        &DenyGate,
-        &FakeFetcher {
-            body: b"should-never-be-returned".to_vec(),
-        },
-    )
-    .await
-    .expect_err("denied network capability must block the fetch");
-    match err {
-        ImportError::Fetch(m) => assert!(
-            m.contains("capability denied"),
-            "fetch error must name the capability denial: {m}"
-        ),
-        other => panic!("expected Fetch(capability denied), got {other:?}"),
+async fn validate_egress_accepts_a_public_host_and_pins_the_address() {
+    let resolver = MapResolver::new(&[("example.com", &["93.184.216.34"])]);
+    let target = egress::validate_egress("https://example.com/skill.json", &resolver)
+        .await
+        .expect("a public host passes egress validation");
+    assert_eq!(target.host, "example.com");
+    assert_eq!(
+        target.addr,
+        "93.184.216.34:443".parse::<SocketAddr>().unwrap(),
+        "the connection is pinned to the validated address (DNS-rebinding defense)"
+    );
+}
+
+#[tokio::test]
+async fn validate_egress_rejects_a_host_that_resolves_to_a_private_address() {
+    // The DNS-rebinding class: a "looks-public" host name that resolves
+    // to an internal address. The Resolver seam lets the test prove the
+    // ADDRESS — not the name — is what is classified.
+    let resolver = MapResolver::new(&[("looks-fine.example", &["127.0.0.1"])]);
+    let err = egress::validate_egress("https://looks-fine.example/x.json", &resolver)
+        .await
+        .expect_err("a host resolving to loopback must be rejected");
+    let ImportError::Fetch(m) = &err else {
+        panic!("expected ImportError::Fetch, got {err:?}");
+    };
+    assert!(m.contains("egress blocked"), "names the egress block: {m}");
+}
+
+#[tokio::test]
+async fn validate_egress_rejects_when_any_resolved_address_is_private() {
+    // A host resolving to both a public and a private address is
+    // treated as hostile — one bad address fails the whole fetch.
+    let resolver = MapResolver::new(&[("mixed.example", &["8.8.8.8", "10.0.0.1"])]);
+    let err = egress::validate_egress("https://mixed.example/x.json", &resolver)
+        .await
+        .expect_err("one private address among the resolved set fails the fetch");
+    assert!(matches!(err, ImportError::Fetch(_)), "got {err:?}");
+}
+
+#[tokio::test]
+async fn validate_egress_rejects_the_ipv4_encoding_bypass() {
+    // reqwest::Url canonicalizes 0x7f000001 / 2130706433 to the host
+    // 127.0.0.1; the resolver (IP literals resolve to themselves) then
+    // yields loopback, which classify_ip rejects.
+    let resolver = MapResolver::new(&[]);
+    for raw in ["https://0x7f000001/x.json", "https://2130706433/x.json"] {
+        let err = egress::validate_egress(raw, &resolver)
+            .await
+            .expect_err("an IP-encoded loopback URL must be rejected");
+        assert!(matches!(err, ImportError::Fetch(_)), "{raw} → {err:?}");
     }
 }
 
 #[tokio::test]
-async fn real_http_fetcher_fetches_from_wiremock_no_live_network() {
-    // The real reqwest `Fetcher` (import::fetch — the new
-    // src.import.fetch.rs coverage holdout) hits ONLY the user-supplied
-    // URL. Exercised against a local wiremock server: no live network
-    // in the gate (Hard Rule 4 / CLAUDE.md capability-adherence).
+async fn validate_egress_rejects_a_non_https_url() {
+    let resolver = MapResolver::new(&[("example.com", &["93.184.216.34"])]);
+    let err = egress::validate_egress("http://example.com/x.json", &resolver)
+        .await
+        .expect_err("a non-https URL must be rejected before any resolution");
+    assert!(matches!(err, ImportError::Fetch(_)), "got {err:?}");
+}
+
+#[tokio::test]
+async fn validate_egress_rejects_a_host_with_no_addresses() {
+    let resolver = MapResolver::new(&[("void.example", &[])]);
+    let err = egress::validate_egress("https://void.example/x.json", &resolver)
+        .await
+        .expect_err("a host that resolves to nothing must be rejected");
+    assert!(matches!(err, ImportError::Fetch(_)), "got {err:?}");
+}
+
+#[tokio::test]
+async fn validate_egress_surfaces_a_resolver_failure() {
+    let resolver = MapResolver::new(&[]);
+    let err = egress::validate_egress("https://unmapped.example/x.json", &resolver)
+        .await
+        .expect_err("a resolver failure surfaces as a fetch error");
+    let ImportError::Fetch(m) = &err else {
+        panic!("expected ImportError::Fetch, got {err:?}");
+    };
+    assert!(
+        m.contains("DNS resolution failed"),
+        "the error names the resolution failure: {m}"
+    );
+}
+
+// ── fetch_with redirect loop — every hop independently re-validated ──
+
+#[tokio::test]
+async fn redirect_to_private_address_is_blocked() {
+    // The headline assembled regression (ADR-0016 / CQ-M07-1). The
+    // fetcher 302s to a host that resolves PRIVATE; fetch_with must
+    // re-validate the REDIRECT target — an original-host-only check
+    // would let this through. Drives the real fetch_with redirect loop.
+    let resolver = MapResolver::new(&[
+        ("raw.githubusercontent.com", &["93.184.216.34"]),
+        ("internal.example", &["10.0.0.1"]),
+    ]);
+    let fetcher = RedirectingFetcher {
+        to: "https://internal.example/skill.json".to_string(),
+    };
+    let err = import::fetch_with(
+        &ImportSource::Url("https://raw.githubusercontent.com/o/r/main/skill.json".into()),
+        &fetcher,
+        &resolver,
+    )
+    .await
+    .expect_err("a redirect to a private address must be blocked on re-validation");
+    let ImportError::Fetch(m) = &err else {
+        panic!("expected ImportError::Fetch, got {err:?}");
+    };
+    assert!(
+        m.contains("egress blocked"),
+        "the redirect target must be blocked AT egress re-validation, not \
+         merely exhausted as a redirect loop: {m}"
+    );
+}
+
+#[tokio::test]
+async fn redirect_chain_past_the_cap_is_abandoned() {
+    let resolver = MapResolver::new(&[
+        ("raw.githubusercontent.com", &["93.184.216.34"]),
+        ("hop.example", &["93.184.216.34"]),
+    ]);
+    let fetcher = RedirectingFetcher {
+        to: "https://hop.example/next.json".to_string(),
+    };
+    let err = import::fetch_with(
+        &ImportSource::Url("https://raw.githubusercontent.com/o/r/main/skill.json".into()),
+        &fetcher,
+        &resolver,
+    )
+    .await
+    .expect_err("an unbounded redirect chain must be abandoned");
+    let ImportError::Fetch(m) = &err else {
+        panic!("expected ImportError::Fetch, got {err:?}");
+    };
+    assert!(
+        m.contains("too many redirects"),
+        "the cap rejection names the limit: {m}"
+    );
+}
+
+#[tokio::test]
+async fn redirect_to_public_then_body_succeeds() {
+    let resolver = MapResolver::new(&[
+        ("raw.githubusercontent.com", &["93.184.216.34"]),
+        ("cdn.example", &["93.184.216.34"]),
+    ]);
+    let fetcher = ScriptedFetcher::new(vec![
+        FetchHop::Redirect("https://cdn.example/skill.json".to_string()),
+        FetchHop::Body(b"redirected-body".to_vec()),
+    ]);
+    let bytes = import::fetch_with(
+        &ImportSource::Url("https://raw.githubusercontent.com/o/r/main/skill.json".into()),
+        &fetcher,
+        &resolver,
+    )
+    .await
+    .expect("a public redirect followed by a body succeeds");
+    assert_eq!(bytes, b"redirected-body");
+}
+
+// ── HttpFetcher / SystemResolver — the import/fetch.rs OS holdout ────
+//
+// The real reqwest Fetcher + system resolver hit ONLY the supplied
+// target. Exercised against a local wiremock server (HTTP) by calling
+// fetch_hop directly with a constructed ValidatedTarget — no live
+// network in the gate (Hard Rule 4 / CLAUDE.md capability-adherence).
+
+#[tokio::test]
+async fn http_fetcher_returns_body_for_a_2xx_response() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(b"wiremock-body".to_vec()))
         .mount(&server)
         .await;
-    let fetcher = import::fetch::HttpFetcher::new();
-    let bytes = import::fetch_with(
-        &ImportSource::Url(format!("{}/skill.json", server.uri())),
-        &AllowGate,
-        &fetcher,
-    )
-    .await
-    .expect("real fetcher returns the wiremock body");
-    assert_eq!(bytes, b"wiremock-body");
+    let hop = import::fetch::HttpFetcher::new()
+        .fetch_hop(&wiremock_target(&server, "skill.json"))
+        .await
+        .expect("a 2xx response yields a body hop");
+    match hop {
+        FetchHop::Body(b) => assert_eq!(b, b"wiremock-body"),
+        FetchHop::Redirect(loc) => panic!("expected a body, got a redirect to {loc}"),
+    }
+}
+
+#[tokio::test]
+async fn http_fetcher_maps_a_3xx_to_a_redirect_hop() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(302).insert_header("location", "/moved.json"))
+        .mount(&server)
+        .await;
+    let hop = import::fetch::HttpFetcher::new()
+        .fetch_hop(&wiremock_target(&server, "skill.json"))
+        .await
+        .expect("a 3xx response yields a redirect hop");
+    match hop {
+        FetchHop::Redirect(loc) => assert!(
+            loc.ends_with("/moved.json"),
+            "the redirect hop carries the resolved Location: {loc}"
+        ),
+        FetchHop::Body(_) => panic!("expected a redirect hop, got a body"),
+    }
+}
+
+#[tokio::test]
+async fn http_fetcher_rejects_an_oversize_body() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_bytes(vec![0_u8; egress::MAX_BODY_BYTES + 1]),
+        )
+        .mount(&server)
+        .await;
+    let err = import::fetch::HttpFetcher::new()
+        .fetch_hop(&wiremock_target(&server, "big.json"))
+        .await
+        .expect_err("a body past MAX_BODY_BYTES must be rejected");
+    assert!(
+        err.contains("exceeds"),
+        "the body-cap rejection names the limit: {err}"
+    );
+}
+
+#[tokio::test]
+async fn http_fetcher_errors_on_an_http_failure_status() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+    let err = import::fetch::HttpFetcher::new()
+        .fetch_hop(&wiremock_target(&server, "missing.json"))
+        .await
+        .expect_err("a 4xx must be a fetch error");
+    assert!(err.contains("404"), "the error names the status: {err}");
+}
+
+#[tokio::test]
+async fn http_fetcher_errors_on_a_redirect_with_no_location() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(302))
+        .mount(&server)
+        .await;
+    let err = import::fetch::HttpFetcher::new()
+        .fetch_hop(&wiremock_target(&server, "x.json"))
+        .await
+        .expect_err("a 3xx with no Location header must error");
+    assert!(
+        err.contains("Location"),
+        "the error names the missing header: {err}"
+    );
+}
+
+#[tokio::test]
+async fn system_resolver_resolves_an_ip_literal_to_itself() {
+    // Resolving an IP literal is a no-op lookup — deterministic, no
+    // network. (A named-host lookup would need live DNS.)
+    let ips = import::fetch::SystemResolver
+        .resolve("93.184.216.34")
+        .await
+        .expect("an IP literal resolves");
+    assert_eq!(ips, vec!["93.184.216.34".parse::<IpAddr>().unwrap()]);
 }
 
 // ── validate: schema is the source of truth (CLAUDE.md §14) ─────────
@@ -373,10 +773,10 @@ async fn compatible_os_mismatch_blocks_before_l3() {
         Tier::Promoted,
         "windows",
         &lock_path(&dir),
-        &AllowGate,
         &FakeFetcher { body: vec![] },
         &PanicSandbox,
         &PanicRegistry,
+        &PublicResolver,
         &FixedClock,
     )
     .await
@@ -402,10 +802,10 @@ async fn compatible_os_match_passes_the_gate() {
         Tier::Promoted,
         "windows",
         &lock_path(&dir),
-        &AllowGate,
         &FakeFetcher { body: vec![] },
         &OkSandbox,
         &PanicRegistry,
+        &PublicResolver,
         &FixedClock,
     )
     .await;
@@ -427,12 +827,12 @@ async fn l3_rejection_blocks_install_and_writes_no_lock() {
         Tier::Promoted,
         "windows",
         &lp,
-        &AllowGate,
         &FakeFetcher {
             body: valid_skill_bytes(),
         },
         &RejectSandbox,
         &PanicRegistry,
+        &PublicResolver,
         &FixedClock,
     )
     .await
@@ -463,12 +863,193 @@ fn tier_gate_novice_requires_review_promoted_passes() {
     match novice {
         ImportError::TierReviewRequired(review) => {
             assert_eq!(review.l3_report, report, "review carries the L3 report");
+            assert!(
+                review.share_provenance.is_none(),
+                "an unexported artifact carries no share_provenance trust line"
+            );
         }
         other => panic!("expected TierReviewRequired, got {other:?}"),
     }
 
     import::tier_gate(&a, Tier::Promoted, &report)
         .expect("Promoted within bounds is an L4 pass-through (auto-accept)");
+}
+
+// ── M07.5 / ADR-0017 — the validate/commit lifecycle split ──────────
+//
+// These drive the ASSEMBLED `import_artifact_with` composition (not
+// `tier_gate` in isolation — that is the M07.V Stage-V blind spot,
+// gotcha #82). The phase-doc root cause — "the pipeline installs +
+// hash-locks every artifact before a Novice Reject can refuse it" — is
+// the falsifiable hypothesis `reject_rolls_back_lock_and_registry`
+// disproves: it FAILS on `main` today, where the pipeline installs
+// unconditionally (CLAUDE.md §6 assembled-app-regression mandate).
+
+#[tokio::test]
+async fn novice_import_returns_pending_and_writes_no_lock() {
+    // The assembled-pipeline assertion Stage V never made: a Novice
+    // import driven through import_artifact_with is HELD (Pending), and
+    // NOTHING is written to skills.lock.
+    let dir = tempfile::tempdir().unwrap();
+    let lp = lock_path(&dir);
+    let outcome = import::import_artifact_with(
+        ImportSource::Url("https://raw.githubusercontent.com/o/r/main/pdf.json".into()),
+        ArtifactKind::Skill,
+        Tier::Novice,
+        "windows",
+        &lp,
+        &FakeFetcher {
+            body: valid_skill_bytes(),
+        },
+        &OkSandbox,
+        &PanicRegistry,
+        &PublicResolver,
+        &FixedClock,
+    )
+    .await
+    .expect("a Novice import is held, not failed");
+
+    let ImportOutcome::Pending { pending, .. } = outcome else {
+        panic!("a Novice import must be Pending, got {outcome:?}");
+    };
+    assert_eq!(pending.lock_key(), "pdf-summarizer@1.0.0");
+    assert!(
+        !lp.exists(),
+        "a held Novice import must write NO skills.lock entry"
+    );
+}
+
+#[tokio::test]
+async fn reject_rolls_back_lock_and_registry() {
+    // ADR-0016's named regression — closes M07.V 🔴 #1 (backend). A
+    // Novice import of an mcp_server is HELD: no skills.lock entry AND
+    // no MCP registry upsert. Dropping the PendingImport (the renderer's
+    // "Reject") leaves both stores empty — there is nothing to roll
+    // back because the install half never ran. FAILS on `main` today,
+    // where import_artifact_with installs + upserts unconditionally.
+    let dir = tempfile::tempdir().unwrap();
+    let lp = lock_path(&dir);
+    let reg = RecordingRegistry::default();
+    let outcome = import::import_artifact_with(
+        ImportSource::File({
+            let p = dir.path().join("mcp.json");
+            std::fs::write(&p, valid_mcp_bytes()).unwrap();
+            p
+        }),
+        ArtifactKind::McpServer,
+        Tier::Novice,
+        "windows",
+        &lp,
+        &FakeFetcher { body: vec![] },
+        &OkSandbox,
+        &reg,
+        &PublicResolver,
+        &FixedClock,
+    )
+    .await
+    .expect("a Novice mcp import is held, not failed");
+
+    let ImportOutcome::Pending { pending, .. } = outcome else {
+        panic!("a Novice import must be Pending, got {outcome:?}");
+    };
+    assert!(!lp.exists(), "a held Novice import writes no skills.lock");
+    assert!(
+        reg.upserts.lock().unwrap().is_empty(),
+        "a held Novice import performs no MCP registry upsert"
+    );
+
+    // The renderer's "Reject": drop the held import, call nothing.
+    drop(pending);
+    assert!(!lp.exists(), "after Reject, still no skills.lock entry");
+    assert!(
+        reg.upserts.lock().unwrap().is_empty(),
+        "after Reject, still no MCP registry row"
+    );
+}
+
+#[tokio::test]
+async fn complete_import_with_installs_after_a_held_review() {
+    // The renderer's "Install" confirm: complete_import_with runs the
+    // held install half — a skills.lock entry (tier_at_install novice)
+    // AND exactly one MCP registry upsert.
+    let dir = tempfile::tempdir().unwrap();
+    let lp = lock_path(&dir);
+    let reg = RecordingRegistry::default();
+    let outcome = import::import_artifact_with(
+        ImportSource::File({
+            let p = dir.path().join("mcp.json");
+            std::fs::write(&p, valid_mcp_bytes()).unwrap();
+            p
+        }),
+        ArtifactKind::McpServer,
+        Tier::Novice,
+        "windows",
+        &lp,
+        &FakeFetcher { body: vec![] },
+        &OkSandbox,
+        &reg,
+        &PublicResolver,
+        &FixedClock,
+    )
+    .await
+    .expect("a Novice mcp import is held");
+
+    let ImportOutcome::Pending { pending, .. } = outcome else {
+        panic!("a Novice import must be Pending, got {outcome:?}");
+    };
+    assert!(!lp.exists(), "precondition: the held import wrote nothing");
+
+    let installed = import::complete_import_with(&pending, &reg, &lp, &FixedClock)
+        .expect("completing a held review installs");
+    assert_eq!(installed.lock_key, "pdf-mcp@0.0.0");
+
+    let v = serde_json::to_value(skills_lock::read(&lp).unwrap()).unwrap();
+    assert_eq!(v["installed"]["pdf-mcp@0.0.0"]["kind"], json!("mcp_server"));
+    assert_eq!(
+        v["installed"]["pdf-mcp@0.0.0"]["tier_at_install"],
+        json!("novice"),
+        "tier_at_install records the Novice tier at the deferred install"
+    );
+    let upserts = reg.upserts.lock().unwrap().clone();
+    assert_eq!(
+        upserts.len(),
+        1,
+        "completing a held mcp import upserts once"
+    );
+    assert_eq!(upserts[0].name, "pdf-mcp");
+}
+
+#[tokio::test]
+async fn promoted_import_installs_inline() {
+    // The Promoted L4 auto-accept path is unchanged by the split — the
+    // artifact installs + locks inline, no review held.
+    let dir = tempfile::tempdir().unwrap();
+    let lp = lock_path(&dir);
+    let outcome = import::import_artifact_with(
+        ImportSource::Url("https://raw.githubusercontent.com/o/r/main/pdf.json".into()),
+        ArtifactKind::Skill,
+        Tier::Promoted,
+        "windows",
+        &lp,
+        &FakeFetcher {
+            body: valid_skill_bytes(),
+        },
+        &OkSandbox,
+        &PanicRegistry,
+        &PublicResolver,
+        &FixedClock,
+    )
+    .await
+    .expect("a Promoted import installs");
+
+    assert!(
+        matches!(outcome, ImportOutcome::Installed(_)),
+        "a Promoted import installs inline, got {outcome:?}"
+    );
+    assert!(
+        lp.exists(),
+        "a Promoted import writes the skills.lock entry"
+    );
 }
 
 // ── full pipeline happy path — install + skills.lock (B reuse) ──────
@@ -478,21 +1059,24 @@ async fn promoted_url_import_installs_and_writes_spec_faithful_lock_entry() {
     let dir = tempfile::tempdir().unwrap();
     let lp = lock_path(&dir);
     let body = valid_skill_bytes();
-    let installed = import::import_artifact_with(
+    let outcome = import::import_artifact_with(
         ImportSource::Url("https://raw.githubusercontent.com/o/r/main/pdf.json".into()),
         ArtifactKind::Skill,
         Tier::Promoted,
         "windows",
         &lp,
-        &AllowGate,
         &FakeFetcher { body: body.clone() },
         &OkSandbox,
         &PanicRegistry,
+        &PublicResolver,
         &FixedClock,
     )
     .await
     .expect("happy-path import succeeds");
 
+    let ImportOutcome::Installed(installed) = outcome else {
+        panic!("a Promoted import installs inline, got {outcome:?}");
+    };
     assert_eq!(installed.lock_key, "pdf-summarizer@1.0.0");
 
     // The lock entry is spec-faithful (B's shape) and the content hash
@@ -522,24 +1106,31 @@ async fn promoted_url_import_installs_and_writes_spec_faithful_lock_entry() {
 async fn file_import_locks_source_as_file_shape() {
     // B carry-forward: ImportSource::File must serialize to exactly B's
     // `Source` `{ "type": "file", "path": ... }` discriminated shape.
+    // Promoted so the install commits inline (a Novice import is held —
+    // the deferred-install file-shape path is covered by
+    // `complete_import_with_installs_after_a_held_review`).
     let dir = tempfile::tempdir().unwrap();
     let lp = lock_path(&dir);
     let art = dir.path().join("local-skill.json");
     std::fs::write(&art, valid_skill_bytes()).unwrap();
-    import::import_artifact_with(
+    let outcome = import::import_artifact_with(
         ImportSource::File(art.clone()),
         ArtifactKind::Skill,
-        Tier::Novice,
+        Tier::Promoted,
         "windows",
         &lp,
-        &AllowGate,
         &FakeFetcher { body: vec![] },
         &OkSandbox,
         &PanicRegistry,
+        &PublicResolver,
         &FixedClock,
     )
     .await
-    .expect("Novice file import installs (review is a renderer concern; backend installs)");
+    .expect("Promoted file import installs inline");
+    assert!(
+        matches!(outcome, ImportOutcome::Installed(_)),
+        "a Promoted import installs inline, got {outcome:?}"
+    );
 
     let v = serde_json::to_value(skills_lock::read(&lp).unwrap()).unwrap();
     let src = &v["installed"]["pdf-summarizer@1.0.0"]["source"];
@@ -547,7 +1138,7 @@ async fn file_import_locks_source_as_file_shape() {
     assert_eq!(src["path"], json!(art.to_string_lossy().as_ref()));
     assert_eq!(
         v["installed"]["pdf-summarizer@1.0.0"]["tier_at_install"],
-        json!("novice"),
+        json!("promoted"),
         "tier_at_install records the tier at install time (spec §2201)"
     );
 }
@@ -559,7 +1150,7 @@ async fn mcp_server_config_import_lands_in_the_m06_registry() {
     let dir = tempfile::tempdir().unwrap();
     let lp = lock_path(&dir);
     let reg = RecordingRegistry::default();
-    let installed = import::import_artifact_with(
+    let outcome = import::import_artifact_with(
         ImportSource::File({
             let p = dir.path().join("mcp.json");
             std::fs::write(&p, valid_mcp_bytes()).unwrap();
@@ -569,15 +1160,18 @@ async fn mcp_server_config_import_lands_in_the_m06_registry() {
         Tier::Promoted,
         "windows",
         &lp,
-        &AllowGate,
         &FakeFetcher { body: vec![] },
         &OkSandbox,
         &reg,
+        &PublicResolver,
         &FixedClock,
     )
     .await
     .expect("mcp-server-config import succeeds");
 
+    let ImportOutcome::Installed(installed) = outcome else {
+        panic!("a Promoted import installs inline, got {outcome:?}");
+    };
     let upserts = reg.upserts.lock().unwrap().clone();
     assert_eq!(upserts.len(), 1, "exactly one registry upsert");
     assert_eq!(upserts[0].name, "pdf-mcp");
@@ -658,29 +1252,32 @@ async fn enriched_install_carries_real_capability_disclosure() {
     // is the artifact's own declaration, surfaced verbatim.
     let dir = tempfile::tempdir().unwrap();
     let lp = lock_path(&dir);
-    let installed = import::import_artifact_with(
+    let outcome = import::import_artifact_with(
         ImportSource::Url("https://raw.githubusercontent.com/o/r/main/fs.json".into()),
         ArtifactKind::Skill,
         Tier::Novice,
         "windows",
         &lp,
-        &AllowGate,
         &FakeFetcher {
             body: skill_with_caps_bytes(),
         },
         &OkSandbox,
         &PanicRegistry,
+        &PublicResolver,
         &FixedClock,
     )
     .await
-    .expect("happy-path import succeeds");
+    .expect("a Novice import is held for review");
 
-    assert_eq!(installed.lock_key, "fs-test@2.0.0");
+    let ImportOutcome::Pending { review, pending } = outcome else {
+        panic!("a Novice import is held as Pending, got {outcome:?}");
+    };
+    assert_eq!(pending.lock_key(), "fs-test@2.0.0");
     // Real extraction from the artifact's declared capabilities — order
     // follows capability_summary's key walk (tools_called, network,
     // spawn_agents, then shell).
     assert_eq!(
-        installed.capabilities,
+        review.capabilities,
         vec![
             "tools_called: Read".to_string(),
             "tools_called: Write".to_string(),
@@ -688,7 +1285,7 @@ async fn enriched_install_carries_real_capability_disclosure() {
             "spawn_agents: sub-agent".to_string(),
             "shell: true".to_string(),
         ],
-        "the enriched return must carry the artifact's REAL declared \
+        "the held review must carry the artifact's REAL declared \
          capability disclosure (ADR-0015)"
     );
 }
@@ -705,27 +1302,30 @@ async fn enriched_install_carries_l3_report_and_present_provenance() {
     let p = dir.path().join("fw.json");
     std::fs::write(&p, serde_json::to_vec(&fw).unwrap()).unwrap();
 
-    let installed = import::import_artifact_with(
+    let outcome = import::import_artifact_with(
         ImportSource::File(p),
         ArtifactKind::Agent,
         Tier::Novice,
         "windows",
         &lp,
-        &AllowGate,
         &FakeFetcher { body: vec![] },
         &OkSandbox,
         &PanicRegistry,
+        &PublicResolver,
         &FixedClock,
     )
     .await
-    .expect("provenance-carrying framework imports");
+    .expect("provenance-carrying framework is held for review");
 
-    assert!(installed.report.passed, "L3 cleared → report.passed");
+    let ImportOutcome::Pending { review, .. } = outcome else {
+        panic!("a Novice import is held as Pending, got {outcome:?}");
+    };
+    assert!(review.l3_report.passed, "L3 cleared → report.passed");
     assert!(
-        installed.report.reasons.is_empty(),
+        review.l3_report.reasons.is_empty(),
         "a passing L3 report carries no reasons"
     );
-    let prov = installed
+    let prov = review
         .share_provenance
         .as_ref()
         .expect("an exported artifact surfaces share_provenance (ADR-0005)");
@@ -744,23 +1344,26 @@ async fn enriched_install_provenance_is_none_when_artifact_unexported() {
     // state, never fabricated data.
     let dir = tempfile::tempdir().unwrap();
     let lp = lock_path(&dir);
-    let installed = import::import_artifact_with(
+    let outcome = import::import_artifact_with(
         ImportSource::Url("https://raw.githubusercontent.com/o/r/main/s.json".into()),
         ArtifactKind::Skill,
         Tier::Promoted,
         "windows",
         &lp,
-        &AllowGate,
         &FakeFetcher {
             body: skill_with_caps_bytes(),
         },
         &OkSandbox,
         &PanicRegistry,
+        &PublicResolver,
         &FixedClock,
     )
     .await
     .expect("unexported import succeeds");
 
+    let ImportOutcome::Installed(installed) = outcome else {
+        panic!("a Promoted import installs inline, got {outcome:?}");
+    };
     assert!(
         installed.share_provenance.is_none(),
         "an unexported artifact has no share_provenance — None, not {{}}"

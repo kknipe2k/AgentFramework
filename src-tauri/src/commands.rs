@@ -40,10 +40,10 @@ use runtime_core::event::AgentEvent;
 use runtime_core::CmdError;
 use runtime_main::drone_ipc::{DroneClient, RecoveredSession};
 use runtime_main::hitl::{HitlChoice, HitlError, HitlSeam};
-use runtime_main::import::fetch::HttpFetcher;
+use runtime_main::import::fetch::{HttpFetcher, SystemResolver};
 use runtime_main::import::{
-    self, ArtifactKind, ImportError, ImportSource, McpRegistry, McpServerImport, NetworkGate,
-    Sandbox, SystemClock,
+    self, ArtifactKind, ImportError, ImportSource, McpRegistry, McpServerImport, Sandbox,
+    SystemClock,
 };
 use runtime_main::key_store::{read_api_key, write_api_key, KeyStoreError};
 use runtime_main::providers::anthropic::AnthropicProvider;
@@ -1012,67 +1012,99 @@ fn smoke_config() -> AgentConfig {
     }
 }
 
-/// Outcome of [`import_artifact`] surfaced to the renderer (Stage E).
+/// Outcome of [`import_artifact`] / [`complete_import_artifact`]
+/// surfaced to the renderer (M07.5 / ADR-0017 — the install-after-
+/// confirm split that closes M07.V 🔴 #1).
 ///
-/// Enriched at M07.E per ADR-0015 with the §M7 review primitive: the
-/// declared `capabilities` disclosure, the `l3_report` body, and the
-/// ADR-0005 `share_provenance` trust block — all already computed by
-/// the import pipeline (`import_artifact_with` → `Installed`) and
-/// previously discarded at the command boundary. Hand-mirrored on the
-/// renderer side in `src/lib/ipc.ts` (the `McpTool` / `ResumePlan`
-/// hand-mirror precedent — not schema-generated). Serde defaults emit
-/// `snake_case` keys; the renderer's `ImportOutcome` interface mirrors
-/// them verbatim.
+/// Discriminated on `status`. `Pending` carries the `pending_review_id`
+/// the renderer echoes back to [`complete_import_artifact`] /
+/// [`cancel_pending_import`]; `Installed` is terminal. Both carry the
+/// §M7 review primitive (capability disclosure + L3 report + ADR-0005
+/// `share_provenance`) so the renderer maps either arm into its
+/// `imports` slot uniformly.
+///
+/// Hand-mirrored renderer-side in `src/lib/ipc.ts` (the `McpTool` /
+/// `ResumePlan` precedent — not schema-generated); serde
+/// `tag = "status"` + `rename_all = "snake_case"`. The
+/// `import_outcome_*` in-source tests pin the JSON keys.
 #[derive(Debug, serde::Serialize)]
-pub struct ImportOutcome {
-    /// The `name@version` written into `skills.lock`.
-    pub lock_key: String,
-    /// Whether the Novice capability-disclosure review applies — the
-    /// renderer renders the disclosure modal for Novice (the L4 outcome
-    /// is decided here, the renderer just renders it; spec §M7 / E.3.4).
-    pub review_required: bool,
-    /// Secrets the artifact needs before first run (spec §15d notice).
-    pub requires_secrets: Vec<String>,
-    /// Plain-English declared-capability summary the §M7 disclosure
-    /// renders (ADR-0015). Source-of-truth = the artifact's declared
-    /// `capabilities` block, extracted via `capability_summary`.
-    pub capabilities: Vec<String>,
-    /// The L3 sandbox report (ADR-0015). Rides as a nested object so
-    /// the renderer can show `passed` + `reasons` without re-parsing.
-    pub l3_report: runtime_main::import::L3Report,
-    /// The ADR-0005 trust block when the imported artifact carries one;
-    /// `null` when unexported. The renderer renders the "No provenance"
-    /// state from `null`, never a synthesized empty block.
-    pub share_provenance: Option<serde_json::Value>,
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ImportOutcome {
+    /// Novice — held at the tier-gate review; nothing installed or
+    /// locked. The renderer shows the capability-disclosure modal.
+    Pending {
+        /// The [`PendingImportState`] key — echoed by
+        /// [`complete_import_artifact`] / [`cancel_pending_import`].
+        pending_review_id: String,
+        /// The `name@version` the import will lock under (the renderer
+        /// record key; stable across pending → installed).
+        lock_key: String,
+        /// Plain-English declared-capability summary (§M7 disclosure).
+        capabilities: Vec<String>,
+        /// The L3 sandbox report.
+        l3_report: runtime_main::import::L3Report,
+        /// Secrets to provision before first run (§15d).
+        requires_secrets: Vec<String>,
+        /// ADR-0005 trust block; `null` when unexported.
+        share_provenance: Option<serde_json::Value>,
+    },
+    /// Installed + hash-locked (Promoted L4 auto-accept, or a completed
+    /// Novice review).
+    Installed {
+        /// The `name@version` written into `skills.lock`.
+        lock_key: String,
+        /// Plain-English declared-capability summary (§M7 disclosure).
+        capabilities: Vec<String>,
+        /// The L3 sandbox report.
+        l3_report: runtime_main::import::L3Report,
+        /// Secrets to provision before first run (§15d).
+        requires_secrets: Vec<String>,
+        /// ADR-0005 trust block; `null` when unexported.
+        share_provenance: Option<serde_json::Value>,
+    },
 }
 
-/// L1 network gate over the M05 `CapabilityEnforcer` — import egress is
-/// constrained to the user-supplied host (default-deny + domain scope;
-/// Hard Rule 4 — no phone-home, only the URL the user pasted is hit).
-struct EnforcerGate;
+/// Tauri-managed state — Novice imports awaiting a tier-gate review
+/// confirmation (M07.5 / ADR-0017). Keyed by `pending_review_id`. An
+/// entry lives only between [`import_artifact`] returning `Pending` and
+/// the renderer's [`complete_import_artifact`] / [`cancel_pending_import`]
+/// call. A plain `std::sync::Mutex` — the critical sections are a map
+/// insert / remove with no `.await` held across the lock.
+///
+/// `MAX_PENDING` bounds the map: a renderer that creates `Pending`
+/// records without ever resolving them cannot grow it without limit
+/// (each entry holds the fetched artifact bytes). v0.1 is single-session
+/// and reviews one import at a time, so the bound is generous
+/// defense-in-depth, not a normal-path limit.
+#[derive(Default)]
+pub struct PendingImportState(
+    std::sync::Mutex<std::collections::HashMap<String, import::PendingImport>>,
+);
 
-impl NetworkGate for EnforcerGate {
-    fn check(&self, host: &str) -> Result<(), String> {
-        use runtime_core::generated::capability::{
-            CapabilityDeclaration, CapabilityKind, CapabilityScope, DomainPattern, ResourceName,
-            SideEffectClass,
-        };
-        use runtime_main::capability::CapabilityEnforcer;
-        use std::str::FromStr as _;
+/// Upper bound on concurrently-held [`PendingImportState`] entries.
+const MAX_PENDING: usize = 16;
 
-        let decl = CapabilityDeclaration {
-            kind: CapabilityKind::Network,
-            resource: ResourceName::from_str(host).map_err(|e| e.to_string())?,
-            scope: CapabilityScope::Domain(
-                DomainPattern::from_str(host).map_err(|e| e.to_string())?,
-            ),
-            side_effect_class: SideEffectClass::NetworkEgress,
-        };
-        let mut enforcer = CapabilityEnforcer::new();
-        enforcer.grant("import-fetch", decl.clone());
-        enforcer
-            .check("import-fetch", &decl)
-            .map_err(|e| e.to_string())
+impl PendingImportState {
+    /// Insert a held import. Returns `Err` if the map is at
+    /// `MAX_PENDING` (the caller maps it to a `CmdError`).
+    fn insert(&self, id: String, pending: import::PendingImport) -> Result<(), String> {
+        let mut map = self.0.lock().expect("PendingImportState mutex poisoned");
+        if map.len() >= MAX_PENDING {
+            return Err(format!("too many pending imports (max {MAX_PENDING})"));
+        }
+        map.insert(id, pending);
+        drop(map);
+        Ok(())
+    }
+
+    /// Remove and return the held import for `id`. `None` for an unknown
+    /// id — a `complete`/`cancel` double-fire — handled idempotently by
+    /// the callers.
+    fn take(&self, id: &str) -> Option<import::PendingImport> {
+        self.0
+            .lock()
+            .expect("PendingImportState mutex poisoned")
+            .remove(id)
     }
 }
 
@@ -1152,16 +1184,21 @@ fn import_err_to_cmd(e: &ImportError) -> CmdError {
 /// seam. Resolves the framework-root `skills.lock` path
 /// (path-agnostic — CLAUDE.md §9), wires the real reqwest fetcher + the
 /// M05 L1/L3 + the M06 registry adapter + wall-clock, and records the
-/// current tier as `tier_at_install`. The Novice capability-disclosure
-/// review is rendered by the Stage E review screen via the
-/// `import::tier_gate` seam (E.3.4 — "the renderer renders the
-/// outcome"); `review_required` carries that decision to the renderer.
+/// current tier as `tier_at_install`. Per M07.5 / ADR-0017 a Novice
+/// import returns [`ImportOutcome::Pending`] — nothing installed or
+/// locked — and the held import is stashed in [`PendingImportState`]
+/// until the renderer's [`complete_import_artifact`] /
+/// [`cancel_pending_import`] resolves the tier-gate review.
 ///
 /// # Errors
 ///
 /// - [`CmdError::Internal`] for any pipeline failure (fetch / schema /
 ///   L3 reject / OS mismatch / lock / registry), the message naming the
-///   stage.
+///   stage, or when `PendingImportState` is at capacity.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Tauri command — the renderer args plus the injected State handles exceed the lint threshold"
+)]
 #[tauri::command]
 pub async fn import_artifact(
     app: AppHandle,
@@ -1171,6 +1208,7 @@ pub async fn import_artifact(
     sandbox: tauri::State<'_, Arc<SandboxClient>>,
     registry: tauri::State<'_, Arc<Registry>>,
     tier_state: tauri::State<'_, CurrentTierState>,
+    pending: tauri::State<'_, PendingImportState>,
 ) -> Result<ImportOutcome, CmdError> {
     let dir = app
         .path()
@@ -1196,29 +1234,112 @@ pub async fn import_artifact(
     };
     let tier = *tier_state.lock().await;
 
-    let installed = import::import_artifact_with(
+    let outcome = import::import_artifact_with(
         src,
         kind,
         tier,
         std::env::consts::OS,
         &lock,
-        &EnforcerGate,
         &HttpFetcher::new(),
         &SandboxAdapter(Arc::clone(sandbox.inner())),
         &RegistryAdapter(Arc::clone(registry.inner())),
+        &SystemResolver,
         &SystemClock,
     )
     .await
     .map_err(|e| import_err_to_cmd(&e))?;
 
-    Ok(ImportOutcome {
+    Ok(match outcome {
+        import::ImportOutcome::Installed(installed) => ImportOutcome::Installed {
+            lock_key: installed.lock_key,
+            capabilities: installed.capabilities,
+            l3_report: installed.report,
+            requires_secrets: installed.requires_secrets,
+            share_provenance: installed.share_provenance,
+        },
+        import::ImportOutcome::Pending {
+            review,
+            pending: held,
+        } => {
+            let pending_review_id = uuid::Uuid::new_v4().to_string();
+            let lock_key = held.lock_key();
+            pending
+                .insert(pending_review_id.clone(), held)
+                .map_err(CmdError::internal)?;
+            ImportOutcome::Pending {
+                pending_review_id,
+                lock_key,
+                capabilities: review.capabilities,
+                l3_report: review.l3_report,
+                requires_secrets: review.requires_secrets,
+                share_provenance: review.share_provenance,
+            }
+        }
+    })
+}
+
+/// Finish a Novice import the renderer confirmed at the tier-gate
+/// review (M07.5 / ADR-0017). Takes the held `PendingImport` out of
+/// [`PendingImportState`], runs the install half
+/// (`import::complete_import_with`), and returns the terminal
+/// `Installed` outcome.
+///
+/// # Errors
+///
+/// [`CmdError::Internal`] when `pending_review_id` is unknown (already
+/// completed / cancelled) or the install half fails.
+#[tauri::command]
+pub async fn complete_import_artifact(
+    app: AppHandle,
+    pending_review_id: String,
+    registry: tauri::State<'_, Arc<Registry>>,
+    pending: tauri::State<'_, PendingImportState>,
+) -> Result<ImportOutcome, CmdError> {
+    let dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| CmdError::internal(format!("app_local_data_dir: {e}")))?;
+    let lock = dir.join("skills.lock");
+
+    let held = pending.take(&pending_review_id).ok_or_else(|| {
+        CmdError::internal(format!("unknown pending import: {pending_review_id}"))
+    })?;
+    let installed = import::complete_import_with(
+        &held,
+        &RegistryAdapter(Arc::clone(registry.inner())),
+        &lock,
+        &SystemClock,
+    )
+    .map_err(|e| import_err_to_cmd(&e))?;
+
+    Ok(ImportOutcome::Installed {
         lock_key: installed.lock_key,
-        review_required: matches!(tier, Tier::Novice),
-        requires_secrets: installed.requires_secrets,
         capabilities: installed.capabilities,
         l3_report: installed.report,
+        requires_secrets: installed.requires_secrets,
         share_provenance: installed.share_provenance,
     })
+}
+
+/// Reject a Novice import the renderer dismissed at the tier-gate
+/// review (M07.5 / ADR-0017).
+///
+/// Drops the held `PendingImport`. Because the install half never ran,
+/// there is nothing to roll back — no `skills.lock` entry and no MCP
+/// registry row were ever written. This is the M07.V 🔴 #1 fix.
+/// Idempotent — an unknown id (a double-fire) is a no-op.
+///
+/// # Errors
+///
+/// Never returns `Err`; the `Result` return is required for a Tauri
+/// async command that borrows managed `State`.
+#[tauri::command]
+pub async fn cancel_pending_import(
+    pending_review_id: String,
+    pending: tauri::State<'_, PendingImportState>,
+) -> Result<(), CmdError> {
+    pending.take(&pending_review_id);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1264,20 +1385,15 @@ mod tests {
     }
 
     #[test]
-    fn import_outcome_serializes_the_enriched_review_wire_for_the_renderer() {
-        // M07.E / ADR-0015 — the cross-language wire anchor (condition
-        // 2). The Stage E renderer's hand-mirrored `ImportOutcome`
-        // interface (src/lib/ipc.ts, the McpTool/ResumePlan precedent)
-        // pattern-matches THIS exact serialized shape. Pinning the snake
-        // _case keys here is what makes the renderer fixture provably
-        // the real bridge contract, not a fabricated mock. The
-        // `runtime-main` integration suite proves a REAL import produces
-        // an enriched `Installed`; this proves the command maps it to
-        // the JSON the renderer consumes.
-        let outcome = ImportOutcome {
+    fn import_outcome_pending_serializes_discriminated_wire() {
+        // M07.5 / ADR-0017 — the cross-language wire anchor. The C.fix
+        // renderer (src/lib/ipc.ts, the McpTool/ResumePlan precedent)
+        // hand-mirrors THIS shape and discriminates on `status`. Pinning
+        // the keys here makes the renderer fixture provably the real
+        // bridge contract, not a fabricated mock.
+        let outcome = ImportOutcome::Pending {
+            pending_review_id: "review-1".to_string(),
             lock_key: "fs-test@2.0.0".to_string(),
-            review_required: true,
-            requires_secrets: vec!["OPENAI_API_KEY".to_string()],
             capabilities: vec![
                 "network: api.example.com".to_string(),
                 "shell: true".to_string(),
@@ -1287,50 +1403,177 @@ mod tests {
                 passed: true,
                 reasons: vec![],
             },
+            requires_secrets: vec!["OPENAI_API_KEY".to_string()],
             share_provenance: Some(serde_json::json!({
                 "exported_by": "share-it@0.1.0",
                 "rebake_changes": []
             })),
         };
         let v = serde_json::to_value(&outcome).unwrap();
+        assert_eq!(
+            v["status"],
+            serde_json::json!("pending"),
+            "the renderer discriminates the held arm on `status`"
+        );
+        assert_eq!(v["pending_review_id"], serde_json::json!("review-1"));
         assert_eq!(v["lock_key"], serde_json::json!("fs-test@2.0.0"));
-        assert_eq!(v["review_required"], serde_json::json!(true));
-        assert_eq!(v["requires_secrets"], serde_json::json!(["OPENAI_API_KEY"]));
         assert_eq!(
             v["capabilities"],
-            serde_json::json!(["network: api.example.com", "shell: true"]),
-            "the renderer's plain-English disclosure reads `capabilities`"
+            serde_json::json!(["network: api.example.com", "shell: true"])
         );
         assert_eq!(
             v["l3_report"],
             serde_json::json!({ "report_id": "vr-1", "passed": true, "reasons": [] }),
             "the L3 report crosses the bridge as a nested object"
         );
+        assert_eq!(v["requires_secrets"], serde_json::json!(["OPENAI_API_KEY"]));
         assert_eq!(
             v["share_provenance"]["rebake_changes"],
-            serde_json::json!([]),
-            "share_provenance surfaces verbatim (None serializes to null)"
+            serde_json::json!([])
         );
     }
 
     #[test]
-    fn import_outcome_serializes_absent_provenance_as_null() {
-        // The renderer renders the "no provenance" state from `null`,
-        // never a synthesized empty block (ADR-0005 / ADR-0015).
-        let outcome = ImportOutcome {
+    fn import_outcome_installed_serializes_discriminated_wire() {
+        // The terminal arm — Promoted L4 auto-accept or a completed
+        // Novice review. `status` is `installed`; absent provenance
+        // serializes to `null` (the renderer renders "no provenance"
+        // from `null`, never a synthesized empty block).
+        let outcome = ImportOutcome::Installed {
             lock_key: "x@1.0.0".to_string(),
-            review_required: false,
-            requires_secrets: vec![],
             capabilities: vec![],
             l3_report: runtime_main::import::L3Report {
                 report_id: "r".to_string(),
                 passed: true,
                 reasons: vec![],
             },
+            requires_secrets: vec![],
             share_provenance: None,
         };
         let v = serde_json::to_value(&outcome).unwrap();
+        assert_eq!(v["status"], serde_json::json!("installed"));
+        assert_eq!(v["lock_key"], serde_json::json!("x@1.0.0"));
         assert_eq!(v["share_provenance"], serde_json::Value::Null);
+    }
+
+    // ── M07.5 / ADR-0017 — PendingImportState round-trip ────────────
+    //
+    // The round-trip tests drive a REAL held import out of the
+    // assembled `import_artifact_with` pipeline (the injected-seam
+    // harness mirrored from `import_pipeline_integration.rs`) — a
+    // `PendingImport` cannot be constructed outside `runtime_main`,
+    // and the assembled exercise is the honest one (gotcha #82).
+
+    struct ImportFetcherFake(Vec<u8>);
+    #[async_trait]
+    impl import::Fetcher for ImportFetcherFake {
+        async fn fetch_hop(
+            &self,
+            _target: &import::egress::ValidatedTarget,
+        ) -> Result<import::egress::FetchHop, String> {
+            Ok(import::egress::FetchHop::Body(self.0.clone()))
+        }
+    }
+
+    struct ImportResolverAllow;
+    #[async_trait]
+    impl import::egress::Resolver for ImportResolverAllow {
+        async fn resolve(&self, _host: &str) -> Result<Vec<std::net::IpAddr>, String> {
+            Ok(vec![std::net::IpAddr::V4(std::net::Ipv4Addr::new(
+                93, 184, 216, 34,
+            ))])
+        }
+    }
+
+    struct ImportSandboxOk;
+    #[async_trait]
+    impl import::Sandbox for ImportSandboxOk {
+        async fn validate(&self, _code: &str) -> Result<Vec<String>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct ImportRegistryNoop;
+    impl import::McpRegistry for ImportRegistryNoop {
+        fn upsert(&self, _cfg: &import::McpServerImport) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    /// A schema-valid skill — `capabilities` is required by
+    /// `schemas/skill.v1.json`.
+    fn novice_skill_json() -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "name": "pdf-summarizer",
+            "version": "1.0.0",
+            "description": "Summarize PDFs.",
+            "capabilities": {
+                "tools_called": [],
+                "skills_loaded": [],
+                "file_access": { "read": [], "write": [] },
+                "network": [],
+                "shell": false,
+                "spawn_agents": []
+            }
+        }))
+        .unwrap()
+    }
+
+    /// Drive the real import pipeline to a held Novice import — the
+    /// `PendingImport` the `PendingImportState` tests round-trip.
+    async fn novice_pending_import() -> import::PendingImport {
+        let dir = tempfile::tempdir().unwrap();
+        let outcome = import::import_artifact_with(
+            ImportSource::Url("https://raw.githubusercontent.com/o/r/main/s.json".into()),
+            ArtifactKind::Skill,
+            Tier::Novice,
+            std::env::consts::OS,
+            &dir.path().join("skills.lock"),
+            &ImportFetcherFake(novice_skill_json()),
+            &ImportSandboxOk,
+            &ImportRegistryNoop,
+            &ImportResolverAllow,
+            &SystemClock,
+        )
+        .await
+        .expect("the import pipeline runs");
+        match outcome {
+            import::ImportOutcome::Pending { pending, .. } => pending,
+            import::ImportOutcome::Installed(_) => {
+                panic!("a Novice import must be held as Pending")
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_import_state_round_trips_insert_then_take() {
+        let state = PendingImportState::default();
+        state
+            .insert("review-1".to_string(), novice_pending_import().await)
+            .expect("insert under MAX_PENDING succeeds");
+        assert!(
+            state.take("review-1").is_some(),
+            "take returns the held import"
+        );
+        assert!(
+            state.take("review-1").is_none(),
+            "a second take is None — a complete/cancel double-fire is idempotent"
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_import_state_insert_past_max_is_rejected() {
+        let state = PendingImportState::default();
+        let held = novice_pending_import().await;
+        for i in 0..MAX_PENDING {
+            state
+                .insert(format!("review-{i}"), held.clone())
+                .expect("insert within the bound succeeds");
+        }
+        assert!(
+            state.insert("overflow".to_string(), held).is_err(),
+            "insert past MAX_PENDING is rejected"
+        );
     }
 
     /// In-process stub provider used by `run_smoke_session_with` tests.

@@ -203,29 +203,51 @@ export async function mcpListServers(): Promise<McpServerSummary[]> {
   return await invoke<McpServerSummary[]>('mcp_list_servers');
 }
 
-/**
- * Outcome of the M07 Stage C `import_artifact` Tauri command, enriched
- * at M07.E per ADR-0015 with the §M7 review primitive (capability
- * disclosure + L3 report + ADR-0005 `share_provenance`). Hand-mirrored
- * from the serde shape in `src-tauri/src/commands.rs::ImportOutcome`
- * (the `McpTool` / `ResumePlan` precedent — not schema-generated; the
- * `src-tauri` `import_outcome_serializes_*` in-source tests pin the
- * JSON keys this interface mirrors).
- *
- * Keys are snake_case (serde default; no `rename_all`). `share_provenance`
- * is `null` when the imported artifact was not exported; the panel
- * renders the "No provenance" state from `null`, never a synthesized
- * empty block (ADR-0005).
- */
-export interface ImportOutcome {
-  lock_key: string;
-  review_required: boolean;
-  requires_secrets: string[];
-  capabilities: string[];
-  l3_report: { report_id: string; passed: boolean; reasons: string[] };
-  /** ADR-0005 trust block when present; `null` when unexported. `unknown` covers `null` for ESLint's redundancy rule. */
-  share_provenance: unknown;
+/** L3 sandbox report — rides nested inside {@link ImportOutcome}. */
+export interface L3ReportWire {
+  report_id: string;
+  passed: boolean;
+  reasons: string[];
 }
+
+/**
+ * Outcome of `import_artifact` / `complete_import_artifact` (M07.5 /
+ * ADR-0017 — the install-after-confirm split that closes M07.V 🔴 #1).
+ * Discriminated on `status`, hand-mirrored from the serde
+ * `#[serde(tag = "status")]` enum in
+ * `src-tauri/src/commands.rs::ImportOutcome` (the `McpTool` /
+ * `ResumePlan` precedent — not schema-generated; the `src-tauri`
+ * `import_outcome_*` in-source tests pin the JSON keys this union
+ * mirrors).
+ *
+ * `pending` — Novice: the backend ran the pipeline through the
+ * tier-gate and is HOLDING; nothing is installed or locked. Carry
+ * `pending_review_id` to `completeImportArtifact` / `cancelPendingImport`.
+ * `installed` — terminal: installed + hash-locked (Promoted L4
+ * auto-accept, or a completed Novice review). Keys are snake_case
+ * (serde default). `share_provenance` is `null` when unexported; the
+ * panel renders the "No provenance" state from `null` (ADR-0005).
+ */
+export type ImportOutcome =
+  | {
+      status: 'pending';
+      pending_review_id: string;
+      lock_key: string;
+      capabilities: string[];
+      l3_report: L3ReportWire;
+      requires_secrets: string[];
+      /** ADR-0005 trust block when present; `null` when unexported. */
+      share_provenance: unknown;
+    }
+  | {
+      status: 'installed';
+      lock_key: string;
+      capabilities: string[];
+      l3_report: L3ReportWire;
+      requires_secrets: string[];
+      /** ADR-0005 trust block when present; `null` when unexported. */
+      share_provenance: unknown;
+    };
 
 /** `ImportSource::Url` vs `ImportSource::File` — the shipped wire. */
 export type ImportSourceKind = 'url' | 'file';
@@ -251,6 +273,28 @@ export async function importArtifact(
     location,
     artifactKind,
   });
+}
+
+/**
+ * Confirm a Novice import at the tier-gate review (M07.5 / ADR-0017).
+ * Runs the install half the backend held back; resolves to the terminal
+ * `installed` outcome. `pendingReviewId` is PINNED to the A.fix-shipped
+ * `complete_import_artifact` command param (Tauri auto-converts the
+ * snake_case Rust `pending_review_id`).
+ */
+export async function completeImportArtifact(pendingReviewId: string): Promise<ImportOutcome> {
+  return await invoke<ImportOutcome>('complete_import_artifact', { pendingReviewId });
+}
+
+/**
+ * Reject a Novice import at the tier-gate review (M07.5 / ADR-0017).
+ * Drops the held pending import — because the install half never ran,
+ * nothing is rolled back: no `skills.lock` entry and no MCP registry row
+ * was ever written (the M07.V 🔴 #1 fix). Idempotent. `pendingReviewId`
+ * is PINNED to the A.fix-shipped `cancel_pending_import` command param.
+ */
+export async function cancelPendingImport(pendingReviewId: string): Promise<void> {
+  await invoke('cancel_pending_import', { pendingReviewId });
 }
 
 export async function subscribeAgentEvents(

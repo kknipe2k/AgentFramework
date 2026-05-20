@@ -17,6 +17,8 @@ vi.mock('@tauri-apps/api/event', () => ({
 }));
 
 import {
+  cancelPendingImport,
+  completeImportArtifact,
   importArtifact,
   invokeQuerySessionDb,
   invokeReplaySession,
@@ -235,23 +237,35 @@ describe('ipc', () => {
     expect(invokeMock).toHaveBeenCalledWith('mcp_list_servers');
   });
 
-  // M07.E / ADR-0015 — the import_artifact wrapper. Params are PINNED
-  // to the SHIPPED Stage C command (commands.rs:1144): three flat
-  // camelCased args `{ sourceKind, location, artifactKind }`, NOT the
-  // phase-doc-assumed `{ src, kind }` (the wire-signature-audit drift).
-  // The enriched ImportOutcome is the Rust-proven shape (the
-  // commands.rs `import_outcome_serializes_*` anchor).
-  const enrichedOutcome: ImportOutcome = {
+  // M07.5 / ADR-0017 — the import_artifact / complete_import_artifact /
+  // cancel_pending_import wrappers. import_artifact's three flat
+  // camelCased args `{ sourceKind, location, artifactKind }` are
+  // unchanged from M07.E; only the RETURN type became the discriminated
+  // ImportOutcome union (`status: 'pending' | 'installed'`). The
+  // complete_/cancel_ params are PINNED to the A.fix-shipped commands.rs
+  // signatures — a single `pendingReviewId` camelCased arg (Tauri
+  // auto-converts the snake_case Rust `pending_review_id`).
+  const pendingOutcome: ImportOutcome = {
+    status: 'pending',
+    pending_review_id: 'pri-1',
     lock_key: 'fs-test@2.0.0',
-    review_required: true,
     requires_secrets: ['OPENAI_API_KEY'],
     capabilities: ['network: api.example.com', 'shell: true'],
     l3_report: { report_id: 'vr-1', passed: true, reasons: [] },
     share_provenance: { exported_by: 'share-it@0.1.0', rebake_changes: [] },
   };
 
+  const installedOutcome: ImportOutcome = {
+    status: 'installed',
+    lock_key: 'fs-test@2.0.0',
+    requires_secrets: [],
+    capabilities: ['network: api.example.com'],
+    l3_report: { report_id: 'vr-2', passed: true, reasons: [] },
+    share_provenance: null,
+  };
+
   it('importArtifact_passes_pinned_camelCase_args_not_src_kind', async () => {
-    invokeMock.mockResolvedValueOnce(enrichedOutcome);
+    invokeMock.mockResolvedValueOnce(pendingOutcome);
     const out = await importArtifact(
       'url',
       'https://raw.githubusercontent.com/o/r/main/fs.json',
@@ -265,19 +279,36 @@ describe('ipc', () => {
     const [, arg] = invokeMock.mock.calls[0] as [string, Record<string, unknown>];
     expect(arg).not.toHaveProperty('src');
     expect(arg).not.toHaveProperty('kind');
-    // The enriched review fields round-trip unchanged.
+    // The discriminated outcome round-trips unchanged.
+    expect(out.status).toBe('pending');
     expect(out.capabilities).toEqual(['network: api.example.com', 'shell: true']);
     expect(out.l3_report.passed).toBe(true);
-    expect(out.review_required).toBe(true);
   });
 
   it('importArtifact_passes_file_source_and_mcp_kind', async () => {
-    invokeMock.mockResolvedValueOnce({ ...enrichedOutcome, share_provenance: null });
+    invokeMock.mockResolvedValueOnce(installedOutcome);
     await importArtifact('file', 'C:/tmp/server.json', 'mcp_server');
     expect(invokeMock).toHaveBeenCalledWith('import_artifact', {
       sourceKind: 'file',
       location: 'C:/tmp/server.json',
       artifactKind: 'mcp_server',
+    });
+  });
+
+  it('completeImportArtifact_invokes_complete_import_artifact_with_pinned_pendingReviewId', async () => {
+    invokeMock.mockResolvedValueOnce(installedOutcome);
+    const out = await completeImportArtifact('pri-1');
+    expect(invokeMock).toHaveBeenCalledWith('complete_import_artifact', {
+      pendingReviewId: 'pri-1',
+    });
+    expect(out.status).toBe('installed');
+  });
+
+  it('cancelPendingImport_invokes_cancel_pending_import_with_pinned_pendingReviewId', async () => {
+    invokeMock.mockResolvedValueOnce(undefined);
+    await cancelPendingImport('pri-1');
+    expect(invokeMock).toHaveBeenCalledWith('cancel_pending_import', {
+      pendingReviewId: 'pri-1',
     });
   });
 });

@@ -362,10 +362,11 @@ export interface CapabilityViolationRecord {
  * `recordImport`; the renderer reads camelCase here.
  *
  * `phase` semantics:
- * - `'review'` — Novice (`review_required: true`) sees the disclosure
- *   modal before the artifact surfaces. Promoted-within-bounds is
- *   `'installed'` directly (L4 auto-accept; the backend installed
- *   atomically — confirm-before-use is a renderer concern).
+ * - `'review'` — Novice: the backend held the import at the tier-gate
+ *   (a `'pending'` ImportOutcome — nothing installed or locked yet;
+ *   M07.5 / ADR-0017). The disclosure modal gates the real backend
+ *   install. Promoted-within-bounds is `'installed'` directly (L4
+ *   auto-accept).
  * - `'installed'` — the artifact is live in the framework; the panel
  *   shows it as a simple row.
  * - `'blocked'` — `artifact_hash_mismatch` fired (spec §2214); the
@@ -375,6 +376,13 @@ export interface CapabilityViolationRecord {
 export interface ImportRecord {
   ref: string;
   phase: 'review' | 'installed' | 'blocked';
+  /**
+   * The backend `pending_review_id` for a `'review'`-phase record
+   * (M07.5 / ADR-0017) — the renderer echoes it to
+   * `completeImportArtifact` / `cancelPendingImport`. `undefined` for
+   * `'installed'` / `'blocked'` records.
+   */
+  pendingReviewId?: string;
   capabilities: string[];
   requiresSecrets: string[];
   l3Report: { reportId: string; passed: boolean; reasons: string[] } | null;
@@ -575,9 +583,10 @@ interface GraphState {
   resolveUncertainInvocation: (invocationId: string) => void;
 
   /**
-   * M07.E: map a successful `import_artifact` outcome into the
-   * `imports` slot. `review_required: true` → `'review'`; otherwise
-   * `'installed'`. Snake_case wire keys are mapped to camelCase here.
+   * M07.5 / ADR-0017: map an `import_artifact` / `complete_import_artifact`
+   * outcome into the `imports` slot. A `'pending'` outcome → a
+   * `'review'` record carrying `pendingReviewId`; `'installed'` → an
+   * `'installed'` record. Snake_case wire keys map to camelCase here.
    */
   recordImport: (outcome: ImportOutcome) => void;
 
@@ -1739,9 +1748,11 @@ export const useGraphStore = create<GraphState>((set) => ({
         ...state.imports,
         [outcome.lock_key]: {
           ref: outcome.lock_key,
-          // Promoted-within-bounds skips the disclosure modal (L4
-          // auto-accept); Novice always gets the review modal.
-          phase: outcome.review_required ? 'review' : 'installed',
+          // M07.5 / ADR-0017: 'pending' → the review modal gates the
+          // install; 'installed' → terminal. The backend no longer
+          // installs before the review (🔴 #1 fix).
+          phase: outcome.status === 'pending' ? 'review' : 'installed',
+          pendingReviewId: outcome.status === 'pending' ? outcome.pending_review_id : undefined,
           capabilities: outcome.capabilities,
           requiresSecrets: outcome.requires_secrets,
           l3Report: {

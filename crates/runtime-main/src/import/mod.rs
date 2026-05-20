@@ -4,13 +4,17 @@
 //! Composes the artifact import flow over already-shipped primitives —
 //! it builds NOTHING that M05/M06/M07.B already provide:
 //!
-//! - **fetch** — local-file read or capability-gated URL GET. Egress is
-//!   gated through the M05 L1 `NetworkGate` (the `CapabilityEnforcer`
-//!   in production); only the user-supplied URL is hit, no phone-home
-//!   (Hard Rule 4). The real `reqwest` impl is `fetch::HttpFetcher` —
-//!   the new runtime-main OS-call-holdout coverage exclusion
-//!   `src.import.fetch.rs` (seam-tested via `fetch_with` + injected
-//!   fakes; behaviourally smoke-tested against a local `wiremock`).
+//! - **fetch** — local-file read or SSRF-hardened URL GET. URL egress
+//!   is gated through the pure `import::egress` module (ADR-0018):
+//!   `https`-only, every resolved IP classified against the non-public
+//!   ranges, the connection DNS-pinned, and every redirect hop
+//!   re-validated. Only the user-supplied URL (and any public redirect
+//!   target) is hit, no phone-home (Hard Rule 4). The real `reqwest`
+//!   impl is `fetch::HttpFetcher` + `fetch::SystemResolver` — the
+//!   runtime-main OS-call-holdout coverage exclusion
+//!   `src.import.fetch.rs`; the egress decision logic is the pure,
+//!   fully-tested `egress` module, only the socket + DNS syscalls are
+//!   the holdout.
 //! - **validate** — the schema is the source of truth (CLAUDE.md §14):
 //!   skill / tool / mcp_server are gated by deserializing into their
 //!   generated typify type. Identity (`name`/`version`) + the §15c/§15d
@@ -52,6 +56,12 @@
 /// The real `reqwest` `Fetcher` — the `src.import.fetch.rs` OS-call
 /// holdout (seam-tested; behaviourally smoke-tested via `wiremock`).
 pub mod fetch;
+
+/// Import-fetch egress security — the SSRF-hardened egress gate.
+///
+/// `classify_ip` / `check_url` / `validate_egress` (ADR-0018) — pure
+/// decision logic, fully tested to the runtime-main ≥95 gate.
+pub mod egress;
 
 use std::path::{Path, PathBuf};
 
@@ -169,6 +179,10 @@ pub struct L3Report {
 
 /// The capability disclosure the Stage E review screen renders for a
 /// Novice import (spec §M7 — "Novice sees the disclosure + L3 report").
+///
+/// `Eq` is not derived: `share_provenance` is a `serde_json::Value`,
+/// which is `PartialEq` but not `Eq`. `PartialEq` (used by `assert_eq!`)
+/// is preserved, mirroring the `Installed` struct's derive.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TierReview {
     /// Human-readable declared-capability summary for the disclosure.
@@ -177,6 +191,10 @@ pub struct TierReview {
     pub l3_report: L3Report,
     /// Secrets to provision before first run (spec §15d).
     pub requires_secrets: Vec<String>,
+    /// The ADR-0005 `share_provenance` trust block (when exported) — the
+    /// review modal renders it as a trust line. `None` when the artifact
+    /// was never exported through the trust chain.
+    pub share_provenance: Option<Value>,
 }
 
 /// A completed install.
@@ -204,6 +222,55 @@ pub struct Installed {
     /// artifact carries one; `None` when unexported (the renderer
     /// renders "No provenance" rather than synthesizing an empty block).
     pub share_provenance: Option<Value>,
+}
+
+/// A Novice import held at the tier-gate review (M07.5 / ADR-0017 — the
+/// install-after-confirm split).
+///
+/// The pipeline has already run fetch / validate / §15c / L3; the only
+/// work left is the install half — MCP-registry upsert (`mcp_server`
+/// only) + install + lock — which [`complete_import_with`] runs on the
+/// renderer's confirm.
+#[derive(Debug, Clone)]
+pub struct PendingImport {
+    art: ValidatedArtifact,
+    src: ImportSource,
+    report: L3Report,
+    tier: Tier,
+}
+
+impl PendingImport {
+    /// The `name@version` this import will lock under once completed.
+    /// The renderer keys its review record by this — it is stable across
+    /// the pending → installed transition.
+    #[must_use]
+    pub fn lock_key(&self) -> String {
+        self.art.name_at_version()
+    }
+}
+
+/// The outcome of [`import_artifact_with`] (M07.5 / ADR-0017 — the
+/// validate/commit split that closes M07.V 🔴 #1).
+///
+/// - `Installed` — the tier-gate passed (Promoted, L4 auto-accept); the
+///   artifact is installed + hash-locked inline.
+/// - `Pending` — the tier-gate requires a Novice capability-disclosure
+///   review (spec §8.security L4); NOTHING is installed or locked. The
+///   renderer shows the review screen; [`complete_import_with`] finishes
+///   the install on confirm, or the pending state is dropped on reject
+///   (nothing to roll back — the install half never ran).
+#[derive(Debug)]
+pub enum ImportOutcome {
+    /// Installed + hash-locked (Promoted / L4 auto-accept).
+    Installed(Installed),
+    /// Held for a Novice review — no install, no lock (the 🔴 #1 fix).
+    Pending {
+        /// The capability disclosure the review screen renders. Boxed
+        /// to keep the enum's variant sizes balanced.
+        review: Box<TierReview>,
+        /// The in-flight import [`complete_import_with`] finishes.
+        pending: PendingImport,
+    },
 }
 
 /// A normalized MCP-server-config import handed to the [`McpRegistry`]
@@ -247,9 +314,11 @@ pub enum ImportError {
     #[error("L3 sandbox rejected: {0:?}")]
     L3(Vec<String>),
     /// Novice tier — the renderer must show the capability-disclosure
-    /// review screen before the install is accepted (spec §M7).
+    /// review screen before the install is accepted (spec §M7). The
+    /// `TierReview` is boxed so this outcome variant does not bloat
+    /// every `Result<_, ImportError>` in the module.
     #[error("tier-gated: review required before install")]
-    TierReviewRequired(TierReview),
+    TierReviewRequired(Box<TierReview>),
     /// §15c — the artifact does not support the host OS. BLOCKING (fail
     /// loudly, checked before L3).
     #[error("compatible_os mismatch: artifact {artifact:?} vs host {host}")]
@@ -267,28 +336,19 @@ pub enum ImportError {
     Registry(String),
 }
 
-/// Fetch transport seam — the real impl is [`fetch::HttpFetcher`]
-/// (`reqwest`); tests inject a fake. Async because the real path is a
-/// network round-trip.
+/// Fetch transport seam — the real impl is [`fetch::HttpFetcher`];
+/// tests inject a fake. One hop: a body, or a redirect for
+/// [`fetch_with`] to re-validate (M07.5 / ADR-0018 — the SSRF-hardened
+/// fetch path).
 #[async_trait::async_trait]
 pub trait Fetcher: Send + Sync {
-    /// GET `url`, returning the response body bytes.
+    /// Issue one GET to the validated, DNS-pinned `target`.
     ///
     /// # Errors
     ///
-    /// Any transport / HTTP-status failure, stringified.
-    async fn get(&self, url: &str) -> Result<Vec<u8>, String>;
-}
-
-/// L1 network capability gate seam — the real impl wraps the M05
-/// `CapabilityEnforcer`; tests inject allow / deny.
-pub trait NetworkGate: Send + Sync {
-    /// Authorize egress to `host`.
-    ///
-    /// # Errors
-    ///
-    /// The deny reason when the network capability is not granted.
-    fn check(&self, host: &str) -> Result<(), String>;
+    /// Any transport / HTTP-status / body-cap failure, stringified.
+    async fn fetch_hop(&self, target: &egress::ValidatedTarget)
+        -> Result<egress::FetchHop, String>;
 }
 
 /// L3 sandbox seam — the real impl wraps `sandbox_ipc::SandboxClient`
@@ -333,46 +393,38 @@ impl Clock for SystemClock {
     }
 }
 
-/// Extract the host of a URL for the capability check. Deliberately
-/// minimal — `reqwest` performs the authoritative parse on the real
-/// GET; this only needs the authority for the L1 gate.
-fn host_of(url: &str) -> Result<String, String> {
-    let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
-    let authority = after_scheme
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or(after_scheme);
-    let host = authority.rsplit('@').next().unwrap_or(authority);
-    let host = host.split(':').next().unwrap_or(host);
-    if host.is_empty() {
-        Err(format!("cannot determine host from URL: {url}"))
-    } else {
-        Ok(host.to_string())
-    }
-}
-
 /// Fetch the artifact bytes.
 ///
-/// File reads skip the network gate; URL fetches are capability-gated
-/// through the M05 L1 enforcer BEFORE any GET (Hard Rule 4 — only the
-/// user-supplied URL is ever hit).
+/// File reads are local. URL fetches are SSRF-hardened (ADR-0018): each
+/// hop — the initial URL and every redirect target — is re-validated
+/// through [`egress::validate_egress`] (`https`-only, public-address-
+/// only, DNS-pinned) before the GET. The redirect chain is bounded by
+/// [`egress::MAX_REDIRECTS`].
 ///
 /// # Errors
 ///
-/// [`ImportError::Fetch`] for a missing file, a denied network
-/// capability, or any transport/HTTP failure.
+/// [`ImportError::Fetch`] for a missing file, an egress rejection, a
+/// transport failure, or a redirect chain past the cap.
 pub async fn fetch_with(
     src: &ImportSource,
-    gate: &dyn NetworkGate,
     get: &dyn Fetcher,
+    resolver: &dyn egress::Resolver,
 ) -> Result<Vec<u8>, ImportError> {
     match src {
         ImportSource::File(p) => std::fs::read(p).map_err(|e| ImportError::Fetch(e.to_string())),
         ImportSource::Url(u) => {
-            let host = host_of(u).map_err(ImportError::Fetch)?;
-            gate.check(&host)
-                .map_err(|e| ImportError::Fetch(format!("network capability denied: {e}")))?;
-            get.get(u).await.map_err(ImportError::Fetch)
+            let mut current = u.clone();
+            for _ in 0..=egress::MAX_REDIRECTS {
+                let target = egress::validate_egress(&current, resolver).await?;
+                match get.fetch_hop(&target).await.map_err(ImportError::Fetch)? {
+                    egress::FetchHop::Body(bytes) => return Ok(bytes),
+                    egress::FetchHop::Redirect(next) => current = next,
+                }
+            }
+            Err(ImportError::Fetch(format!(
+                "too many redirects (max {})",
+                egress::MAX_REDIRECTS
+            )))
         }
     }
 }
@@ -491,11 +543,12 @@ fn capability_summary(raw: &Value) -> Vec<String> {
 pub fn tier_gate(a: &ValidatedArtifact, tier: Tier, report: &L3Report) -> Result<(), ImportError> {
     match tier {
         Tier::Promoted => Ok(()),
-        Tier::Novice => Err(ImportError::TierReviewRequired(TierReview {
+        Tier::Novice => Err(ImportError::TierReviewRequired(Box::new(TierReview {
             capabilities: capability_summary(&a.raw),
             l3_report: report.clone(),
             requires_secrets: a.meta.requires_secrets.clone(),
-        })),
+            share_provenance: a.meta.share_provenance.clone(),
+        }))),
     }
 }
 
@@ -579,15 +632,54 @@ pub fn install_with(
         .map_err(|e| ImportError::Lock(e.to_string()))
 }
 
+/// The install half of the import pipeline — install + `skills.lock`
+/// write, then MCP-registry upsert (`mcp_server` only). Runs ONLY past a
+/// passed tier-gate: inline for Promoted, or via [`complete_import_with`]
+/// on a Novice confirm. It NEVER runs for an unconfirmed Novice review —
+/// that is the M07.V 🔴 #1 fix.
+///
+/// The MCP-registry upsert is ordered AFTER the `skills.lock` write: the
+/// lock is the ADR-0014 integrity source of truth, and the two stores
+/// are not transactionally linked — if the upsert fails after the lock
+/// is written, the artifact is locked-but-not-registered (a re-import
+/// reconciles it), the more recoverable partial state than a registry
+/// row with no lock entry.
+fn commit_import(
+    art: &ValidatedArtifact,
+    src: &ImportSource,
+    report: &L3Report,
+    tier: Tier,
+    reg: &dyn McpRegistry,
+    lock: &Path,
+    clock: &dyn Clock,
+) -> Result<Installed, ImportError> {
+    install_with(art, src, report, tier, lock, clock)?;
+    if matches!(art.kind, ArtifactKind::McpServer) {
+        reg.upsert(&mcp_import_of(art))
+            .map_err(ImportError::Registry)?;
+    }
+    Ok(Installed {
+        lock_key: art.name_at_version(),
+        report: report.clone(),
+        requires_secrets: art.meta.requires_secrets.clone(),
+        capabilities: capability_summary(&art.raw),
+        share_provenance: art.meta.share_provenance.clone(),
+    })
+}
+
 /// The full import pipeline (the unit-tested seam the Tauri command
-/// wraps): fetch → validate → §15c gate (BEFORE L3) → L3 → L4 tier-gate
-/// → MCP-registry upsert (`mcp_server` only) → install + lock.
+/// wraps): fetch → validate → §15c gate (BEFORE L3) → L3 → L4 tier-gate.
+///
+/// A passed tier-gate (Promoted, L4 auto-accept) installs + hash-locks
+/// inline; a `TierReviewRequired` (Novice) holds the import as a
+/// [`PendingImport`] and installs NOTHING — the renderer's confirm runs
+/// the held install half via [`complete_import_with`] (M07.5 / ADR-0017,
+/// closes M07.V 🔴 #1).
 ///
 /// # Errors
 ///
-/// Each stage's distinct [`ImportError`]; `TierReviewRequired` is a
-/// Novice review outcome, not a failure (the renderer drives the
-/// confirm-then-install in Stage E).
+/// Each stage's distinct [`ImportError`]. `TierReviewRequired` is NOT
+/// surfaced as an error — it is folded into [`ImportOutcome::Pending`].
 #[allow(clippy::too_many_arguments)]
 pub async fn import_artifact_with(
     src: ImportSource,
@@ -595,13 +687,13 @@ pub async fn import_artifact_with(
     tier: Tier,
     host_os: &str,
     lock: &Path,
-    gate: &dyn NetworkGate,
     get: &dyn Fetcher,
     sb: &dyn Sandbox,
     reg: &dyn McpRegistry,
+    resolver: &dyn egress::Resolver,
     clock: &dyn Clock,
-) -> Result<Installed, ImportError> {
-    let bytes = fetch_with(&src, gate, get).await?;
+) -> Result<ImportOutcome, ImportError> {
+    let bytes = fetch_with(&src, get, resolver).await?;
     let art = validate(kind, &bytes)?;
 
     // §15c — BLOCKING, and BEFORE the expensive L3 (cheap reject).
@@ -626,37 +718,56 @@ pub async fn import_artifact_with(
         reasons: Vec::new(),
     };
 
-    // L4 tier-gate is applied by the Tauri shell command (it short-
-    // circuits to surface `TierReviewRequired` to the renderer so the
-    // Stage E capability-disclosure modal gates a Novice import before
-    // it is completed). The seam itself always installs + hash-locks:
-    // the M07.B integrity model is lock-on-first-install, and the
-    // review is a renderer confirm-gate, not a backend refusal. The
-    // tier still rides into the lock entry's `tier_at_install`.
-    if matches!(kind, ArtifactKind::McpServer) {
-        reg.upsert(&mcp_import_of(&art))
-            .map_err(ImportError::Registry)?;
+    // L4 tier-gate — the M07.5 install-after-confirm gate (closes
+    // 🔴 #1). Promoted → Ok → install inline. Novice →
+    // TierReviewRequired → HOLD: nothing is upserted or locked until
+    // `complete_import_with` runs on the renderer's confirm.
+    match tier_gate(&art, tier, &report) {
+        Ok(()) => {
+            let installed = commit_import(&art, &src, &report, tier, reg, lock, clock)?;
+            Ok(ImportOutcome::Installed(installed))
+        }
+        Err(ImportError::TierReviewRequired(review)) => Ok(ImportOutcome::Pending {
+            review,
+            pending: PendingImport {
+                art,
+                src,
+                report,
+                tier,
+            },
+        }),
+        // `tier_gate` yields only `Ok` or `TierReviewRequired`; this arm
+        // keeps the match total without a panic.
+        Err(other) => Err(other),
     }
+}
 
-    install_with(&art, &src, &report, tier, lock, clock)?;
-
-    // Surface the §M7 review fields the pipeline already computes
-    // (ADR-0015 / M07.E enriched return). `capability_summary` reads
-    // the same `art.raw` block the validator parsed; `share_provenance`
-    // is the ADR-0005 trust block the validator parsed into
-    // `ArtifactMeta`; both ride the bridge alongside the existing
-    // `report` (L3) + `requires_secrets` (§15d).
-    let capabilities = capability_summary(&art.raw);
-    let lock_key = art.name_at_version();
-    let requires_secrets = art.meta.requires_secrets;
-    let share_provenance = art.meta.share_provenance;
-    Ok(Installed {
-        lock_key,
-        report,
-        requires_secrets,
-        capabilities,
-        share_provenance,
-    })
+/// Finish a Novice import the renderer confirmed at the tier-gate
+/// review (the `complete_import_artifact` Tauri command).
+///
+/// Runs the install half — install + `skills.lock` write + MCP-registry
+/// upsert — that [`import_artifact_with`] deliberately held back for the
+/// review.
+///
+/// # Errors
+///
+/// [`ImportError::Lock`] / [`ImportError::Registry`] when the lock write
+/// or the registry upsert fails.
+pub fn complete_import_with(
+    pending: &PendingImport,
+    reg: &dyn McpRegistry,
+    lock: &Path,
+    clock: &dyn Clock,
+) -> Result<Installed, ImportError> {
+    commit_import(
+        &pending.art,
+        &pending.src,
+        &pending.report,
+        pending.tier,
+        reg,
+        lock,
+        clock,
+    )
 }
 
 /// Populate `share_provenance` on a framework value at export time
@@ -698,19 +809,6 @@ pub fn read_share_provenance(artifact_json: &Value) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn host_of_extracts_authority() {
-        assert_eq!(
-            host_of("https://raw.githubusercontent.com/o/r/main/x.json").unwrap(),
-            "raw.githubusercontent.com"
-        );
-        assert_eq!(
-            host_of("https://user@h.example.com:8443/p").unwrap(),
-            "h.example.com"
-        );
-        assert!(host_of("https:///nohost").is_err());
-    }
 
     #[test]
     fn system_clock_is_post_2024() {

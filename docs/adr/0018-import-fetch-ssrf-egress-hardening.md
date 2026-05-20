@@ -1,6 +1,6 @@
 # ADR-0018: Import-fetch SSRF egress hardening
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-05-20
 **Deciders:** @kknipe2k (maintainer)
 **Tags:** import, capability, security, ssrf, network, m07.5
