@@ -72,6 +72,9 @@ fn main() {
             commands::mcp_list_servers,
             // M07.C — import pipeline
             commands::import_artifact,
+            // M07.5 — import validate/commit lifecycle (ADR-0017)
+            commands::complete_import_artifact,
+            commands::cancel_pending_import,
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();
@@ -95,6 +98,13 @@ fn main() {
             // round-trips without a new dependency.
             let global_budget: GlobalBudgetState = Mutex::new(None);
             app_handle.manage(global_budget);
+            // M07.5 §8.security L4 / ADR-0017: Novice imports held at the
+            // tier-gate review live here between import_artifact
+            // returning Pending and the renderer's complete_/cancel_
+            // call. Process-local in-memory state (v0.1 single-session);
+            // managed unconditionally so the import command trio is
+            // always wired even when MCP setup is unavailable.
+            app_handle.manage(commands::PendingImportState::default());
             // M05 Stage D §8.security L4: load the persisted tier from
             // `<app_data_dir>/tier.json` (first-run default is Novice).
             // The CurrentTierState seam is the single source of truth

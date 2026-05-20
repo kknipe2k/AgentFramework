@@ -33,8 +33,8 @@ use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use runtime_core::generated::skills_lock::SkillsLock;
 use runtime_main::import::{
-    self, ArtifactKind, Clock, Fetcher, ImportError, ImportSource, L3Report, McpRegistry,
-    McpServerImport, NetworkGate, Sandbox,
+    self, ArtifactKind, Clock, Fetcher, ImportError, ImportOutcome, ImportSource, L3Report,
+    McpRegistry, McpServerImport, NetworkGate, Sandbox,
 };
 use runtime_main::skills_lock;
 use runtime_main::tier::Tier;
@@ -463,12 +463,186 @@ fn tier_gate_novice_requires_review_promoted_passes() {
     match novice {
         ImportError::TierReviewRequired(review) => {
             assert_eq!(review.l3_report, report, "review carries the L3 report");
+            assert!(
+                review.share_provenance.is_none(),
+                "an unexported artifact carries no share_provenance trust line"
+            );
         }
         other => panic!("expected TierReviewRequired, got {other:?}"),
     }
 
     import::tier_gate(&a, Tier::Promoted, &report)
         .expect("Promoted within bounds is an L4 pass-through (auto-accept)");
+}
+
+// ── M07.5 / ADR-0017 — the validate/commit lifecycle split ──────────
+//
+// These drive the ASSEMBLED `import_artifact_with` composition (not
+// `tier_gate` in isolation — that is the M07.V Stage-V blind spot,
+// gotcha #82). The phase-doc root cause — "the pipeline installs +
+// hash-locks every artifact before a Novice Reject can refuse it" — is
+// the falsifiable hypothesis `reject_rolls_back_lock_and_registry`
+// disproves: it FAILS on `main` today, where the pipeline installs
+// unconditionally (CLAUDE.md §6 assembled-app-regression mandate).
+
+#[tokio::test]
+async fn novice_import_returns_pending_and_writes_no_lock() {
+    // The assembled-pipeline assertion Stage V never made: a Novice
+    // import driven through import_artifact_with is HELD (Pending), and
+    // NOTHING is written to skills.lock.
+    let dir = tempfile::tempdir().unwrap();
+    let lp = lock_path(&dir);
+    let outcome = import::import_artifact_with(
+        ImportSource::Url("https://raw.githubusercontent.com/o/r/main/pdf.json".into()),
+        ArtifactKind::Skill,
+        Tier::Novice,
+        "windows",
+        &lp,
+        &AllowGate,
+        &FakeFetcher {
+            body: valid_skill_bytes(),
+        },
+        &OkSandbox,
+        &PanicRegistry,
+        &FixedClock,
+    )
+    .await
+    .expect("a Novice import is held, not failed");
+
+    let ImportOutcome::Pending { pending, .. } = outcome else {
+        panic!("a Novice import must be Pending, got {outcome:?}");
+    };
+    assert_eq!(pending.lock_key(), "pdf-summarizer@1.0.0");
+    assert!(
+        !lp.exists(),
+        "a held Novice import must write NO skills.lock entry"
+    );
+}
+
+#[tokio::test]
+async fn reject_rolls_back_lock_and_registry() {
+    // ADR-0016's named regression — closes M07.V 🔴 #1 (backend). A
+    // Novice import of an mcp_server is HELD: no skills.lock entry AND
+    // no MCP registry upsert. Dropping the PendingImport (the renderer's
+    // "Reject") leaves both stores empty — there is nothing to roll
+    // back because the install half never ran. FAILS on `main` today,
+    // where import_artifact_with installs + upserts unconditionally.
+    let dir = tempfile::tempdir().unwrap();
+    let lp = lock_path(&dir);
+    let reg = RecordingRegistry::default();
+    let outcome = import::import_artifact_with(
+        ImportSource::File({
+            let p = dir.path().join("mcp.json");
+            std::fs::write(&p, valid_mcp_bytes()).unwrap();
+            p
+        }),
+        ArtifactKind::McpServer,
+        Tier::Novice,
+        "windows",
+        &lp,
+        &AllowGate,
+        &FakeFetcher { body: vec![] },
+        &OkSandbox,
+        &reg,
+        &FixedClock,
+    )
+    .await
+    .expect("a Novice mcp import is held, not failed");
+
+    let ImportOutcome::Pending { pending, .. } = outcome else {
+        panic!("a Novice import must be Pending, got {outcome:?}");
+    };
+    assert!(!lp.exists(), "a held Novice import writes no skills.lock");
+    assert!(
+        reg.upserts.lock().unwrap().is_empty(),
+        "a held Novice import performs no MCP registry upsert"
+    );
+
+    // The renderer's "Reject": drop the held import, call nothing.
+    drop(pending);
+    assert!(!lp.exists(), "after Reject, still no skills.lock entry");
+    assert!(
+        reg.upserts.lock().unwrap().is_empty(),
+        "after Reject, still no MCP registry row"
+    );
+}
+
+#[tokio::test]
+async fn complete_import_with_installs_after_a_held_review() {
+    // The renderer's "Install" confirm: complete_import_with runs the
+    // held install half — a skills.lock entry (tier_at_install novice)
+    // AND exactly one MCP registry upsert.
+    let dir = tempfile::tempdir().unwrap();
+    let lp = lock_path(&dir);
+    let reg = RecordingRegistry::default();
+    let outcome = import::import_artifact_with(
+        ImportSource::File({
+            let p = dir.path().join("mcp.json");
+            std::fs::write(&p, valid_mcp_bytes()).unwrap();
+            p
+        }),
+        ArtifactKind::McpServer,
+        Tier::Novice,
+        "windows",
+        &lp,
+        &AllowGate,
+        &FakeFetcher { body: vec![] },
+        &OkSandbox,
+        &reg,
+        &FixedClock,
+    )
+    .await
+    .expect("a Novice mcp import is held");
+
+    let ImportOutcome::Pending { pending, .. } = outcome else {
+        panic!("a Novice import must be Pending, got {outcome:?}");
+    };
+    assert!(!lp.exists(), "precondition: the held import wrote nothing");
+
+    let installed = import::complete_import_with(&pending, &reg, &lp, &FixedClock)
+        .expect("completing a held review installs");
+    assert_eq!(installed.lock_key, "pdf-mcp@0.0.0");
+
+    let v = serde_json::to_value(skills_lock::read(&lp).unwrap()).unwrap();
+    assert_eq!(v["installed"]["pdf-mcp@0.0.0"]["kind"], json!("mcp_server"));
+    assert_eq!(
+        v["installed"]["pdf-mcp@0.0.0"]["tier_at_install"],
+        json!("novice"),
+        "tier_at_install records the Novice tier at the deferred install"
+    );
+    let upserts = reg.upserts.lock().unwrap().clone();
+    assert_eq!(upserts.len(), 1, "completing a held mcp import upserts once");
+    assert_eq!(upserts[0].name, "pdf-mcp");
+}
+
+#[tokio::test]
+async fn promoted_import_installs_inline() {
+    // The Promoted L4 auto-accept path is unchanged by the split — the
+    // artifact installs + locks inline, no review held.
+    let dir = tempfile::tempdir().unwrap();
+    let lp = lock_path(&dir);
+    let outcome = import::import_artifact_with(
+        ImportSource::Url("https://raw.githubusercontent.com/o/r/main/pdf.json".into()),
+        ArtifactKind::Skill,
+        Tier::Promoted,
+        "windows",
+        &lp,
+        &AllowGate,
+        &FakeFetcher {
+            body: valid_skill_bytes(),
+        },
+        &OkSandbox,
+        &PanicRegistry,
+        &FixedClock,
+    )
+    .await
+    .expect("a Promoted import installs");
+
+    assert!(
+        matches!(outcome, ImportOutcome::Installed(_)),
+        "a Promoted import installs inline, got {outcome:?}"
+    );
+    assert!(lp.exists(), "a Promoted import writes the skills.lock entry");
 }
 
 // ── full pipeline happy path — install + skills.lock (B reuse) ──────
@@ -478,7 +652,7 @@ async fn promoted_url_import_installs_and_writes_spec_faithful_lock_entry() {
     let dir = tempfile::tempdir().unwrap();
     let lp = lock_path(&dir);
     let body = valid_skill_bytes();
-    let installed = import::import_artifact_with(
+    let outcome = import::import_artifact_with(
         ImportSource::Url("https://raw.githubusercontent.com/o/r/main/pdf.json".into()),
         ArtifactKind::Skill,
         Tier::Promoted,
@@ -493,6 +667,9 @@ async fn promoted_url_import_installs_and_writes_spec_faithful_lock_entry() {
     .await
     .expect("happy-path import succeeds");
 
+    let ImportOutcome::Installed(installed) = outcome else {
+        panic!("a Promoted import installs inline, got {outcome:?}");
+    };
     assert_eq!(installed.lock_key, "pdf-summarizer@1.0.0");
 
     // The lock entry is spec-faithful (B's shape) and the content hash
@@ -522,14 +699,17 @@ async fn promoted_url_import_installs_and_writes_spec_faithful_lock_entry() {
 async fn file_import_locks_source_as_file_shape() {
     // B carry-forward: ImportSource::File must serialize to exactly B's
     // `Source` `{ "type": "file", "path": ... }` discriminated shape.
+    // Promoted so the install commits inline (a Novice import is held —
+    // the deferred-install file-shape path is covered by
+    // `complete_import_with_installs_after_a_held_review`).
     let dir = tempfile::tempdir().unwrap();
     let lp = lock_path(&dir);
     let art = dir.path().join("local-skill.json");
     std::fs::write(&art, valid_skill_bytes()).unwrap();
-    import::import_artifact_with(
+    let outcome = import::import_artifact_with(
         ImportSource::File(art.clone()),
         ArtifactKind::Skill,
-        Tier::Novice,
+        Tier::Promoted,
         "windows",
         &lp,
         &AllowGate,
@@ -539,7 +719,11 @@ async fn file_import_locks_source_as_file_shape() {
         &FixedClock,
     )
     .await
-    .expect("Novice file import installs (review is a renderer concern; backend installs)");
+    .expect("Promoted file import installs inline");
+    assert!(
+        matches!(outcome, ImportOutcome::Installed(_)),
+        "a Promoted import installs inline, got {outcome:?}"
+    );
 
     let v = serde_json::to_value(skills_lock::read(&lp).unwrap()).unwrap();
     let src = &v["installed"]["pdf-summarizer@1.0.0"]["source"];
@@ -547,7 +731,7 @@ async fn file_import_locks_source_as_file_shape() {
     assert_eq!(src["path"], json!(art.to_string_lossy().as_ref()));
     assert_eq!(
         v["installed"]["pdf-summarizer@1.0.0"]["tier_at_install"],
-        json!("novice"),
+        json!("promoted"),
         "tier_at_install records the tier at install time (spec §2201)"
     );
 }
@@ -559,7 +743,7 @@ async fn mcp_server_config_import_lands_in_the_m06_registry() {
     let dir = tempfile::tempdir().unwrap();
     let lp = lock_path(&dir);
     let reg = RecordingRegistry::default();
-    let installed = import::import_artifact_with(
+    let outcome = import::import_artifact_with(
         ImportSource::File({
             let p = dir.path().join("mcp.json");
             std::fs::write(&p, valid_mcp_bytes()).unwrap();
@@ -578,6 +762,9 @@ async fn mcp_server_config_import_lands_in_the_m06_registry() {
     .await
     .expect("mcp-server-config import succeeds");
 
+    let ImportOutcome::Installed(installed) = outcome else {
+        panic!("a Promoted import installs inline, got {outcome:?}");
+    };
     let upserts = reg.upserts.lock().unwrap().clone();
     assert_eq!(upserts.len(), 1, "exactly one registry upsert");
     assert_eq!(upserts[0].name, "pdf-mcp");
@@ -658,7 +845,7 @@ async fn enriched_install_carries_real_capability_disclosure() {
     // is the artifact's own declaration, surfaced verbatim.
     let dir = tempfile::tempdir().unwrap();
     let lp = lock_path(&dir);
-    let installed = import::import_artifact_with(
+    let outcome = import::import_artifact_with(
         ImportSource::Url("https://raw.githubusercontent.com/o/r/main/fs.json".into()),
         ArtifactKind::Skill,
         Tier::Novice,
@@ -673,14 +860,17 @@ async fn enriched_install_carries_real_capability_disclosure() {
         &FixedClock,
     )
     .await
-    .expect("happy-path import succeeds");
+    .expect("a Novice import is held for review");
 
-    assert_eq!(installed.lock_key, "fs-test@2.0.0");
+    let ImportOutcome::Pending { review, pending } = outcome else {
+        panic!("a Novice import is held as Pending, got {outcome:?}");
+    };
+    assert_eq!(pending.lock_key(), "fs-test@2.0.0");
     // Real extraction from the artifact's declared capabilities — order
     // follows capability_summary's key walk (tools_called, network,
     // spawn_agents, then shell).
     assert_eq!(
-        installed.capabilities,
+        review.capabilities,
         vec![
             "tools_called: Read".to_string(),
             "tools_called: Write".to_string(),
@@ -688,7 +878,7 @@ async fn enriched_install_carries_real_capability_disclosure() {
             "spawn_agents: sub-agent".to_string(),
             "shell: true".to_string(),
         ],
-        "the enriched return must carry the artifact's REAL declared \
+        "the held review must carry the artifact's REAL declared \
          capability disclosure (ADR-0015)"
     );
 }
@@ -705,7 +895,7 @@ async fn enriched_install_carries_l3_report_and_present_provenance() {
     let p = dir.path().join("fw.json");
     std::fs::write(&p, serde_json::to_vec(&fw).unwrap()).unwrap();
 
-    let installed = import::import_artifact_with(
+    let outcome = import::import_artifact_with(
         ImportSource::File(p),
         ArtifactKind::Agent,
         Tier::Novice,
@@ -718,14 +908,17 @@ async fn enriched_install_carries_l3_report_and_present_provenance() {
         &FixedClock,
     )
     .await
-    .expect("provenance-carrying framework imports");
+    .expect("provenance-carrying framework is held for review");
 
-    assert!(installed.report.passed, "L3 cleared → report.passed");
+    let ImportOutcome::Pending { review, .. } = outcome else {
+        panic!("a Novice import is held as Pending, got {outcome:?}");
+    };
+    assert!(review.l3_report.passed, "L3 cleared → report.passed");
     assert!(
-        installed.report.reasons.is_empty(),
+        review.l3_report.reasons.is_empty(),
         "a passing L3 report carries no reasons"
     );
-    let prov = installed
+    let prov = review
         .share_provenance
         .as_ref()
         .expect("an exported artifact surfaces share_provenance (ADR-0005)");
@@ -744,7 +937,7 @@ async fn enriched_install_provenance_is_none_when_artifact_unexported() {
     // state, never fabricated data.
     let dir = tempfile::tempdir().unwrap();
     let lp = lock_path(&dir);
-    let installed = import::import_artifact_with(
+    let outcome = import::import_artifact_with(
         ImportSource::Url("https://raw.githubusercontent.com/o/r/main/s.json".into()),
         ArtifactKind::Skill,
         Tier::Promoted,
@@ -761,6 +954,9 @@ async fn enriched_install_provenance_is_none_when_artifact_unexported() {
     .await
     .expect("unexported import succeeds");
 
+    let ImportOutcome::Installed(installed) = outcome else {
+        panic!("a Promoted import installs inline, got {outcome:?}");
+    };
     assert!(
         installed.share_provenance.is_none(),
         "an unexported artifact has no share_provenance — None, not {{}}"

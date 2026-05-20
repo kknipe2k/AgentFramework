@@ -169,7 +169,11 @@ pub struct L3Report {
 
 /// The capability disclosure the Stage E review screen renders for a
 /// Novice import (spec §M7 — "Novice sees the disclosure + L3 report").
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Eq` is not derived: `share_provenance` is a `serde_json::Value`,
+/// which is `PartialEq` but not `Eq`. `PartialEq` (used by `assert_eq!`)
+/// is preserved, mirroring the `Installed` struct's derive.
+#[derive(Debug, Clone, PartialEq)]
 pub struct TierReview {
     /// Human-readable declared-capability summary for the disclosure.
     pub capabilities: Vec<String>,
@@ -177,6 +181,10 @@ pub struct TierReview {
     pub l3_report: L3Report,
     /// Secrets to provision before first run (spec §15d).
     pub requires_secrets: Vec<String>,
+    /// The ADR-0005 `share_provenance` trust block (when exported) — the
+    /// review modal renders it as a trust line. `None` when the artifact
+    /// was never exported through the trust chain.
+    pub share_provenance: Option<Value>,
 }
 
 /// A completed install.
@@ -204,6 +212,52 @@ pub struct Installed {
     /// artifact carries one; `None` when unexported (the renderer
     /// renders "No provenance" rather than synthesizing an empty block).
     pub share_provenance: Option<Value>,
+}
+
+/// A Novice import held at the tier-gate review (M07.5 / ADR-0017 — the
+/// install-after-confirm split). The pipeline has already run fetch /
+/// validate / §15c / L3; the only work left is the install half — MCP-
+/// registry upsert (`mcp_server` only) + install + lock — which
+/// [`complete_import_with`] runs on the renderer's confirm.
+#[derive(Debug, Clone)]
+pub struct PendingImport {
+    art: ValidatedArtifact,
+    src: ImportSource,
+    report: L3Report,
+    tier: Tier,
+}
+
+impl PendingImport {
+    /// The `name@version` this import will lock under once completed.
+    /// The renderer keys its review record by this — it is stable across
+    /// the pending → installed transition.
+    #[must_use]
+    pub fn lock_key(&self) -> String {
+        self.art.name_at_version()
+    }
+}
+
+/// The outcome of [`import_artifact_with`] (M07.5 / ADR-0017 — the
+/// validate/commit split that closes M07.V 🔴 #1).
+///
+/// - `Installed` — the tier-gate passed (Promoted, L4 auto-accept); the
+///   artifact is installed + hash-locked inline.
+/// - `Pending` — the tier-gate requires a Novice capability-disclosure
+///   review (spec §8.security L4); NOTHING is installed or locked. The
+///   renderer shows the review screen; [`complete_import_with`] finishes
+///   the install on confirm, or the pending state is dropped on reject
+///   (nothing to roll back — the install half never ran).
+#[derive(Debug)]
+pub enum ImportOutcome {
+    /// Installed + hash-locked (Promoted / L4 auto-accept).
+    Installed(Installed),
+    /// Held for a Novice review — no install, no lock (the 🔴 #1 fix).
+    Pending {
+        /// The capability disclosure the review screen renders.
+        review: TierReview,
+        /// The in-flight import [`complete_import_with`] finishes.
+        pending: PendingImport,
+    },
 }
 
 /// A normalized MCP-server-config import handed to the [`McpRegistry`]
@@ -495,6 +549,7 @@ pub fn tier_gate(a: &ValidatedArtifact, tier: Tier, report: &L3Report) -> Result
             capabilities: capability_summary(&a.raw),
             l3_report: report.clone(),
             requires_secrets: a.meta.requires_secrets.clone(),
+            share_provenance: a.meta.share_provenance.clone(),
         })),
     }
 }
@@ -579,15 +634,48 @@ pub fn install_with(
         .map_err(|e| ImportError::Lock(e.to_string()))
 }
 
+/// The install half of the import pipeline — install + `skills.lock`
+/// write, then MCP-registry upsert (`mcp_server` only). Runs ONLY past a
+/// passed tier-gate: inline for Promoted, or via [`complete_import_with`]
+/// on a Novice confirm. It NEVER runs for an unconfirmed Novice review —
+/// that is the M07.V 🔴 #1 fix.
+///
+/// The MCP-registry upsert is ordered AFTER the `skills.lock` write: the
+/// lock is the ADR-0014 integrity source of truth, and the two stores
+/// are not transactionally linked — if the upsert fails after the lock
+/// is written, the artifact is locked-but-not-registered (a re-import
+/// reconciles it), the more recoverable partial state than a registry
+/// row with no lock entry.
+fn commit_import(
+    art: &ValidatedArtifact,
+    src: &ImportSource,
+    report: &L3Report,
+    tier: Tier,
+    reg: &dyn McpRegistry,
+    lock: &Path,
+    clock: &dyn Clock,
+) -> Result<Installed, ImportError> {
+    install_with(art, src, report, tier, lock, clock)?;
+    if matches!(art.kind, ArtifactKind::McpServer) {
+        reg.upsert(&mcp_import_of(art))
+            .map_err(ImportError::Registry)?;
+    }
+    Ok(Installed {
+        lock_key: art.name_at_version(),
+        report: report.clone(),
+        requires_secrets: art.meta.requires_secrets.clone(),
+        capabilities: capability_summary(&art.raw),
+        share_provenance: art.meta.share_provenance.clone(),
+    })
+}
+
 /// The full import pipeline (the unit-tested seam the Tauri command
-/// wraps): fetch → validate → §15c gate (BEFORE L3) → L3 → L4 tier-gate
-/// → MCP-registry upsert (`mcp_server` only) → install + lock.
+/// wraps): fetch → validate → §15c gate (BEFORE L3) → L3 → install +
+/// lock → MCP-registry upsert (`mcp_server` only).
 ///
 /// # Errors
 ///
-/// Each stage's distinct [`ImportError`]; `TierReviewRequired` is a
-/// Novice review outcome, not a failure (the renderer drives the
-/// confirm-then-install in Stage E).
+/// Each stage's distinct [`ImportError`].
 #[allow(clippy::too_many_arguments)]
 pub async fn import_artifact_with(
     src: ImportSource,
@@ -600,7 +688,7 @@ pub async fn import_artifact_with(
     sb: &dyn Sandbox,
     reg: &dyn McpRegistry,
     clock: &dyn Clock,
-) -> Result<Installed, ImportError> {
+) -> Result<ImportOutcome, ImportError> {
     let bytes = fetch_with(&src, gate, get).await?;
     let art = validate(kind, &bytes)?;
 
@@ -626,37 +714,34 @@ pub async fn import_artifact_with(
         reasons: Vec::new(),
     };
 
-    // L4 tier-gate is applied by the Tauri shell command (it short-
-    // circuits to surface `TierReviewRequired` to the renderer so the
-    // Stage E capability-disclosure modal gates a Novice import before
-    // it is completed). The seam itself always installs + hash-locks:
-    // the M07.B integrity model is lock-on-first-install, and the
-    // review is a renderer confirm-gate, not a backend refusal. The
-    // tier still rides into the lock entry's `tier_at_install`.
-    if matches!(kind, ArtifactKind::McpServer) {
-        reg.upsert(&mcp_import_of(&art))
-            .map_err(ImportError::Registry)?;
-    }
+    let installed = commit_import(&art, &src, &report, tier, reg, lock, clock)?;
+    Ok(ImportOutcome::Installed(installed))
+}
 
-    install_with(&art, &src, &report, tier, lock, clock)?;
-
-    // Surface the §M7 review fields the pipeline already computes
-    // (ADR-0015 / M07.E enriched return). `capability_summary` reads
-    // the same `art.raw` block the validator parsed; `share_provenance`
-    // is the ADR-0005 trust block the validator parsed into
-    // `ArtifactMeta`; both ride the bridge alongside the existing
-    // `report` (L3) + `requires_secrets` (§15d).
-    let capabilities = capability_summary(&art.raw);
-    let lock_key = art.name_at_version();
-    let requires_secrets = art.meta.requires_secrets;
-    let share_provenance = art.meta.share_provenance;
-    Ok(Installed {
-        lock_key,
-        report,
-        requires_secrets,
-        capabilities,
-        share_provenance,
-    })
+/// Finish a Novice import the renderer confirmed at the tier-gate
+/// review (the `complete_import_artifact` Tauri command). Runs the
+/// install half — install + `skills.lock` write + MCP-registry upsert —
+/// that [`import_artifact_with`] deliberately held back for the review.
+///
+/// # Errors
+///
+/// [`ImportError::Lock`] / [`ImportError::Registry`] when the lock write
+/// or the registry upsert fails.
+pub fn complete_import_with(
+    pending: &PendingImport,
+    reg: &dyn McpRegistry,
+    lock: &Path,
+    clock: &dyn Clock,
+) -> Result<Installed, ImportError> {
+    commit_import(
+        &pending.art,
+        &pending.src,
+        &pending.report,
+        pending.tier,
+        reg,
+        lock,
+        clock,
+    )
 }
 
 /// Populate `share_provenance` on a framework value at export time
