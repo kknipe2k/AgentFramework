@@ -16,8 +16,9 @@
 //! `wiremock` server (no live network in the gate).
 
 use std::net::IpAddr;
+use std::time::Duration;
 
-use super::egress::{FetchHop, Resolver, ValidatedTarget};
+use super::egress::{FetchHop, Resolver, ValidatedTarget, MAX_BODY_BYTES};
 use super::Fetcher;
 
 /// Production `Fetcher` backed by `reqwest`.
@@ -34,8 +35,51 @@ impl HttpFetcher {
 
 #[async_trait::async_trait]
 impl Fetcher for HttpFetcher {
-    async fn fetch_hop(&self, _target: &ValidatedTarget) -> Result<FetchHop, String> {
-        todo!("M07.5 Stage B.fix green phase — HttpFetcher::fetch_hop")
+    async fn fetch_hop(&self, target: &ValidatedTarget) -> Result<FetchHop, String> {
+        let client = reqwest::Client::builder()
+            // No auto-follow — `fetch_with` re-validates each hop.
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            // DNS-pin: connect to the validated address, not a fresh
+            // resolution (the DNS-rebinding defense).
+            .resolve(&target.host, target.addr)
+            .build()
+            .map_err(|e| e.to_string())?;
+
+        let mut resp = client
+            .get(target.url.as_str())
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let status = resp.status();
+
+        if status.is_redirection() {
+            let location = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .ok_or_else(|| format!("HTTP {status}: redirect with no Location header"))?;
+            // Resolve a relative Location against the current URL.
+            let next = target.url.join(location).map_err(|e| e.to_string())?;
+            return Ok(FetchHop::Redirect(next.to_string()));
+        }
+        if !status.is_success() {
+            return Err(format!("HTTP {status}"));
+        }
+
+        // Streamed, capped body read — robust against a lying
+        // Content-Length.
+        let mut body = Vec::new();
+        while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+            body.extend_from_slice(&chunk);
+            if body.len() > MAX_BODY_BYTES {
+                return Err(format!(
+                    "response body exceeds the {MAX_BODY_BYTES}-byte import cap"
+                ));
+            }
+        }
+        Ok(FetchHop::Body(body))
     }
 }
 
@@ -45,7 +89,12 @@ pub struct SystemResolver;
 
 #[async_trait::async_trait]
 impl Resolver for SystemResolver {
-    async fn resolve(&self, _host: &str) -> Result<Vec<IpAddr>, String> {
-        todo!("M07.5 Stage B.fix green phase — SystemResolver::resolve")
+    async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, String> {
+        // The port is irrelevant to classification — 443 is a
+        // placeholder so `lookup_host` accepts the (host, port) form.
+        let addrs = tokio::net::lookup_host((host, 443_u16))
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(addrs.map(|sa| sa.ip()).collect())
     }
 }

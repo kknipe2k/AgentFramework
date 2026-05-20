@@ -46,8 +46,40 @@ pub enum EgressReject {
 /// # Errors
 ///
 /// [`EgressReject::PrivateAddress`] for any non-public address.
-pub fn classify_ip(_ip: IpAddr) -> Result<(), EgressReject> {
-    todo!("M07.5 Stage B.fix green phase — classify_ip")
+pub fn classify_ip(ip: IpAddr) -> Result<(), EgressReject> {
+    // Unwrap an IPv4-mapped IPv6 address so a mapped private address
+    // classifies as the v4 address it really is.
+    let normalized = match ip {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
+        IpAddr::V4(_) => ip,
+    };
+    let blocked = match normalized {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || v4.is_documentation()
+                // CGNAT shared address space 100.64.0.0/10.
+                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 0x40)
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                // Unique local fc00::/7.
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+                // Link-local unicast fe80::/10.
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+        }
+    };
+    if blocked {
+        Err(EgressReject::PrivateAddress(normalized))
+    } else {
+        Ok(())
+    }
 }
 
 /// Parse the raw URL and enforce the `https`-only scheme allowlist.
@@ -60,8 +92,13 @@ pub fn classify_ip(_ip: IpAddr) -> Result<(), EgressReject> {
 ///
 /// [`EgressReject::Parse`] when the URL is malformed;
 /// [`EgressReject::Scheme`] when the scheme is not `https`.
-pub fn check_url(_raw: &str) -> Result<Url, EgressReject> {
-    todo!("M07.5 Stage B.fix green phase — check_url")
+pub fn check_url(raw: &str) -> Result<Url, EgressReject> {
+    let url = Url::parse(raw).map_err(|e| EgressReject::Parse(e.to_string()))?;
+    if url.scheme() == "https" {
+        Ok(url)
+    } else {
+        Err(EgressReject::Scheme(url.scheme().to_string()))
+    }
 }
 
 /// DNS-resolution seam for egress validation.
@@ -114,10 +151,43 @@ pub enum FetchHop {
 /// [`ImportError::Fetch`] carrying the [`EgressReject`] reason, or the
 /// resolver's own failure.
 pub async fn validate_egress(
-    _raw: &str,
-    _resolver: &dyn Resolver,
+    raw: &str,
+    resolver: &dyn Resolver,
 ) -> Result<ValidatedTarget, ImportError> {
-    // Red-phase stub — the green impl awaits the injected `Resolver`.
-    tokio::task::yield_now().await;
-    todo!("M07.5 Stage B.fix green phase — validate_egress")
+    let url = check_url(raw).map_err(|r| reject_to_import(&r))?;
+    // `check_url` accepts only `https`, which always carries a host;
+    // the `None` arm is unreachable but handled without a panic.
+    let Some(raw_host) = url.host_str() else {
+        return Err(reject_to_import(&EgressReject::NoHost));
+    };
+    let host = raw_host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_string();
+    let port = url.port_or_known_default().unwrap_or(443);
+
+    let ips = resolver
+        .resolve(&host)
+        .await
+        .map_err(|e| ImportError::Fetch(format!("DNS resolution failed: {e}")))?;
+    let Some(&first) = ips.first() else {
+        return Err(reject_to_import(&EgressReject::NoAddress(host)));
+    };
+    // A host resolving to ANY non-public address is treated as hostile
+    // (a host that resolves to both public and private fails too).
+    for &ip in &ips {
+        classify_ip(ip).map_err(|r| reject_to_import(&r))?;
+    }
+    Ok(ValidatedTarget {
+        url,
+        host,
+        addr: SocketAddr::new(first, port),
+    })
+}
+
+/// Map an [`EgressReject`] onto the pipeline's [`ImportError::Fetch`]
+/// — consistent with how the old `NetworkGate` denial surfaced (no new
+/// `ImportError` variant).
+fn reject_to_import(reason: &EgressReject) -> ImportError {
+    ImportError::Fetch(format!("egress blocked: {reason:?}"))
 }

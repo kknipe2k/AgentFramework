@@ -26,6 +26,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `ImportOutcome` crosses the IPC bridge discriminated on `status`.
   Backend half only — the renderer rewire is M07.5 Stage C.fix.
 
+### Fixed — M07.5 Stage B.fix (import-fetch SSRF egress hardening — CQ-M07-1)
+
+- **The import-fetch egress is now SSRF-hardened.** The import pipeline
+  fetches a user-supplied URL server-side; `HttpFetcher`
+  (`crates/runtime-main/src/import/fetch.rs`) was `reqwest::Client::new()`
+  — auto-following up to 10 redirects with no scheme, IP, body-size, or
+  timeout limits — and `EnforcerGate` granted itself the capability
+  declaration it then checked (a tautology behind a "default-deny" doc
+  comment; simplify finding CQ-M07-1). Per **ADR-0018** (import-fetch
+  SSRF egress hardening — flipped `Proposed → Accepted`): a new pure
+  `import::egress` module — `classify_ip` rejects every non-public
+  address range (loopback, RFC-1918, link-local, CGNAT, IPv6
+  ULA/link-local, unspecified, multicast/broadcast, documentation, and
+  IPv4-mapped IPv6), `check_url` enforces `https`-only via the
+  `reqwest::Url` WHATWG parser (defeating IP-encoding tricks), and
+  `validate_egress` resolves + classifies every address through an
+  injected `Resolver` seam. `HttpFetcher` is rebuilt: redirects
+  disabled, the connection DNS-pinned to the validated address
+  (`ClientBuilder::resolve` — the DNS-rebinding defense),
+  connect/request timeouts, and a streamed body-size cap. `fetch_with`
+  drives a bounded redirect loop that re-validates EVERY hop. The
+  tautological `NetworkGate` / `EnforcerGate` and the hand-rolled
+  `host_of` URL parser are removed. No new dependency.
+
 ### Changed — M07 Stage G (closeout — gap-analysis, summary, coverage-policy reconciliation, simplify pass)
 
 - **M07 milestone closeout.** `docs/build-prompts/retrospectives/M07-summary.md`
