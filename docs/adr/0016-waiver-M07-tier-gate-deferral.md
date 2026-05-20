@@ -1,6 +1,6 @@
 # ADR-0016: Waiver — M07.V Finding #1 (tier-gate enforcement deferral to the M07.5 fix-cycle)
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-05-19
 **Deciders:** @kknipe2k (maintainer)
 **Tags:** waiver, capability, security, import, tier, scope, m07, m07.5

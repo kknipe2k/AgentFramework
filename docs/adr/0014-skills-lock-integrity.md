@@ -1,6 +1,6 @@
 # ADR-0014: skills.lock artifact-integrity primitive
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-05-18
 **Deciders:** @kknipe2k
 **Tags:** schema, security, scope

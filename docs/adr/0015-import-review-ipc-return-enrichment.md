@@ -1,6 +1,6 @@
 # ADR-0015: `import_artifact` IPC return enrichment for the §M7 review screen
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-05-19
 **Deciders:** @kknipe2k
 **Tags:** ipc, scope, security, capability
