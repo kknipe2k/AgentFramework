@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
+  cancelPendingImport,
+  completeImportArtifact,
   importArtifact,
   unwrapCmdError,
   type ImportArtifactKind,
@@ -16,23 +18,24 @@ const ARTIFACT_KINDS: readonly ImportArtifactKind[] = [
 ] as const;
 
 /**
- * Builder Import panel (M07 Stage E; MVP §M7; ADR-0015). Paste a raw
- * GitHub URL, pick a kind, click Import → the Tauri command runs the
- * fetch / schema-validate / §15c gate / L3 / install + lock pipeline
- * (Stages B + C, reused; no new backend) and returns the §M7 review
- * primitive (capability disclosure + L3 report + ADR-0005
- * share_provenance), additively enriched per ADR-0015.
+ * Builder Import panel (M07 Stage E; M07.5 / ADR-0017; MVP §M7). Paste a
+ * raw GitHub URL, pick a kind, click Import → the `import_artifact`
+ * Tauri command runs the fetch / schema-validate / §15c gate / L3 /
+ * tier-gate pipeline and returns a discriminated `ImportOutcome`.
  *
- * For Novice (`review_required: true`) the disclosure modal gates
- * confirm-before-use; Promoted-within-bounds auto-installs (L4
- * pass-through). `artifact_hash_mismatch` (spec §2214) transitions a
- * record to `'blocked'` and renders the Reinstall / Remove prompt
- * (integrity > availability — ADR-0014).
+ * For Novice the backend HOLDS the import at the tier-gate (a `'pending'`
+ * outcome — nothing installed or locked); the disclosure modal genuinely
+ * gates the install. Install runs the held backend install half
+ * (`complete_import_artifact`); Reject drops the held pending import
+ * (`cancel_pending_import`) — the M07.V 🔴 #1 fix. Promoted-within-bounds
+ * installs inline (L4 auto-accept). `artifact_hash_mismatch` (spec
+ * §2214) transitions a record to `'blocked'` and renders the Reinstall /
+ * Remove prompt (integrity > availability — ADR-0014).
  *
  * Local-file import via a native picker is deferred to a future stage
- * (needs `@tauri-apps/plugin-dialog` + Rust registration; out of this
- * stage's "no new backend" scope per ADR-0015). The wrapper already
- * accepts `'file'` sources; the surface lands when the picker does.
+ * (needs `@tauri-apps/plugin-dialog` + Rust registration). The wrapper
+ * already accepts `'file'` sources; the surface lands when the picker
+ * does.
  */
 export function ImportPanel(): JSX.Element {
   const imports = useGraphStore(useShallow((s) => Object.values(s.imports)));
@@ -66,6 +69,39 @@ export function ImportPanel(): JSX.Element {
       setError(unwrapCmdError(e));
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  // M07.5 / ADR-0017 — the tier-gate review handlers. Install runs the
+  // held backend install half; Reject drops the held pending import.
+  // The IPC lives here (the handleSubmit pattern); confirmImport /
+  // dismissImport stay pure store mutations run only after the backend
+  // command resolves.
+  async function handleInstall(item: ImportRecord): Promise<void> {
+    if (item.pendingReviewId === undefined) {
+      return;
+    }
+    setError(null);
+    try {
+      await completeImportArtifact(item.pendingReviewId);
+      confirmImport(item.ref);
+    } catch (e) {
+      console.error('complete_import_artifact error:', e);
+      setError(unwrapCmdError(e));
+    }
+  }
+
+  async function handleReject(item: ImportRecord): Promise<void> {
+    if (item.pendingReviewId === undefined) {
+      return;
+    }
+    setError(null);
+    try {
+      await cancelPendingImport(item.pendingReviewId);
+      dismissImport(item.ref);
+    } catch (e) {
+      console.error('cancel_pending_import error:', e);
+      setError(unwrapCmdError(e));
     }
   }
 
@@ -150,8 +186,8 @@ export function ImportPanel(): JSX.Element {
       {reviewItem !== null && (
         <ReviewModal
           item={reviewItem}
-          onInstall={() => confirmImport(reviewItem.ref)}
-          onReject={() => dismissImport(reviewItem.ref)}
+          onInstall={() => void handleInstall(reviewItem)}
+          onReject={() => void handleReject(reviewItem)}
         />
       )}
     </section>
