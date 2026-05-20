@@ -1410,9 +1410,28 @@ mod tests {
         );
     }
 
-    /// Provider that emits a single MCP-shaped `ToolUse` then stops, so
-    /// the M06.F injection-seam test drives the run-loop interception.
-    struct McpToolProvider;
+    /// Provider that emits an MCP-shaped `ToolUse` on the FIRST turn,
+    /// then — on every subsequent turn — emits only `MessageStop`,
+    /// modelling a real LLM that requests a tool once, receives the
+    /// result, and answers.
+    ///
+    /// The turn counter is load-bearing (D2-latent deadlock fix, M07
+    /// `fix(M07)`): M07.D2 made `run_smoke_session_with` drive the
+    /// multi-turn `run_agent` loop, which re-streams after every
+    /// dispatched tool. A provider that yielded `ToolUse`
+    /// *unconditionally* would dispatch on every turn, so the loop
+    /// never breaks early — it runs to `MAX_AGENT_TURNS`, emitting
+    /// ~3 events/turn into the test's bounded `mpsc::channel(16)` that
+    /// is only drained *after* the run returns. The channel fills
+    /// around turn 5 and `emit().await` (`tx.send().await`) blocks
+    /// forever — a deadlock (production is unaffected: the real
+    /// `run_smoke_session` spawns `forward_events` to drain
+    /// concurrently). Yielding no `ToolUse` on turn 2 leaves
+    /// `TurnFeedback::dispatched` empty so `run_agent` terminates.
+    #[derive(Default)]
+    struct McpToolProvider {
+        turn: std::sync::atomic::AtomicUsize,
+    }
 
     #[async_trait]
     impl LLMProvider for McpToolProvider {
@@ -1434,17 +1453,33 @@ mod tests {
             &self,
             _config: AgentConfig,
         ) -> Result<BoxStream<'_, ProviderEvent>, ProviderError> {
-            Ok(Box::pin(futures::stream::iter(vec![
-                ProviderEvent::ToolUse {
-                    id: "t1".to_string(),
-                    name: "pdf-mcp__extract_text".to_string(),
-                    input: serde_json::json!({"path": "doc.pdf"}),
-                },
-                ProviderEvent::MessageStop {
-                    stop_reason: "end_turn".to_string(),
-                    total_tokens: None,
-                },
-            ])))
+            let turn = self.turn.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if turn == 0 {
+                // Turn 1 — the model requests an MCP tool.
+                Ok(Box::pin(futures::stream::iter(vec![
+                    ProviderEvent::ToolUse {
+                        id: "t1".to_string(),
+                        name: "pdf-mcp__extract_text".to_string(),
+                        input: serde_json::json!({"path": "doc.pdf"}),
+                    },
+                    ProviderEvent::MessageStop {
+                        stop_reason: "tool_use".to_string(),
+                        total_tokens: None,
+                    },
+                ])))
+            } else {
+                // Turn 2+ — tool result fed back; the model answers and
+                // ends. No further `ToolUse` ⇒ the multi-turn loop's
+                // `TurnFeedback::dispatched` is empty ⇒ `run_agent`
+                // breaks. This is what makes the bounded test channel
+                // sufficient (a handful of events, not MAX_AGENT_TURNS×).
+                Ok(Box::pin(futures::stream::iter(vec![
+                    ProviderEvent::MessageStop {
+                        stop_reason: "end_turn".to_string(),
+                        total_tokens: None,
+                    },
+                ])))
+            }
         }
         async fn count_tokens(&self, _m: &[Message]) -> Result<u64, ProviderError> {
             Ok(0)
@@ -1492,7 +1527,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(16);
         let drone = Arc::new(DroneClient::noop());
         run_smoke_session_with(
-            McpToolProvider,
+            McpToolProvider::default(),
             tx,
             drone,
             smoke_config(),
