@@ -134,6 +134,22 @@ describe('ImportPanel', () => {
     expect(useGraphStore.getState().imports['fs-test@2.0.0']?.phase).toBe('installed');
   });
 
+  it('install_surfaces_an_error_when_complete_import_artifact_fails', async () => {
+    // A backend failure of the held install half surfaces via setError;
+    // the record stays in 'review' — it is NOT promoted to 'installed'.
+    invokeMock
+      .mockResolvedValueOnce(pendingOutcome) // import_artifact
+      .mockRejectedValueOnce({ type: 'internal', message: 'install failed' });
+    render(<ImportPanel />);
+    await userEvent.type(screen.getByTestId('import-url'), 'https://x/y.json');
+    await userEvent.click(screen.getByTestId('import-submit'));
+    await screen.findByTestId('import-review-modal');
+
+    await userEvent.click(screen.getByTestId('import-install'));
+    expect(await screen.findByText(/internal: install failed/)).toBeInTheDocument();
+    expect(useGraphStore.getState().imports['fs-test@2.0.0']?.phase).toBe('review');
+  });
+
   it('reject_invokes_cancel_pending_import', async () => {
     // M07.V 🔴 #1 closure. The prior reject_dismisses_the_import_record
     // (below) asserted ONLY that the local store record was deleted —
@@ -163,6 +179,47 @@ describe('ImportPanel', () => {
 
     await userEvent.click(screen.getByTestId('import-reject'));
     await waitFor(() => expect(useGraphStore.getState().imports['fs-test@2.0.0']).toBeUndefined());
+  });
+
+  it('reject_surfaces_an_error_when_cancel_pending_import_fails', async () => {
+    // A backend failure of cancel_pending_import surfaces via setError;
+    // the local record is NOT dismissed (the store action runs only
+    // after the IPC resolves).
+    invokeMock
+      .mockResolvedValueOnce(pendingOutcome) // import_artifact
+      .mockRejectedValueOnce({ type: 'internal', message: 'cancel failed' });
+    render(<ImportPanel />);
+    await userEvent.type(screen.getByTestId('import-url'), 'https://x/y.json');
+    await userEvent.click(screen.getByTestId('import-submit'));
+    await screen.findByTestId('import-review-modal');
+
+    await userEvent.click(screen.getByTestId('import-reject'));
+    expect(await screen.findByText(/internal: cancel failed/)).toBeInTheDocument();
+    expect(useGraphStore.getState().imports['fs-test@2.0.0']).toBeDefined();
+  });
+
+  it('install_and_reject_are_no_ops_when_the_review_record_lacks_a_pending_id', async () => {
+    // Defensive guard: a 'review' record with no pendingReviewId is never
+    // produced by recordImport, but the field is optional on ImportRecord.
+    // Install / Reject must not fire a backend command for such a record.
+    useGraphStore.setState({
+      imports: {
+        'fs-test@2.0.0': {
+          ref: 'fs-test@2.0.0',
+          phase: 'review',
+          capabilities: [],
+          requiresSecrets: [],
+          l3Report: null,
+          shareProvenance: null,
+        },
+      },
+    });
+    render(<ImportPanel />);
+    await screen.findByTestId('import-review-modal');
+
+    await userEvent.click(screen.getByTestId('import-install'));
+    await userEvent.click(screen.getByTestId('import-reject'));
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 
   it('artifact_hash_mismatch_surfaces_a_blocking_reinstall_remove_prompt', async () => {
