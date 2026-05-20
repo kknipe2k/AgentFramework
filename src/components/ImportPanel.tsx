@@ -289,6 +289,12 @@ function describeProvenance(prov: unknown): string {
   if (prov === null || prov === undefined) {
     return 'No provenance — this artifact was not exported through the trust chain.';
   }
+  // A non-object provenance value is malformed — treat it as absent
+  // rather than letting the cast below fall through to the "rebaked"
+  // branch (CQ-M07-4). `null` is already handled above.
+  if (typeof prov !== 'object') {
+    return 'No provenance — this artifact was not exported through the trust chain.';
+  }
   // ADR-0005: rebake_changes [] = runtime-to-runtime transfer, no
   // rebaking. A non-empty rebake_changes is a v1.0 Share It path.
   const rec = prov as { rebake_changes?: unknown };
