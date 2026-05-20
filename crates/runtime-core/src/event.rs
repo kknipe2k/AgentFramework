@@ -778,6 +778,23 @@ pub enum AgentEvent {
         /// Human-readable deny cause (rendered verbatim).
         reason: String,
     },
+
+    // ── Registry import integrity (spec §2181-2216, M07 Stage B) ──
+    /// An installed artifact's recomputed SRI content hash no longer
+    /// matches the hash locked in `skills.lock` — spec §2214; ADR-0014.
+    /// The load path BLOCKS the artifact's use (integrity > availability)
+    /// and the renderer surfaces a Reinstall / Remove prompt (M07 Stage
+    /// E). Mirrors `event.v1.json` `ArtifactHashMismatch`; hand-rolled
+    /// here per the `BudgetWarn` / `McpRequestBlocked` curated-union
+    /// precedent (typify generates the parallel artifact).
+    ArtifactHashMismatch {
+        /// `name@version` of the drifted artifact.
+        artifact_ref: String,
+        /// The SRI hash recorded in `skills.lock` at install time.
+        expected: String,
+        /// The SRI hash recomputed over the bytes on disk now.
+        actual: String,
+    },
 }
 
 #[cfg(test)]

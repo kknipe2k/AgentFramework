@@ -749,4 +749,155 @@ mod tests {
             "got: {result:?}"
         );
     }
+
+    /// TD-002 — `read_signals` must succeed twice in sequence on the
+    /// same client. Mirrors `query_session_db_succeeds_twice_in_sequence`
+    /// for the second of the three drone-IPC read methods that compose
+    /// `send_with_reconnect` + `await_event` + `next_event`. Pins the
+    /// borrow-not-move multi-call invariant per-method (defense in depth
+    /// over `connection::next_event_returns_consecutive_events_without_consuming_reader`).
+    #[tokio::test]
+    async fn read_signals_succeeds_twice_in_sequence() {
+        use std::pin::Pin;
+        use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+
+        type DynRead = Pin<Box<dyn AsyncRead + Send + Unpin>>;
+        type DynWrite = Pin<Box<dyn AsyncWrite + Send + Unpin>>;
+        let (a, b) = tokio::io::duplex(4096);
+        let (a_rd, a_wr) = tokio::io::split(a);
+        let (b_rd, mut b_wr) = tokio::io::split(b);
+        let conn = Connection::from_streams(
+            "/test",
+            Box::pin(a_rd) as DynRead,
+            Box::pin(a_wr) as DynWrite,
+        );
+        let sl1 = serde_json::to_string(&DroneEvent::SignalLog {
+            signals: vec![serde_json::json!({"call": "first"})],
+        })
+        .unwrap();
+        let sl2 = serde_json::to_string(&DroneEvent::SignalLog {
+            signals: vec![serde_json::json!({"call": "second"})],
+        })
+        .unwrap();
+        b_wr.write_all(format!("{sl1}\n{sl2}\n").as_bytes())
+            .await
+            .expect("write peer");
+        b_wr.flush().await.expect("flush");
+        drop(b_rd);
+
+        let client = DroneClient {
+            inner: tokio::sync::Mutex::new(conn),
+        };
+
+        let first = client
+            .read_signals("s1".to_string())
+            .await
+            .expect("first read_signals");
+        assert_eq!(first[0].get("call").and_then(|v| v.as_str()), Some("first"));
+        let second = client
+            .read_signals("s1".to_string())
+            .await
+            .expect("second read_signals must also succeed (TD-002)");
+        assert_eq!(
+            second[0].get("call").and_then(|v| v.as_str()),
+            Some("second")
+        );
+    }
+
+    /// TD-002 — `recover_session` must succeed twice in sequence on the
+    /// same client. The third drone-IPC read method composing the
+    /// borrow-not-move `next_event` path; closes the TD-002 per-method
+    /// coverage gap alongside `read_signals_succeeds_twice_in_sequence`.
+    #[tokio::test]
+    async fn recover_session_succeeds_twice_in_sequence() {
+        use std::pin::Pin;
+        use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+
+        type DynRead = Pin<Box<dyn AsyncRead + Send + Unpin>>;
+        type DynWrite = Pin<Box<dyn AsyncWrite + Send + Unpin>>;
+        let (a, b) = tokio::io::duplex(4096);
+        let (a_rd, a_wr) = tokio::io::split(a);
+        let (b_rd, mut b_wr) = tokio::io::split(b);
+        let conn = Connection::from_streams(
+            "/test",
+            Box::pin(a_rd) as DynRead,
+            Box::pin(a_wr) as DynWrite,
+        );
+        let sr1 = serde_json::to_string(&DroneEvent::SessionRecovered {
+            snapshot_id: Some("snap-first".to_string()),
+            state: serde_json::json!({}),
+            plans: vec![],
+            tasks: vec![],
+            uncertain_tool_invocations: vec![],
+        })
+        .unwrap();
+        let sr2 = serde_json::to_string(&DroneEvent::SessionRecovered {
+            snapshot_id: Some("snap-second".to_string()),
+            state: serde_json::json!({}),
+            plans: vec![],
+            tasks: vec![],
+            uncertain_tool_invocations: vec![],
+        })
+        .unwrap();
+        b_wr.write_all(format!("{sr1}\n{sr2}\n").as_bytes())
+            .await
+            .expect("write peer");
+        b_wr.flush().await.expect("flush");
+        drop(b_rd);
+
+        let client = DroneClient {
+            inner: tokio::sync::Mutex::new(conn),
+        };
+
+        let first = client
+            .recover_session("s1".to_string())
+            .await
+            .expect("first recover_session");
+        assert_eq!(first.snapshot_id.as_deref(), Some("snap-first"));
+        let second = client
+            .recover_session("s1".to_string())
+            .await
+            .expect("second recover_session must also succeed (TD-002)");
+        assert_eq!(second.snapshot_id.as_deref(), Some("snap-second"));
+    }
+
+    /// M04 🟡 per-module coverage close — the `read_signals` Codec-on-
+    /// rejection-alert error branch. Mirrors
+    /// `query_session_db_rejection_alert_surfaces_as_codec_error` for the
+    /// `read_signals` filter arm (`Alert` message starting with
+    /// `"read_signals"` re-tagged as `DroneIpcError::Codec`), the
+    /// uncovered error path lifting `drone_ipc/client.rs` within the
+    /// runtime-main ≥95 gate.
+    #[tokio::test]
+    async fn read_signals_rejection_alert_surfaces_as_codec_error() {
+        use std::pin::Pin;
+        use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+
+        type DynRead = Pin<Box<dyn AsyncRead + Send + Unpin>>;
+        type DynWrite = Pin<Box<dyn AsyncWrite + Send + Unpin>>;
+        let (a, b) = tokio::io::duplex(4096);
+        let (a_rd, a_wr) = tokio::io::split(a);
+        let (b_rd, mut b_wr) = tokio::io::split(b);
+        let conn = Connection::from_streams(
+            "/test",
+            Box::pin(a_rd) as DynRead,
+            Box::pin(a_wr) as DynWrite,
+        );
+        let alert = serde_json::to_string(&DroneEvent::Alert {
+            level: runtime_core::AlertLevel::Critical,
+            message: "read_signals rejected: unknown session".to_string(),
+        })
+        .unwrap();
+        b_wr.write_all(format!("{alert}\n").as_bytes())
+            .await
+            .expect("write");
+        b_wr.flush().await.expect("flush");
+        drop(b_rd);
+
+        let client = DroneClient {
+            inner: tokio::sync::Mutex::new(conn),
+        };
+        let result = client.read_signals("s1".to_string()).await;
+        assert!(matches!(result, Err(DroneIpcError::Codec(_))));
+    }
 }

@@ -22,36 +22,8 @@ use serde_json::json;
 use tempfile::TempDir;
 use uuid::Uuid;
 
-fn drone_binary() -> std::path::PathBuf {
-    let mut p = std::env::current_exe().expect("current_exe");
-    p.pop();
-    if p.ends_with("deps") {
-        p.pop();
-    }
-    #[cfg(windows)]
-    p.push("runtime-drone.exe");
-    #[cfg(unix)]
-    p.push("runtime-drone");
-    p
-}
-
-fn ensure_drone_built() {
-    let bin = drone_binary();
-    if !bin.exists() {
-        let target_dir = bin.parent().expect("parent");
-        let mut cmd = std::process::Command::new(env!("CARGO"));
-        cmd.args(["build", "--bin", "runtime-drone"]);
-        if std::env::var_os("CARGO_TARGET_DIR").is_none() {
-            cmd.env(
-                "CARGO_TARGET_DIR",
-                target_dir.parent().expect("profile parent"),
-            );
-        }
-        let status = cmd.status().expect("cargo build");
-        assert!(status.success(), "drone build failed");
-    }
-    assert!(bin.exists(), "drone binary missing at {}", bin.display());
-}
+mod common;
+use common::{drone_binary, ensure_drone_built};
 
 #[cfg(unix)]
 fn make_socket(dir: &std::path::Path) -> std::path::PathBuf {

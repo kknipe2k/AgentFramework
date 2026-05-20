@@ -38,7 +38,7 @@ use tokio::sync::RwLock;
 use crate::namespace::NamespaceError;
 
 use crate::error::McpError;
-use crate::namespace::NamespaceResolver;
+use crate::namespace::{NamespaceResolver, NewAmbiguity};
 use crate::transport::Connection;
 
 /// Seam that yields a live [`Connection`] for a resolved server name.
@@ -116,6 +116,44 @@ impl McpDispatcher {
             audit,
             session_id: session_id.into(),
         }
+    }
+
+    /// §5a step 5 — re-resolution on server connect (ADR-0011 (b);
+    /// M06.V 🟡 #1's "no production driver").
+    ///
+    /// Authored against `McpDispatcher`, NOT `McpClient`: the
+    /// [`NamespaceResolver`] lives here per ADR-0010, so the production
+    /// driver belongs here too. `McpClient` only *impls*
+    /// [`ConnectionResolver`] (ADR-0011 (a)); the resolver re-evaluation
+    /// is the dispatcher's responsibility. This is the M06.V Dec-6
+    /// `<wire_trace_vs_adr_reconcile>` #6 reconciliation made concrete.
+    ///
+    /// Snapshots the connected server's tool set (through the same
+    /// injected [`ConnectionResolver`] dispatch uses) into the resolver
+    /// and returns the short names that BECAME ambiguous as a result —
+    /// the caller (D2's agent-with-tools loop) emits a
+    /// `tool_alias_ambiguous` event per [`NewAmbiguity`].
+    ///
+    /// # Errors
+    ///
+    /// - [`McpError`] when the server connection or its `list_tools`
+    ///   handshake fails.
+    pub async fn on_server_connected(&self, server: &str) -> Result<Vec<NewAmbiguity>, McpError> {
+        let connection = self.connections.connection(server).await?;
+        let tools = connection.list_tools().await?;
+        let names: Vec<String> = tools.into_iter().map(|t| t.name).collect();
+        Ok(self.resolver.write().await.connect_server(server, names))
+    }
+
+    /// §5a step 5 — re-resolution on server disconnect (ADR-0011 (b)).
+    ///
+    /// Drops the server from the resolver snapshot so subsequent
+    /// `resolve` calls reflect the smaller connected set. A disconnect
+    /// can only REMOVE ambiguity, never introduce it, so there is no
+    /// new-ambiguity delta to surface (mirrors
+    /// [`NamespaceResolver::disconnect_server`]).
+    pub async fn on_server_disconnected(&self, server: &str) {
+        self.resolver.write().await.disconnect_server(server);
     }
 }
 

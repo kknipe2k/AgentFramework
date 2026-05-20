@@ -24,6 +24,7 @@
 
 pub mod auth;
 pub mod auth_keyring;
+pub mod connection_resolver;
 pub mod error;
 pub mod lifecycle;
 pub mod registry;
@@ -32,6 +33,13 @@ pub use auth::{InMemorySecretStore, SecretStore, MCP_KEYRING_SERVICE};
 pub use auth_keyring::KeyringSecretStore;
 pub use error::LifecycleError;
 pub use registry::{McpServerRecord, Registry};
+
+/// CQ-6 — the server connection status is the schema-generated
+/// `McpServerStatus` enum (`schemas/mcp.v1.json#/$defs/McpServerStatus`,
+/// shipped M06.B), re-exported as `ServerStatus`. Hand-writing it would
+/// violate Hard Rule 5; the registry round-trips it via the generated
+/// `Display`/`FromStr` at the `SQLite` TEXT boundary.
+pub use runtime_core::generated::mcp::McpServerStatus as ServerStatus;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -64,8 +72,8 @@ pub struct McpServerSummary {
     pub transport: String,
     /// True iff a per-server auth secret is registered.
     pub has_auth: bool,
-    /// Current connection status.
-    pub status: String,
+    /// Current connection status (CQ-6 — the generated schema enum).
+    pub status: ServerStatus,
 }
 
 impl McpClient {
@@ -332,22 +340,32 @@ impl McpClient {
                 .map(|(k, v)| (k.clone(), Arc::clone(v)))
                 .collect()
         };
+        // EFF-4 — accumulate every server's outcome and persist the
+        // whole pass in ONE batched registry transaction (was K
+        // sequential `update_last_alive` calls). CQ-6 — the persisted
+        // value is the `ServerStatus` enum: a successful ping is
+        // `Connected`, a failed one `Error`. Atomic across the pass so
+        // the multi-server path (an M07 registry may hold >1 server)
+        // never observes a half-written set.
+        let ts = i64::try_from(audit::entry::now_unix_ms()).unwrap_or(i64::MAX);
+        let mut updates: Vec<(String, ServerStatus, i64)> = Vec::with_capacity(snapshot.len());
         let mut to_drop = Vec::new();
         for (name, conn) in &snapshot {
             match conn.ping().await {
-                Ok(()) => {
-                    // Best-effort timestamp persistence; failures don't
-                    // change the health-pass outcome.
-                    let ts = i64::try_from(audit::entry::now_unix_ms()).unwrap_or(i64::MAX);
-                    if let Err(e) = self.registry.update_last_alive(name, ts) {
-                        tracing::warn!(error = %e, name = %name, "registry update_last_alive failed");
-                    }
-                }
+                Ok(()) => updates.push((name.clone(), ServerStatus::Connected, ts)),
                 Err(e) => {
                     tracing::warn!(error = %e, name = %name, "MCP health-ping failed; emitting mcp_missing");
                     emit_missing(name);
+                    updates.push((name.clone(), ServerStatus::Error, ts));
                     to_drop.push(name.clone());
                 }
+            }
+        }
+        if !updates.is_empty() {
+            // Best-effort persistence per spec §13.5 — a registry write
+            // failure logs + continues; it does not gate the pass.
+            if let Err(e) = self.registry.update_health_batch(&updates) {
+                tracing::warn!(error = %e, "registry health-batch update failed");
             }
         }
         if !to_drop.is_empty() {
@@ -423,7 +441,10 @@ fn config_to_record(config: &McpServerConfig) -> McpServerRecord {
         cwd,
         url,
         auth_secret_ref: config.auth_secret_ref.clone(),
-        status: "configured".to_string(),
+        // CQ-6 — a freshly-added server is `disconnected` until the
+        // first health pass / connect (schema transition
+        // `disconnected → health_pending → connected on add`).
+        status: ServerStatus::Disconnected,
     }
 }
 

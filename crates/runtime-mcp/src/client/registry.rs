@@ -26,6 +26,7 @@ use std::sync::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::client::error::LifecycleError;
+use crate::client::ServerStatus;
 
 /// `SQLite` registry handle. Mutex-guarded around the rusqlite Connection
 /// because rusqlite's Connection is `Send` but not `Sync`.
@@ -73,9 +74,11 @@ pub struct McpServerRecord {
     /// Per-server keychain-key reference, when an auth secret is stored.
     /// Renamed from `auth_token_ref` at M06.C migration 002.
     pub auth_secret_ref: Option<String>,
-    /// Server connection status — `configured` | `connected` | `errored`
-    /// | `disabled` | `failed`. Driven by lifecycle health-pings.
-    pub status: String,
+    /// Server connection status (CQ-6 — the schema-generated
+    /// [`ServerStatus`] enum: `connected` | `disconnected` |
+    /// `health_pending` | `error`). Driven by lifecycle health-pings;
+    /// stored in the TEXT column via the generated `Display`/`FromStr`.
+    pub status: ServerStatus,
 }
 
 impl Registry {
@@ -130,7 +133,7 @@ impl Registry {
                     record.cwd,
                     record.url,
                     record.auth_secret_ref,
-                    record.status,
+                    record.status.to_string(),
                     now,
                 ],
             )
@@ -230,9 +233,60 @@ impl Registry {
         result?;
         Ok(())
     }
+
+    /// EFF-4 — persist a whole health pass in ONE transaction.
+    ///
+    /// `run_health_pass` previously issued K sequential `UPDATE`s (one
+    /// `update_last_alive` per server, no status write). This applies
+    /// every server's `(name, status, ts)` in a single transaction so
+    /// the multi-server set is updated atomically with one fsync and a
+    /// reader never observes a half-written pass. Each tuple writes the
+    /// CQ-6 [`ServerStatus`] (serialized via the generated `Display`) +
+    /// `last_connected_at`/`updated_at`. A name with no matching row is
+    /// a silent no-op (the server was removed mid-pass).
+    ///
+    /// # Errors
+    ///
+    /// - [`LifecycleError::Registry`] when the transaction or any
+    ///   statement fails (the whole pass rolls back).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the inner connection mutex is poisoned.
+    pub fn update_health_batch(
+        &self,
+        updates: &[(String, ServerStatus, i64)],
+    ) -> Result<(), LifecycleError> {
+        let mut conn = self.conn.lock().expect("registry conn mutex poisoned");
+        let tx = conn.transaction()?;
+        {
+            let mut up = tx.prepare(
+                "UPDATE mcp_servers SET status = ?1, last_connected_at = ?2, \
+                 updated_at = ?2 WHERE name = ?3",
+            )?;
+            for (name, status, ts) in updates {
+                up.execute(params![status.to_string(), ts, name])?;
+            }
+        }
+        tx.commit()?;
+        drop(conn);
+        Ok(())
+    }
 }
 
 fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<McpServerRecord> {
+    // CQ-6 — the status TEXT column round-trips through the generated
+    // `FromStr`. A value outside the schema enum is registry corruption,
+    // surfaced as a conversion failure (→ `LifecycleError::Registry`)
+    // rather than silently coerced.
+    let status_str: String = row.get(8)?;
+    let status = status_str.parse::<ServerStatus>().map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(
+            8,
+            rusqlite::types::Type::Text,
+            format!("invalid McpServerStatus {status_str:?}: {e}").into(),
+        )
+    })?;
     Ok(McpServerRecord {
         name: row.get(0)?,
         transport: row.get(1)?,
@@ -242,7 +296,7 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<McpServerRecord> {
         cwd: row.get(5)?,
         url: row.get(6)?,
         auth_secret_ref: row.get(7)?,
-        status: row.get(8)?,
+        status,
     })
 }
 

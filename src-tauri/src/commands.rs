@@ -40,6 +40,11 @@ use runtime_core::event::AgentEvent;
 use runtime_core::CmdError;
 use runtime_main::drone_ipc::{DroneClient, RecoveredSession};
 use runtime_main::hitl::{HitlChoice, HitlError, HitlSeam};
+use runtime_main::import::fetch::HttpFetcher;
+use runtime_main::import::{
+    self, ArtifactKind, ImportError, ImportSource, McpRegistry, McpServerImport, NetworkGate,
+    Sandbox, SystemClock,
+};
 use runtime_main::key_store::{read_api_key, write_api_key, KeyStoreError};
 use runtime_main::providers::anthropic::AnthropicProvider;
 use runtime_main::providers::{AgentConfig, ContentBlock, LLMProvider, Message, MessageRole};
@@ -47,11 +52,13 @@ use runtime_main::recovery::{
     request_resume_with, respond_uncertainty_with, ResumeError, ResumePlan, UncertaintyError,
     UncertaintyResolution,
 };
+use runtime_main::sandbox_ipc::SandboxClient;
 use runtime_main::sdk::{
     replay_signals_to_events, AgentSdk, ApprovalDecision, ApprovalError, ApprovalSeam,
     McpToolDispatch, SessionId,
 };
 use runtime_main::tier::{save_tier, Tier, TierPersistenceError};
+use runtime_mcp::client::registry::{McpServerRecord, Registry};
 use runtime_mcp::client::{McpClient, McpServerSummary};
 use runtime_mcp::transport::McpTool;
 use serde_json::Value;
@@ -128,15 +135,31 @@ pub async fn run_smoke_session(
     let (tx, rx) = mpsc::channel::<AgentEvent>(64);
     let app_clone = app.clone();
     let forwarder = tokio::spawn(forward_events(rx, app_clone));
-    // Per ADR-0011, the production wrapper passes `None`: the concrete
-    // `McpDispatcher` is not constructible in-shell (no
-    // `impl ConnectionResolver for McpClient`; no shell enforcer) and
-    // the no-tools smoke prompt emits no `ProviderEvent::ToolUse`. The
-    // construction + a live agent-loop exercise are the M07
-    // carry-forward; the `*_with` injection seam below is what M06.F
-    // delivers + mock-tests.
-    let result =
-        run_smoke_session_with(provider, tx, drone_client, smoke_config(), None, session_id).await;
+    // ADR-0011 (a)-(c) discharged at M07.D1: the concrete
+    // `McpDispatcher` is now constructible in-shell
+    // (`build_mcp_dispatcher`), so the production wrapper threads
+    // `Some(dispatcher)` instead of M06.F's `None`. The dispatcher is
+    // built only when the `McpClient` opened at startup (best-effort
+    // per spec §13.5 — without it the no-tools smoke still runs). The
+    // no-tools smoke prompt emits no `ProviderEvent::ToolUse`, so the
+    // dispatcher is constructed-but-not-exercised here; D2's
+    // agent-with-tools loop is what drives it.
+    let mcp_dispatch: Option<Arc<dyn McpToolDispatch>> =
+        app.try_state::<Arc<McpClient>>().map(|client| {
+            let audit = app
+                .try_state::<Arc<runtime_main::audit::AuditWriter>>()
+                .map(|w| w.inner().clone());
+            build_mcp_dispatcher(client.inner().clone(), audit, &session_id)
+        });
+    let result = run_smoke_session_with(
+        provider,
+        tx,
+        drone_client,
+        smoke_config(),
+        mcp_dispatch,
+        session_id,
+    )
+    .await;
     drop(api_key);
     // Wait for the forwarder to drain any final events before returning.
     let _ = forwarder.await;
@@ -154,9 +177,10 @@ pub async fn run_smoke_session(
 /// `mcp_dispatch` is the M06.F (ADR-0010 + ADR-0011) composition-root
 /// injection seam: when `Some`, it is composed onto the SDK via
 /// [`AgentSdk::with_mcp_dispatch`] so the run loop intercepts
-/// `ProviderEvent::ToolUse` through it. Production passes `None` (the
-/// concrete `McpDispatcher` construction is the M07 carry-forward per
-/// ADR-0011); the M06.F seam test injects a mock.
+/// `ProviderEvent::ToolUse` through it. As of M07.D1 production threads
+/// `Some(build_mcp_dispatcher(..))` (ADR-0011 (a)-(c) discharged); the
+/// seam test injects a mock and the construction test injects the
+/// concrete dispatcher.
 ///
 /// `session_id` is the drone's seeded session id (managed at setup
 /// from [`crate::drone_lifecycle::DroneLifecycle::sdk_session_id`]).
@@ -190,6 +214,50 @@ pub async fn run_smoke_session_with<P: LLMProvider + 'static>(
         tracing::info!("run_smoke_session succeeded");
     }
     result
+}
+
+/// ADR-0011 (c) — construct the concrete `McpDispatcher` in the shell.
+///
+/// Closes the M07.A-mapped construction graph: M06.F's production
+/// `run_smoke_session` passed `None` because neither the
+/// `CapabilityEnforcer` nor the `NamespaceResolver` had a `src-tauri`
+/// construction site (ADR-0011 Context #2/#3). All three are now
+/// reachable in-shell:
+///
+/// - the §5a `NamespaceResolver` starts empty —
+///   `NamespaceResolver::new(BTreeMap::new())`; it is populated by the
+///   §5a re-resolution driver (`McpDispatcher::on_server_connected`,
+///   ADR-0011 (b)) as servers connect, not at construction.
+/// - the L1 `CapabilityEnforcer` is the empty default; the v0.1
+///   no-tools smoke grants nothing, so the dispatcher is
+///   constructed-but-not-exercised here (D2's agent-with-tools loop is
+///   what builds the framework-/tier-wired enforcer and drives it).
+/// - `Arc<McpClient>` (Tauri-managed, opened at startup) is injected as
+///   `Arc<dyn ConnectionResolver>` (ADR-0011 (a)).
+///
+/// `CapabilityEnforcer` construction is CODEOWNERS-flagged (Hard Rule
+/// 8); the M07.D1 construction-reachability map + this function are the
+/// surfaced plan.
+fn build_mcp_dispatcher(
+    mcp_client: Arc<McpClient>,
+    audit: Option<Arc<runtime_main::audit::AuditWriter>>,
+    session_id: &SessionId,
+) -> Arc<dyn McpToolDispatch> {
+    use runtime_main::capability::CapabilityEnforcer;
+    use runtime_mcp::{ConnectionResolver, McpDispatcher, NamespaceResolver};
+    use std::collections::BTreeMap;
+    use tokio::sync::RwLock;
+
+    let resolver = Arc::new(RwLock::new(NamespaceResolver::new(BTreeMap::new())));
+    let enforcer = Arc::new(CapabilityEnforcer::new());
+    let connections: Arc<dyn ConnectionResolver> = mcp_client;
+    Arc::new(McpDispatcher::new(
+        resolver,
+        enforcer,
+        connections,
+        audit,
+        session_id.as_string(),
+    ))
 }
 
 async fn forward_events(mut rx: mpsc::Receiver<AgentEvent>, app: AppHandle) {
@@ -944,6 +1012,215 @@ fn smoke_config() -> AgentConfig {
     }
 }
 
+/// Outcome of [`import_artifact`] surfaced to the renderer (Stage E).
+///
+/// Enriched at M07.E per ADR-0015 with the §M7 review primitive: the
+/// declared `capabilities` disclosure, the `l3_report` body, and the
+/// ADR-0005 `share_provenance` trust block — all already computed by
+/// the import pipeline (`import_artifact_with` → `Installed`) and
+/// previously discarded at the command boundary. Hand-mirrored on the
+/// renderer side in `src/lib/ipc.ts` (the `McpTool` / `ResumePlan`
+/// hand-mirror precedent — not schema-generated). Serde defaults emit
+/// `snake_case` keys; the renderer's `ImportOutcome` interface mirrors
+/// them verbatim.
+#[derive(Debug, serde::Serialize)]
+pub struct ImportOutcome {
+    /// The `name@version` written into `skills.lock`.
+    pub lock_key: String,
+    /// Whether the Novice capability-disclosure review applies — the
+    /// renderer renders the disclosure modal for Novice (the L4 outcome
+    /// is decided here, the renderer just renders it; spec §M7 / E.3.4).
+    pub review_required: bool,
+    /// Secrets the artifact needs before first run (spec §15d notice).
+    pub requires_secrets: Vec<String>,
+    /// Plain-English declared-capability summary the §M7 disclosure
+    /// renders (ADR-0015). Source-of-truth = the artifact's declared
+    /// `capabilities` block, extracted via `capability_summary`.
+    pub capabilities: Vec<String>,
+    /// The L3 sandbox report (ADR-0015). Rides as a nested object so
+    /// the renderer can show `passed` + `reasons` without re-parsing.
+    pub l3_report: runtime_main::import::L3Report,
+    /// The ADR-0005 trust block when the imported artifact carries one;
+    /// `null` when unexported. The renderer renders the "No provenance"
+    /// state from `null`, never a synthesized empty block.
+    pub share_provenance: Option<serde_json::Value>,
+}
+
+/// L1 network gate over the M05 `CapabilityEnforcer` — import egress is
+/// constrained to the user-supplied host (default-deny + domain scope;
+/// Hard Rule 4 — no phone-home, only the URL the user pasted is hit).
+struct EnforcerGate;
+
+impl NetworkGate for EnforcerGate {
+    fn check(&self, host: &str) -> Result<(), String> {
+        use runtime_core::generated::capability::{
+            CapabilityDeclaration, CapabilityKind, CapabilityScope, DomainPattern, ResourceName,
+            SideEffectClass,
+        };
+        use runtime_main::capability::CapabilityEnforcer;
+        use std::str::FromStr as _;
+
+        let decl = CapabilityDeclaration {
+            kind: CapabilityKind::Network,
+            resource: ResourceName::from_str(host).map_err(|e| e.to_string())?,
+            scope: CapabilityScope::Domain(
+                DomainPattern::from_str(host).map_err(|e| e.to_string())?,
+            ),
+            side_effect_class: SideEffectClass::NetworkEgress,
+        };
+        let mut enforcer = CapabilityEnforcer::new();
+        enforcer.grant("import-fetch", decl.clone());
+        enforcer
+            .check("import-fetch", &decl)
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// L3 adapter over the M05 sandbox subprocess (`runtime-sandbox`,
+/// reused — not rebuilt). v0.1 import L3 uses a conservative
+/// `Read`/`Pure` declaration: any write / network / spawn / exec token
+/// the validator detects in the artifact rejects the install
+/// (sandbox-before-trust; ADR-0014 threat model).
+struct SandboxAdapter(Arc<SandboxClient>);
+
+#[async_trait::async_trait]
+impl Sandbox for SandboxAdapter {
+    async fn validate(&self, code: &str) -> Result<Vec<String>, String> {
+        use runtime_core::generated::capability::{
+            CapabilityDeclaration, CapabilityKind, CapabilityScope, GlobPattern, ResourceName,
+            SideEffectClass,
+        };
+        use runtime_main::sandbox_ipc::ValidationResult;
+        use std::str::FromStr as _;
+
+        let conservative = CapabilityDeclaration {
+            kind: CapabilityKind::Read,
+            resource: ResourceName::from_str("*").expect("`*` is a valid ResourceName"),
+            scope: CapabilityScope::Glob(
+                GlobPattern::from_str("*").expect("`*` is a valid GlobPattern"),
+            ),
+            side_effect_class: SideEffectClass::Pure,
+        };
+        match self
+            .0
+            .validate(code.to_string(), conservative)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            ValidationResult::Ok => Ok(Vec::new()),
+            ValidationResult::Reject { reasons } => Ok(reasons),
+        }
+    }
+}
+
+/// MCP Manager registry adapter (ADR-0010 dependency inversion — the
+/// concrete `runtime_mcp::Registry` is wrapped HERE in the shell, never
+/// depended on by `runtime-main`, to avoid the `runtime-mcp →
+/// runtime-main` Cargo cycle). `upsert` = idempotent remove-then-insert
+/// so a re-import replaces the prior config.
+struct RegistryAdapter(Arc<Registry>);
+
+impl McpRegistry for RegistryAdapter {
+    fn upsert(&self, cfg: &McpServerImport) -> Result<(), String> {
+        let record = McpServerRecord {
+            name: cfg.name.clone(),
+            transport: cfg.transport.clone(),
+            command: cfg.command.clone(),
+            args_json: cfg.args_json.clone(),
+            env_json: cfg.env_json.clone(),
+            cwd: cfg.cwd.clone(),
+            url: cfg.url.clone(),
+            auth_secret_ref: cfg.auth_secret_ref.clone(),
+            // CQ-6 — a freshly-imported MCP-config server is
+            // `disconnected` until the first health pass / connect.
+            status: runtime_mcp::ServerStatus::Disconnected,
+        };
+        self.0.remove(&cfg.name).map_err(|e| e.to_string())?;
+        self.0.insert(&record).map_err(|e| e.to_string())
+    }
+}
+
+fn import_err_to_cmd(e: &ImportError) -> CmdError {
+    CmdError::internal(e.to_string())
+}
+
+/// Import an artifact (skill / tool / agent / MCP-server config) by
+/// GitHub-raw URL or local file — M07 Stage C (spec Phase 7 §2152-2211;
+/// MVP §M7).
+///
+/// Thin §5 shell wrapper over the unit-tested `import_artifact_with`
+/// seam. Resolves the framework-root `skills.lock` path
+/// (path-agnostic — CLAUDE.md §9), wires the real reqwest fetcher + the
+/// M05 L1/L3 + the M06 registry adapter + wall-clock, and records the
+/// current tier as `tier_at_install`. The Novice capability-disclosure
+/// review is rendered by the Stage E review screen via the
+/// `import::tier_gate` seam (E.3.4 — "the renderer renders the
+/// outcome"); `review_required` carries that decision to the renderer.
+///
+/// # Errors
+///
+/// - [`CmdError::Internal`] for any pipeline failure (fetch / schema /
+///   L3 reject / OS mismatch / lock / registry), the message naming the
+///   stage.
+#[tauri::command]
+pub async fn import_artifact(
+    app: AppHandle,
+    source_kind: String,
+    location: String,
+    artifact_kind: String,
+    sandbox: tauri::State<'_, Arc<SandboxClient>>,
+    registry: tauri::State<'_, Arc<Registry>>,
+    tier_state: tauri::State<'_, CurrentTierState>,
+) -> Result<ImportOutcome, CmdError> {
+    let dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| CmdError::internal(format!("app_local_data_dir: {e}")))?;
+    let lock = dir.join("skills.lock");
+
+    let src = match source_kind.as_str() {
+        "url" => ImportSource::Url(location),
+        "file" => ImportSource::File(location.into()),
+        other => return Err(CmdError::internal(format!("unknown source_kind: {other}"))),
+    };
+    let kind = match artifact_kind.as_str() {
+        "skill" => ArtifactKind::Skill,
+        "tool" => ArtifactKind::Tool,
+        "agent" => ArtifactKind::Agent,
+        "mcp_server" => ArtifactKind::McpServer,
+        other => {
+            return Err(CmdError::internal(format!(
+                "unknown artifact_kind: {other}"
+            )))
+        }
+    };
+    let tier = *tier_state.lock().await;
+
+    let installed = import::import_artifact_with(
+        src,
+        kind,
+        tier,
+        std::env::consts::OS,
+        &lock,
+        &EnforcerGate,
+        &HttpFetcher::new(),
+        &SandboxAdapter(Arc::clone(sandbox.inner())),
+        &RegistryAdapter(Arc::clone(registry.inner())),
+        &SystemClock,
+    )
+    .await
+    .map_err(|e| import_err_to_cmd(&e))?;
+
+    Ok(ImportOutcome {
+        lock_key: installed.lock_key,
+        review_required: matches!(tier, Tier::Novice),
+        requires_secrets: installed.requires_secrets,
+        capabilities: installed.capabilities,
+        l3_report: installed.report,
+        share_provenance: installed.share_provenance,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -984,6 +1261,76 @@ mod tests {
         // (CmdError is foreign to runtime-main; KeyStoreError is local).
         let e: CmdError = KeyStoreError::NotFound.into();
         assert!(matches!(e, CmdError::SetupRequired), "got {e:?}");
+    }
+
+    #[test]
+    fn import_outcome_serializes_the_enriched_review_wire_for_the_renderer() {
+        // M07.E / ADR-0015 — the cross-language wire anchor (condition
+        // 2). The Stage E renderer's hand-mirrored `ImportOutcome`
+        // interface (src/lib/ipc.ts, the McpTool/ResumePlan precedent)
+        // pattern-matches THIS exact serialized shape. Pinning the snake
+        // _case keys here is what makes the renderer fixture provably
+        // the real bridge contract, not a fabricated mock. The
+        // `runtime-main` integration suite proves a REAL import produces
+        // an enriched `Installed`; this proves the command maps it to
+        // the JSON the renderer consumes.
+        let outcome = ImportOutcome {
+            lock_key: "fs-test@2.0.0".to_string(),
+            review_required: true,
+            requires_secrets: vec!["OPENAI_API_KEY".to_string()],
+            capabilities: vec![
+                "network: api.example.com".to_string(),
+                "shell: true".to_string(),
+            ],
+            l3_report: runtime_main::import::L3Report {
+                report_id: "vr-1".to_string(),
+                passed: true,
+                reasons: vec![],
+            },
+            share_provenance: Some(serde_json::json!({
+                "exported_by": "share-it@0.1.0",
+                "rebake_changes": []
+            })),
+        };
+        let v = serde_json::to_value(&outcome).unwrap();
+        assert_eq!(v["lock_key"], serde_json::json!("fs-test@2.0.0"));
+        assert_eq!(v["review_required"], serde_json::json!(true));
+        assert_eq!(v["requires_secrets"], serde_json::json!(["OPENAI_API_KEY"]));
+        assert_eq!(
+            v["capabilities"],
+            serde_json::json!(["network: api.example.com", "shell: true"]),
+            "the renderer's plain-English disclosure reads `capabilities`"
+        );
+        assert_eq!(
+            v["l3_report"],
+            serde_json::json!({ "report_id": "vr-1", "passed": true, "reasons": [] }),
+            "the L3 report crosses the bridge as a nested object"
+        );
+        assert_eq!(
+            v["share_provenance"]["rebake_changes"],
+            serde_json::json!([]),
+            "share_provenance surfaces verbatim (None serializes to null)"
+        );
+    }
+
+    #[test]
+    fn import_outcome_serializes_absent_provenance_as_null() {
+        // The renderer renders the "no provenance" state from `null`,
+        // never a synthesized empty block (ADR-0005 / ADR-0015).
+        let outcome = ImportOutcome {
+            lock_key: "x@1.0.0".to_string(),
+            review_required: false,
+            requires_secrets: vec![],
+            capabilities: vec![],
+            l3_report: runtime_main::import::L3Report {
+                report_id: "r".to_string(),
+                passed: true,
+                reasons: vec![],
+            },
+            share_provenance: None,
+        };
+        let v = serde_json::to_value(&outcome).unwrap();
+        assert_eq!(v["share_provenance"], serde_json::Value::Null);
     }
 
     /// In-process stub provider used by `run_smoke_session_with` tests.
@@ -1063,9 +1410,28 @@ mod tests {
         );
     }
 
-    /// Provider that emits a single MCP-shaped `ToolUse` then stops, so
-    /// the M06.F injection-seam test drives the run-loop interception.
-    struct McpToolProvider;
+    /// Provider that emits an MCP-shaped `ToolUse` on the FIRST turn,
+    /// then — on every subsequent turn — emits only `MessageStop`,
+    /// modelling a real LLM that requests a tool once, receives the
+    /// result, and answers.
+    ///
+    /// The turn counter is load-bearing (D2-latent deadlock fix, M07
+    /// `fix(M07)`): M07.D2 made `run_smoke_session_with` drive the
+    /// multi-turn `run_agent` loop, which re-streams after every
+    /// dispatched tool. A provider that yielded `ToolUse`
+    /// *unconditionally* would dispatch on every turn, so the loop
+    /// never breaks early — it runs to `MAX_AGENT_TURNS`, emitting
+    /// ~3 events/turn into the test's bounded `mpsc::channel(16)` that
+    /// is only drained *after* the run returns. The channel fills
+    /// around turn 5 and `emit().await` (`tx.send().await`) blocks
+    /// forever — a deadlock (production is unaffected: the real
+    /// `run_smoke_session` spawns `forward_events` to drain
+    /// concurrently). Yielding no `ToolUse` on turn 2 leaves
+    /// `TurnFeedback::dispatched` empty so `run_agent` terminates.
+    #[derive(Default)]
+    struct McpToolProvider {
+        turn: std::sync::atomic::AtomicUsize,
+    }
 
     #[async_trait]
     impl LLMProvider for McpToolProvider {
@@ -1087,17 +1453,33 @@ mod tests {
             &self,
             _config: AgentConfig,
         ) -> Result<BoxStream<'_, ProviderEvent>, ProviderError> {
-            Ok(Box::pin(futures::stream::iter(vec![
-                ProviderEvent::ToolUse {
-                    id: "t1".to_string(),
-                    name: "pdf-mcp__extract_text".to_string(),
-                    input: serde_json::json!({"path": "doc.pdf"}),
-                },
-                ProviderEvent::MessageStop {
-                    stop_reason: "end_turn".to_string(),
-                    total_tokens: None,
-                },
-            ])))
+            let turn = self.turn.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if turn == 0 {
+                // Turn 1 — the model requests an MCP tool.
+                Ok(Box::pin(futures::stream::iter(vec![
+                    ProviderEvent::ToolUse {
+                        id: "t1".to_string(),
+                        name: "pdf-mcp__extract_text".to_string(),
+                        input: serde_json::json!({"path": "doc.pdf"}),
+                    },
+                    ProviderEvent::MessageStop {
+                        stop_reason: "tool_use".to_string(),
+                        total_tokens: None,
+                    },
+                ])))
+            } else {
+                // Turn 2+ — tool result fed back; the model answers and
+                // ends. No further `ToolUse` ⇒ the multi-turn loop's
+                // `TurnFeedback::dispatched` is empty ⇒ `run_agent`
+                // breaks. This is what makes the bounded test channel
+                // sufficient (a handful of events, not MAX_AGENT_TURNS×).
+                Ok(Box::pin(futures::stream::iter(vec![
+                    ProviderEvent::MessageStop {
+                        stop_reason: "end_turn".to_string(),
+                        total_tokens: None,
+                    },
+                ])))
+            }
         }
         async fn count_tokens(&self, _m: &[Message]) -> Result<u64, ProviderError> {
             Ok(0)
@@ -1145,7 +1527,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(16);
         let drone = Arc::new(DroneClient::noop());
         run_smoke_session_with(
-            McpToolProvider,
+            McpToolProvider::default(),
             tx,
             drone,
             smoke_config(),
@@ -1182,6 +1564,83 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, AgentEvent::ToolResult { .. })),
             "the injected MCP dispatch must also surface a ToolResult; events: {events:?}"
+        );
+    }
+
+    // ── ADR-0011 (c) — concrete McpDispatcher constructed in src-tauri ──
+    //
+    // M06.F's production `run_smoke_session` passed `None` because the
+    // concrete `McpDispatcher` was not constructible in-shell (ADR-0011
+    // Context #2/#3 — no `NamespaceResolver`/`CapabilityEnforcer` ctor
+    // site). D1 adds `build_mcp_dispatcher`, closing the A-mapped
+    // construction graph. CapabilityEnforcer construction is
+    // CODEOWNERS-flagged (Hard Rule 8) — the construction-reachability
+    // map + this seam test is the surfaced plan.
+
+    fn mcp_client_over_tempdir() -> (tempfile::TempDir, Arc<McpClient>) {
+        use runtime_mcp::client::{InMemorySecretStore, SecretStore};
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let registry =
+            Arc::new(Registry::open(&dir.path().join("mcp.sqlite")).expect("open registry"));
+        let secret_store: Arc<dyn SecretStore> = Arc::new(InMemorySecretStore::new());
+        let client = Arc::new(McpClient::new(registry, secret_store, "sess-build"));
+        (dir, client)
+    }
+
+    #[tokio::test]
+    async fn build_mcp_dispatcher_yields_the_concrete_dispatcher_not_a_mock() {
+        // The constructed value must behave as the concrete
+        // `McpDispatcher`: an empty `NamespaceResolver` resolves an
+        // unknown tool to §5a `NotFound` ⇒ `dispatch_if_mcp` returns
+        // `None` (fall-through). A mock (e.g. `InvokingMcpDispatch`)
+        // returns `Some(Invoked)` — so `None` here proves it is the
+        // real concrete impl threaded through, not a stand-in.
+        let (_dir, client) = mcp_client_over_tempdir();
+        let dispatcher = build_mcp_dispatcher(client, None, &SessionId::new());
+        let outcome = dispatcher
+            .dispatch_if_mcp(
+                "worker",
+                "definitely_not_an_mcp_tool",
+                serde_json::json!({}),
+                &std::collections::BTreeMap::new(),
+            )
+            .await;
+        assert!(
+            outcome.is_none(),
+            "concrete McpDispatcher with an empty resolver must fall through (None); got {outcome:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_smoke_session_with_threads_the_concrete_built_dispatcher() {
+        // The assembled path (the §6/v1.8 assembled-regression mandate):
+        // the shell ctor output threads through the real
+        // `run_smoke_session_with` seam. The no-tools smoke emits no
+        // `ProviderEvent::ToolUse`, so the dispatcher is
+        // constructed-but-not-exercised here (D2's agent-with-tools loop
+        // is what exercises it) — but construction + threading must not
+        // break the existing smoke path.
+        let (_dir, client) = mcp_client_over_tempdir();
+        let dispatcher = build_mcp_dispatcher(client, None, &SessionId::new());
+        let (tx, mut rx) = mpsc::channel(8);
+        let drone = Arc::new(DroneClient::noop());
+        run_smoke_session_with(
+            StubProvider,
+            tx,
+            drone,
+            smoke_config(),
+            Some(dispatcher),
+            SessionId::new(),
+        )
+        .await
+        .expect("smoke path still succeeds with the concrete dispatcher injected");
+        let mut events = Vec::new();
+        while let Some(e) = rx.recv().await {
+            events.push(e);
+        }
+        assert!(
+            !events.is_empty(),
+            "the no-tools smoke still produces its events with the dispatcher threaded"
         );
     }
 

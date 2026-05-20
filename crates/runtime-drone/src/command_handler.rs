@@ -4,7 +4,7 @@
 //! against the `SQLite` database. Emits `DroneEvent` results on the
 //! broadcast channel. Six command variants per `agent-runtime-spec.md` §1d.
 
-use crate::{plan_projector, snapshot, vdr};
+use crate::{plan_projector, snapshot, token_usage, vdr};
 use runtime_core::{AlertLevel, DroneCommand, DroneEvent, ProcessConfig, ProcessType};
 use rusqlite::Connection;
 use std::sync::Arc;
@@ -31,6 +31,10 @@ pub enum CommandError {
     /// Plan projector error (M04 Stage B).
     #[error(transparent)]
     PlanProjector(#[from] plan_projector::PlanProjectorError),
+
+    /// `token_usage` projector error (M07.D2, ADR-0011 d).
+    #[error(transparent)]
+    TokenUsageProjector(#[from] token_usage::TokenUsageProjectorError),
 }
 
 /// Run the command-dispatch loop until `cmd_rx` closes or
@@ -136,7 +140,7 @@ async fn handle_write_signal(
 ) {
     let payload_str = serde_json::to_string(payload).unwrap_or_else(|_| "null".to_string());
     let guard = conn.lock().await;
-    let result: Result<(usize, usize), CommandError> = (|| {
+    let result: Result<(usize, usize, usize), CommandError> = (|| {
         guard.execute(
             "INSERT OR IGNORE INTO signals (\
                 id, session_id, type, event, timestamp, payload_json, context_type\
@@ -151,9 +155,11 @@ async fn handle_write_signal(
                 context_type,
             ],
         )?;
-        // Two projectors: vdr (decision/verify) + plan_projector (plan/task).
-        // Both are idempotent; either may no-op for non-matching kinds /
-        // event types.
+        // Three projectors: vdr (decision/verify) + plan_projector
+        // (plan/task) + token_usage (the agent loop's per-turn usage
+        // report, M07.D2). All idempotent; each may no-op for
+        // non-matching kinds / event types. Same transaction, same call
+        // site — NOT a new DroneCommand (no IPC-protocol change).
         let vdr_n = match vdr::project_signal(&guard, signal_id) {
             Ok(n) => n,
             Err(vdr::VdrError::SignalNotFound(_)) => 0,
@@ -164,7 +170,12 @@ async fn handle_write_signal(
             Err(plan_projector::PlanProjectorError::SignalNotFound(_)) => 0,
             Err(e) => return Err(CommandError::from(e)),
         };
-        Ok((vdr_n, plan_n))
+        let tu_n = match token_usage::project_signal(&guard, signal_id) {
+            Ok(n) => n,
+            Err(token_usage::TokenUsageProjectorError::SignalNotFound(_)) => 0,
+            Err(e) => return Err(CommandError::from(e)),
+        };
+        Ok((vdr_n, plan_n, tu_n))
     })();
     drop(guard);
     match result {

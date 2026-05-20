@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AgentEvent } from '../../src/types/agent_event';
 import { useGraphStore } from '../../src/lib/graphStore';
+import type { ImportOutcome } from '../../src/lib/ipc';
 
 // Helpers — use schema-snake_case field names per CLAUDE.md §14
 // (src/types/agent_event.ts is generated from schemas/event.v1.json).
@@ -1588,5 +1589,87 @@ describe('graphStore.applyEvent', () => {
     useGraphStore.getState().clear();
     expect(useGraphStore.getState().pendingHitl).toEqual({});
     expect(useGraphStore.getState().notifierRecords).toEqual({});
+  });
+});
+
+// M07.E / ADR-0015 — the import slot + the artifact_hash_mismatch
+// reducer + the review confirm/dismiss actions. The slot is the single
+// source of truth the ImportPanel renders from; recordImport maps the
+// SHIPPED enriched ImportOutcome wire (snake_case) into the store's
+// camelCase ImportRecord at the boundary.
+describe('graphStore imports (M07.E)', () => {
+  const enriched: ImportOutcome = {
+    lock_key: 'fs-test@2.0.0',
+    review_required: true,
+    requires_secrets: ['OPENAI_API_KEY'],
+    capabilities: ['network: api.example.com', 'shell: true'],
+    l3_report: { report_id: 'vr-1', passed: true, reasons: [] },
+    share_provenance: { exported_by: 'share-it@0.1.0', rebake_changes: [] },
+  };
+
+  beforeEach(() => {
+    useGraphStore.setState({ imports: {} });
+  });
+  afterEach(() => {
+    useGraphStore.setState({ imports: {} });
+  });
+
+  it('recordImport_maps_enriched_outcome_into_a_review_record', () => {
+    useGraphStore.getState().recordImport(enriched);
+    const rec = useGraphStore.getState().imports['fs-test@2.0.0'];
+    expect(rec).toBeDefined();
+    expect(rec?.ref).toBe('fs-test@2.0.0');
+    expect(rec?.phase).toBe('review'); // review_required === true
+    expect(rec?.capabilities).toEqual(['network: api.example.com', 'shell: true']);
+    expect(rec?.requiresSecrets).toEqual(['OPENAI_API_KEY']);
+    expect(rec?.l3Report).toEqual({ reportId: 'vr-1', passed: true, reasons: [] });
+    expect(rec?.shareProvenance).toEqual({
+      exported_by: 'share-it@0.1.0',
+      rebake_changes: [],
+    });
+  });
+
+  it('recordImport_phase_is_installed_when_review_not_required', () => {
+    useGraphStore
+      .getState()
+      .recordImport({ ...enriched, lock_key: 'x@1.0.0', review_required: false });
+    expect(useGraphStore.getState().imports['x@1.0.0']?.phase).toBe('installed');
+  });
+
+  it('confirmImport_promotes_a_review_record_to_installed', () => {
+    useGraphStore.getState().recordImport(enriched);
+    useGraphStore.getState().confirmImport('fs-test@2.0.0');
+    expect(useGraphStore.getState().imports['fs-test@2.0.0']?.phase).toBe('installed');
+  });
+
+  it('dismissImport_removes_the_record', () => {
+    useGraphStore.getState().recordImport(enriched);
+    useGraphStore.getState().dismissImport('fs-test@2.0.0');
+    expect(useGraphStore.getState().imports['fs-test@2.0.0']).toBeUndefined();
+  });
+
+  it('artifact_hash_mismatch_blocks_the_artifact_with_the_drift_detail', () => {
+    const ev: AgentEvent = {
+      type: 'artifact_hash_mismatch',
+      artifact_ref: 'fs-test@2.0.0',
+      expected: 'sha256-AAAA',
+      actual: 'sha256-BBBB',
+    };
+    useGraphStore.getState().applyEvent(ev);
+    const rec = useGraphStore.getState().imports['fs-test@2.0.0'];
+    expect(rec?.phase).toBe('blocked');
+    expect(rec?.expected).toBe('sha256-AAAA');
+    expect(rec?.actual).toBe('sha256-BBBB');
+    expect(rec?.error).toContain('sha256-AAAA');
+    expect(rec?.error).toContain('sha256-BBBB');
+  });
+
+  it('imports_survive_clear_like_other_install_state', () => {
+    // Integrity/install state (parallels currentMcpServers / currentTier
+    // — preserved across session clear() so a blocked artifact stays
+    // blocked until the user reinstalls or removes it).
+    useGraphStore.getState().recordImport(enriched);
+    useGraphStore.getState().clear();
+    expect(useGraphStore.getState().imports['fs-test@2.0.0']).toBeDefined();
   });
 });

@@ -36,7 +36,7 @@ pub mod transport;
 
 pub use client::{
     InMemorySecretStore, KeyringSecretStore, LifecycleError, McpClient, McpServerRecord,
-    McpServerSummary, Registry, SecretStore, MCP_KEYRING_SERVICE,
+    McpServerSummary, Registry, SecretStore, ServerStatus, MCP_KEYRING_SERVICE,
 };
 pub use dispatch::{mcp_tool_capability, ConnectionResolver, McpDispatcher};
 pub use error::McpError;

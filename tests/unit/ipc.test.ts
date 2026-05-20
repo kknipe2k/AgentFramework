@@ -17,6 +17,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 }));
 
 import {
+  importArtifact,
   invokeQuerySessionDb,
   invokeReplaySession,
   invokeRespondHitl,
@@ -28,6 +29,7 @@ import {
   mcpTestConnection,
   subscribeAgentEvents,
   unwrapCmdError,
+  type ImportOutcome,
 } from '../../src/lib/ipc';
 import type { AgentEvent } from '../../src/types/agent_event';
 import type { McpServerConfig } from '../../src/types/mcp';
@@ -231,5 +233,51 @@ describe('ipc', () => {
     invokeMock.mockResolvedValueOnce([]);
     await mcpListServers();
     expect(invokeMock).toHaveBeenCalledWith('mcp_list_servers');
+  });
+
+  // M07.E / ADR-0015 — the import_artifact wrapper. Params are PINNED
+  // to the SHIPPED Stage C command (commands.rs:1144): three flat
+  // camelCased args `{ sourceKind, location, artifactKind }`, NOT the
+  // phase-doc-assumed `{ src, kind }` (the wire-signature-audit drift).
+  // The enriched ImportOutcome is the Rust-proven shape (the
+  // commands.rs `import_outcome_serializes_*` anchor).
+  const enrichedOutcome: ImportOutcome = {
+    lock_key: 'fs-test@2.0.0',
+    review_required: true,
+    requires_secrets: ['OPENAI_API_KEY'],
+    capabilities: ['network: api.example.com', 'shell: true'],
+    l3_report: { report_id: 'vr-1', passed: true, reasons: [] },
+    share_provenance: { exported_by: 'share-it@0.1.0', rebake_changes: [] },
+  };
+
+  it('importArtifact_passes_pinned_camelCase_args_not_src_kind', async () => {
+    invokeMock.mockResolvedValueOnce(enrichedOutcome);
+    const out = await importArtifact(
+      'url',
+      'https://raw.githubusercontent.com/o/r/main/fs.json',
+      'skill',
+    );
+    expect(invokeMock).toHaveBeenCalledWith('import_artifact', {
+      sourceKind: 'url',
+      location: 'https://raw.githubusercontent.com/o/r/main/fs.json',
+      artifactKind: 'skill',
+    });
+    const [, arg] = invokeMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect(arg).not.toHaveProperty('src');
+    expect(arg).not.toHaveProperty('kind');
+    // The enriched review fields round-trip unchanged.
+    expect(out.capabilities).toEqual(['network: api.example.com', 'shell: true']);
+    expect(out.l3_report.passed).toBe(true);
+    expect(out.review_required).toBe(true);
+  });
+
+  it('importArtifact_passes_file_source_and_mcp_kind', async () => {
+    invokeMock.mockResolvedValueOnce({ ...enrichedOutcome, share_provenance: null });
+    await importArtifact('file', 'C:/tmp/server.json', 'mcp_server');
+    expect(invokeMock).toHaveBeenCalledWith('import_artifact', {
+      sourceKind: 'file',
+      location: 'C:/tmp/server.json',
+      artifactKind: 'mcp_server',
+    });
   });
 });
