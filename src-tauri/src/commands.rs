@@ -1093,6 +1093,7 @@ impl PendingImportState {
             return Err(format!("too many pending imports (max {MAX_PENDING})"));
         }
         map.insert(id, pending);
+        drop(map);
         Ok(())
     }
 
@@ -1224,6 +1225,10 @@ fn import_err_to_cmd(e: &ImportError) -> CmdError {
 /// - [`CmdError::Internal`] for any pipeline failure (fetch / schema /
 ///   L3 reject / OS mismatch / lock / registry), the message naming the
 ///   stage, or when `PendingImportState` is at capacity.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Tauri command — the renderer args plus the injected State handles exceed the lint threshold"
+)]
 #[tauri::command]
 pub async fn import_artifact(
     app: AppHandle,
@@ -1282,7 +1287,10 @@ pub async fn import_artifact(
             requires_secrets: installed.requires_secrets,
             share_provenance: installed.share_provenance,
         },
-        import::ImportOutcome::Pending { review, pending: held } => {
+        import::ImportOutcome::Pending {
+            review,
+            pending: held,
+        } => {
             let pending_review_id = uuid::Uuid::new_v4().to_string();
             let lock_key = held.lock_key();
             pending
@@ -1344,17 +1352,24 @@ pub async fn complete_import_artifact(
 }
 
 /// Reject a Novice import the renderer dismissed at the tier-gate
-/// review (M07.5 / ADR-0017). Drops the held `PendingImport`. Because
-/// the install half never ran, there is nothing to roll back — no
-/// `skills.lock` entry and no MCP registry row were ever written. This
-/// is the M07.V 🔴 #1 fix. Idempotent — an unknown id (a double-fire)
-/// is a no-op.
+/// review (M07.5 / ADR-0017).
+///
+/// Drops the held `PendingImport`. Because the install half never ran,
+/// there is nothing to roll back — no `skills.lock` entry and no MCP
+/// registry row were ever written. This is the M07.V 🔴 #1 fix.
+/// Idempotent — an unknown id (a double-fire) is a no-op.
+///
+/// # Errors
+///
+/// Never returns `Err`; the `Result` return is required for a Tauri
+/// async command that borrows managed `State`.
 #[tauri::command]
-pub fn cancel_pending_import(
+pub async fn cancel_pending_import(
     pending_review_id: String,
     pending: tauri::State<'_, PendingImportState>,
-) {
+) -> Result<(), CmdError> {
     pending.take(&pending_review_id);
+    Ok(())
 }
 
 #[cfg(test)]

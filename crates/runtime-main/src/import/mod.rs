@@ -173,7 +173,7 @@ pub struct L3Report {
 /// `Eq` is not derived: `share_provenance` is a `serde_json::Value`,
 /// which is `PartialEq` but not `Eq`. `PartialEq` (used by `assert_eq!`)
 /// is preserved, mirroring the `Installed` struct's derive.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TierReview {
     /// Human-readable declared-capability summary for the disclosure.
     pub capabilities: Vec<String>,
@@ -215,10 +215,12 @@ pub struct Installed {
 }
 
 /// A Novice import held at the tier-gate review (M07.5 / ADR-0017 — the
-/// install-after-confirm split). The pipeline has already run fetch /
-/// validate / §15c / L3; the only work left is the install half — MCP-
-/// registry upsert (`mcp_server` only) + install + lock — which
-/// [`complete_import_with`] runs on the renderer's confirm.
+/// install-after-confirm split).
+///
+/// The pipeline has already run fetch / validate / §15c / L3; the only
+/// work left is the install half — MCP-registry upsert (`mcp_server`
+/// only) + install + lock — which [`complete_import_with`] runs on the
+/// renderer's confirm.
 #[derive(Debug, Clone)]
 pub struct PendingImport {
     art: ValidatedArtifact,
@@ -253,8 +255,9 @@ pub enum ImportOutcome {
     Installed(Installed),
     /// Held for a Novice review — no install, no lock (the 🔴 #1 fix).
     Pending {
-        /// The capability disclosure the review screen renders.
-        review: TierReview,
+        /// The capability disclosure the review screen renders. Boxed
+        /// to keep the enum's variant sizes balanced.
+        review: Box<TierReview>,
         /// The in-flight import [`complete_import_with`] finishes.
         pending: PendingImport,
     },
@@ -301,9 +304,11 @@ pub enum ImportError {
     #[error("L3 sandbox rejected: {0:?}")]
     L3(Vec<String>),
     /// Novice tier — the renderer must show the capability-disclosure
-    /// review screen before the install is accepted (spec §M7).
+    /// review screen before the install is accepted (spec §M7). The
+    /// `TierReview` is boxed so this outcome variant does not bloat
+    /// every `Result<_, ImportError>` in the module.
     #[error("tier-gated: review required before install")]
-    TierReviewRequired(TierReview),
+    TierReviewRequired(Box<TierReview>),
     /// §15c — the artifact does not support the host OS. BLOCKING (fail
     /// loudly, checked before L3).
     #[error("compatible_os mismatch: artifact {artifact:?} vs host {host}")]
@@ -545,12 +550,12 @@ fn capability_summary(raw: &Value) -> Vec<String> {
 pub fn tier_gate(a: &ValidatedArtifact, tier: Tier, report: &L3Report) -> Result<(), ImportError> {
     match tier {
         Tier::Promoted => Ok(()),
-        Tier::Novice => Err(ImportError::TierReviewRequired(TierReview {
+        Tier::Novice => Err(ImportError::TierReviewRequired(Box::new(TierReview {
             capabilities: capability_summary(&a.raw),
             l3_report: report.clone(),
             requires_secrets: a.meta.requires_secrets.clone(),
             share_provenance: a.meta.share_provenance.clone(),
-        })),
+        }))),
     }
 }
 
@@ -670,12 +675,18 @@ fn commit_import(
 }
 
 /// The full import pipeline (the unit-tested seam the Tauri command
-/// wraps): fetch → validate → §15c gate (BEFORE L3) → L3 → install +
-/// lock → MCP-registry upsert (`mcp_server` only).
+/// wraps): fetch → validate → §15c gate (BEFORE L3) → L3 → L4 tier-gate.
+///
+/// A passed tier-gate (Promoted, L4 auto-accept) installs + hash-locks
+/// inline; a `TierReviewRequired` (Novice) holds the import as a
+/// [`PendingImport`] and installs NOTHING — the renderer's confirm runs
+/// the held install half via [`complete_import_with`] (M07.5 / ADR-0017,
+/// closes M07.V 🔴 #1).
 ///
 /// # Errors
 ///
-/// Each stage's distinct [`ImportError`].
+/// Each stage's distinct [`ImportError`]. `TierReviewRequired` is NOT
+/// surfaced as an error — it is folded into [`ImportOutcome::Pending`].
 #[allow(clippy::too_many_arguments)]
 pub async fn import_artifact_with(
     src: ImportSource,
@@ -714,14 +725,36 @@ pub async fn import_artifact_with(
         reasons: Vec::new(),
     };
 
-    let installed = commit_import(&art, &src, &report, tier, reg, lock, clock)?;
-    Ok(ImportOutcome::Installed(installed))
+    // L4 tier-gate — the M07.5 install-after-confirm gate (closes
+    // 🔴 #1). Promoted → Ok → install inline. Novice →
+    // TierReviewRequired → HOLD: nothing is upserted or locked until
+    // `complete_import_with` runs on the renderer's confirm.
+    match tier_gate(&art, tier, &report) {
+        Ok(()) => {
+            let installed = commit_import(&art, &src, &report, tier, reg, lock, clock)?;
+            Ok(ImportOutcome::Installed(installed))
+        }
+        Err(ImportError::TierReviewRequired(review)) => Ok(ImportOutcome::Pending {
+            review,
+            pending: PendingImport {
+                art,
+                src,
+                report,
+                tier,
+            },
+        }),
+        // `tier_gate` yields only `Ok` or `TierReviewRequired`; this arm
+        // keeps the match total without a panic.
+        Err(other) => Err(other),
+    }
 }
 
 /// Finish a Novice import the renderer confirmed at the tier-gate
-/// review (the `complete_import_artifact` Tauri command). Runs the
-/// install half — install + `skills.lock` write + MCP-registry upsert —
-/// that [`import_artifact_with`] deliberately held back for the review.
+/// review (the `complete_import_artifact` Tauri command).
+///
+/// Runs the install half — install + `skills.lock` write + MCP-registry
+/// upsert — that [`import_artifact_with`] deliberately held back for the
+/// review.
 ///
 /// # Errors
 ///

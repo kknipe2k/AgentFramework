@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed — M07.5 Stage A.fix (tier-gate lifecycle — M07.V 🔴 #1, backend)
+
+- **The import pipeline now enforces the Novice tier-gate review.**
+  `import_artifact_with` (`crates/runtime-main/src/import/mod.rs`)
+  validated through `tier_gate` but never called it — it installed and
+  hash-locked every artifact unconditionally, so a Novice "Reject" had
+  no backend effect (M07.V 🔴 #1; spec §8.security L4). Per **ADR-0017**
+  (install-after-confirm — flipped `Proposed → Accepted`),
+  `import_artifact_with` now calls `tier_gate` between L3 and the
+  install half and returns `ImportOutcome::{Installed, Pending}`: a
+  Novice import returns `Pending` and installs / locks / upserts
+  NOTHING; the install half (extracted into `commit_import`, shared
+  with the inline Promoted path) runs only on the renderer's confirm
+  via the new `complete_import_with`. ADR-0014 lock-on-first-install is
+  preserved — the lock is still written exactly once, at true install.
+  The Tauri layer gains `complete_import_artifact` /
+  `cancel_pending_import` commands and a bounded `PendingImportState`;
+  `ImportOutcome` crosses the IPC bridge discriminated on `status`.
+  Backend half only — the renderer rewire is M07.5 Stage C.fix.
+
 ### Changed — M07 Stage G (closeout — gap-analysis, summary, coverage-policy reconciliation, simplify pass)
 
 - **M07 milestone closeout.** `docs/build-prompts/retrospectives/M07-summary.md`

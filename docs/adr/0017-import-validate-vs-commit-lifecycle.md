@@ -1,6 +1,6 @@
 # ADR-0017: Import validate-vs-commit lifecycle split (install-after-confirm)
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-05-20
 **Deciders:** @kknipe2k (maintainer)
 **Tags:** import, capability, security, ipc, tier, lifecycle, m07.5
