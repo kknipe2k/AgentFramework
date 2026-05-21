@@ -202,6 +202,31 @@ describe('Inspector', () => {
     await waitFor(() => expect(openMock).toHaveBeenCalled());
     expect(loadFrameworkMock).not.toHaveBeenCalled();
   });
+
+  it('a_failed_validate_surfaces_the_error', async () => {
+    // A command error thrown across the bridge is unwrapped via
+    // unwrapCmdError (gotcha #30), not String(e).
+    validateFrameworkMock.mockRejectedValue(new Error('validate bridge failure'));
+    render(<Inspector />);
+    screen.getByRole('button', { name: 'Validate' }).click();
+    expect(await screen.findByText(/validate bridge failure/)).toBeInTheDocument();
+  });
+
+  it('a_failed_save_surfaces_the_error', async () => {
+    openMock.mockResolvedValue('C:/save-dir');
+    saveFrameworkMock.mockRejectedValue(new Error('save bridge failure'));
+    render(<Inspector />);
+    screen.getByRole('button', { name: 'Save' }).click();
+    expect(await screen.findByText(/save bridge failure/)).toBeInTheDocument();
+  });
+
+  it('a_failed_load_surfaces_the_error', async () => {
+    openMock.mockResolvedValue('C:/load-dir');
+    loadFrameworkMock.mockRejectedValue(new Error('load bridge failure'));
+    render(<Inspector />);
+    screen.getByRole('button', { name: 'Load' }).click();
+    expect(await screen.findByText(/load bridge failure/)).toBeInTheDocument();
+  });
 });
 
 // gotcha #67 — a className with no styles.css rule renders unstyled and

@@ -88,4 +88,16 @@ describe('JsonView', () => {
     expect(screen.queryByTestId('builder-json-error')).not.toBeInTheDocument();
     expect(replaceFramework).toHaveBeenCalledWith(expect.objectContaining({ name: 'recovered' }));
   });
+
+  it('a_valid_json_edit_keeps_the_user_draft_verbatim_not_re_pretty_printed', () => {
+    // The self-edit guard: the JSON tab's OWN valid edit must not
+    // re-stringify (reformat) the user's in-progress draft. A compact
+    // edit stays compact — only a framework change from elsewhere
+    // re-seeds (the a_canvas_edit_re_seeds test above covers that arm).
+    render(<JsonView />);
+    const textarea = screen.getByTestId('builder-json-textarea');
+    const compact = JSON.stringify(namedFramework('compact-edit'));
+    fireEvent.change(textarea, { target: { value: compact } });
+    expect(screen.getByTestId('builder-json-textarea')).toHaveValue(compact);
+  });
 });
