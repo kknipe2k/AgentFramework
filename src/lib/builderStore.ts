@@ -13,8 +13,10 @@ import { unwrapCmdError, validateFramework, type FrameworkValidationReport } fro
 // setDiskFramework / selectNode / setValidation; D1 implemented addNode
 // / updateNode / moveNode + the framework→canvas node projection; D2
 // implements connectEdge (the four edge types) + the canvasEdges
-// projection + the debounced continuous-validation trigger. removeNode
-// stays a typed no-op stub — node deletion is not in D2's scope.
+// projection + the debounced continuous-validation trigger; E adds
+// testerOpen + openTester / closeTester (the Inspector Test button —
+// F2 renders the Tester modal on `testerOpen`). removeNode stays a
+// typed no-op stub — node deletion is not in D2's scope.
 
 /** One Palette item dragged onto the canvas. */
 export type BuilderNodeKind = 'agent' | 'tool' | 'skill' | 'hitl' | 'hook';
@@ -484,11 +486,12 @@ export const useBuilderStore = create<BuilderState>((set, get) => {
     // scope (no D2 deliverable, no D2 test); a later stage fills it.
     removeNode: () => set((s) => s),
     setValidation: (report) => set({ validation: report }),
-    // STUB (M08.E red phase) — openTester / closeTester are implemented
-    // in the green phase. Here they leave the state unchanged so the
-    // openTester / closeTester behavior tests fail for the right reason.
-    openTester: () => set((s) => s),
-    closeTester: () => set((s) => s),
+    // E ships openTester / closeTester INERT-but-wired — the Inspector's
+    // Test button calls openTester; Stage F2's Tester modal renders on
+    // `testerOpen`. The M07.E "wired-but-pending" incremental-
+    // construction precedent, not dead code.
+    openTester: () => set({ testerOpen: true }),
+    closeTester: () => set({ testerOpen: false }),
     canvasNodes: () => memoizedCanvasNodes(get().framework, get().nodePositions),
     canvasEdges: () => {
       const framework = get().framework;

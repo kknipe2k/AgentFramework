@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M08 Stage E (Inspector + canvas↔JSON two-way binding)
+
+- **`src/components/builder/Inspector.tsx`** — the right-panel Builder
+  Inspector (spec Phase 9): a live `framework.json` preview, a disk
+  diff (`framework` vs `diskFramework`), the whole-framework capability
+  summary read from the `validate_framework` report's
+  `capability_summary` field (Stage B B.3.4 — a report field, not a
+  separate command), an explicit **Validate** button (the same
+  `validate_framework` D2's continuous pass uses — spec §9, one
+  validator, two triggers), and a **Test** button (sets
+  `builderStore.openTester`; INERT-but-wired — Stage F2 delivers the
+  modal). Save/Load wire the `@tauri-apps/plugin-dialog` directory
+  picker to Stage B's `save_framework` / `load_framework` (MVP §M8
+  criteria 7 + 8).
+- **`src/components/builder/JsonView.tsx`** — the Canvas | JSON
+  binding's JSON tab: a raw-JSON editor over `builderStore.framework`.
+  A valid edit routes through `replaceFramework` and the canvas
+  re-derives (ADR-0020); an invalid (malformed / half-typed) edit
+  surfaces an inline parse error and leaves the store **untouched** —
+  the load-bearing no-desync guard (MVP §M8 criterion 6).
+- **`src/lib/frameworkDiff.ts`** — `diffFramework`, the pure
+  prefix/suffix-trim line diff backing the Inspector's "Changes since
+  save" section.
+- **`src/components/builder/BuilderShell.tsx`** — the center-region
+  **Canvas | JSON** tab toggle; mounts the `Inspector` in the
+  right-region stub Stage C shipped.
+- **`src/lib/builderStore.ts`** — `testerOpen` slot + `openTester` /
+  `closeTester` (the Inspector Test button's target — F2's modal
+  renders on `testerOpen`; INERT-but-wired at E).
+- **`src/lib/ipc.ts`** — `saveFramework` / `loadFramework` wrappers +
+  the `Companion` / `LoadedFramework` types, PINNED to the shipped
+  Stage B `save_framework(dir, framework, companions)` /
+  `load_framework(dir)` signatures (the v1.8 `wire_signature_audit`
+  reconciled the phase doc's assumed `{ dir, fw }`).
+
 ### Added — M08 Stage D2 (Builder Canvas — edges, narrowing, validation)
 
 - **`src/lib/builderStore.ts`** — `connectEdge` implemented (Stage C

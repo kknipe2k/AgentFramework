@@ -1536,3 +1536,160 @@ p.error {
 .narrowing-notice__rejected {
   color: var(--node-error);
 }
+
+/* ---- M08.E Inspector + Canvas | JSON two-way binding ----
+ * The center-region Canvas | JSON tab toggle, the right-panel
+ * Inspector, and the raw JSON editor. Theme variables only (M07-IRL #3
+ * — no literal colors against the dark theme). */
+
+.builder-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--node-base-border);
+  background: var(--node-bg);
+}
+
+.builder-tab {
+  padding: 0.3rem 0.9rem;
+  font-size: 0.78rem;
+  background: var(--node-bg);
+  color: var(--node-fg-muted);
+  border: none;
+  cursor: pointer;
+}
+
+.builder-tab--active {
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border-bottom: 2px solid var(--node-active);
+}
+
+.builder-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.6rem;
+  height: 100%;
+  color: var(--node-fg);
+}
+
+.inspector-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+}
+
+.inspector-section h3 {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--node-fg);
+}
+
+.inspector-section p {
+  margin: 0;
+  color: var(--node-fg-muted);
+}
+
+.inspector-section--preview pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 0.4rem;
+  font-size: 0.72rem;
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+}
+
+.inspector-section--capabilities dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.15rem 0.6rem;
+  margin: 0;
+  color: var(--node-fg);
+}
+
+.inspector-section--capabilities dt {
+  color: var(--node-fg-muted);
+}
+
+.inspector-section--capabilities dd {
+  margin: 0;
+}
+
+.inspector__diff pre {
+  margin: 0;
+  padding: 0.4rem;
+  max-height: 200px;
+  overflow: auto;
+  font-size: 0.72rem;
+  background: var(--node-bg-alt);
+  color: var(--node-fg-muted);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+}
+
+/* Diff additions / removals — the live-graph complete / error tokens. */
+.inspector__diff-add {
+  color: var(--node-complete);
+}
+
+.inspector__diff-remove {
+  color: var(--node-error);
+}
+
+.inspector__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: auto;
+}
+
+.inspector__actions button {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.78rem;
+  background: var(--node-active);
+  color: var(--node-hitl);
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.inspector__errors {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  color: var(--node-error);
+}
+
+.json-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.json-view textarea {
+  flex: 1;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  padding: 0.5rem;
+  font-family: monospace;
+  font-size: 0.78rem;
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border: none;
+}
+
+.json-view__error {
+  margin: 0;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.75rem;
+  background: var(--node-bg);
+  color: var(--node-error);
+  border-top: 1px solid var(--node-error);
+}
