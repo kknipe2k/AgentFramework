@@ -342,7 +342,11 @@ export interface InstalledArtifact {
  * artifacts survive an app restart (M07-IRL #6).
  */
 export async function listInstalledArtifacts(): Promise<InstalledArtifact[]> {
-  return await invoke<InstalledArtifact[]>('list_installed_artifacts');
+  const result = await invoke<InstalledArtifact[]>('list_installed_artifacts');
+  // The command always resolves an array (Stage B — Result<Vec<_>>);
+  // coerce defensively so a malformed bridge payload cannot crash a
+  // consumer's `.length` / `.filter` / `.map`.
+  return Array.isArray(result) ? result : [];
 }
 
 /**

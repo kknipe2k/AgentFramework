@@ -1,12 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
   cancelPendingImport,
   completeImportArtifact,
   importArtifact,
+  listInstalledArtifacts,
+  pickLocalArtifactFile,
   unwrapCmdError,
   type ImportArtifactKind,
   type ImportOutcome,
+  type InstalledArtifact,
 } from '../lib/ipc';
 import { useGraphStore, type ImportRecord } from '../lib/graphStore';
 
@@ -32,10 +35,12 @@ const ARTIFACT_KINDS: readonly ImportArtifactKind[] = [
  * §2214) transitions a record to `'blocked'` and renders the Reinstall /
  * Remove prompt (integrity > availability — ADR-0014).
  *
- * Local-file import via a native picker is deferred to a future stage
- * (needs `@tauri-apps/plugin-dialog` + Rust registration). The wrapper
- * already accepts `'file'` sources; the surface lands when the picker
- * does.
+ * Local-file import (M08.C / M07.V 🟡 #4): the "Browse…" button opens
+ * the native `@tauri-apps/plugin-dialog` picker and imports the chosen
+ * file via the existing `importArtifact('file', …)` wrapper — the
+ * backend already accepted `ImportSource::File`. On mount the panel
+ * reloads the durable `skills.lock` via `listInstalledArtifacts` so
+ * installed artifacts survive an app restart (M07-IRL #6).
  */
 export function ImportPanel(): JSX.Element {
   const imports = useGraphStore(useShallow((s) => Object.values(s.imports)));
@@ -47,6 +52,16 @@ export function ImportPanel(): JSX.Element {
   const [kind, setKind] = useState<ImportArtifactKind>('skill');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lockArtifacts, setLockArtifacts] = useState<InstalledArtifact[]>([]);
+
+  useEffect(() => {
+    // M07-IRL #6 — reload the durable skills.lock on mount so installed
+    // artifacts survive an app restart. list_installed_artifacts (Stage
+    // B) is the production reader; an absent lock resolves to [].
+    void listInstalledArtifacts()
+      .then(setLockArtifacts)
+      .catch((e) => console.error('list_installed_artifacts error:', e));
+  }, []);
 
   // The most-recent review record drives the modal — Novice imports
   // surface one disclosure at a time (single-session per §0d).
@@ -66,6 +81,31 @@ export function ImportPanel(): JSX.Element {
       setUrl('');
     } catch (e) {
       console.error('import_artifact error:', e);
+      setError(unwrapCmdError(e));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // M08.C / M07.V 🟡 #4 — the "Browse…" local-file companion to the URL
+  // field. The native picker resolves a path (or null on cancel — a
+  // normal user action, not an error); the path imports via the existing
+  // importArtifact('file', …) wrapper.
+  async function handleBrowse(): Promise<void> {
+    if (submitting) {
+      return;
+    }
+    const path = await pickLocalArtifactFile();
+    if (path === null) {
+      return; // user cancelled
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const outcome: ImportOutcome = await importArtifact('file', path, kind);
+      recordImport(outcome);
+    } catch (e) {
+      console.error('import_artifact (file) error:', e);
       setError(unwrapCmdError(e));
     } finally {
       setSubmitting(false);
@@ -149,6 +189,14 @@ export function ImportPanel(): JSX.Element {
         >
           Import
         </button>
+        <button
+          type="button"
+          data-testid="import-browse"
+          disabled={submitting}
+          onClick={() => void handleBrowse()}
+        >
+          Browse…
+        </button>
       </form>
 
       {blocked.length > 0 && (
@@ -178,6 +226,21 @@ export function ImportPanel(): JSX.Element {
             >
               <span className="import-row__ref">{it.ref}</span>
               <span className="import-row__status">installed</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {lockArtifacts.length > 0 && (
+        <ul className="import-panel__installed" data-testid="import-lock-list">
+          {lockArtifacts.map((a) => (
+            <li
+              key={a.key}
+              className="import-row import-row--installed"
+              data-testid={`import-lock-row-${a.key}`}
+            >
+              <span className="import-row__ref">{a.key}</span>
+              <span className="import-row__status">{a.kind}</span>
             </li>
           ))}
         </ul>

@@ -2,11 +2,18 @@ import { create } from 'zustand';
 import type { Framework } from '../types/framework';
 import type { FrameworkValidationReport } from './ipc';
 
-// M08.C red-phase stub — the Builder store (ADR-0020). The store SHAPE
-// ships here; green implements replaceFramework / setDiskFramework /
-// selectNode / setValidation. The canvas-mutation actions (addNode /
-// updateNode / connectEdge / removeNode) stay typed no-op stubs that
-// D1/D2 fill — shipping them keeps the store interface final at C.
+// M08.C — the Builder store (ADR-0020). builderStore holds the
+// in-progress framework.json as the single source of truth; the canvas
+// (D1/D2) is a projection derived from `framework`, and canvas edits
+// mutate `framework`. It is a SEPARATE Zustand store from `graphStore`
+// (the live-execution store) — the two have disjoint lifecycles
+// (build-time vs run-time) and conflating them is the dual-purpose-store
+// anti-pattern. C ships the store shape + replaceFramework /
+// setDiskFramework / selectNode / setValidation; the canvas-mutation
+// actions (addNode / updateNode / connectEdge / removeNode) ship as
+// typed no-op stubs that D1/D2 fill — shipping them keeps the store
+// interface final at C so no later stage re-shapes a useBuilderStore
+// selector.
 
 /** One Palette item dragged onto the canvas (D1 consumes these). */
 export type BuilderNodeKind = 'agent' | 'tool' | 'skill' | 'hitl' | 'hook';
@@ -70,12 +77,14 @@ export const useBuilderStore = create<BuilderState>((set) => ({
   diskFramework: null,
   selectedNodeId: null,
   validation: null,
-  replaceFramework: () => set((s) => s),
-  setDiskFramework: () => set((s) => s),
-  selectNode: () => set((s) => s),
+  replaceFramework: (fw) => set({ framework: fw }),
+  setDiskFramework: (fw) => set({ diskFramework: fw }),
+  selectNode: (id) => set({ selectedNodeId: id }),
+  // D1/D2 replace these no-op bodies; shipping them typed keeps the
+  // store shape final at C.
   addNode: () => set((s) => s),
   updateNode: () => set((s) => s),
   connectEdge: () => set((s) => s),
   removeNode: () => set((s) => s),
-  setValidation: () => set((s) => s),
+  setValidation: (report) => set({ validation: report }),
 }));

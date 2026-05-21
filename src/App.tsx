@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { ApprovalPanel } from './components/ApprovalPanel';
 import { BudgetHeaderBar } from './components/BudgetHeaderBar';
+import { BuilderShell } from './components/builder/BuilderShell';
+import { ViewSwitch, type AppView } from './components/builder/ViewSwitch';
 import { GapPanel } from './components/GapPanel';
 import { GraphCanvas } from './components/GraphCanvas';
 import { HITLModal } from './components/HITLModal';
@@ -48,7 +50,54 @@ if (typeof window !== 'undefined') {
   window.__graphStore = useGraphStore;
 }
 
+interface RuntimeLayoutProps {
+  hasKey: boolean;
+  running: boolean;
+  error: string | null;
+  onSetKey: (key: string) => Promise<void>;
+  onSmoke: () => Promise<void>;
+  lastSessionId: string | null;
+}
+
+// RuntimeLayout — the live-execution view (SetupPanel + SmokeButton +
+// the `graph-layout` panels + the modal/dialog overlays). Extracted
+// verbatim from App's return so the Runtime view is a clean unit and the
+// M08.C Builder view is a sibling, not a rewrite. Behavior is unchanged:
+// App still owns the hasKey / running / error state, the
+// subscribeAgentEvents effect, and the replay-on-mount.
+function RuntimeLayout({
+  hasKey,
+  running,
+  error,
+  onSetKey,
+  onSmoke,
+  lastSessionId,
+}: RuntimeLayoutProps): JSX.Element {
+  return (
+    <>
+      <SetupPanel onSave={onSetKey} />
+      <SmokeButton disabled={!hasKey || running} onClick={onSmoke} />
+      {error && <p className="error">{error}</p>}
+      <div className="graph-layout">
+        <GraphCanvas />
+        <InspectorPanel />
+        <ApprovalPanel />
+        <HITLPanel />
+        <GapPanel />
+        <MCPServerSettings />
+        <ImportPanel />
+      </div>
+      <HITLModal />
+      <HITLToast />
+      <RecoveryDialog />
+      <UncertaintyPrompt sessionId={lastSessionId ?? ''} />
+      <SqlInspector />
+    </>
+  );
+}
+
 export function App(): JSX.Element {
+  const [view, setView] = useState<AppView>('runtime');
   const [hasKey, setHasKey] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -124,23 +173,19 @@ export function App(): JSX.Element {
     <main>
       <BudgetHeaderBar />
       <h1>Agent Runtime — M03 live graph</h1>
-      <SetupPanel onSave={handleSetKey} />
-      <SmokeButton disabled={!hasKey || running} onClick={handleSmoke} />
-      {error && <p className="error">{error}</p>}
-      <div className="graph-layout">
-        <GraphCanvas />
-        <InspectorPanel />
-        <ApprovalPanel />
-        <HITLPanel />
-        <GapPanel />
-        <MCPServerSettings />
-        <ImportPanel />
-      </div>
-      <HITLModal />
-      <HITLToast />
-      <RecoveryDialog />
-      <UncertaintyPrompt sessionId={lastSessionId ?? ''} />
-      <SqlInspector />
+      <ViewSwitch value={view} onChange={setView} />
+      {view === 'runtime' ? (
+        <RuntimeLayout
+          hasKey={hasKey}
+          running={running}
+          error={error}
+          onSetKey={handleSetKey}
+          onSmoke={handleSmoke}
+          lastSessionId={lastSessionId}
+        />
+      ) : (
+        <BuilderShell />
+      )}
     </main>
   );
 }

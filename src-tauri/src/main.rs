@@ -51,6 +51,11 @@ fn main() {
         // Verified against https://v2.tauri.app/plugin/notification/ at
         // 2026-05-10 (gotcha #32).
         .plugin(tauri_plugin_notification::init())
+        // M08 Stage C (spec §M7) — dialog plugin for the local-file
+        // picker. Permission granted via src-tauri/capabilities/default.json
+        // `dialog:allow-open`. Verified against
+        // https://v2.tauri.app/plugin/dialog/ at 2026-05-21 (gotcha #32).
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::set_api_key,
             commands::has_api_key,

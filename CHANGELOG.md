@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M08 Stage C (Builder shell + Palette + local-file picker)
+
+- **Runtime ↔ Builder view switch (`src/App.tsx`).** A top-level `view`
+  state + a `ViewSwitch` chrome toggle; the existing live-graph layout
+  is extracted verbatim into a `RuntimeLayout` component and
+  conditionally rendered, `<BuilderShell/>` rendering for the Builder
+  view. The `subscribeAgentEvents` effect, replay-on-mount, and the
+  `__graphStore` Playwright affordance are unchanged.
+- **`src/lib/builderStore.ts` — the Builder Zustand store (ADR-0020).**
+  Holds the in-progress `framework.json` as the single source of truth;
+  the canvas (D1/D2) is a projection. SEPARATE from `graphStore`. C
+  ships `replaceFramework` / `setDiskFramework` / `selectNode` /
+  `setValidation`; the canvas-mutation actions ship as typed no-op stubs
+  D1/D2 fill, so the store shape is final at C.
+- **`src/components/builder/BuilderShell.tsx`** — the three-panel grid:
+  a working `Palette`, an empty Canvas region (a React-Flow drop target
+  D1 fills), an empty Inspector region (a stub E fills).
+- **`src/components/builder/Palette.tsx`** — the five-tab filterable
+  drag-source Palette (Tools / Skills / Agents / HITL / Hooks); every
+  item carries an `application/x-builder-node` drag payload (the C↔D1
+  contract). Tools/Skills/Agents list built-ins + installed artifacts.
+- **`src/lib/ipc.ts`** — `listInstalledArtifacts` (Stage B's
+  `list_installed_artifacts`, zero JS args) + `pickLocalArtifactFile`
+  (a `@tauri-apps/plugin-dialog` wrapper); the `InstalledArtifact` /
+  `FrameworkValidationReport` / `NodeError` hand-mirrored serde types.
+- **Local-file picker (M07.V 🟡 #4).** `@tauri-apps/plugin-dialog`
+  registered three places (npm dep, `src-tauri` `Cargo.toml` + the
+  builder `.plugin()` call, the `dialog:allow-open` capability entry);
+  wired into `ImportPanel` as a "Browse…" companion to the URL field.
+- **`skills.lock`-on-mount reload (M07-IRL #6).** `ImportPanel` + the
+  Palette call `list_installed_artifacts` on mount, so installed
+  artifacts survive an app restart.
+- **`src/types/framework.ts`** — the generated `Framework` TS type;
+  `crates/xtask` adds `framework.v1.json` to its TS-codegen targets
+  (CLAUDE.md §14) and runs `json-schema-to-typescript` from the schema
+  directory so external `$ref`s resolve.
+- **ADR-0020** — the Builder canvas ↔ `framework.json` state model.
+
 ### Added — M08 Stage B (Builder backend)
 
 - **`crates/runtime-main/src/builder/` — the Builder backend.** The

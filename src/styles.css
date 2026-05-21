@@ -1281,3 +1281,115 @@ p.error {
   gap: 0.4rem;
   justify-content: flex-end;
 }
+
+/* ---- M08.C Builder workbench — view switch + three-panel shell ----
+ * All colors reference the --node-* theme tokens (M07-IRL #3 — no
+ * literal colors against the dark theme). */
+
+.view-switch {
+  display: inline-flex;
+  margin: 0.5rem 0;
+  border: 1px solid var(--node-base-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.view-switch__option {
+  padding: 0.35rem 0.9rem;
+  font-size: 0.85rem;
+  background: var(--node-bg);
+  color: var(--node-fg-muted);
+  border: none;
+  cursor: pointer;
+}
+
+.view-switch__option--active {
+  background: var(--node-active);
+  color: var(--node-hitl);
+}
+
+.builder-shell {
+  display: grid;
+  grid-template-columns: 220px 1fr 320px;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  height: 70vh;
+  color: var(--node-fg);
+}
+
+.builder-shell__palette,
+.builder-shell__canvas,
+.builder-shell__inspector {
+  background: var(--node-bg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 4px;
+  overflow: auto;
+}
+
+.builder-shell__canvas {
+  background: var(--node-bg-alt);
+}
+
+.builder-palette {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  color: var(--node-fg);
+}
+
+.builder-palette__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--node-base-border);
+}
+
+.builder-palette__tab {
+  flex: 1 1 auto;
+  padding: 0.35rem 0.4rem;
+  font-size: 0.72rem;
+  text-transform: capitalize;
+  background: var(--node-bg);
+  color: var(--node-fg-muted);
+  border: none;
+  cursor: pointer;
+}
+
+.builder-palette__tab--active {
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border-bottom: 2px solid var(--node-active);
+}
+
+.builder-palette__filter {
+  margin: 0.5rem;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.8rem;
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+}
+
+.builder-palette__list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0.5rem 0.5rem;
+  overflow: auto;
+}
+
+.builder-palette__item {
+  padding: 0.35rem 0.5rem;
+  margin-bottom: 0.3rem;
+  font-size: 0.8rem;
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+  cursor: grab;
+}
+
+.builder-palette__empty {
+  margin: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--node-fg-muted);
+}

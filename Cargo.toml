@@ -76,6 +76,15 @@ globset             = "0.4"
 # https://v2.tauri.app/plugin/notification/ at 2026-05-10.
 tauri-plugin-notification = "2"
 
+# M08 Stage C — Tauri 2.x dialog plugin for the local-file picker (the
+# Builder import affordance + the M07 Import panel "Browse…" companion;
+# MVP §M7 / M07.V 🟡 #4). 2.x matches the Tauri 2 baseline. Per
+# docs/gotchas.md #32 cross-stack discipline: npm package, Rust crate,
+# `open` API, and the `dialog:allow-open` capability identifier verified
+# against https://v2.tauri.app/plugin/dialog/ — npm + crate 2.7.1 at
+# 2026-05-21.
+tauri-plugin-dialog = "2"
+
 # runtime-core path-dep for runtime-main + future provider consumers.
 # Version pin avoids the cargo-deny wildcard rule.
 runtime-core        = { path = "crates/runtime-core", version = "0.1.0" }
