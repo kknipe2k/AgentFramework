@@ -76,6 +76,11 @@ fn main() {
             // M07.5 — import validate/commit lifecycle (ADR-0017)
             commands::complete_import_artifact,
             commands::cancel_pending_import,
+            // M08 Stage B — Builder backend
+            commands::validate_framework,
+            commands::save_framework,
+            commands::load_framework,
+            commands::list_installed_artifacts,
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();

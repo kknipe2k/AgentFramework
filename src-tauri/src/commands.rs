@@ -34,10 +34,15 @@
 //! struct-variant enum here; M04 Stage A2 migrated to the generated
 //! tuple-variant shape (the wire format is unchanged).
 
+use std::path::Path;
 use std::sync::Arc;
 
 use runtime_core::event::AgentEvent;
+use runtime_core::generated::framework::Framework;
 use runtime_core::CmdError;
+use runtime_main::builder::{
+    Companion, FrameworkValidationReport, InstalledArtifact, LoadedFramework,
+};
 use runtime_main::drone_ipc::{DroneClient, RecoveredSession};
 use runtime_main::hitl::{HitlChoice, HitlError, HitlSeam};
 use runtime_main::import::fetch::{HttpFetcher, SystemResolver};
@@ -1367,6 +1372,114 @@ pub async fn cancel_pending_import(
     Ok(())
 }
 
+// ── M08 Stage B — Builder backend commands ──────────────────────────
+//
+// Four thin shell wrappers over the `runtime_main::builder` seams. The
+// `*_with` function is the unit-tested core (CLAUDE.md §5 `*_with`
+// archetype); the `#[tauri::command]` wrapper is the §5 tauri-shell
+// holdout. `validate_framework` returns its report as the command's
+// return value — a §12-owned wire decision: continuous editor
+// validation is a request/response interaction, the shape M07's
+// `import_artifact` established (spec Phase 9 says "events", written
+// before the IPC matured to command returns). The wrappers are `async`
+// to match the existing command surface (the existing commands are all
+// `async`).
+
+/// Validate an in-progress framework document.
+///
+/// The Builder Canvas (D2 red badges) + the Inspector (E) call this
+/// continuously as the user edits. The document may be incomplete or
+/// invalid — that is the point.
+#[tauri::command]
+pub async fn validate_framework(doc: Value) -> FrameworkValidationReport {
+    validate_framework_with(&doc)
+}
+
+/// Test-seam for [`validate_framework`] (CLAUDE.md §5 `*_with`).
+#[must_use]
+pub fn validate_framework_with(doc: &Value) -> FrameworkValidationReport {
+    runtime_main::builder::validate_framework(doc)
+}
+
+/// Save a framework + its companion markdown files to `dir`.
+///
+/// # Errors
+///
+/// [`CmdError::Internal`] on a non-directory target or any filesystem
+/// write failure.
+#[tauri::command]
+pub async fn save_framework(
+    dir: String,
+    framework: Framework,
+    companions: Vec<Companion>,
+) -> Result<(), CmdError> {
+    save_framework_with(Path::new(&dir), &framework, &companions)
+}
+
+/// Test-seam for [`save_framework`] (CLAUDE.md §5 `*_with`).
+///
+/// # Errors
+///
+/// [`CmdError::Internal`] wrapping any `runtime_main::builder::BuilderError`.
+pub fn save_framework_with(
+    dir: &Path,
+    framework: &Framework,
+    companions: &[Companion],
+) -> Result<(), CmdError> {
+    runtime_main::builder::save_framework(dir, framework, companions)
+        .map_err(|e| CmdError::internal(e.to_string()))
+}
+
+/// Load a framework + its companion markdown files from `dir`.
+///
+/// # Errors
+///
+/// [`CmdError::Internal`] when `framework.json` is missing/unreadable or
+/// fails to parse.
+#[tauri::command]
+pub async fn load_framework(dir: String) -> Result<LoadedFramework, CmdError> {
+    load_framework_with(Path::new(&dir))
+}
+
+/// Test-seam for [`load_framework`] (CLAUDE.md §5 `*_with`).
+///
+/// # Errors
+///
+/// [`CmdError::Internal`] wrapping any `runtime_main::builder::BuilderError`.
+pub fn load_framework_with(dir: &Path) -> Result<LoadedFramework, CmdError> {
+    runtime_main::builder::load_framework(dir).map_err(|e| CmdError::internal(e.to_string()))
+}
+
+/// List the artifacts recorded in the framework's `skills.lock`.
+///
+/// The lock lives at `<app_local_data_dir>/skills.lock` — the same path
+/// `import_artifact` writes (the path-agnostic archetype; the shell
+/// resolves the directory). An absent lock yields an empty list — the
+/// M07-IRL #6 fix (the Import panel reads this on startup).
+///
+/// # Errors
+///
+/// [`CmdError::Internal`] when the data directory cannot be resolved or
+/// the lock file exists but is corrupt.
+#[tauri::command]
+pub async fn list_installed_artifacts(app: AppHandle) -> Result<Vec<InstalledArtifact>, CmdError> {
+    let dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| CmdError::internal(format!("app_local_data_dir: {e}")))?;
+    list_installed_artifacts_with(&dir.join("skills.lock"))
+}
+
+/// Test-seam for [`list_installed_artifacts`] (CLAUDE.md §5 `*_with`).
+///
+/// # Errors
+///
+/// [`CmdError::Internal`] wrapping a corrupt-lock
+/// `runtime_main::builder::BuilderError`.
+pub fn list_installed_artifacts_with(lock_path: &Path) -> Result<Vec<InstalledArtifact>, CmdError> {
+    runtime_main::builder::list_installed(lock_path).map_err(|e| CmdError::internal(e.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2534,5 +2647,72 @@ mod tests {
         // ReceiverDropped (also soft-translated to internal). Both
         // outcomes are accepted: the function must NOT panic.
         let _ = respond_hitl_with("u-drop".into(), "skip".into(), &seam).await;
+    }
+
+    // ── M08 Stage B — Builder backend command seams ─────────────────
+
+    /// Minimal valid framework JSON for the builder-command seam tests.
+    fn builder_seam_framework() -> Value {
+        serde_json::json!({
+            "name": "test",
+            "version": "1.0.0",
+            "description": "test framework",
+            "model": { "provider": "anthropic", "id": "claude-sonnet-4-6" },
+            "agents": [{
+                "id": "worker",
+                "role": "worker",
+                "model": { "provider": "anthropic", "id": "claude-sonnet-4-6" },
+                "capabilities": {
+                    "tools_called": [], "skills_loaded": [],
+                    "file_access": { "read": [], "write": [] },
+                    "network": [], "shell": false, "spawn_agents": []
+                },
+                "allowed_tools": [], "allowed_skills": [], "spawns": []
+            }],
+            "tools": [],
+            "skills": [],
+            "session_root_agent": "worker"
+        })
+    }
+
+    #[test]
+    fn validate_framework_with_valid_doc_reports_ok() {
+        let report = validate_framework_with(&builder_seam_framework());
+        assert!(
+            report.ok,
+            "a valid framework validates clean through the seam"
+        );
+    }
+
+    #[test]
+    fn validate_framework_with_schema_invalid_doc_reports_not_ok() {
+        let report = validate_framework_with(&serde_json::json!({ "not": "a framework" }));
+        assert!(!report.ok);
+        assert!(report.capability_summary.is_none());
+    }
+
+    #[test]
+    fn save_and_load_framework_with_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let fw: Framework = serde_json::from_value(builder_seam_framework()).unwrap();
+        save_framework_with(dir.path(), &fw, &[]).expect("save seam succeeds");
+        let loaded = load_framework_with(dir.path()).expect("load seam succeeds");
+        assert_eq!(loaded.framework.agents.len(), 1);
+    }
+
+    #[test]
+    fn load_framework_with_missing_dir_returns_cmd_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = load_framework_with(dir.path()).expect_err("missing framework.json errs");
+        // The seam maps builder::BuilderError onto the wire-format CmdError.
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn list_installed_artifacts_with_absent_lock_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let installed = list_installed_artifacts_with(&dir.path().join("skills.lock"))
+            .expect("an absent lock is not an error");
+        assert!(installed.is_empty());
     }
 }
