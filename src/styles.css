@@ -1328,6 +1328,8 @@ p.error {
 
 .builder-shell__canvas {
   background: var(--node-bg-alt);
+  /* anchor for the absolutely-positioned NodeConfigPanel overlay (D1) */
+  position: relative;
 }
 
 .builder-palette {
@@ -1391,5 +1393,85 @@ p.error {
 .builder-palette__empty {
   margin: 0.5rem;
   font-size: 0.8rem;
+  color: var(--node-fg-muted);
+}
+
+/* ---- M08.D1 Builder Canvas — node editor ----
+ * The interactive React-Flow canvas + the five Builder node components
+ * (a thin interactive layer over the §3 node CSS) + the inline
+ * NodeConfigPanel. Theme variables only (M07-IRL #3 — no literals). */
+
+.builder-canvas {
+  width: 100%;
+  height: 100%;
+  background: var(--node-bg-alt);
+}
+
+/* The Builder nodes reuse the §3 agent-node / tool-node / … CSS; this
+ * thin layer adds only the interactive drag affordance. */
+.builder-agent-node,
+.builder-tool-node,
+.builder-skill-node,
+.builder-hitl-node,
+.builder-hook-node {
+  cursor: grab;
+}
+
+.builder-node-config {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 240px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.6rem;
+  background: var(--node-bg);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 4px;
+}
+
+.builder-node-config__title {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--node-fg);
+}
+
+.builder-node-config__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.72rem;
+  color: var(--node-fg-muted);
+}
+
+.builder-node-config__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.builder-node-config__list-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--node-fg);
+}
+
+.builder-node-config__add {
+  display: flex;
+  gap: 0.25rem;
+}
+
+/* The empty-state line of the shared CapabilityDisclosure surface. */
+.import-capability-disclosure--empty {
+  margin: 0;
+  font-size: 12px;
   color: var(--node-fg-muted);
 }

@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M08 Stage D1 (Builder Canvas — node editor)
+
+- **`src/components/builder/BuilderCanvas.tsx`** — the interactive
+  React-Flow node editor, a NEW component distinct from the read-only
+  live-graph `GraphCanvas`. A drop target; renders nodes from the
+  `builderStore.framework` projection; module-level `builderNodeTypes`
+  (the GraphCanvas re-mount trap). `onConnect` is left unset — edges
+  are D2.
+- **`src/components/builder/nodes/Builder{Agent,Tool,Skill,Hitl,Hook}Node.tsx`**
+  — the five interactive Builder node components; reuse the §3 node CSS
+  class families plus a thin `builder-*-node` drag-affordance layer.
+- **`src/components/builder/NodeConfigPanel.tsx`** — the inline
+  node-configuration surface: `role`, `model` (Anthropic model
+  dropdown), and the `allowed_tools` / `allowed_skills` editable lists;
+  every edit calls `builderStore.updateNode`.
+- **`src/components/CapabilityDisclosure.tsx`** — the shared
+  plain-English capability-disclosure surface (the M05 §8.security L1
+  disclosure), extracted from `ImportPanel`'s import-review modal as a
+  behavior-preserving lift so the Builder nodes reuse it (its third
+  reuse); `ImportPanel` now consumes the extracted component.
+- **`src/lib/builderStore.ts`** — `addNode` / `updateNode` implemented
+  (Stage C shipped them as typed no-op stubs); the `nodePositions`
+  slot, the `moveNode` action (React Flow v12 controlled drag), and the
+  memoized `canvasNodes` / `canvasEdges` framework→React-Flow
+  projection selectors (the ADR-0020 model in code). `addNode` is
+  idempotent on a re-drop of the same Palette item.
+- MVP §M8 criterion 1 demonstrated end-to-end in Playwright: drag an
+  Agent onto the empty canvas → set role/model → the plain-English
+  capability disclosure renders below the node.
+
 ### Added — M08 Stage C (Builder shell + Palette + local-file picker)
 
 - **Runtime ↔ Builder view switch (`src/App.tsx`).** A top-level `view`

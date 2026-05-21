@@ -12,6 +12,7 @@ import {
   type InstalledArtifact,
 } from '../lib/ipc';
 import { useGraphStore, type ImportRecord } from '../lib/graphStore';
+import { CapabilityDisclosure } from './CapabilityDisclosure';
 
 const ARTIFACT_KINDS: readonly ImportArtifactKind[] = [
   'skill',
@@ -320,19 +321,14 @@ function ReviewModal({ item, onInstall, onReject }: ReviewModalProps): JSX.Eleme
 
         <section className="import-review-modal__section">
           <h3 className="import-review-modal__section-title">Declared capabilities</h3>
-          {item.capabilities.length === 0 ? (
-            <p className="import-review-modal__none" data-testid="import-capability-disclosure">
-              No capabilities declared.
-            </p>
-          ) : (
-            <ul className="import-capability-disclosure" data-testid="import-capability-disclosure">
-              {item.capabilities.map((c) => (
-                <li key={c} className="import-capability-disclosure__item">
-                  {c}
-                </li>
-              ))}
-            </ul>
-          )}
+          {/* The shared §8.security L1 disclosure surface — extracted at
+              M08.D1 so the Builder Canvas nodes reuse it (its third
+              reuse). */}
+          <CapabilityDisclosure
+            capabilities={item.capabilities}
+            emptyMessage="No capabilities declared."
+            data-testid="import-capability-disclosure"
+          />
         </section>
 
         <section className="import-review-modal__section" data-testid="import-l3-report">
