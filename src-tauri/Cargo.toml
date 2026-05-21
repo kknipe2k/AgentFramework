@@ -46,6 +46,12 @@ keyring            = { workspace = true }
 # (`request_tier_transition_with_*`). Same workspace dep as the other
 # crates use for filesystem-isolation tests.
 tempfile           = { workspace = true }
+# M08 Stage F1 — the `test-helpers` feature exposes `MockTransport` so the
+# `connect_test_session_mcp` tests drive a concrete `McpDispatcher`
+# without a live MCP server (mirrors crates/runtime-main's dev-dep
+# choice). `runtime-mcp` is already a normal dependency above; this entry
+# only enables the test-only feature for dev/test builds.
+runtime-mcp        = { path = "../crates/runtime-mcp", features = ["test-helpers"] }
 
 [lints]
 workspace = true

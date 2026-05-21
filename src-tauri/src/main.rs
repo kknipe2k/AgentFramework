@@ -86,6 +86,8 @@ fn main() {
             commands::save_framework,
             commands::load_framework,
             commands::list_installed_artifacts,
+            // M08 Stage F1 — the Tester backend
+            commands::test_framework,
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();

@@ -87,6 +87,22 @@ impl HitlSeam {
         Self::default()
     }
 
+    /// A `HitlSeam` for the Builder's Tester (M08 Stage F1; ADR-0019).
+    ///
+    /// Every [`Self::await_response`] call resolves IMMEDIATELY with a
+    /// fixed default [`HitlChoice`] instead of registering a pending
+    /// await — the test session runs unattended (spec Phase 9: "test
+    /// sessions don't block on user input — defaults applied"). No
+    /// renderer is attached; no `resolve` is ever called.
+    ///
+    /// This changes the HITL *response* (auto-default vs await a user
+    /// decision), NOT the capability-enforcement *logic* (Hard Rule 8 —
+    /// `CapabilityEnforcer::check` is byte-identical to a live session).
+    #[must_use]
+    pub fn test_defaults() -> Self {
+        todo!("M08.F1 green phase: construct the auto-defaulting test seam")
+    }
+
     /// SDK calls this to suspend on a pending HITL request. Future resolves
     /// when the renderer (or test harness) calls [`Self::resolve`] for the
     /// same `prompt_id`, OR when `wait` elapses (returns
@@ -315,5 +331,50 @@ mod tests {
         };
         assert_eq!(p.prompt_id, "u-1");
         assert_eq!(p.options.len(), 2);
+    }
+
+    // ── M08.F1 — the test-defaults seam (ADR-0019) ──────────────────
+
+    #[tokio::test]
+    async fn test_defaults_seam_resolves_await_response_with_the_default_immediately() {
+        // The Builder's Tester weaves this seam so a test run never
+        // blocks; await_response resolves Ok with the default choice
+        // without any renderer calling resolve().
+        let seam = HitlSeam::test_defaults();
+        let res = tokio_timeout(FAST, seam.await_response("p1", FAST))
+            .await
+            .expect("the test-defaults seam must not block on user input");
+        assert!(
+            res.is_ok(),
+            "await_response resolves Ok with the default, got {res:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_defaults_seam_does_not_block_when_no_renderer_is_attached() {
+        // A live HitlSeam with no renderer would TimedOut even at a
+        // generous wait; the test-defaults seam resolves immediately
+        // regardless of the wait budget.
+        let seam = HitlSeam::test_defaults();
+        let res = seam
+            .await_response("never-resolved", Duration::from_millis(10))
+            .await;
+        assert!(
+            res.is_ok(),
+            "the test-defaults seam resolves without a renderer, got {res:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_defaults_seam_leaves_no_pending_registration() {
+        // The auto-default path short-circuits before the pending map —
+        // a test run accumulates no outstanding awaits.
+        let seam = HitlSeam::test_defaults();
+        let _ = seam.await_response("p1", FAST).await;
+        assert_eq!(
+            seam.pending_len().await,
+            0,
+            "the test-defaults seam never registers a pending await"
+        );
     }
 }

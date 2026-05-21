@@ -41,7 +41,7 @@ use runtime_core::event::AgentEvent;
 use runtime_core::generated::framework::Framework;
 use runtime_core::CmdError;
 use runtime_main::builder::{
-    Companion, FrameworkValidationReport, InstalledArtifact, LoadedFramework,
+    Companion, FrameworkValidationReport, InstalledArtifact, LoadedFramework, TestOutcome,
 };
 use runtime_main::drone_ipc::{DroneClient, RecoveredSession};
 use runtime_main::hitl::{HitlChoice, HitlError, HitlSeam};
@@ -66,6 +66,7 @@ use runtime_main::tier::{save_tier, Tier, TierPersistenceError};
 use runtime_mcp::client::registry::{McpServerRecord, Registry};
 use runtime_mcp::client::{McpClient, McpServerSummary};
 use runtime_mcp::transport::McpTool;
+use runtime_mcp::{McpDispatcher, McpError};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
@@ -1480,6 +1481,119 @@ pub fn list_installed_artifacts_with(lock_path: &Path) -> Result<Vec<InstalledAr
     runtime_main::builder::list_installed(lock_path).map_err(|e| CmdError::internal(e.to_string()))
 }
 
+// ── M08 Stage F1 — the Tester backend (isolated test session) ────────
+//
+// `test_framework` is the production wrapper (the OS-touching half — it
+// resolves the throwaway DB path, spawns the test-session drone, and
+// tears both down), mirroring how `run_smoke_session` wraps
+// `run_smoke_session_with`. `test_framework_with` is the `*_with` seam
+// (CLAUDE.md §5): provider / drone / MCP dispatch injected, delegating
+// to `runtime_main::builder::run_test_session_with`.
+//
+// `connect_test_session_mcp` is the FIRST production caller of
+// `McpDispatcher::on_server_connected` (M07.V 🟡 #3): runtime-main cannot
+// reference `runtime_mcp::McpDispatcher` (runtime-mcp depends on
+// runtime-main — the reverse edge would be a Cargo cycle), so the §5a
+// re-resolution connect handler lives here in the shell, where both
+// crates are visible. ADR-0019 records the placement.
+
+/// Resolve a throwaway test-session `SQLite` path under the OS temp dir.
+///
+/// NEVER the user session DB (`app_local_data_dir`): the Tester writes
+/// nothing to a user data directory (spec Phase 9; ADR-0019). A fresh
+/// per-run UUID makes concurrent / sequential runs collision-free.
+fn throwaway_test_db_path() -> std::path::PathBuf {
+    todo!("M08.F1 green phase: std::env::temp_dir().join(runtime-tester-<uuid>.sqlite)")
+}
+
+/// Connect the candidate framework's MCP servers for the test session,
+/// driving the §5a re-resolution — the FIRST production caller of
+/// [`McpDispatcher::on_server_connected`] (M07.V 🟡 #3 — discharged).
+///
+/// Returns one `AgentEvent::ToolAliasAmbiguous` per `NewAmbiguity` the
+/// re-resolution surfaced (spec §5a step 5), in connect order.
+///
+/// # Errors
+///
+/// [`McpError`] when a server's connection / `list_tools` fails.
+pub async fn connect_test_session_mcp(
+    dispatcher: &McpDispatcher,
+    servers: &[String],
+) -> Result<Vec<AgentEvent>, McpError> {
+    let _ = (dispatcher, servers);
+    todo!("M08.F1 green phase: on_server_connected per server, NewAmbiguity → ToolAliasAmbiguous")
+}
+
+/// Disconnect the test session's MCP servers on teardown — the
+/// production caller of [`McpDispatcher::on_server_disconnected`].
+pub async fn disconnect_test_session_mcp(dispatcher: &McpDispatcher, servers: &[String]) {
+    let _ = (dispatcher, servers);
+    todo!("M08.F1 green phase: on_server_disconnected per server")
+}
+
+/// Test-seam for [`test_framework`] (CLAUDE.md §5 `*_with`).
+///
+/// Delegates to [`runtime_main::builder::run_test_session_with`] and maps
+/// a `TesterError` onto the wire-format [`CmdError`]. A *failed test* is
+/// `Ok(TestOutcome { passed: false, .. })`, not an `Err`.
+///
+/// # Errors
+///
+/// [`CmdError::Internal`] wrapping a `TesterError` (infrastructure
+/// failure — drone spawn / temp-DB setup).
+pub async fn test_framework_with<P: LLMProvider + 'static>(
+    framework_doc: &Framework,
+    task: &str,
+    db_path: &Path,
+    provider: P,
+    drone: Arc<DroneClient>,
+    mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
+    session_id: SessionId,
+) -> Result<TestOutcome, CmdError> {
+    let _ = (
+        framework_doc,
+        task,
+        db_path,
+        provider,
+        drone,
+        mcp_dispatch,
+        session_id,
+    );
+    todo!("M08.F1 green phase: delegate to run_test_session_with, map TesterError -> CmdError")
+}
+
+/// Run the Builder's Tester against a candidate framework — M08 Stage F1.
+///
+/// Spawns an ISOLATED test session: a throwaway `SQLite` DB resolved
+/// here in the shell ([`throwaway_test_db_path`]; never the user DB —
+/// ADR-0019), a test-defaults `HitlSeam` (capability violations → test
+/// failures, not live HITL), no user-data-dir writes. The candidate
+/// `framework_doc` crosses the wire straight from the canvas (spec
+/// Phase 9 "does NOT need to save first"). The throwaway DB + the
+/// test-session drone are torn down before returning.
+///
+/// # Errors
+///
+/// - [`CmdError::SetupRequired`] if no API key is in the keychain.
+/// - [`CmdError::Internal`] for a `TesterError` (drone spawn / temp-DB
+///   setup failed). A *failed test* is `Ok(TestOutcome { passed: false,
+///   .. })`, not an `Err`.
+#[tauri::command]
+pub async fn test_framework(
+    app: AppHandle,
+    framework_doc: Framework,
+    task: String,
+) -> Result<TestOutcome, CmdError> {
+    // The M08.F1 green phase wires the isolated-session lifecycle; the
+    // helpers below are its parts (referenced so each has a caller).
+    let _ = (&app, &framework_doc, &task);
+    let _ = test_framework_with::<AnthropicProvider>;
+    let _ = connect_test_session_mcp;
+    let _ = disconnect_test_session_mcp;
+    let _ = throwaway_test_db_path;
+    todo!("M08.F1 green phase: spawn + run + tear down the isolated test session")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2714,5 +2828,149 @@ mod tests {
         let installed = list_installed_artifacts_with(&dir.path().join("skills.lock"))
             .expect("an absent lock is not an error");
         assert!(installed.is_empty());
+    }
+
+    // ── M08 Stage F1 — the Tester backend (isolated test session) ────
+    mod tester_backend {
+        use super::*;
+
+        use std::collections::BTreeMap;
+
+        use async_trait::async_trait;
+        use runtime_main::capability::CapabilityEnforcer;
+        use runtime_mcp::transport::{Connection, MockTransport, Transport};
+        use runtime_mcp::{ConnectionResolver, McpDispatcher, NamespaceResolver};
+        use tokio::sync::RwLock;
+
+        /// A `ConnectionResolver` returning a single `MockTransport`-backed
+        /// connection for every server (mirrors `agent_with_tools_loop.rs`).
+        struct MockConnResolver {
+            transport: MockTransport,
+        }
+
+        #[async_trait]
+        impl ConnectionResolver for MockConnResolver {
+            async fn connection(
+                &self,
+                _server: &str,
+            ) -> Result<Arc<dyn Connection>, runtime_mcp::McpError> {
+                Ok(Arc::from(self.transport.connect().await?))
+            }
+        }
+
+        /// A concrete `McpDispatcher` whose `MockTransport`-backed servers
+        /// all expose the short tool name `read` — so a second connected
+        /// server makes `read` ambiguous (§5a step 5).
+        fn build_test_dispatcher() -> McpDispatcher {
+            let transport = MockTransport::new()
+                .with_tool("read", None, serde_json::json!({ "type": "object" }))
+                .with_tool_result("read", serde_json::json!({ "ok": true }));
+            McpDispatcher::new(
+                Arc::new(RwLock::new(NamespaceResolver::new(BTreeMap::new()))),
+                Arc::new(CapabilityEnforcer::new()),
+                Arc::new(MockConnResolver { transport }),
+                None,
+                "m08-f1-test",
+            )
+        }
+
+        fn f1_framework() -> Framework {
+            serde_json::from_value(builder_seam_framework()).expect("fixture framework")
+        }
+
+        #[tokio::test]
+        async fn connect_test_session_mcp_calls_on_server_connected_per_server() {
+            // The production connect handler drives on_server_connected
+            // for each candidate-framework MCP server (M07.V 🟡 #3).
+            let dispatcher = build_test_dispatcher();
+            connect_test_session_mcp(&dispatcher, &["fs".to_string()])
+                .await
+                .expect("connecting a single server through the production handler succeeds");
+        }
+
+        #[tokio::test]
+        async fn connect_test_session_mcp_new_ambiguity_emits_tool_alias_ambiguous() {
+            // Two connected servers exposing the same short name make it
+            // ambiguous; the §5a re-resolution surfaces ToolAliasAmbiguous.
+            let dispatcher = build_test_dispatcher();
+            let events =
+                connect_test_session_mcp(&dispatcher, &["fs".to_string(), "other".to_string()])
+                    .await
+                    .expect("connect both servers");
+            assert!(
+                events.iter().any(|e| matches!(
+                    e,
+                    AgentEvent::ToolAliasAmbiguous { name, .. } if name.as_str() == "read"
+                )),
+                "two servers exposing `read` emit ToolAliasAmbiguous; events: {events:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn disconnect_test_session_mcp_drops_servers_so_a_reconnect_is_unambiguous() {
+            // on_server_disconnected must actually remove the server: after
+            // a teardown, a lone reconnect of one of the two colliding
+            // servers is no longer ambiguous.
+            let dispatcher = build_test_dispatcher();
+            let first =
+                connect_test_session_mcp(&dispatcher, &["fs".to_string(), "other".to_string()])
+                    .await
+                    .expect("connect both");
+            assert!(
+                first
+                    .iter()
+                    .any(|e| matches!(e, AgentEvent::ToolAliasAmbiguous { .. })),
+                "two colliding servers must surface an ambiguity first"
+            );
+            disconnect_test_session_mcp(&dispatcher, &["fs".to_string(), "other".to_string()])
+                .await;
+            let second = connect_test_session_mcp(&dispatcher, &["fs".to_string()])
+                .await
+                .expect("reconnect one");
+            assert!(
+                !second
+                    .iter()
+                    .any(|e| matches!(e, AgentEvent::ToolAliasAmbiguous { .. })),
+                "after on_server_disconnected dropped both servers, a lone reconnect is unambiguous"
+            );
+        }
+
+        #[tokio::test]
+        async fn test_framework_with_returns_test_outcome_for_a_clean_run() {
+            // The commands.rs `*_with` seam composes the Tester and maps
+            // TesterError -> CmdError; a clean run is Ok(TestOutcome).
+            let dir = tempfile::tempdir().expect("tempdir");
+            let db_path = dir.path().join("runtime-tester.sqlite");
+            let outcome = test_framework_with(
+                &f1_framework(),
+                "summarize the input",
+                &db_path,
+                StubProvider,
+                Arc::new(DroneClient::noop()),
+                None,
+                SessionId::new(),
+            )
+            .await
+            .expect("the Tester seam returns Ok(TestOutcome) for a clean run");
+            assert!(outcome.passed, "a clean tool-free run passes");
+        }
+
+        #[test]
+        fn throwaway_test_db_path_is_under_the_os_temp_dir() {
+            let path = throwaway_test_db_path();
+            assert!(
+                path.starts_with(std::env::temp_dir()),
+                "the test DB lives under the OS temp dir, never the user data dir; got {path:?}"
+            );
+        }
+
+        #[test]
+        fn throwaway_test_db_path_is_unique_per_call() {
+            assert_ne!(
+                throwaway_test_db_path(),
+                throwaway_test_db_path(),
+                "each test run resolves a fresh throwaway DB path"
+            );
+        }
     }
 }

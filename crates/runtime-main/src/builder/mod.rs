@@ -32,12 +32,18 @@ pub mod error;
 pub mod persist;
 /// Whole-framework capability summary + per-spawn-edge narrowing.
 pub mod summary;
+/// The Builder's Tester — isolated, throwaway test session (Stage F1).
+pub mod tester;
 /// Continuous framework validation + the `skills.lock` reader.
 pub mod validate;
 
 pub use error::BuilderError;
 pub use persist::{load_framework, save_framework, Companion, LoadedFramework};
 pub use summary::{framework_capability_summary, FrameworkCapabilitySummary, SpawnEdgeNarrowing};
+pub use tester::{
+    fold_outcome, load_verified_artifact, run_test_session_with, CapabilityFailure, TestOutcome,
+    TesterError, TokenSpend,
+};
 pub use validate::{
     list_installed, validate_framework, FrameworkValidationReport, InstalledArtifact, NodeError,
 };
