@@ -53,6 +53,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             commands::set_api_key,
+            commands::has_api_key,
             commands::run_smoke_session,
             commands::query_session_db,
             commands::replay_session,

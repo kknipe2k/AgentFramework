@@ -76,9 +76,11 @@ impl StdioTransport {
 
     /// Build a `tokio::process::Command` from this transport's config,
     /// without spawning. This is the pure-logic seam tested by the
-    /// `build_command_*` test family.
+    /// `build_command_*` test family. The program name is run through
+    /// [`resolve_program`] so an npm-shipped CLI resolves to its Windows
+    /// `.cmd` shim (M06.5 IRL 🟡-2).
     pub(crate) fn build_command(&self) -> Command {
-        let mut cmd = Command::new(&self.command);
+        let mut cmd = Command::new(resolve_program(&self.command));
         for arg in &self.args {
             cmd.arg(arg);
         }
@@ -90,6 +92,26 @@ impl StdioTransport {
         }
         cmd
     }
+}
+
+/// Map an npm-shipped CLI name to its platform-correct program name.
+///
+/// The npm CLI ships `npx` / `npm` as `npx.cmd` / `npm.cmd` batch shims
+/// on Windows; `tokio::process::Command` does not auto-resolve the
+/// `.cmd` extension, so a bare `npx` MCP server fails to spawn there
+/// (M06.5 IRL 🟡-2). On Linux/macOS the bare names are real executables
+/// and pass through unchanged. Any non-npm command passes through on
+/// every platform — the rewrite is scoped to the two npm shims.
+fn resolve_program(command: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        match command {
+            "npx" => return "npx.cmd".to_string(),
+            "npm" => return "npm.cmd".to_string(),
+            _ => {}
+        }
+    }
+    command.to_string()
 }
 
 #[async_trait]

@@ -15,6 +15,7 @@ import { SmokeButton } from './components/SmokeButton';
 import { SqlInspector } from './components/SqlInspector';
 import { UncertaintyPrompt } from './components/UncertaintyPrompt';
 import {
+  invokeHasApiKey,
   invokeReplaySession,
   invokeRunSmokeSession,
   invokeSetApiKey,
@@ -53,6 +54,16 @@ export function App(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // M07-IRL #7: seed `hasKey` from the OS keychain so a key entered in
+    // a prior session survives an app restart. The root cause of the
+    // finding was the absent startup read — `hasKey` was hardcoded false
+    // and only flipped inside handleSetKey.
+    void invokeHasApiKey()
+      .then((present) => setHasKey(present))
+      .catch((e) => {
+        console.error('has_api_key error:', e);
+      });
+
     // Replay-on-mount: if a previous session id was stashed in
     // localStorage by a prior session_start, ask main to read its
     // signal log and re-emit AgentEvents through the existing

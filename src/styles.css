@@ -1125,13 +1125,18 @@ p.error {
   padding: 0.1rem 0;
 }
 
-/* ── M07.E Import panel + tier-gate review modal (ADR-0015) ────────── */
+/* ── M07.E Import panel + tier-gate review modal (ADR-0015) ──────────
+   M08.A (M07-IRL #3): the .import-* selectors set `background` but no
+   `color`, so the import UI text rendered ≈ the dark panel background.
+   Each text-bearing selector is pinned to the --node-fg / --node-fg-muted
+   theme tokens (styles.css:18-19). */
 
 .import-panel {
   border: 1px solid var(--node-border, #444);
   border-radius: 6px;
   padding: 0.6rem 0.8rem;
   background: var(--node-bg, #1c1c1c);
+  color: var(--node-fg);
 }
 .import-panel__header {
   display: flex;
@@ -1142,6 +1147,7 @@ p.error {
 .import-panel__title {
   font-size: 14px;
   margin: 0;
+  color: var(--node-fg);
 }
 .import-panel__error {
   color: #e66;
@@ -1158,6 +1164,7 @@ p.error {
   flex-direction: column;
   gap: 0.2rem;
   font-size: 12px;
+  color: var(--node-fg-muted);
 }
 .import-panel__reinstall-prompt {
   margin-top: 0.6rem;
@@ -1188,9 +1195,10 @@ p.error {
 }
 .import-row__ref {
   font-family: monospace;
+  color: var(--node-fg);
 }
 .import-row__status {
-  color: #8a8;
+  color: var(--node-fg-muted);
   margin-left: auto;
 }
 .import-row__error {
@@ -1220,15 +1228,17 @@ p.error {
   width: min(560px, 90vw);
   max-height: 90vh;
   overflow: auto;
+  color: var(--node-fg);
 }
 .import-review-modal__title {
   margin: 0 0 0.5rem;
   font-size: 15px;
+  color: var(--node-fg);
 }
 .import-review-modal__intro {
   margin: 0 0 0.6rem;
   font-size: 12px;
-  color: #bbb;
+  color: var(--node-fg-muted);
 }
 .import-review-modal__section {
   margin-bottom: 0.6rem;

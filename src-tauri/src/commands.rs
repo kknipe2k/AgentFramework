@@ -104,12 +104,28 @@ where
     Ok(())
 }
 
-/// Test-seam for the `has_api_key` command (CLAUDE.md §5 `*_with`
-/// archetype). Accepts an injectable presence probe so unit tests
-/// exercise the command surface without touching the real OS keychain.
+/// Whether an Anthropic API key is present in the OS keychain.
+///
+/// The renderer reads this at mount to seed `hasKey` so a key entered
+/// once survives an app restart (M07-IRL #7 — the root cause was the
+/// absent startup read, not a keychain write failure).
+///
+/// # Errors
+///
+/// Infallible in practice — the presence probe (`key_store::has_api_key`)
+/// maps every keychain outcome to a `bool`; the `Result` shape is the
+/// Tauri-command convention so the renderer's `unwrapCmdError` path
+/// stays uniform.
+#[tauri::command]
+pub async fn has_api_key() -> Result<bool, CmdError> {
+    Ok(has_api_key_with(runtime_main::key_store::has_api_key))
+}
+
+/// Test-seam for [`has_api_key`] (CLAUDE.md §5 `*_with` archetype).
+/// Accepts an injectable presence probe so unit tests exercise the
+/// command surface without touching the real OS keychain.
 pub fn has_api_key_with(probe: impl Fn() -> bool) -> bool {
-    let _ = probe;
-    unimplemented!("M08.A green phase — has_api_key_with")
+    probe()
 }
 
 /// Run the M02 smoke session against the live Anthropic API.

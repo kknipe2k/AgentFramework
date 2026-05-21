@@ -1547,12 +1547,11 @@ export const useGraphStore = create<GraphState>((set) => ({
           return { ...state, currentTier: event.current };
         }
 
-        // No-op variants — stream_text + decision_record + token_usage
-        // feed the inspector, not the graph; session_end + tool_error +
-        // mode_changed are graph-no-op by design. The exhaustive default
-        // below is the forcing function: any new variant added to the
-        // schema breaks the compile until handled.
-        //
+        // stream_text + decision_record feed the inspector, not the
+        // graph; session_end + tool_error + mode_changed are graph-no-op
+        // by design (handled in the no-op group below). The exhaustive
+        // default at the end is the forcing function: any new variant
+        // added to the schema breaks the compile until handled.
         case 'mcp_installed': {
           // Spec §5 (M06.D): server installed → track live status keyed
           // by name. currentMcpServers is registry-backed install state
@@ -1669,15 +1668,47 @@ export const useGraphStore = create<GraphState>((set) => ({
           };
         }
 
-        // No-op variants — stream_text + decision_record + token_usage
-        // feed the inspector, not the graph; session_end + tool_error +
+        case 'token_usage': {
+          // M07-IRL #2: the agent-node inspector showed tokensIn:0 /
+          // tokensOut:0 against a non-zero tokensTotal — the renderer
+          // dropped this event (it was a no-op switch arm). The SDK
+          // emits AgentEvent::TokenUsage and the drone projects it
+          // correctly; the drop was renderer-side. TokenUsage carries no
+          // agent_id (event.v1.json), so attribute the usage to the
+          // running agent — the single-active-agent assumption
+          // tool_result already relies on. A multi-turn loop emits one
+          // token_usage per turn; the in/out split accumulates.
+          const runningAgent = state.nodes.find(
+            (n) => n.type === 'agent' && n.data.status === 'active',
+          );
+          if (runningAgent === undefined) {
+            return state;
+          }
+          return {
+            ...state,
+            nodes: state.nodes.map((n) =>
+              n.id === runningAgent.id && n.type === 'agent'
+                ? {
+                    ...n,
+                    data: {
+                      ...n.data,
+                      tokensIn: n.data.tokensIn + event.input,
+                      tokensOut: n.data.tokensOut + event.output,
+                    },
+                  }
+                : n,
+            ),
+          };
+        }
+
+        // No-op variants — stream_text + decision_record feed the
+        // inspector, not the graph; session_end + tool_error +
         // mode_changed are graph-no-op by design.
         case 'session_end':
         case 'tool_error':
         case 'mode_changed':
         case 'stream_text':
         case 'decision_record':
-        case 'token_usage':
           return state;
 
         default: {

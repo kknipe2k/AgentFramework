@@ -6,6 +6,57 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed — M08 Stage A (post-M07 carry-forward absorption)
+
+- **`plan_loop` driver shell (M04 carry-forward).** A new
+  `crates/runtime-main/src/plan/plan_loop.rs` ships `drive_plan` — the
+  M04-deferred driver that walks a `PlanStateMachine` from
+  `PendingApproval` through `Complete`, routing the approval gate
+  through the in-process `HitlSeam` (ADR-0007) and emitting the
+  `plan_approval_requested` / `plan_approved` / `plan_complete` /
+  `plan_aborted` lifecycle events. Task execution stays
+  `AgentSdk::run_agent` — this is the FSM-driver shell only and has no
+  production caller yet (v0.1's session path is the no-plan smoke
+  session).
+- **Token in/out breakdown now populated (M07-IRL #2).** The agent-node
+  inspector showed `tokensIn:0 / tokensOut:0` against a non-zero
+  `tokensTotal`. The renderer dropped `AgentEvent::TokenUsage` (a no-op
+  arm in `graphStore.applyEvent`); the SDK + drone projector were
+  already correct. The `token_usage` reducer now attributes the
+  input/output to the running agent node — `TokenUsage` carries no
+  `agent_id`, so it uses the single-active-agent assumption.
+- **API key persists across an app restart (M07-IRL #7).** The root
+  cause was the absent startup read — `App.tsx` hardcoded `hasKey`
+  false and only flipped it inside `handleSetKey`. Adds
+  `key_store::has_api_key`, the `has_api_key` Tauri command + its
+  `has_api_key_with` seam, the `invokeHasApiKey` IPC wrapper, and an
+  `App` mount read that seeds `hasKey` from the keychain.
+- **Import-panel text contrast (M07-IRL #3).** The `.import-*` selectors
+  set `background` but no `color`, so the import UI text rendered ≈ the
+  dark panel background. Each text-bearing selector is pinned to the
+  `--node-fg` / `--node-fg-muted` theme tokens.
+- **`npx` MCP servers spawn on Windows (M06.5 IRL 🟡-2).** `npm` ships
+  `npx` / `npm` as `npx.cmd` / `npm.cmd` batch shims on Windows;
+  `tokio::process::Command` does not auto-resolve the `.cmd` extension.
+  `transport::stdio::build_command` now resolves the platform-correct
+  program name.
+
+### Recorded — M08 Stage A (carry-forward dispositions)
+
+- **HITL `ui_variant` routing (M06.5 IRL 🟡-1) — already-closed.** All
+  three HITL components branch on `uiVariant` and the `graphStore`
+  reducer maps `event.ui_variant`; the finding closed in an intervening
+  stage. A cross-variant regression test now pins it.
+- **Stale Test error banner (M06.5 IRL 🟡-3) — already-closed.**
+  `handleSmoke` clears the `error` slot at run start and no racing
+  handler re-sets it; the finding closed in an intervening stage. A
+  regression test now pins it.
+- **M07-IRL #5 (tier-promotion UI) → Stage G.** Dispositioned to the
+  M08 Settings panel; M06.5 IRL 🟡-4 (budget settings) likewise. The
+  M05.D gap-analysis already referenced a "Settings panel" consumer for
+  `request_tier_transition` that was never built — a documented-gap
+  re-confirmation. No Settings code ships in Stage A.
+
 ### Fixed — M07.5 Stage A.fix (tier-gate lifecycle — M07.V 🔴 #1, backend)
 
 - **The import pipeline now enforces the Novice tier-gate review.**

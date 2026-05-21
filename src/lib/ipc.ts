@@ -38,6 +38,16 @@ export async function invokeSetApiKey(key: string): Promise<void> {
 }
 
 /**
+ * Whether an Anthropic API key is present in the OS keychain. The App
+ * mount reads this so a key entered once survives an app restart
+ * (M07-IRL #7). Resolves `false` on any keychain error — the renderer
+ * treats "can't tell" as "absent" (the user can re-enter the key).
+ */
+export async function invokeHasApiKey(): Promise<boolean> {
+  return await invoke<boolean>('has_api_key');
+}
+
+/**
  * Run a SELECT-only query against the session database. The drone-side
  * validator rejects DDL/DML/PRAGMA + compound statements; rejection
  * surfaces as a `CmdError::Internal`-shape rejection (use
