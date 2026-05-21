@@ -95,6 +95,13 @@ fn regenerate_types(check: bool) -> Result<()> {
         ("budget", schemas_dir.join("budget.v1.json")),
         ("capability", schemas_dir.join("capability.v1.json")),
         ("mcp", schemas_dir.join("mcp.v1.json")),
+        // M08 Stage C — the Builder store (src/lib/builderStore.ts) holds
+        // framework.json as its source of truth (ADR-0020); the renderer
+        // needs the generated `Framework` TS type (CLAUDE.md §14 Hard
+        // Rule 5 — never hand-written). framework.v1.json carries
+        // external `$ref`s to common.v1.json + agent.v1.json, resolved by
+        // the schema-dir CWD in `run_npx_json_schema_to_typescript`.
+        ("framework", schemas_dir.join("framework.v1.json")),
     ];
     let ts_targets_refs: Vec<(&str, &std::path::Path)> = ts_targets
         .iter()
@@ -193,13 +200,24 @@ fn ts_header(schema_basename: &str) -> String {
 fn run_npx_json_schema_to_typescript(schema_path: &std::path::Path) -> Result<String> {
     use std::process::Command;
     let npx_bin = if cfg!(windows) { "npx.cmd" } else { "npx" };
-    let output = Command::new(npx_bin)
-        .args([
-            "--yes",
-            "json-schema-to-typescript",
-            "--unreachableDefinitions",
-        ])
-        .arg(schema_path)
+    let mut cmd = Command::new(npx_bin);
+    cmd.args([
+        "--yes",
+        "json-schema-to-typescript",
+        "--unreachableDefinitions",
+    ])
+    .arg(schema_path);
+    // json-schema-ref-parser resolves a schema's relative external
+    // `$ref`s (e.g. framework.v1.json -> common.v1.json) against the
+    // process working directory, not the schema file's own directory.
+    // Run from the schema's directory so cross-file refs resolve.
+    // Schemas with only internal `#/$defs` refs (event / error / plan /
+    // task / hitl / budget / capability / mcp) are unaffected — the
+    // output is byte-identical regardless of CWD.
+    if let Some(parent) = schema_path.parent() {
+        cmd.current_dir(parent);
+    }
+    let output = cmd
         .output()
         .with_context(|| format!("spawn {npx_bin} json-schema-to-typescript"))?;
     if !output.status.success() {

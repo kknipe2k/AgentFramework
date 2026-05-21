@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { open } from '@tauri-apps/plugin-dialog';
 import type { AgentEvent } from '../types/agent_event';
 import type { CmdError } from '../types/error';
 import type { McpServerConfig } from '../types/mcp';
@@ -305,6 +306,90 @@ export async function completeImportArtifact(pendingReviewId: string): Promise<I
  */
 export async function cancelPendingImport(pendingReviewId: string): Promise<void> {
   await invoke('cancel_pending_import', { pendingReviewId });
+}
+
+/**
+ * One installed / imported artifact row. Mirrors the serde shape of
+ * `runtime_main::builder::InstalledArtifact` (M08 Stage B — NOT
+ * schema-generated; the struct crosses the Tauri bridge as-is, the
+ * `McpServerSummary` / `McpTool` precedent). `list_installed_artifacts`
+ * returns `InstalledArtifact[]`. The field set is PINNED to the Stage
+ * B-shipped struct: `{ key, kind, source, installed_at }`.
+ */
+export interface InstalledArtifact {
+  /** The `name@version` skills.lock key. */
+  key: string;
+  /** Artifact kind — the skills.lock `ArtifactKind`. */
+  kind: 'skill' | 'tool' | 'agent' | 'mcp_server';
+  /**
+   * Where the artifact was imported from (the lock entry's `Source` — a
+   * typify `oneOf`). Opaque here; the Palette keys items on `kind`.
+   */
+  source: unknown;
+  /** RFC-3339 install timestamp (from the lock entry's `installed_at`). */
+  installed_at: string;
+}
+
+/**
+ * List artifacts recorded in `skills.lock` — M08 Stage B's
+ * `list_installed_artifacts`, the first production `skills.lock` reader.
+ *
+ * The command takes ZERO JS args: the Tauri shell resolves
+ * `<app_local_data_dir>/skills.lock` internally (wire PINNED to the
+ * shipped Stage B signature `list_installed_artifacts(app: AppHandle)`).
+ * An absent lock resolves to `[]` (Stage B: absent → empty, not an
+ * error). The Palette + the ImportPanel call this on mount so installed
+ * artifacts survive an app restart (M07-IRL #6).
+ */
+export async function listInstalledArtifacts(): Promise<InstalledArtifact[]> {
+  return await invoke<InstalledArtifact[]>('list_installed_artifacts');
+}
+
+/**
+ * One validation problem keyed to the offending node / JSON-path.
+ * Mirrors `runtime_main::builder::NodeError` (M08 Stage B).
+ */
+export interface NodeError {
+  /**
+   * JSON-path or node id the error attaches to (`(root)` for a
+   * whole-document schema-shape failure).
+   */
+  node_path: string;
+  message: string;
+}
+
+/**
+ * The structured framework-validation report. Mirrors the serde shape of
+ * `runtime_main::builder::FrameworkValidationReport` (M08 Stage B —
+ * hand-mirrored, the `McpServerSummary` precedent). Stage B's
+ * `validate_framework` command returns it; D2's continuous validation
+ * and E's Validate button consume it. C declares the type so
+ * `builderStore`'s `validation` slot is final at this stage;
+ * `capability_summary` stays opaque until Stage E renders the
+ * whole-framework capability picture and pins its full TS shape.
+ */
+export interface FrameworkValidationReport {
+  schema_errors: NodeError[];
+  capability_errors: NodeError[];
+  ok: boolean;
+  capability_summary: unknown;
+}
+
+/**
+ * Open the native file picker for a local artifact file (M07.V 🟡 #4 —
+ * `@tauri-apps/plugin-dialog`). Returns the chosen absolute path, or
+ * `null` when the user cancels — a cancel is a normal user action, not
+ * an error, so the caller short-circuits on `null`. The caller passes
+ * the path to `importArtifact('file', path, kind)`; the backend already
+ * accepts `ImportSource::File` — only this renderer surface was missing.
+ */
+export async function pickLocalArtifactFile(): Promise<string | null> {
+  const picked = await open({
+    multiple: false,
+    directory: false,
+    filters: [{ name: 'Artifact', extensions: ['json', 'md'] }],
+  });
+  return typeof picked === 'string' ? picked : null;
 }
 
 export async function subscribeAgentEvents(
