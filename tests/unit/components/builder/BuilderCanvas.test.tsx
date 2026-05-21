@@ -106,14 +106,12 @@ import { useBuilderStore } from '../../../../src/lib/builderStore';
 describe('BuilderCanvas', () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    validateFrameworkMock
-      .mockReset()
-      .mockResolvedValue({
-        schema_errors: [],
-        capability_errors: [],
-        ok: true,
-        capability_summary: null,
-      });
+    validateFrameworkMock.mockReset().mockResolvedValue({
+      schema_errors: [],
+      capability_errors: [],
+      ok: true,
+      capability_summary: null,
+    });
     // Full reset — tests below swap addNode / selectNode / connectEdge
     // for spies, so the real actions must be restored between cases.
     useBuilderStore.setState(useBuilderStore.getInitialState(), true);

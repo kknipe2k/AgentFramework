@@ -27,14 +27,12 @@ function namedFramework(name: string): Framework {
 describe('builderStore', () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    validateFrameworkMock
-      .mockReset()
-      .mockResolvedValue({
-        schema_errors: [],
-        capability_errors: [],
-        ok: true,
-        capability_summary: null,
-      });
+    validateFrameworkMock.mockReset().mockResolvedValue({
+      schema_errors: [],
+      capability_errors: [],
+      ok: true,
+      capability_summary: null,
+    });
     useBuilderStore.setState({
       framework: emptyFramework(),
       diskFramework: null,
@@ -117,14 +115,12 @@ describe('builderStore', () => {
 describe('builderStore — D1 canvas node actions', () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    validateFrameworkMock
-      .mockReset()
-      .mockResolvedValue({
-        schema_errors: [],
-        capability_errors: [],
-        ok: true,
-        capability_summary: null,
-      });
+    validateFrameworkMock.mockReset().mockResolvedValue({
+      schema_errors: [],
+      capability_errors: [],
+      ok: true,
+      capability_summary: null,
+    });
     useBuilderStore.setState({
       framework: emptyFramework(),
       diskFramework: null,
