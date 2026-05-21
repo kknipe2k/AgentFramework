@@ -183,7 +183,11 @@ test.describe('M08.D2 Builder Canvas edge editor', () => {
     await expect(page.getByTestId('builder-canvas')).toBeVisible();
 
     await page.getByTestId('palette-tab-agents').click();
-    await dropPaletteItem(page, 'palette-item-parent-agent', 360, 150);
+    // y=220 (was y=150): M08.E added the Canvas | JSON tab bar above the
+    // canvas, shifting it ~28px down — a y=150 drop now lands above the
+    // canvas viewport and the parent node's source handle is unreachable
+    // for the handle-to-handle edge drag. 220 matches the other D2 drops.
+    await dropPaletteItem(page, 'palette-item-parent-agent', 360, 220);
     await dropPaletteItem(page, 'palette-item-child-agent', 360, 440);
 
     await drawEdge(page, 'builder-agent-node-parent-agent', 'builder-agent-node-child-agent');
