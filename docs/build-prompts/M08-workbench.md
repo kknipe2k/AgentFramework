@@ -1534,7 +1534,7 @@ Concrete deliverables:
 4. **`src/components/builder/Palette.tsx` — the five-tab Palette.** Tools / Skills / Agents / HITL / Hooks tabs; per-tab text filter; every item a native-HTML drag source (`draggable` + `dataTransfer`). Tools/Skills/Agents list built-ins + whatever `listInstalledArtifacts` returns; HITL lists the §6a trigger types; Hooks lists the §4a firing points.
 5. **`src/lib/ipc.ts` — two new wrappers.** `listInstalledArtifacts(): Promise<InstalledArtifact[]>` (Stage B's `list_installed_artifacts` command) and `pickLocalArtifactFile(): Promise<string | null>` (a thin wrapper over `@tauri-apps/plugin-dialog`'s `open`). Params + return shapes PINNED via `<wire_signature_audit>` / `shape=`.
 6. **`src/components/ImportPanel.tsx` — file-picker companion + `skills.lock`-on-mount reload.** A "Browse…" button beside the URL field that calls `pickLocalArtifactFile()` and imports via the existing `importArtifact('file', path, kind)` wrapper (M07.V 🟡 #4); a `useEffect` that calls `listInstalledArtifacts` on mount so installed artifacts survive a restart in the panel (M07-IRL #6).
-7. **`@tauri-apps/plugin-dialog` registration.** `package.json` dependency; `src-tauri/Cargo.toml` plugin crate; the `.plugin(...)` call in the Tauri builder; the Tauri capability/allowlist entry permitting `dialog:allow-open`.
+7. **`@tauri-apps/plugin-dialog` registration.** Versions web-checked 2026-05: npm `@tauri-apps/plugin-dialog` 2.7.1, Rust crate `tauri-plugin-dialog` 2.7.1. Three registrations, each required or the picker silently no-ops: (1) the `package.json` dependency (pin `^2.0.0` — the `@tauri-apps/plugin-notification` precedent); (2) the Rust side — `tauri-plugin-dialog = "2"` in the **workspace** `Cargo.toml` `[workspace.dependencies]` + `{ workspace = true }` in `src-tauri/Cargo.toml` (the `tauri-plugin-notification` precedent — the version pin lives at workspace level) + `.plugin(tauri_plugin_dialog::init())` in the Tauri builder; (3) the capability entry permitting `dialog:allow-open` (the granular per-command permission — narrower than `dialog:default`, which also grants save/message/ask/confirm). `npm run tauri add dialog` scaffolds these but writes the Rust dep straight into `src-tauri/Cargo.toml` — reconcile it to the workspace-`[workspace.dependencies]` convention afterward, and verify each registration landed.
 8. **ADR-0020** — Builder canvas↔`framework.json` state model. Filed this stage, `Proposed → Accepted` in the M08 PR.
 9. **Renderer ≥80 (vitest)** + Playwright behavior coverage for the shell / Palette / view switch.
 
@@ -1556,10 +1556,11 @@ Not in this stage:
 | `src/components/builder/ViewSwitch.tsx` | **new** | The Runtime ↔ Builder chrome toggle (small; could inline in `App.tsx`, kept separate for test isolation). |
 | `src/lib/ipc.ts` | exists | `listInstalledArtifacts` + `pickLocalArtifactFile` wrappers; the `InstalledArtifact` interface (hand-mirrored from B's command return — the `McpServerSummary` precedent). Params PINNED via `<wire_signature_audit>`. |
 | `src/components/ImportPanel.tsx` | exists | "Browse…" file-picker companion to the URL field (M07.V 🟡 #4); `listInstalledArtifacts`-on-mount reload (M07-IRL #6). |
-| `src-tauri/Cargo.toml` | exists | `tauri-plugin-dialog` crate dependency. |
+| `Cargo.toml` (workspace) | exists | `tauri-plugin-dialog = "2"` in `[workspace.dependencies]` — the version pin lives at workspace level (the `tauri-plugin-notification` precedent). |
+| `src-tauri/Cargo.toml` | exists | `tauri-plugin-dialog = { workspace = true }` — mirrors the existing `tauri-plugin-notification` line. |
 | `src-tauri/src/main.rs` (or `lib.rs`) | exists | `.plugin(tauri_plugin_dialog::init())` in the Tauri builder. |
 | `src-tauri/capabilities/*.json` | exists | `dialog:allow-open` capability entry. |
-| `package.json` | exists | `@tauri-apps/plugin-dialog` dependency. |
+| `package.json` | exists | `@tauri-apps/plugin-dialog` dependency, pinned `^2.0.0` (verified latest 2.7.1, 2026-05). |
 | `src/styles.css` | exists | Builder shell + Palette + view-switch classes (theme variables — do **not** reintroduce the M07-IRL #3 contrast bug Stage A fixed). |
 | `tests/e2e/builder_shell.spec.ts` | **new** | Playwright: view switch → three-panel shell; Palette tabs / filter / draggable item. |
 | `tests/unit/lib/builderStore.test.ts` | **new** | Vitest: store actions + initial-state shape. |
@@ -1579,7 +1580,7 @@ Pin to the **shipped** Stage B wire, not the phase-doc assumption (the M06.E `mc
 
 - `<wire_signature_audit>` (C.5): read `src-tauri/src/commands.rs` for the committed `list_installed_artifacts` signature; record `actual_params` verbatim. B.3.3 says it takes `lock_path: &Path` resolved by the Tauri shell — confirm whether the *command* takes zero JS args (shell resolves the path internally, the likely shape) or a path arg.
 - `<phase_doc_inventory_audit shape=…>` (C.5): the `InstalledArtifact` shape Stage B's command returns. B.3.3 names `Vec<InstalledArtifact>` — pin the actual field set (`key` / `kind` / `source` / `installed_at`, per B.3.3's `InstalledArtifact`) from the shipped Rust struct; it is hand-mirrored into `ipc.ts` (not schema-generated — the `McpServerSummary` / `McpTool` precedent, both documented as serde-shape mirrors in `ipc.ts`).
-- `<dependency_audit_check>` (C.5): `@tauri-apps/plugin-dialog` version + the exact Rust-side registration steps (crate name, `init()` call, capability permission identifier), confirmed against the current Tauri 2.x plugin docs before wiring (CLAUDE.md §12 — web-check externally-knowable facts; plugin APIs and permission identifiers have changed across Tauri 2.x point releases).
+- `<dependency_audit_check>` (C.5): `@tauri-apps/plugin-dialog` version + the exact Rust-side registration steps (crate name, `init()` call, capability permission identifier), confirmed against the current Tauri 2.x plugin docs before wiring (CLAUDE.md §12 — web-check externally-knowable facts; plugin APIs and permission identifiers have changed across Tauri 2.x point releases). Verified at authoring time (2026-05): npm `@tauri-apps/plugin-dialog` 2.7.1, Rust `tauri-plugin-dialog` 2.7.1, the directory-picker API `open({ directory: true })`, `dialog:allow-open` as the granular capability identifier; the Rust crate pins at workspace level (`tauri-plugin-dialog = "2"`) per the `tauri-plugin-notification` precedent. Re-confirm and update if the registry has moved.
 
 #### C.3.2 The build-mode view switch — `src/App.tsx`
 
@@ -2090,7 +2091,7 @@ Vite dev server, `@tauri-apps/api` **and** `@tauri-apps/plugin-dialog` module-mo
   </adr_triggers>
 
   <dependency_audit_check>
-    <dep name="@tauri-apps/plugin-dialog" min_version="2.0" prefer_crates_io_name="true" source_authority="web-check the current Tauri 2.x plugin docs for the npm version + the Rust crate name (tauri-plugin-dialog) + the capability permission identifier" required_features="N/A" audit="new renderer + Rust dependency — spec-implied (MVP §M7 file picker); must pass cargo deny check (no GPL/AGPL) + npm audit --audit-level=high"/>
+    <dep name="@tauri-apps/plugin-dialog" min_version="2.0" prefer_crates_io_name="true" source_authority="VERIFIED 2026-05: npm @tauri-apps/plugin-dialog 2.7.1, Rust crate tauri-plugin-dialog 2.7.1, capability identifier dialog:allow-open, directory-picker API open({ directory: true }). Pin the Rust crate at workspace level (tauri-plugin-dialog = &quot;2&quot; in [workspace.dependencies]) per the tauri-plugin-notification precedent; re-confirm against the current Tauri 2.x plugin docs before wiring" required_features="N/A" audit="new renderer + Rust dependency — spec-implied (MVP §M7 file picker); must pass cargo deny check (no GPL/AGPL) + npm audit --audit-level=high"/>
   </dependency_audit_check>
 
   <wire_signature_audit>
@@ -2243,7 +2244,7 @@ Concrete deliverables:
 1. **`src/components/builder/BuilderCanvas.tsx`** — a new interactive React-Flow component, distinct from the read-only `GraphCanvas.tsx`. A drop target (`onDrop` / `onDragOver`); renders nodes from the `builderStore.framework` projection; supports node selection (`onNodeClick` → `builderStore.selectNode`). Module-level `builderNodeTypes` map (the `GraphCanvas` `nodeTypes` trap — redefining per render re-mounts every node).
 2. **`src/components/builder/nodes/*.tsx`** — interactive Builder node components: `BuilderAgentNode`, `BuilderToolNode`, `BuilderSkillNode`, `BuilderHitlNode`, `BuilderHookNode`. They reuse the §3 visual CSS (the `agent-node` / `tool-node` class families) but are **new** components — the read-only live-graph nodes are not editable; the `<existing_pattern_audit>` pins reuse-vs-new per node.
 3. **The `framework` → canvas-projection derivation** — `builderStore` exposes `canvasNodes` / `canvasEdges` selectors that derive React-Flow `Node[]` / `Edge[]` from `framework.agents[]` + the inline tool/skill/hook references. D1 implements the node side of the projection; D2 adds edges.
-4. **`builderStore.addNode`** — the C-stubbed action, implemented: instantiate a Palette item into `framework` (an Agent → an `agents[]` entry; a Tool/Skill/Hook → an available-artifact entry a D2 edge later wires into an agent). Plus a `nodePositions` slot so user-placed nodes keep manual coordinates (the projection carries position).
+4. **`builderStore.addNode`** — the C-stubbed action, implemented: instantiate a Palette item into `framework` (an Agent → an `agents[]` entry; a Tool/Skill/Hook → an available-artifact entry a D2 edge later wires into an agent). Plus a `nodePositions` slot + a `moveNode` action so user-placed nodes keep manual coordinates and stay draggable (React Flow v12's controlled canvas delivers a node drag as an `onNodesChange` position change → `moveNode`); the projection carries position.
 5. **`src/components/builder/NodeConfigPanel.tsx`** (or an inline popover) — the inline node-configuration surface (spec Phase 9 "right-click for properties"): for an Agent, `role` (text), `model` (the Anthropic model dropdown), `allowed_tools` / `allowed_skills` (editable lists). Every edit calls `builderStore.updateNode`.
 6. **`builderStore.updateNode`** — the C-stubbed action, implemented: apply an inline-config patch to the node's entry in `framework`.
 7. **Per-node capability disclosure** — **reuse** the M07.E plain-English capability-disclosure surface (the `import-capability-disclosure` list pattern, itself the M05 §8.security L1 disclosure reused) to render each node's declared `allowed_*` in plain English below the node. Derived live from `framework`, so an inline-config edit updates the disclosure immediately.
@@ -2268,7 +2269,7 @@ Not in this stage:
 | `src/components/builder/nodes/BuilderHitlNode.tsx` | **new** | Interactive HITL node — reuses the `hitl-node` CSS. |
 | `src/components/builder/nodes/BuilderHookNode.tsx` | **new** | Interactive Hook node — reuses the `hook-node` CSS. |
 | `src/components/builder/NodeConfigPanel.tsx` | **new** | Inline node configuration (role / model / `allowed_*` editable lists). |
-| `src/lib/builderStore.ts` | exists | Implement `addNode` / `updateNode` (C-stubbed); add the `canvasNodes` / `canvasEdges` projection selectors + the `nodePositions` slot. |
+| `src/lib/builderStore.ts` | exists | Implement `addNode` / `updateNode` (C-stubbed); add the `canvasNodes` / `canvasEdges` projection selectors + the `nodePositions` slot + the `moveNode` action (React Flow v12 `onNodesChange`). |
 | `src/styles.css` | exists | Builder canvas + Builder node + config-panel classes (theme variables — M07-IRL #3). |
 | `tests/e2e/builder_canvas_nodes.spec.ts` | **new** | Playwright: drag an Agent onto the canvas → configure → disclosure (MVP §M8 criterion 1). |
 | `tests/unit/lib/builderStore.test.ts` | exists | Vitest: extend — `addNode` / `updateNode` + the projection derivation. |
@@ -2298,6 +2299,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  type NodeChange,
   type NodeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -2329,6 +2331,7 @@ function BuilderCanvasInner(): JSX.Element {
   const nodes = useBuilderStore(useShallow((s) => s.canvasNodes()));
   const edges = useBuilderStore(useShallow((s) => s.canvasEdges()));
   const addNode = useBuilderStore((s) => s.addNode);
+  const moveNode = useBuilderStore((s) => s.moveNode);
   const selectNode = useBuilderStore((s) => s.selectNode);
   const { screenToFlowPosition } = useReactFlow();
 
@@ -2348,12 +2351,23 @@ function BuilderCanvasInner(): JSX.Element {
     addNode(kind, ref, position); // mutates framework; the projection re-derives
   }
 
+  // React Flow v12 is fully CONTROLLED — a node cannot be repositioned
+  // unless the change flows back in. onNodesChange routes each position
+  // change to nodePositions; the projection re-derives at the new spot.
+  // Selection stays on onNodeClick (one writer for selectedNodeId).
+  function onNodesChange(changes: NodeChange[]): void {
+    for (const c of changes) {
+      if (c.type === 'position' && c.position) moveNode(c.id, c.position);
+    }
+  }
+
   return (
     <div className="builder-canvas" data-testid="builder-canvas" onDrop={onDrop} onDragOver={onDragOver}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
         nodeTypes={builderNodeTypes}
+        onNodesChange={onNodesChange}
         onNodeClick={(_, node) => selectNode(node.id)}
         onPaneClick={() => selectNode(null)}
         /* onConnect is D2 — left unset here */
@@ -2396,6 +2410,9 @@ interface BuilderState {
   canvasNodes: () => Node[];
   /** Derive the React-Flow edge array — empty in D1, D2 fills it. */
   canvasEdges: () => Edge[];
+  /** Update one node's position — `BuilderCanvas`'s onNodesChange routes
+   *  a user drag here (React Flow v12 is fully controlled). */
+  moveNode: (nodeId: string, position: { x: number; y: number }) => void;
 }
 
 // addNode — implemented (C shipped the typed stub):
@@ -2419,6 +2436,12 @@ addNode: (kind, ref, position) =>
     return { framework, nodePositions: { ...s.nodePositions, [nodeId]: position } };
   }),
 
+// moveNode — onNodesChange routes a user drag here. Only nodePositions
+// changes; `framework` is untouched (node position is builder-UI state,
+// not part of the schema document — so a drag never dirties E's disk diff).
+moveNode: (nodeId, position) =>
+  set((s) => ({ nodePositions: { ...s.nodePositions, [nodeId]: position } })),
+
 // canvasNodes — the framework → React-Flow projection (node side):
 canvasNodes: () => {
   const s = get();
@@ -2435,6 +2458,8 @@ canvasNodes: () => {
 ```
 
 Dropping an **Agent** adds an `agents[]` entry — MVP §M8 criterion 1's *"drags an Agent node onto empty canvas"* is the headline path D1 must demonstrate. A Tool/Skill/Hook drop records an available artifact that a D2 edge later wires into an agent's `allowed_*`. `addNode` is **idempotent** on re-drop of the same item (keyed by `${kind}:${ref}`) — re-dropping does not duplicate the `agents[]` entry. The projection (`canvasNodes`) is a pure function of `framework` + `nodePositions`, called through a `useShallow` selector so the canvas re-renders only on a real projection change.
+
+User **repositioning** works the same controlled-flow way: React Flow v12 is fully controlled — a node will not move on its own — so a node drag is delivered as an `onNodesChange` position change, and `BuilderCanvas` routes it to `moveNode`, which updates `nodePositions` only. Because node position lives **outside** `framework`, dragging a node never dirties E's framework-vs-disk diff — only schema-meaningful edits (add / configure / connect) do.
 
 #### D1.3.4 Inline node configuration — `src/components/builder/NodeConfigPanel.tsx`
 
@@ -2578,7 +2603,7 @@ Per gotcha #67 (a component rendered in the DOM ≠ its CSS exists), every new c
 
 #### D1.4.1 Playwright behavior — `tests/e2e/builder_canvas_nodes.spec.ts`
 
-Vite dev server, `@tauri-apps/api` module-mocked (gotcha #23); drag-drop via Playwright's drag API against the dev server. This spec demonstrates **MVP §M8 criterion 1 end-to-end**:
+Vite dev server, `@tauri-apps/api` module-mocked (gotcha #23). The Palette→canvas drop is HTML5 native drag-and-drop (`draggable` + `dataTransfer`); the Playwright helper must simulate the `dataTransfer` payload — a bare `locator.dragTo` does not carry the custom `application/x-builder-node` MIME data. The React-Flow canvas needs an explicit width/height in the test viewport and the harness mocks `ResizeObserver` (React Flow measures the pane through it). This spec demonstrates **MVP §M8 criterion 1 end-to-end**:
 
 - `dragging_an_agent_palette_item_onto_the_canvas_instantiates_an_agent_node` — switch to Builder → drag the Agent Palette item onto the empty canvas → a `builder-agent-node` appears.
 - `selecting_a_node_opens_the_inline_config_panel` — click the node → `builder-node-config` renders.
@@ -2597,12 +2622,14 @@ Vite dev server, `@tauri-apps/api` module-mocked (gotcha #23); drag-drop via Pla
 - `updateNode_patches_allowed_tools_and_allowed_skills`
 - `canvasNodes_derives_a_react_flow_node_per_framework_agent` (the projection)
 - `canvasNodes_carries_the_user_placed_position_from_nodePositions`
+- `moveNode_updates_nodePositions_and_leaves_framework_untouched` (a drag is UI state, not a schema edit)
 
 #### D1.4.3 `BuilderCanvas` unit tests — `tests/unit/components/builder/BuilderCanvas.test.tsx`
 
 - `renders_a_node_per_canvasNodes_projection_entry`
 - `onDrop_parses_the_palette_payload_and_calls_addNode`
 - `onDrop_ignores_a_drag_without_the_builder_node_mime_type`
+- `onNodesChange_with_a_position_change_calls_moveNode` (React Flow v12 controlled-drag wiring)
 - `clicking_a_node_calls_selectNode`
 - `clicking_the_pane_clears_the_selection`
 
@@ -2775,6 +2802,7 @@ Vite dev server, `@tauri-apps/api` module-mocked (gotcha #23); drag-drop via Pla
     <claim type="file" path="src/components/builder/NodeConfigPanel.tsx" verified="false" note="D1 creates"/>
     <claim type="store_slot" path="src/lib/builderStore.ts" symbol="canvasNodes" shape="() => Node[] — the framework→React-Flow projection D1 implements (node side); D2 adds canvasEdges" verified="false" note="D1 adds"/>
     <claim type="store_slot" path="src/lib/builderStore.ts" symbol="nodePositions" shape="Record&lt;string, {x:number;y:number}&gt; — user-placed coordinates the projection reads" verified="false" note="D1 adds"/>
+    <claim type="store_slot" path="src/lib/builderStore.ts" symbol="moveNode" shape="(nodeId: string, position: {x:number;y:number}) => void — onNodesChange routes a React Flow v12 controlled-drag here; updates nodePositions only, not framework" verified="false" note="D1 adds"/>
     <claim type="read_first_target" path="docs/build-prompts/retrospectives/M08.C-retrospective.md" verified="true"/>
   </phase_doc_inventory_audit>
 
@@ -2788,6 +2816,7 @@ Vite dev server, `@tauri-apps/api` module-mocked (gotcha #23); drag-drop via Pla
     <trap>#75 — the canvasNodes() / canvasEdges() derived projection selectors use useShallow (zustand/react/shallow) or the canvas re-renders on every store commit.</trap>
     <trap>#67 — every new className (builder-canvas / builder-agent-node / builder-node-config / …) gets a corresponding src/styles.css rule + a static every_class_has_a_corresponding_CSS_rule test.</trap>
     <trap>screenToFlowPosition is only available inside a ReactFlowProvider — the BuilderCanvas wraps its inner component in ReactFlowProvider so the onDrop handler can convert cursor coords to canvas coords.</trap>
+    <trap>React Flow v12 is fully CONTROLLED — a node will not reposition on a user drag unless the change flows back through onNodesChange. BuilderCanvas wires onNodesChange → moveNode (position changes only) so dropped nodes stay draggable; without it the canvas is drop-only and nodes are frozen.</trap>
     <trap>addNode must be idempotent on re-drop of the same Palette item (keyed by ${kind}:${ref}) — re-dropping must not duplicate the framework.agents[] entry.</trap>
   </gotchas>
 
@@ -3284,7 +3313,7 @@ The child agent node's capability disclosure (D1.3.5 — the reused M05 §8.secu
 
 #### D2.4.4 Playwright behavior test — `tests/e2e/builder_edges.spec.ts`
 
-Drives the renderer against the Vite dev server with `@tauri-apps/api` module-mocked (gotcha #23 — Playwright cannot drive the Tauri window; `validate_framework` is mocked to return a scripted `FrameworkValidationReport`). React Flow edge creation goes through the handle-drag in Playwright's drag API.
+Drives the renderer against the Vite dev server with `@tauri-apps/api` module-mocked (gotcha #23 — Playwright cannot drive the Tauri window; `validate_framework` is mocked to return a scripted `FrameworkValidationReport`). React Flow edge creation is a pointer-based handle-to-handle connection: drive it with manual `mouse.down` → stepwise `mouse.move` → `mouse.up` (Playwright's `dragTo` mismatches React Flow's pointer events), moving the pointer in several steps so the drag clears React Flow v12's raised `nodeDragThreshold` default. The canvas needs an explicit width/height and the harness mocks `ResizeObserver`.
 
 ```ts
 test.describe.configure({ timeout: 90_000 }); // gotcha #53 (Vite cold-start)
@@ -3448,7 +3477,7 @@ test('an invalid node-pair connection is rejected — no edge appears', async ({
     <trigger>None new in D2 — it implements against ADR-0020 (the Builder canvas↔framework.json state model, filed at Stage C). D2 adds no schema, no backend, no IPC protocol change, no dependency — it consumes Stage B's validate_framework command. If the build finds it NEEDS a push validation event rather than the command return (e.g. background validation), that is a §14 trigger (schema + cargo xtask regenerate-types + ADR) — surface BEFORE the red phase; do not author it silently.</trigger>
   </adr_triggers>
   <gotchas>
-    <trap>#23 — Playwright drives the Vite dev server with @tauri-apps/api module-mocked; validate_framework is mocked to a scripted FrameworkValidationReport. React Flow edge creation goes through the handle-to-handle drag in Playwright's drag API; it cannot drive the Tauri window.</trap>
+    <trap>#23 — Playwright drives the Vite dev server with @tauri-apps/api module-mocked; validate_framework is mocked to a scripted FrameworkValidationReport. It cannot drive the Tauri window. React Flow edge creation is a pointer drag — use manual mouse.down/move/up (NOT dragTo, which mismatches React Flow's pointer events), stepping the pointer past React Flow v12's raised nodeDragThreshold default; the canvas needs explicit width/height and a mocked ResizeObserver.</trap>
     <trap>Spec §9 — the Agent→Agent narrowing decision is Stage B's Rust report (capability/narrowing.rs::narrow()). The renderer SURFACES the SpawnEdgeNarrowing record ({parent_caps, child_declared_caps, narrowed_caps}) from capability_summary.spawn_edges[]; it NEVER computes an intersection in TS. narrowed_caps is a serde-tagged Result — render the `Ok` surviving set or the `Err` rejection message verbatim; do not recompute either, and do NOT compute a `removed` set-difference (narrow is all-or-nothing — `Ok` is `proposed` verbatim, there is no partial clamp).</trap>
     <trap>Continuous validation is DEBOUNCED — every keystroke into an inline-config field must NOT fire validate_framework; coalesce a burst into one call. The Validate button (Stage E) is the explicit trigger of the SAME validator with no debounce.</trap>
     <trap>connectEdge must REJECT every node-pair that is not one of the four spec edge types — a rejected pair mutates nothing and paints no edge (the canvas edge projection is a pure function of framework — ADR-0020).</trap>
