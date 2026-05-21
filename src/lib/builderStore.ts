@@ -50,6 +50,9 @@ export interface BuilderState {
   /** Latest validate_framework report (D2 continuous pass populates it;
    *  null until the first pass completes). */
   validation: FrameworkValidationReport | null;
+  /** Whether the Tester is open — the Inspector's Test button (E) sets
+   *  it; Stage F2's modal renders on it. INERT-but-wired at Stage E. */
+  testerOpen: boolean;
 
   /** Replace the whole document (E's JSON-tab edit; load_framework). */
   replaceFramework: (fw: Framework) => void;
@@ -68,6 +71,11 @@ export interface BuilderState {
   removeNode: (nodeId: string) => void;
   /** Store a fresh validation report (D2 continuous + E explicit). */
   setValidation: (report: FrameworkValidationReport) => void;
+  /** E: open the Tester (the Inspector Test button). F2 renders the
+   *  modal on `testerOpen`; INERT-but-wired at Stage E. */
+  openTester: () => void;
+  /** E: close the Tester (F2's modal close control). */
+  closeTester: () => void;
 
   /** D1: user-placed canvas coordinates, keyed by `${kind}:${ref}` node
    *  id — editor-local layout view state (ADR-0020: NOT part of the
@@ -440,6 +448,7 @@ export const useBuilderStore = create<BuilderState>((set, get) => {
     diskFramework: null,
     selectedNodeId: null,
     validation: null,
+    testerOpen: false,
     nodePositions: {},
     replaceFramework: (fw) => set({ framework: fw }),
     setDiskFramework: (fw) => set({ diskFramework: fw }),
@@ -475,6 +484,11 @@ export const useBuilderStore = create<BuilderState>((set, get) => {
     // scope (no D2 deliverable, no D2 test); a later stage fills it.
     removeNode: () => set((s) => s),
     setValidation: (report) => set({ validation: report }),
+    // STUB (M08.E red phase) — openTester / closeTester are implemented
+    // in the green phase. Here they leave the state unchanged so the
+    // openTester / closeTester behavior tests fail for the right reason.
+    openTester: () => set((s) => s),
+    closeTester: () => set((s) => s),
     canvasNodes: () => memoizedCanvasNodes(get().framework, get().nodePositions),
     canvasEdges: () => {
       const framework = get().framework;

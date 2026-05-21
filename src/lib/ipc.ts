@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import type { AgentEvent } from '../types/agent_event';
 import type { CapabilityDeclaration } from '../types/capability';
 import type { CmdError } from '../types/error';
+import type { Framework } from '../types/framework';
 import type { McpServerConfig } from '../types/mcp';
 
 /**
@@ -433,6 +434,69 @@ export interface FrameworkValidationReport {
  */
 export async function validateFramework(doc: unknown): Promise<FrameworkValidationReport> {
   return await invoke<FrameworkValidationReport>('validate_framework', { doc });
+}
+
+/**
+ * One inline-defined artifact's companion markdown file. Mirrors the
+ * serde shape of `runtime_main::builder::Companion`
+ * (`crates/runtime-main/src/builder/persist.rs` — M08 Stage B;
+ * hand-mirrored, the `McpServerSummary` precedent). It crosses the
+ * Tauri bridge both ways: a `save_framework` argument and a
+ * `load_framework` return field.
+ */
+export interface Companion {
+  /** File name relative to the framework directory (e.g.
+   *  `summarize.skill.md`). */
+  file_name: string;
+  /** Full markdown body (frontmatter + content), written verbatim. */
+  body: string;
+}
+
+/**
+ * A framework reloaded from disk — Stage B's `load_framework` return.
+ * Mirrors the serde shape of `runtime_main::builder::LoadedFramework`
+ * (M08 Stage B). The renderer feeds `framework` to
+ * `builderStore.replaceFramework`; the canvas re-derives (ADR-0020).
+ */
+export interface LoadedFramework {
+  /** The parsed `framework.json`. */
+  framework: Framework;
+  /** The companion `.md` files found alongside `framework.json`. */
+  companions: Companion[];
+}
+
+/**
+ * Write `framework.json` + companion `.md` files to `dir` — M08 Stage B
+ * `save_framework`. Params are PINNED to the SHIPPED command signature
+ * `save_framework(dir, framework, companions)` at
+ * `src-tauri/src/commands.rs` — NOT the phase-doc-assumed `{ dir, fw }`
+ * (the v1.8 `<wire_signature_audit>` drift caught at Stage E authoring;
+ * the `importArtifact` / `mcpTestConnection` reconciliations above).
+ *
+ * `dir` is the directory the `@tauri-apps/plugin-dialog` picker
+ * returned (Stage C); the backend persistence is path-agnostic
+ * (CLAUDE.md §9). `companions` defaults to `[]` — the v0.1 canvas
+ * authors no inline markdown bodies (M09's Generators will). Errors
+ * surface as the Tauri `CmdError` shape — render via
+ * {@link unwrapCmdError}.
+ */
+export async function saveFramework(
+  dir: string,
+  framework: Framework,
+  companions: Companion[] = [],
+): Promise<void> {
+  await invoke('save_framework', { dir, framework, companions });
+}
+
+/**
+ * Read `framework.json` + its companion `.md` files from `dir` — M08
+ * Stage B `load_framework`. Param PINNED to the shipped signature
+ * `load_framework(dir)`. A save→load→save cycle is byte-stable (Stage
+ * B B.3.2). Errors surface as the Tauri `CmdError` shape — render via
+ * {@link unwrapCmdError}.
+ */
+export async function loadFramework(dir: string): Promise<LoadedFramework> {
+  return await invoke<LoadedFramework>('load_framework', { dir });
 }
 
 /**
