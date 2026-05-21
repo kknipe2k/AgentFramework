@@ -104,6 +104,14 @@ where
     Ok(())
 }
 
+/// Test-seam for the `has_api_key` command (CLAUDE.md §5 `*_with`
+/// archetype). Accepts an injectable presence probe so unit tests
+/// exercise the command surface without touching the real OS keychain.
+pub fn has_api_key_with(probe: impl Fn() -> bool) -> bool {
+    let _ = probe;
+    unimplemented!("M08.A green phase — has_api_key_with")
+}
+
 /// Run the M02 smoke session against the live Anthropic API.
 ///
 /// Reads the API key, constructs an [`AnthropicProvider`], runs the SDK
@@ -400,11 +408,12 @@ where
 ///   the awaiting task was cancelled mid-flight).
 ///
 /// **Note on no-pending-await:** if no SDK task is currently awaiting on
-/// `plan_id` (e.g., the M04 v0.1 `plan_loop` driver is deferred per Stage B
-/// retro `[LIVE]` ambiguity-events; the renderer can dispatch this command
-/// before any SDK awaiter exists), the command returns `Ok(())` and
-/// warn-logs. Per `CLAUDE.md` §12 user-flow ergonomics: do not 500 the
-/// renderer's click on a soft-state issue.
+/// `plan_id` (the M04 `plan_loop` driver shell landed at M08.A —
+/// `runtime_main::plan::plan_loop` — but has no production caller yet, so
+/// the renderer can dispatch this command before any SDK awaiter exists),
+/// the command returns `Ok(())` and warn-logs. Per `CLAUDE.md` §12
+/// user-flow ergonomics: do not 500 the renderer's click on a soft-state
+/// issue.
 #[tauri::command]
 pub async fn approve_plan(
     plan_id: String,
@@ -1985,6 +1994,24 @@ mod tests {
         );
     }
 
+    // ── M08.A — has_api_key startup-read seam (M07-IRL #7) ──
+    // The renderer seeds `hasKey` from the has_api_key command at launch
+    // so a key entered once survives an app restart; the root cause was
+    // the absent startup read, not a keychain write failure.
+
+    #[test]
+    fn has_api_key_with_returns_true_when_probe_reports_present() {
+        assert!(has_api_key_with(|| true), "a present-key probe yields true");
+    }
+
+    #[test]
+    fn has_api_key_with_returns_false_when_probe_reports_absent() {
+        assert!(
+            !has_api_key_with(|| false),
+            "an absent-key probe yields false"
+        );
+    }
+
     #[tokio::test]
     async fn query_session_db_with_returns_rows_from_querier() {
         let rows = query_session_db_with("SELECT id FROM signals".to_string(), |sql| async move {
@@ -2125,10 +2152,12 @@ mod tests {
 
     #[tokio::test]
     async fn approve_plan_with_no_pending_awaiter_returns_ok_with_warn() {
-        // Per CLAUDE.md §12 ergonomics: the SDK plan_loop driver is deferred
-        // to M07 (Stage B retro [LIVE] ambiguity-events), so the renderer
-        // can dispatch approve_plan with no awaiter present. Treat as
-        // soft-Ok (warn-logged) rather than 500 the user's click.
+        // Per CLAUDE.md §12 ergonomics: the M04 plan_loop driver shell
+        // landed at M08.A (`runtime_main::plan::plan_loop`) but has no
+        // production caller yet (v0.1's session path is the no-plan smoke
+        // session), so the renderer can still dispatch approve_plan with
+        // no awaiter present. Treat as soft-Ok (warn-logged) rather than
+        // 500 the user's click.
         let seam = ApprovalSeam::new();
         let result = approve_plan_with("ghost".into(), &seam).await;
         assert!(result.is_ok(), "got {result:?}");

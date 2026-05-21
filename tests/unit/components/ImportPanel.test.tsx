@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // M07.5 / ADR-0017 — ImportPanel renderer tests. The invoke boundary is
@@ -239,5 +241,49 @@ describe('ImportPanel', () => {
 
     await userEvent.click(screen.getByTestId('import-remove-fs-test@2.0.0'));
     await waitFor(() => expect(useGraphStore.getState().imports['fs-test@2.0.0']).toBeUndefined());
+  });
+});
+
+// ── M08.A: import-panel contrast (M07-IRL #3) ──
+// The .import-* selectors set `background` but never `color`, so the
+// import UI text rendered ≈ the dark panel background. The fix pins each
+// selector to the established --node-fg / --node-fg-muted theme tokens.
+// Asserted against the stylesheet source: vitest's happy-dom does not
+// apply Vite-imported CSS to getComputedStyle, so the rule's declared
+// color is the deterministic regression surface.
+
+/**
+ * Return the declaration body of the CSS rule whose comma-separated
+ * selector list contains `selector` exactly. Throws if absent.
+ */
+function ruleBodyFor(css: string, selector: string): string {
+  const ruleRe = /([^{}]+)\{([^{}]*)\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = ruleRe.exec(css)) !== null) {
+    const selectorList = m[1] ?? '';
+    const body = m[2] ?? '';
+    const selectors = selectorList.split(',').map((s) => s.trim());
+    if (selectors.includes(selector)) {
+      return body;
+    }
+  }
+  throw new Error(`no CSS rule found for selector ${selector}`);
+}
+
+describe('ImportPanel contrast (M07-IRL #3)', () => {
+  const css = readFileSync(resolve(__dirname, '../../../src/styles.css'), 'utf8');
+
+  it('import_panel_title_uses_node_fg_theme_token', () => {
+    expect(ruleBodyFor(css, '.import-panel__title')).toMatch(/color:\s*var\(--node-fg\)/);
+  });
+
+  it('import_row_ref_uses_node_fg_theme_token', () => {
+    expect(ruleBodyFor(css, '.import-row__ref')).toMatch(/color:\s*var\(--node-fg\)/);
+  });
+
+  it('import_review_modal_title_uses_node_fg_theme_token', () => {
+    const body = ruleBodyFor(css, '.import-review-modal__title');
+    expect(body).toMatch(/color:\s*var\(--node-fg\)/);
+    expect(body).not.toMatch(/color:\s*var\(--node-bg\)/);
   });
 });
