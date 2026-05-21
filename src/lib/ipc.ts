@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { AgentEvent } from '../types/agent_event';
+import type { CapabilityDeclaration } from '../types/capability';
 import type { CmdError } from '../types/error';
 import type { McpServerConfig } from '../types/mcp';
 
@@ -363,20 +364,75 @@ export interface NodeError {
 }
 
 /**
+ * One Agent→Agent (`spawns`) edge's §8.security L2a narrowing decision.
+ * Mirrors the serde shape of `runtime_main::builder::SpawnEdgeNarrowing`
+ * (M08 Stage B — hand-mirrored, the `McpServerSummary` precedent; the
+ * struct derives `serde::Serialize` and crosses the Tauri bridge as-is).
+ *
+ * The decision is computed by `capability/narrowing.rs::narrow()` in the
+ * Rust main process (M05.B). Spec §9 forbids a second copy of that
+ * intersection in TS — D2 SURFACES this record, it never recomputes it.
+ *
+ * `narrowed_caps` is a serde-serialized Rust `Result`, externally
+ * tagged: `{ Ok: [...] }` carries the surviving set (L2a is
+ * all-or-nothing — `Ok` is the child's declared set verbatim, there is
+ * no partial clamp), `{ Err: "..." }` names the capability the parent
+ * does not hold (Stage B folds that `Err` into `capability_errors`).
+ */
+export interface SpawnEdgeNarrowing {
+  parent_id: string;
+  child_id: string;
+  parent_caps: CapabilityDeclaration[];
+  child_declared_caps: CapabilityDeclaration[];
+  narrowed_caps: { Ok: CapabilityDeclaration[] } | { Err: string };
+}
+
+/**
+ * The whole-framework capability picture (spec Phase 9 Inspector).
+ * Mirrors the serde shape of
+ * `runtime_main::builder::FrameworkCapabilitySummary` (M08 Stage B).
+ * Rides on `FrameworkValidationReport.capability_summary`; D2 reads its
+ * `spawn_edges` for the Agent→Agent narrowing notice, and Stage E reads
+ * the whole-framework totals — both off the one report, no separate
+ * command.
+ */
+export interface FrameworkCapabilitySummary {
+  files_read: string[];
+  files_written: string[];
+  network_hosts: string[];
+  any_shell: boolean;
+  spawn_edges: SpawnEdgeNarrowing[];
+}
+
+/**
  * The structured framework-validation report. Mirrors the serde shape of
  * `runtime_main::builder::FrameworkValidationReport` (M08 Stage B —
  * hand-mirrored, the `McpServerSummary` precedent). Stage B's
  * `validate_framework` command returns it; D2's continuous validation
- * and E's Validate button consume it. C declares the type so
- * `builderStore`'s `validation` slot is final at this stage;
- * `capability_summary` stays opaque until Stage E renders the
- * whole-framework capability picture and pins its full TS shape.
+ * and E's Validate button consume it. `capability_summary` rides on this
+ * report (Stage B B.3.4) and is `null` when schema validation fails (no
+ * parsed framework to summarize).
  */
 export interface FrameworkValidationReport {
   schema_errors: NodeError[];
   capability_errors: NodeError[];
   ok: boolean;
-  capability_summary: unknown;
+  capability_summary: FrameworkCapabilitySummary | null;
+}
+
+/**
+ * Validate an in-progress framework document against the schema-derived
+ * types + the capability primitive — M08 Stage B's `validate_framework`
+ * command. The report is keyed to offending node paths; D2's continuous
+ * debounced pass and Stage E's explicit Validate button both call this
+ * (one Rust validator, two triggers — spec §9, no TS duplication). `doc`
+ * is the canvas's serialized `framework.json` candidate; it MAY be
+ * invalid — that is the point of continuous validation. The command
+ * returns the report synchronously (Stage B's §12-owned wire decision —
+ * the `import_artifact` precedent).
+ */
+export async function validateFramework(doc: unknown): Promise<FrameworkValidationReport> {
+  return await invoke<FrameworkValidationReport>('validate_framework', { doc });
 }
 
 /**

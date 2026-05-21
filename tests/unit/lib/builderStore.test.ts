@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { emptyFramework, useBuilderStore } from '../../../src/lib/builderStore';
 import { useGraphStore } from '../../../src/lib/graphStore';
 import type { Agent, Framework } from '../../../src/types/framework';
@@ -9,6 +9,16 @@ import type { Agent, Framework } from '../../../src/types/framework';
 // store from graphStore (the live-execution store) — the two have
 // disjoint lifecycles (build-time vs run-time) and must not be
 // conflated.
+//
+// M08.D2 — addNode / updateNode now schedule a debounced
+// validate_framework call; mock the ipc command (partial — the other
+// exports stay real) and run on fake timers so these C/D1 store tests
+// stay deterministic and never reach the real Tauri bridge.
+const { validateFrameworkMock } = vi.hoisted(() => ({ validateFrameworkMock: vi.fn() }));
+vi.mock('../../../src/lib/ipc', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/lib/ipc')>();
+  return { ...actual, validateFramework: validateFrameworkMock };
+});
 
 function namedFramework(name: string): Framework {
   return { ...emptyFramework(), name };
@@ -16,12 +26,26 @@ function namedFramework(name: string): Framework {
 
 describe('builderStore', () => {
   beforeEach(() => {
+    vi.useFakeTimers();
+    validateFrameworkMock
+      .mockReset()
+      .mockResolvedValue({
+        schema_errors: [],
+        capability_errors: [],
+        ok: true,
+        capability_summary: null,
+      });
     useBuilderStore.setState({
       framework: emptyFramework(),
       diskFramework: null,
       selectedNodeId: null,
       validation: null,
     });
+  });
+
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
   });
 
   it('initial_state_has_an_empty_framework_and_null_disk_snapshot', () => {
@@ -92,6 +116,15 @@ describe('builderStore', () => {
 // layout state, never part of the framework document.
 describe('builderStore — D1 canvas node actions', () => {
   beforeEach(() => {
+    vi.useFakeTimers();
+    validateFrameworkMock
+      .mockReset()
+      .mockResolvedValue({
+        schema_errors: [],
+        capability_errors: [],
+        ok: true,
+        capability_summary: null,
+      });
     useBuilderStore.setState({
       framework: emptyFramework(),
       diskFramework: null,
@@ -99,6 +132,11 @@ describe('builderStore — D1 canvas node actions', () => {
       validation: null,
       nodePositions: {},
     });
+  });
+
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
   });
 
   it('addNode_with_an_agent_appends_an_agents_entry_to_framework', () => {

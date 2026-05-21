@@ -32,6 +32,12 @@ const DEFAULT_MODEL_ID = 'claude-sonnet-4-6';
  *  'builtin'`; any other Tool is an imported `'external'` artifact. */
 const BUILTIN_TOOL_NAMES = ['Read', 'Write', 'Bash'];
 
+/** The quiet interval (ms) the debounced continuous-validation trigger
+ *  (D2.3.4) waits after the last `framework` mutation before firing one
+ *  `validate_framework` call — a burst of canvas edits coalesces into a
+ *  single backend pass rather than one per keystroke. */
+export const VALIDATION_DEBOUNCE_MS = 250;
+
 /** The Builder store contract — SEPARATE from `graphStore` (ADR-0020). */
 export interface BuilderState {
   /** THE source of truth — the in-progress framework.json. */

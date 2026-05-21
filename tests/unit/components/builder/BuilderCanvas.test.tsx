@@ -1,25 +1,39 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// M08.D1 — the interactive Builder Canvas. @xyflow/react's <ReactFlow>
+// M08.D1/D2 — the interactive Builder Canvas. @xyflow/react's <ReactFlow>
 // is replaced with a deterministic test double: React Flow's real
 // rendering needs a measured pane (ResizeObserver, DOMMatrix) that
 // happy-dom does not provide, and the canvas unit test's job is to
 // verify BuilderCanvas's WIRING — the framework->projection feed, the
-// drop handler, the selection handlers — not React Flow's own
-// rendering. The real <ReactFlow> integration (a node renders, drag
-// works) is covered by the Playwright spec against a real browser.
+// drop handler, the selection handlers, and (D2) the onConnect edge
+// route + the edge projection — not React Flow's own rendering. The
+// real <ReactFlow> integration (a node renders, an edge drag works) is
+// covered by the Playwright spec against a real browser.
 interface MockFlowNode {
   id: string;
   type: string;
   position: { x: number; y: number };
   data: Record<string, unknown>;
 }
+interface MockFlowEdge {
+  id: string;
+  source: string;
+  target: string;
+}
+interface MockConnection {
+  source: string | null;
+  target: string | null;
+  sourceHandle: string | null;
+  targetHandle: string | null;
+}
 interface MockReactFlowProps {
   nodes: MockFlowNode[];
+  edges?: MockFlowEdge[];
   onNodeClick?: (e: unknown, n: MockFlowNode) => void;
   onPaneClick?: (e?: unknown) => void;
+  onConnect?: (c: MockConnection) => void;
 }
 
 vi.mock('@xyflow/react', async (importOriginal) => {
@@ -30,9 +44,23 @@ vi.mock('@xyflow/react', async (importOriginal) => {
     // conversion is React Flow's concern; the test asserts addNode is
     // fed the converted point, whatever it is.
     useReactFlow: () => ({ screenToFlowPosition: (p: { x: number; y: number }) => p }),
-    ReactFlow: ({ nodes, onNodeClick, onPaneClick }: MockReactFlowProps) => (
+    ReactFlow: ({ nodes, edges, onNodeClick, onPaneClick, onConnect }: MockReactFlowProps) => (
       <div data-testid="rf-mock">
         <button type="button" data-testid="rf-pane" onClick={() => onPaneClick?.()} />
+        {/* D2 — fires a handle-to-handle connection the way React Flow's
+            real onConnect would; BuilderCanvas routes it to connectEdge. */}
+        <button
+          type="button"
+          data-testid="rf-connect"
+          onClick={() =>
+            onConnect?.({
+              source: 'agent:planner',
+              target: 'skill:research',
+              sourceHandle: null,
+              targetHandle: null,
+            })
+          }
+        />
         {nodes.map((n) => (
           <button
             type="button"
@@ -44,9 +72,27 @@ vi.mock('@xyflow/react', async (importOriginal) => {
             {n.id}
           </button>
         ))}
+        {(edges ?? []).map((e) => (
+          <div
+            key={e.id}
+            data-testid={`rf-edge-${e.id}`}
+            data-source={e.source}
+            data-target={e.target}
+          />
+        ))}
       </div>
     ),
   };
+});
+
+// builderStore imports validateFramework from ipc — D2's addNode /
+// connectEdge schedule a debounced validate_framework call. Mock it
+// (partial — unwrapCmdError + the other ipc exports stay real) so the
+// canvas wiring tests never reach the real Tauri bridge.
+const { validateFrameworkMock } = vi.hoisted(() => ({ validateFrameworkMock: vi.fn() }));
+vi.mock('../../../../src/lib/ipc', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../src/lib/ipc')>();
+  return { ...actual, validateFramework: validateFrameworkMock };
 });
 
 import { createEvent, fireEvent, render, screen } from '@testing-library/react';
@@ -59,9 +105,23 @@ import { useBuilderStore } from '../../../../src/lib/builderStore';
 
 describe('BuilderCanvas', () => {
   beforeEach(() => {
-    // Full reset — tests below swap addNode / selectNode for spies, so
-    // the real actions must be restored between cases.
+    vi.useFakeTimers();
+    validateFrameworkMock
+      .mockReset()
+      .mockResolvedValue({
+        schema_errors: [],
+        capability_errors: [],
+        ok: true,
+        capability_summary: null,
+      });
+    // Full reset — tests below swap addNode / selectNode / connectEdge
+    // for spies, so the real actions must be restored between cases.
     useBuilderStore.setState(useBuilderStore.getInitialState(), true);
+  });
+
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
   });
 
   it('builderNodeTypes_is_module_level_with_an_entry_per_kind', () => {
@@ -147,6 +207,29 @@ describe('BuilderCanvas', () => {
     const moveNode = vi.fn();
     applyPositionChanges([{ id: 'agent:planner', type: 'select', selected: true }], moveNode);
     expect(moveNode).not.toHaveBeenCalled();
+  });
+
+  // ── D2 — onConnect edge route + the edge projection ──────────────
+  it('onConnect_routes_a_connection_to_connectEdge', () => {
+    // React Flow v12's onConnect fires on a handle-to-handle drag;
+    // BuilderCanvas fills the D1-deferred slot and routes the
+    // connection's (source, target) to builderStore.connectEdge.
+    const connectEdge = vi.fn();
+    useBuilderStore.setState({ connectEdge });
+    render(<BuilderCanvas />);
+    fireEvent.click(screen.getByTestId('rf-connect'));
+    expect(connectEdge).toHaveBeenCalledWith('agent:planner', 'skill:research');
+  });
+
+  it('canvas_renders_an_edge_per_canvasEdges_projection_entry', () => {
+    const store = useBuilderStore.getState();
+    store.addNode('agent', 'planner', { x: 0, y: 0 });
+    store.addNode('skill', 'research', { x: 0, y: 0 });
+    store.connectEdge('agent:planner', 'skill:research');
+    render(<BuilderCanvas />);
+    // The edge projection feeds <ReactFlow edges> — a connectEdge
+    // mutation is the only way a wire appears (ADR-0020).
+    expect(screen.getByTestId('rf-edge-agent:planner->skill:research')).toBeInTheDocument();
   });
 });
 
