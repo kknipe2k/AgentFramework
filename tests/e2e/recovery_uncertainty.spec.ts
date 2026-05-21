@@ -47,6 +47,11 @@ async function clearStore(page: Page): Promise<void> {
 }
 
 test.describe('M04.F recovery uncertainty prompt', () => {
+  // gotcha #53 — guard against the Vite cold-start optimizer pass
+  // should this spec ever run first (the default 60s per-test timeout
+  // is too tight for it). 120s matches the 8 sibling specs.
+  test.describe.configure({ timeout: 120_000 });
+
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await clearStore(page);
