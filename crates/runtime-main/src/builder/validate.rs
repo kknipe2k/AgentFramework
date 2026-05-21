@@ -19,10 +19,13 @@ use std::path::Path;
 
 use serde_json::Value;
 
+use runtime_core::generated::framework::Framework;
 use runtime_core::generated::skills_lock::{ArtifactKind, Source};
 
 use crate::builder::error::BuilderError;
-use crate::builder::summary::FrameworkCapabilitySummary;
+use crate::builder::summary::{framework_capability_summary, FrameworkCapabilitySummary};
+use crate::framework_loader::walk;
+use crate::skills_lock::{self, LockError};
 
 /// One validation problem, keyed to the offending node / JSON-path so
 /// the renderer (D2 red badges, E Validate result) can attribute it.
@@ -77,8 +80,64 @@ pub struct FrameworkValidationReport {
 /// checks need a parsed `Framework`, and `capability_summary` is `None`
 /// because there is nothing to summarize.
 #[must_use]
-pub fn validate_framework(_doc: &Value) -> FrameworkValidationReport {
-    todo!("M08.B green phase")
+pub fn validate_framework(doc: &Value) -> FrameworkValidationReport {
+    // 1. Schema-shape — deserialize into the typify-generated Framework
+    //    type. Success iff the document matches `framework.v1.json`'s
+    //    shape + the generated newtype constraints (CLAUDE.md §14).
+    let framework: Framework = match serde_json::from_value(doc.clone()) {
+        Ok(framework) => framework,
+        Err(error) => {
+            // A shape failure short-circuits — reference + capability
+            // checks need a parsed Framework. v0.1 has no Rust
+            // JSON-Schema validator and no serde-path-tracking
+            // dependency, so the error keys to the document root; the
+            // serde message names the offending field. No
+            // capability_summary: there is no parsed Framework.
+            return FrameworkValidationReport {
+                schema_errors: vec![NodeError {
+                    node_path: "(root)".to_string(),
+                    message: error.to_string(),
+                }],
+                capability_errors: Vec::new(),
+                ok: false,
+                capability_summary: None,
+            };
+        }
+    };
+    // 2. Reference + gap validation via the M04 Layer-1 walker — one
+    //    NodeError per unresolved tool / skill / agent reference, keyed
+    //    to the agent that declared it.
+    let mut capability_errors: Vec<NodeError> = walk(&framework)
+        .into_iter()
+        .map(|gap| NodeError {
+            node_path: gap.agent_id,
+            message: format!("unresolved {:?} reference: {}", gap.kind, gap.missing_name),
+        })
+        .collect();
+    // 3. Whole-framework capability summary — also the source of the
+    //    per-Agent→Agent-edge narrowing decisions. It rides on the
+    //    report so the renderer reads one report, not a second command.
+    let summary = framework_capability_summary(&framework);
+    // 4. A failed Agent→Agent narrowing — the child declares a
+    //    capability the parent does not hold (L2a, all-or-nothing) — is
+    //    a capability error keyed to the child agent, so the renderer
+    //    badges that node. The narrowing itself is `narrow()`, computed
+    //    once in the summary and never redone here.
+    for edge in &summary.spawn_edges {
+        if let Err(message) = &edge.narrowed_caps {
+            capability_errors.push(NodeError {
+                node_path: edge.child_id.clone(),
+                message: format!("capability narrowing failed: {message}"),
+            });
+        }
+    }
+    let ok = capability_errors.is_empty();
+    FrameworkValidationReport {
+        schema_errors: Vec::new(),
+        capability_errors,
+        ok,
+        capability_summary: Some(summary),
+    }
 }
 
 /// One installed artifact, flattened from a `skills.lock` entry for the
@@ -116,6 +175,31 @@ pub struct InstalledArtifact {
 /// not schema-valid. Every non-`NotFound` lock failure propagates — an
 /// over-broad catch that treated a corrupt lock as empty would be a
 /// silent-failure bug.
-pub fn list_installed(_lock_path: &Path) -> Result<Vec<InstalledArtifact>, BuilderError> {
-    todo!("M08.B green phase")
+pub fn list_installed(lock_path: &Path) -> Result<Vec<InstalledArtifact>, BuilderError> {
+    let lock = match skills_lock::read(lock_path) {
+        Ok(lock) => lock,
+        // `skills_lock::read` returns `LockError::Io` of kind
+        // `NotFound` for an absent lock — that single case is "nothing
+        // installed", not a failure. Every other lock error (a corrupt
+        // or non-schema-valid lock) propagates: treating a corrupt lock
+        // as empty would be a silent-failure bug.
+        Err(LockError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Vec::new());
+        }
+        Err(other) => return Err(other.into()),
+    };
+    let mut artifacts: Vec<InstalledArtifact> = lock
+        .installed
+        .into_iter()
+        .map(|(key, entry)| InstalledArtifact {
+            key,
+            kind: entry.kind,
+            source: entry.source,
+            installed_at: entry.installed_at.to_rfc3339(),
+        })
+        .collect();
+    // `installed` is a HashMap — sort by key for a stable Palette
+    // ordering independent of the map's iteration order.
+    artifacts.sort_by(|a, b| a.key.cmp(&b.key));
+    Ok(artifacts)
 }

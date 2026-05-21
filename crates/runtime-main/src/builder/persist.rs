@@ -59,11 +59,22 @@ pub struct LoadedFramework {
 /// - [`BuilderError::Json`] if the framework cannot serialize.
 /// - [`BuilderError::Io`] on any write failure.
 pub fn save_framework(
-    _dir: &Path,
-    _fw: &Framework,
-    _companions: &[Companion],
+    dir: &Path,
+    fw: &Framework,
+    companions: &[Companion],
 ) -> Result<(), BuilderError> {
-    todo!("M08.B green phase")
+    if dir.exists() && !dir.is_dir() {
+        return Err(BuilderError::NotADirectory(dir.display().to_string()));
+    }
+    std::fs::create_dir_all(dir)?;
+    // Pretty-printed + a single trailing newline gives a deterministic
+    // serialization — a save→load→save cycle is byte-stable.
+    let json = serde_json::to_string_pretty(fw)?;
+    std::fs::write(dir.join("framework.json"), format!("{json}\n"))?;
+    for companion in companions {
+        std::fs::write(dir.join(&companion.file_name), &companion.body)?;
+    }
+    Ok(())
 }
 
 /// Read `framework.json` + its companion `.md` files back from `dir`.
@@ -79,6 +90,44 @@ pub fn save_framework(
 ///
 /// - [`BuilderError::Io`] if `dir/framework.json` is missing/unreadable.
 /// - [`BuilderError::Json`] if `framework.json` does not parse.
-pub fn load_framework(_dir: &Path) -> Result<LoadedFramework, BuilderError> {
-    todo!("M08.B green phase")
+pub fn load_framework(dir: &Path) -> Result<LoadedFramework, BuilderError> {
+    let raw = std::fs::read_to_string(dir.join("framework.json"))?;
+    // Parse into the same typify-generated `Framework` type the rest of
+    // the runtime uses — no second loader (spec §9). Gap-tolerant: a
+    // partially-built framework reloads fine; the Builder surfaces gaps
+    // via `validate_framework`, it does not refuse the load.
+    let framework: Framework = serde_json::from_str(&raw)?;
+    let companions = read_companions(dir)?;
+    Ok(LoadedFramework {
+        framework,
+        companions,
+    })
+}
+
+/// Scan `dir` for companion markdown files and read each one.
+///
+/// Companions are the `*.skill.md` / `*.tool.md` / `*.agent.md` files
+/// alongside `framework.json`; the result is sorted by file name for a
+/// deterministic (byte-stable) round-trip.
+fn read_companions(dir: &Path) -> Result<Vec<Companion>, BuilderError> {
+    let mut companions: Vec<Companion> = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if is_companion_md(file_name) {
+            companions.push(Companion {
+                file_name: file_name.to_string(),
+                body: std::fs::read_to_string(&path)?,
+            });
+        }
+    }
+    companions.sort_by(|a, b| a.file_name.cmp(&b.file_name));
+    Ok(companions)
+}
+
+/// Whether `name` is a companion markdown file the canvas round-trips.
+fn is_companion_md(name: &str) -> bool {
+    name.ends_with(".skill.md") || name.ends_with(".tool.md") || name.ends_with(".agent.md")
 }

@@ -7,19 +7,19 @@
 //!
 //! Four surfaces, all reuse-heavy by mandate:
 //!
-//! - [`validate`] — [`validate_framework`] composes schema-shape
-//!   validation (serde into the typify-generated `Framework` type — the
-//!   project's schema-as-source-of-truth mechanism, CLAUDE.md §14),
-//!   reference validation ([`crate::framework_loader::walk`]), and the
-//!   capability summary into one [`FrameworkValidationReport`].
-//! - [`summary`] — [`framework_capability_summary`] aggregates
-//!   [`crate::framework_loader::capability_map`] into whole-framework
-//!   totals and carries, per Agent→Agent spawn edge, the narrowing
-//!   triple computed by the reused [`crate::capability::narrowing::narrow`].
-//! - [`persist`] — [`save_framework`] / [`load_framework`]:
+//! - `validate::validate_framework` composes schema-shape validation
+//!   (serde into the typify-generated `Framework` type — the project's
+//!   schema-as-source-of-truth mechanism, CLAUDE.md §14), reference
+//!   validation (`framework_loader::walk`), and the capability summary
+//!   into one `FrameworkValidationReport`.
+//! - `summary::framework_capability_summary` aggregates
+//!   `framework_loader::capability_map` into whole-framework totals and
+//!   carries, per Agent→Agent spawn edge, the narrowing triple computed
+//!   by the reused `capability::narrowing::narrow`.
+//! - `persist::save_framework` / `persist::load_framework` —
 //!   path-agnostic `&Path` persistence (CLAUDE.md §9 archetype — the
 //!   Tauri shell resolves the directory).
-//! - [`validate::list_installed`] — the first production `skills.lock`
+//! - `validate::list_installed` — the first production `skills.lock`
 //!   reader (closes M07-IRL #6 + the read half of M07.V 🟡 #2).
 //!
 //! The module is pure / seam / `tempfile`-tested — every filesystem call

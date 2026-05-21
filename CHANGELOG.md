@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M08 Stage B (Builder backend)
+
+- **`crates/runtime-main/src/builder/` — the Builder backend.** The
+  single backend the Builder Canvas (Stages D1/D2), the Inspector (E),
+  and the Tester (F1) share — one validator, one capability summary,
+  one save/load path (spec §9 forbids duplicating validation logic
+  between TS and Rust).
+- **`validate_framework`.** Composes schema-shape validation (serde
+  deserialization into the typify-generated `Framework` type — the
+  schema-as-source-of-truth check; v0.1 has no Rust JSON-Schema
+  library), reference validation (reuses `framework_loader::walk`), and
+  the whole-framework capability summary into one
+  `FrameworkValidationReport`, keyed to the offending node / JSON-path.
+  An over-declaring Agent→Agent edge folds into `capability_errors`.
+- **`framework_capability_summary`.** Whole-framework capability totals
+  (file globs, network hosts, shell) aggregated from
+  `framework_loader/capability_map.rs`, carrying per-Agent→Agent-edge
+  the narrowing triple `{parent, child_declared, narrowed}` via the
+  reused `capability/narrowing.rs::narrow` (M05.B L2a). Rides on the
+  `validate_framework` report — there is no separate command.
+- **`save_framework` / `load_framework`.** Path-agnostic `&Path`
+  persistence (CLAUDE.md §9): `framework.json` + companion
+  `*.skill.md` / `*.tool.md` / `*.agent.md` files; a save→load→save
+  cycle is byte-stable (MVP §M8 criterion 8).
+- **`list_installed` — the first production `skills.lock` reader.**
+  Flattens the lock's `installed` map for the Palette / Import panel
+  (closes M07-IRL #6 + the read half of M07.V 🟡 #2). An absent lock
+  returns an empty list; a present-but-corrupt lock returns an error.
+- **Four Tauri commands** — `validate_framework`, `save_framework`,
+  `load_framework`, `list_installed_artifacts` — thin wrappers over the
+  `builder` seams, registered in the `invoke_handler`.
+
 ### Fixed — M08 Stage A (post-M07 carry-forward absorption)
 
 - **`plan_loop` driver shell (M04 carry-forward).** A new

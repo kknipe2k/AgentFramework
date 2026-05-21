@@ -18,6 +18,9 @@
 use runtime_core::generated::capability::CapabilityDeclaration;
 use runtime_core::generated::framework::Framework;
 
+use crate::capability::narrowing::narrow;
+use crate::framework_loader::capability_map;
+
 /// The narrowing decision for one Agent→Agent (`spawns`) edge.
 ///
 /// Carries no `PartialEq` — `CapabilityDeclaration` derives only
@@ -67,6 +70,72 @@ pub struct FrameworkCapabilitySummary {
 /// grant translation and [`crate::capability::narrowing::narrow`] for
 /// the per-spawn-edge intersection — neither is reimplemented (spec §9).
 #[must_use]
-pub fn framework_capability_summary(_fw: &Framework) -> FrameworkCapabilitySummary {
-    todo!("M08.B green phase")
+pub fn framework_capability_summary(fw: &Framework) -> FrameworkCapabilitySummary {
+    let agents = capability_map::inline_agents(fw);
+
+    // 1. Aggregate the coarse file / network / shell totals across
+    //    every inline agent's `Capabilities` block.
+    let mut files_read: Vec<String> = Vec::new();
+    let mut files_written: Vec<String> = Vec::new();
+    let mut network_hosts: Vec<String> = Vec::new();
+    let mut any_shell = false;
+    for &agent in &agents {
+        let caps = &agent.capabilities;
+        for glob in caps.file_access.read.iter() {
+            files_read.push((**glob).clone());
+        }
+        for glob in caps.file_access.write.iter() {
+            files_written.push((**glob).clone());
+        }
+        for host in &caps.network {
+            network_hosts.push(host.clone());
+        }
+        if caps.shell {
+            any_shell = true;
+        }
+    }
+    dedup_sorted(&mut files_read);
+    dedup_sorted(&mut files_written);
+    dedup_sorted(&mut network_hosts);
+
+    // 2. Build one SpawnEdgeNarrowing per Agent→Agent (`spawns`) edge,
+    //    in framework declaration order. The narrowing is the reused
+    //    L2a `narrow()` (M05.B) — never reimplemented (spec §9); its
+    //    `NarrowingError` is stringified because the report crosses the
+    //    IPC boundary. An agent whose grants are not walkable (an
+    //    unresolved or registry-form id) contributes an empty set.
+    let mut spawn_edges: Vec<SpawnEdgeNarrowing> = Vec::new();
+    for &agent in &agents {
+        let parent_id = agent.id.as_str().to_string();
+        let parent_caps =
+            capability_map::parent_grants_for_agent(fw, &parent_id).unwrap_or_default();
+        for child_id in &agent.spawns {
+            let child_declared_caps =
+                capability_map::parent_grants_for_agent(fw, child_id).unwrap_or_default();
+            let narrowed_caps =
+                narrow(&parent_caps, &child_declared_caps).map_err(|error| error.to_string());
+            spawn_edges.push(SpawnEdgeNarrowing {
+                parent_id: parent_id.clone(),
+                child_id: child_id.clone(),
+                parent_caps: parent_caps.clone(),
+                child_declared_caps,
+                narrowed_caps,
+            });
+        }
+    }
+
+    FrameworkCapabilitySummary {
+        files_read,
+        files_written,
+        network_hosts,
+        any_shell,
+        spawn_edges,
+    }
+}
+
+/// Sort + de-duplicate a glob/host list so the summary is stable and
+/// carries each distinct entry once.
+fn dedup_sorted(items: &mut Vec<String>) {
+    items.sort();
+    items.dedup();
 }
