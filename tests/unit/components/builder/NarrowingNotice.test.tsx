@@ -61,9 +61,16 @@ describe('NarrowingNotice', () => {
     });
     render(<NarrowingNotice spawnEdgeId="agent:planner->worker" />);
     expect(screen.getByText(/narrowing applied/i)).toBeInTheDocument();
-    // Child-declared + surviving lists both render the kind:resource labels.
-    expect(screen.getByText(/read:src\/\*\*/)).toBeInTheDocument();
-    expect(screen.getByText(/network:api\.example\.com/)).toBeInTheDocument();
+    // Both lists render every kind:resource label. For an Ok narrowing
+    // the declared set survives verbatim (all-or-nothing), so each label
+    // appears in BOTH lines — assert each list by its own testid rather
+    // than getByText, which would match across both and throw.
+    const declaredLine = screen.getByTestId('narrowing-notice-declared');
+    const survivesLine = screen.getByTestId('narrowing-notice-survives');
+    expect(declaredLine).toHaveTextContent('read:src/**');
+    expect(declaredLine).toHaveTextContent('network:api.example.com');
+    expect(survivesLine).toHaveTextContent('read:src/**');
+    expect(survivesLine).toHaveTextContent('network:api.example.com');
   });
 
   it('renders_the_rejection_message_when_the_child_exceeds_the_parent', () => {
