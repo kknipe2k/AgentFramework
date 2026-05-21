@@ -49,7 +49,7 @@ vi.mock('@xyflow/react', async (importOriginal) => {
   };
 });
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { createEvent, fireEvent, render, screen } from '@testing-library/react';
 import {
   BuilderCanvas,
   applyPositionChanges,
@@ -67,7 +67,13 @@ describe('BuilderCanvas', () => {
   it('builderNodeTypes_is_module_level_with_an_entry_per_kind', () => {
     // Module-level per the GraphCanvas trap — redefining nodeTypes per
     // render re-mounts every node. One entry per BuilderNodeKind.
-    expect(Object.keys(builderNodeTypes).sort()).toEqual(['agent', 'hitl', 'hook', 'skill', 'tool']);
+    expect(Object.keys(builderNodeTypes).sort()).toEqual([
+      'agent',
+      'hitl',
+      'hook',
+      'skill',
+      'tool',
+    ]);
   });
 
   it('renders_a_node_per_canvasNodes_projection_entry', () => {
@@ -83,11 +89,17 @@ describe('BuilderCanvas', () => {
     const addNode = vi.fn();
     useBuilderStore.setState({ addNode });
     render(<BuilderCanvas />);
-    fireEvent.drop(screen.getByTestId('builder-canvas'), {
+    // happy-dom's fireEvent.drop init does not propagate clientX/clientY
+    // onto the synthetic event — construct the drop event and pin the
+    // cursor coords explicitly so the screenToFlowPosition conversion is
+    // genuinely exercised.
+    const canvas = screen.getByTestId('builder-canvas');
+    const drop = createEvent.drop(canvas, {
       dataTransfer: { getData: () => JSON.stringify({ kind: 'tool', ref: 'Read' }) },
-      clientX: 50,
-      clientY: 60,
     });
+    Object.defineProperty(drop, 'clientX', { value: 50 });
+    Object.defineProperty(drop, 'clientY', { value: 60 });
+    fireEvent(canvas, drop);
     expect(addNode).toHaveBeenCalledWith('tool', 'Read', { x: 50, y: 60 });
   });
 
