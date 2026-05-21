@@ -1,3 +1,4 @@
+import type { Edge, Node } from '@xyflow/react';
 import { create } from 'zustand';
 import type { Framework } from '../types/framework';
 import type { FrameworkValidationReport } from './ipc';
@@ -45,6 +46,19 @@ export interface BuilderState {
   removeNode: (nodeId: string) => void;
   /** Store a fresh validation report (D2 continuous + E explicit). */
   setValidation: (report: FrameworkValidationReport) => void;
+
+  /** D1: user-placed canvas coordinates, keyed by `${kind}:${ref}` node
+   *  id — editor-local layout view state (ADR-0020: NOT part of the
+   *  framework document, not persisted by save_framework). */
+  nodePositions: Record<string, { x: number; y: number }>;
+  /** D1: derive the React-Flow node array from `framework` +
+   *  `nodePositions` — the ADR-0020 framework→canvas projection. */
+  canvasNodes: () => Node[];
+  /** D1: derive the React-Flow edge array — empty in D1; D2 fills it. */
+  canvasEdges: () => Edge[];
+  /** D1: update one node's canvas position (React Flow v12 controlled
+   *  drag). Touches `nodePositions` only — never `framework`. */
+  moveNode: (nodeId: string, position: { x: number; y: number }) => void;
 }
 
 /**
@@ -87,4 +101,9 @@ export const useBuilderStore = create<BuilderState>((set) => ({
   connectEdge: () => set((s) => s),
   removeNode: () => set((s) => s),
   setValidation: (report) => set({ validation: report }),
+  // M08.D1 stub — red phase; the impl commit fills these.
+  nodePositions: {},
+  canvasNodes: () => [],
+  canvasEdges: () => [],
+  moveNode: () => set((s) => s),
 }));
