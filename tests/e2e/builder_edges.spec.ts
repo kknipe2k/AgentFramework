@@ -103,6 +103,33 @@ async function drawEdge(
   await page.mouse.up();
 }
 
+/**
+ * Drag the child agent node clear below the parent.
+ *
+ * M08.E added the Canvas | JSON tab bar above the Builder Canvas, which
+ * shrank the canvas — React Flow's fitView can now land the two large
+ * agent nodes overlapping, which buries the parent's source handle
+ * under the child node and the handle-to-handle edge drag cannot
+ * connect. Re-positioning the child by a measured drag (it routes
+ * through onNodesChange → moveNode) guarantees distinct, unobscured
+ * handles regardless of the fitView zoom.
+ */
+async function separateAgentNodes(page: Page): Promise<void> {
+  const parent = await page.getByTestId('builder-agent-node-parent-agent').boundingBox();
+  const child = await page.getByTestId('builder-agent-node-child-agent').boundingBox();
+  if (parent === null || child === null) {
+    throw new Error('agent nodes are not measurable');
+  }
+  // Grab the child by its body (clear of the top connection handle) and
+  // drag it to ~120px below the parent's bottom edge.
+  const grabX = child.x + 40;
+  const grabY = child.y + 26;
+  await page.mouse.move(grabX, grabY);
+  await page.mouse.down();
+  await page.mouse.move(grabX, parent.y + parent.height + 120, { steps: 12 });
+  await page.mouse.up();
+}
+
 function agentArtifact(key: string): Record<string, unknown> {
   return { key, kind: 'agent', source: {}, installed_at: '2026-05-21T00:00:00Z' };
 }
@@ -183,12 +210,12 @@ test.describe('M08.D2 Builder Canvas edge editor', () => {
     await expect(page.getByTestId('builder-canvas')).toBeVisible();
 
     await page.getByTestId('palette-tab-agents').click();
-    // y=220 (was y=150): M08.E added the Canvas | JSON tab bar above the
-    // canvas, shifting it ~28px down — a y=150 drop now lands above the
-    // canvas viewport and the parent node's source handle is unreachable
-    // for the handle-to-handle edge drag. 220 matches the other D2 drops.
-    await dropPaletteItem(page, 'palette-item-parent-agent', 360, 220);
-    await dropPaletteItem(page, 'palette-item-child-agent', 360, 440);
+    await dropPaletteItem(page, 'palette-item-parent-agent', 360, 230);
+    await dropPaletteItem(page, 'palette-item-child-agent', 360, 360);
+    // M08.E's Canvas | JSON tab bar shrank the canvas; drag the child
+    // clear of the parent so the two large agent nodes do not overlap
+    // (which would bury the parent's source handle).
+    await separateAgentNodes(page);
 
     await drawEdge(page, 'builder-agent-node-parent-agent', 'builder-agent-node-child-agent');
     // MVP §M8 criterion 3 — the narrowing decision surfaces, verbatim
