@@ -1330,6 +1330,12 @@ p.error {
   background: var(--node-bg-alt);
   /* anchor for the absolutely-positioned NodeConfigPanel overlay (D1) */
   position: relative;
+  /* A flex column so M08.E's Canvas | JSON tab bar takes its natural
+   * height and the canvas / JSON editor fills exactly the rest — the
+   * canvas must not overflow the section (it would scroll and mis-place
+   * React Flow's pane). */
+  display: flex;
+  flex-direction: column;
 }
 
 .builder-palette {
@@ -1403,7 +1409,10 @@ p.error {
 
 .builder-canvas {
   width: 100%;
-  height: 100%;
+  /* flex-fill the canvas section below the M08.E Canvas | JSON tab bar
+   * (was height:100% — which overflowed once the tab bar was added). */
+  flex: 1;
+  min-height: 0;
   background: var(--node-bg-alt);
 }
 
