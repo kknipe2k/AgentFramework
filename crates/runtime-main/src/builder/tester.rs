@@ -765,4 +765,81 @@ mod tests {
             "got {err:?}"
         );
     }
+
+    // ── M07.V 🟡 #2 — the integrity pre-flight through the seam ──────
+
+    #[tokio::test]
+    async fn run_test_session_with_a_tampered_imported_artifact_refuses_the_run() {
+        // A candidate framework that byte-references an imported artifact
+        // whose on-disk bytes drifted from the co-located skills.lock
+        // fails the test — `run_test_session_with`'s integrity pre-flight
+        // refuses the run rather than executing the tampered artifact
+        // (integrity > availability; ADR-0014).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("runtime-tester.sqlite");
+        // The imported skill on disk carries TAMPERED bytes; the
+        // co-located skills.lock records the hash of the GOOD bytes.
+        std::fs::write(
+            dir.path().join("imported-skill.md"),
+            b"TAMPERED skill bytes",
+        )
+        .expect("write artifact");
+        crate::skills_lock::write_entry(
+            &dir.path().join("skills.lock"),
+            "imported-skill",
+            lock_entry_for(b"the real skill bytes"),
+        )
+        .expect("write lock");
+        let framework: Framework = serde_json::from_value(json!({
+            "name": "m08-f1-tampered-fixture",
+            "version": "1.0.0",
+            "description": "M08.F1 tampered imported-artifact fixture",
+            "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+            "agents": [{
+                "id": "worker",
+                "role": "worker",
+                "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+                "capabilities": {
+                    "tools_called": [],
+                    "skills_loaded": [],
+                    "file_access": { "read": [], "write": [] },
+                    "network": [],
+                    "shell": false,
+                    "spawn_agents": []
+                },
+                "allowed_tools": [],
+                "allowed_skills": [],
+                "spawns": []
+            }],
+            "tools": [],
+            "skills": [
+                { "name": "imported-skill", "path": "imported-skill.md", "source": "external" }
+            ],
+            "session_root_agent": "worker",
+        }))
+        .expect("the tampered-artifact fixture framework round-trips");
+
+        let outcome = run_test_session_with(
+            &framework,
+            "summarize the input",
+            &db_path,
+            TurnStub::clean(),
+            Arc::new(DroneClient::noop()),
+            None,
+            SessionId::new(),
+        )
+        .await
+        .expect("a tampered artifact is a failed test, not Err(TesterError)");
+        assert!(
+            !outcome.passed,
+            "a hash mismatch refuses the run — the candidate fails the test"
+        );
+        assert!(
+            outcome
+                .trace
+                .iter()
+                .any(|e| matches!(e, AgentEvent::ArtifactHashMismatch { .. })),
+            "the refused run carries the schema-faithful ArtifactHashMismatch"
+        );
+    }
 }
