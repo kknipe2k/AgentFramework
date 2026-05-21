@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M08 Stage D2 (Builder Canvas — edges, narrowing, validation)
+
+- **`src/lib/builderStore.ts`** — `connectEdge` implemented (Stage C
+  shipped it as a typed no-op stub): maps a connection's
+  `(sourceKind, targetKind)` pair to one of the four spec Phase 9 edge
+  types — Agent→Skill = `allowed_skills`, Agent→Tool = `allowed_tools`,
+  Agent→Agent = `spawns`, Hook→Task = `task_defaults.post_hooks` — and
+  rejects every other node-pair (no `framework` mutation, no edge).
+  Idempotent. The `canvasEdges` projection derives React-Flow edges
+  from `framework` (the ADR-0020 source-of-truth model for edges); a
+  module-level debounced trigger fires one `validate_framework` call
+  after a burst of `framework` mutations. Exports `parseNodeId` (the
+  shared node-id parser) and `VALIDATION_DEBOUNCE_MS`.
+- **`src/components/builder/BuilderCanvas.tsx`** — `onConnect` wired to
+  `<ReactFlow>` (the slot D1 left unset), routing handle-to-handle
+  connections to `builderStore.connectEdge`.
+- **`src/components/builder/NarrowingNotice.tsx`** — surfaces an
+  Agent→Agent (`spawns`) edge's §8.security L2a narrowing decision read
+  from the `validate_framework` report's
+  `capability_summary.spawn_edges[]`. Renders the backend's
+  `narrowed_caps` arm verbatim — the surviving set on an `Ok` edge, the
+  rejection on an `Err` edge. The intersection is Rust
+  (`capability/narrowing.rs`) — spec §9 forbids a TS re-implementation,
+  so the component computes nothing.
+- **`src/components/builder/nodes/NodeValidationBadge.tsx`** — the
+  shared red-badge surface: `nodeErrorsFor` (the per-node error filter),
+  `useNodeErrors` (the `useShallow` selector hook), and the
+  `NodeValidationBadge` count badge. Each builder node component renders
+  it and carries the `builder-node--invalid` modifier when the
+  continuous validation keys an error to that node (spec Phase 9 "errors
+  surfaced as red badges").
+- **`src/lib/ipc.ts`** — the `validateFramework` wrapper over Stage B's
+  `validate_framework` command + the hand-mirrored `SpawnEdgeNarrowing`
+  / `FrameworkCapabilitySummary` wire types; `FrameworkValidationReport`
+  `capability_summary` pinned to `FrameworkCapabilitySummary | null`.
+- MVP §M8 criteria 2 + 3 + the badge half of 4 demonstrated end-to-end
+  in Playwright: connect Agent→Skill, connect Agent→Agent with the
+  narrowing surfaced, and a red badge on an invalid node.
+
 ### Added — M08 Stage D1 (Builder Canvas — node editor)
 
 - **`src/components/builder/BuilderCanvas.tsx`** — the interactive

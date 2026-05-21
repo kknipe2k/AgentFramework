@@ -1,19 +1,20 @@
 import type { Edge, Node } from '@xyflow/react';
 import { create } from 'zustand';
 import type { Agent, Framework } from '../types/framework';
-import type { FrameworkValidationReport } from './ipc';
+import { unwrapCmdError, validateFramework, type FrameworkValidationReport } from './ipc';
 
-// M08.C/D1 — the Builder store (ADR-0020). builderStore holds the
+// M08.C/D1/D2 — the Builder store (ADR-0020). builderStore holds the
 // in-progress framework.json as the single source of truth; the canvas
 // is a projection derived from `framework`, and canvas edits mutate
 // `framework`. It is a SEPARATE Zustand store from `graphStore` (the
 // live-execution store) — the two have disjoint lifecycles (build-time
 // vs run-time) and conflating them is the dual-purpose-store
 // anti-pattern. C shipped the store shape + replaceFramework /
-// setDiskFramework / selectNode / setValidation; D1 implements the
-// canvas-mutation actions addNode / updateNode / moveNode + the
-// framework→canvas projection (canvasNodes / canvasEdges). connectEdge
-// / removeNode stay typed no-op stubs D2 fills.
+// setDiskFramework / selectNode / setValidation; D1 implemented addNode
+// / updateNode / moveNode + the framework→canvas node projection; D2
+// implements connectEdge (the four edge types) + the canvasEdges
+// projection + the debounced continuous-validation trigger. removeNode
+// stays a typed no-op stub — node deletion is not in D2's scope.
 
 /** One Palette item dragged onto the canvas. */
 export type BuilderNodeKind = 'agent' | 'tool' | 'skill' | 'hitl' | 'hook';
@@ -46,7 +47,8 @@ export interface BuilderState {
   diskFramework: Framework | null;
   /** Selected canvas node id — drives D1's inline config + E's Inspector. */
   selectedNodeId: string | null;
-  /** Latest validate_framework report (D2 populates; null until first run). */
+  /** Latest validate_framework report (D2 continuous pass populates it;
+   *  null until the first pass completes). */
   validation: FrameworkValidationReport | null;
 
   /** Replace the whole document (E's JSON-tab edit; load_framework). */
@@ -59,9 +61,10 @@ export interface BuilderState {
   addNode: (kind: BuilderNodeKind, ref: string, position: Position) => void;
   /** D1: inline-config edit (role / model / allowed_*). */
   updateNode: (nodeId: string, patch: Record<string, unknown>) => void;
-  /** D2: the four edge types -> the right `framework` field. */
+  /** D2: map a connection to one of the four spec edge types — the
+   *  right `framework` mutation — and reject every other node-pair. */
   connectEdge: (sourceId: string, targetId: string) => void;
-  /** D1/D2: drop a node + its edges. */
+  /** Drop a node — a typed no-op stub; node deletion is not in D2 scope. */
   removeNode: (nodeId: string) => void;
   /** Store a fresh validation report (D2 continuous + E explicit). */
   setValidation: (report: FrameworkValidationReport) => void;
@@ -73,7 +76,9 @@ export interface BuilderState {
   /** D1: derive the React-Flow node array from `framework` +
    *  `nodePositions` — the ADR-0020 framework→canvas projection. */
   canvasNodes: () => Node[];
-  /** D1: derive the React-Flow edge array — empty in D1; D2 fills it. */
+  /** D2: derive the React-Flow edge array from `framework` — the four
+   *  edge types projected back as wires (a pure function of the
+   *  document, ADR-0020). */
   canvasEdges: () => Edge[];
   /** D1: update one node's canvas position (React Flow v12 controlled
    *  drag). Touches `nodePositions` only — never `framework`. */
@@ -131,6 +136,21 @@ function isInlineAgent(entry: Framework['agents'][number]): entry is Agent {
   return 'role' in entry;
 }
 
+/**
+ * Split a canvas node id `${kind}:${ref}` into its kind prefix and ref.
+ * The canvas node-id scheme (D1's `projectCanvasNodes`) prefixes every
+ * id with its kind; `connectEdge` reads the kind off the prefix to map
+ * a connection to one of the four spec edge types. Exported so Stage E
+ * / M09 reuse one node-id parser rather than re-splitting ad hoc.
+ */
+export function parseNodeId(id: string): { kind: string; ref: string } {
+  const sep = id.indexOf(':');
+  if (sep === -1) {
+    return { kind: id, ref: '' };
+  }
+  return { kind: id.slice(0, sep), ref: id.slice(sep + 1) };
+}
+
 /** Apply a Palette-item drop to the framework document. Each kind lands
  *  in its schema home so the projection can derive the node and Stage E
  *  can save/load it; a D2 edge later wires Tool/Skill into an agent's
@@ -172,8 +192,10 @@ function applyDrop(framework: Framework, kind: BuilderNodeKind, ref: string): Fr
 /** The framework → React-Flow node projection (ADR-0020). Node
  *  existence is derived from `framework` (so Stage E's load
  *  reconstructs the canvas); positions come from the editor-local
- *  `nodePositions`. D1 projects all five node kinds; D2 adds the edges
- *  that wire Tool/Skill nodes into an agent's `allowed_*`. */
+ *  `nodePositions`. Every node carries `nodePath` — the key the
+ *  validate_framework report attributes a `NodeError` to (a bare agent
+ *  id for agents; the artifact name for tools / skills) — so D2's red
+ *  badge can attribute an error to its node. */
 function projectCanvasNodes(framework: Framework, nodePositions: Record<string, Position>): Node[] {
   const at = (id: string): Position => nodePositions[id] ?? { x: 0, y: 0 };
   const nodes: Node[] = [];
@@ -186,6 +208,7 @@ function projectCanvasNodes(framework: Framework, nodePositions: Record<string, 
       position: at(id),
       data: {
         agentId: entry.id,
+        nodePath: entry.id,
         role: agent?.role ?? '',
         model: agent?.model.id ?? '',
         allowedTools: agent?.allowed_tools ?? [],
@@ -195,19 +218,29 @@ function projectCanvasNodes(framework: Framework, nodePositions: Record<string, 
   }
   for (const tool of framework.tools) {
     const id = `tool:${tool.name}`;
-    nodes.push({ id, type: 'tool', position: at(id), data: { name: tool.name } });
+    nodes.push({
+      id,
+      type: 'tool',
+      position: at(id),
+      data: { name: tool.name, nodePath: tool.name },
+    });
   }
   for (const skill of framework.skills) {
     const id = `skill:${skill.name}`;
-    nodes.push({ id, type: 'skill', position: at(id), data: { name: skill.name } });
+    nodes.push({
+      id,
+      type: 'skill',
+      position: at(id),
+      data: { name: skill.name, nodePath: skill.name },
+    });
   }
   for (const trigger of Object.keys(framework.hitl_policy ?? {})) {
     const id = `hitl:${trigger}`;
-    nodes.push({ id, type: 'hitl', position: at(id), data: { trigger } });
+    nodes.push({ id, type: 'hitl', position: at(id), data: { trigger, nodePath: trigger } });
   }
   for (const point of Object.keys(framework.hooks ?? {})) {
     const id = `hook:${point}`;
-    nodes.push({ id, type: 'hook', position: at(id), data: { point } });
+    nodes.push({ id, type: 'hook', position: at(id), data: { point, nodePath: point } });
   }
   return nodes;
 }
@@ -242,44 +275,215 @@ function memoizedCanvasNodes(
   return nodes;
 }
 
-/** Edges are D2 — D1 ships a stable empty array (a fresh `[]` each call
- *  would defeat the canvas's `useShallow` selector; gotcha #75). */
-const EMPTY_EDGES: Edge[] = [];
+/** The framework → React-Flow edge projection (ADR-0020). The four edge
+ *  types live as `allowed_skills` / `allowed_tools` / `spawns` arrays on
+ *  the framework's agents; each becomes a wire. An edge is projected
+ *  only when BOTH endpoints exist as canvas nodes — an `allowed_*` entry
+ *  set via the inline config with no node on the canvas would otherwise
+ *  point a React Flow edge at nothing. */
+function projectCanvasEdges(framework: Framework, nodeIds: Set<string>): Edge[] {
+  const edges: Edge[] = [];
+  const add = (source: string, target: string): void => {
+    if (nodeIds.has(source) && nodeIds.has(target)) {
+      edges.push({ id: `${source}->${target}`, source, target, className: 'builder-edge' });
+    }
+  };
+  for (const entry of framework.agents) {
+    if (!isInlineAgent(entry)) {
+      continue;
+    }
+    const source = `agent:${entry.id}`;
+    for (const skill of entry.allowed_skills) {
+      add(source, `skill:${skill}`);
+    }
+    for (const tool of entry.allowed_tools) {
+      add(source, `tool:${tool}`);
+    }
+    for (const child of entry.spawns) {
+      add(source, `agent:${child}`);
+    }
+  }
+  return edges;
+}
 
-export const useBuilderStore = create<BuilderState>((set, get) => ({
-  framework: emptyFramework(),
-  diskFramework: null,
-  selectedNodeId: null,
-  validation: null,
-  nodePositions: {},
-  replaceFramework: (fw) => set({ framework: fw }),
-  setDiskFramework: (fw) => set({ diskFramework: fw }),
-  selectNode: (id) => set({ selectedNodeId: id }),
-  addNode: (kind, ref, position) =>
-    set((s) => {
-      const nodeId = `${kind}:${ref}`;
-      if (nodeId in s.nodePositions) {
-        return s; // idempotent on a re-drop of the same Palette item
-      }
-      return {
-        framework: applyDrop(s.framework, kind, ref),
-        nodePositions: { ...s.nodePositions, [nodeId]: position },
-      };
-    }),
-  updateNode: (nodeId, patch) =>
-    set((s) => {
-      const agentId = nodeId.replace(/^agent:/, '');
-      const agents = s.framework.agents.map((entry) =>
-        entry.id === agentId ? { ...entry, ...patch } : entry,
-      ) as Framework['agents'];
-      return { framework: { ...s.framework, agents } };
-    }),
-  // D2 replaces these no-op bodies (edges + node deletion).
-  connectEdge: () => set((s) => s),
-  removeNode: () => set((s) => s),
-  setValidation: (report) => set({ validation: report }),
-  canvasNodes: () => memoizedCanvasNodes(get().framework, get().nodePositions),
-  canvasEdges: () => EMPTY_EDGES,
-  moveNode: (nodeId, position) =>
-    set((s) => ({ nodePositions: { ...s.nodePositions, [nodeId]: position } })),
-}));
+// The edge projection is a pure function of `framework` (the node-id set
+// it filters against is itself derived from `framework`), so it memoizes
+// on the `framework` identity alone — returning a referentially stable
+// array so the canvas's useShallow selector does not re-render per
+// commit (gotcha #75, the canvasNodes precedent).
+let edgeProjectionCache: { framework: Framework; edges: Edge[] } | null = null;
+
+function memoizedCanvasEdges(framework: Framework, nodeIds: Set<string>): Edge[] {
+  if (edgeProjectionCache !== null && edgeProjectionCache.framework === framework) {
+    return edgeProjectionCache.edges;
+  }
+  const edges = projectCanvasEdges(framework, nodeIds);
+  edgeProjectionCache = { framework, edges };
+  return edges;
+}
+
+/** Push `value` onto one inline agent's `allowed_skills` / `allowed_tools`
+ *  / `spawns` list. Idempotent — `connectEdge` re-connecting an
+ *  already-recorded edge does not append a duplicate. Returns the state
+ *  unchanged when the agent is absent or the value is already present. */
+function pushAgentList(
+  state: BuilderState,
+  agentId: string,
+  field: 'allowed_skills' | 'allowed_tools' | 'spawns',
+  value: string,
+): BuilderState {
+  let mutated = false;
+  const agents = state.framework.agents.map((entry) => {
+    if (!isInlineAgent(entry) || entry.id !== agentId) {
+      return entry;
+    }
+    if (entry[field].includes(value)) {
+      return entry; // idempotent — no duplicate edge
+    }
+    mutated = true;
+    return { ...entry, [field]: [...entry[field], value] };
+  }) as Framework['agents'];
+  if (!mutated) {
+    return state;
+  }
+  return { ...state, framework: { ...state.framework, agents } };
+}
+
+/** Push a hook reference onto `task_defaults.post_hooks` (the Hook→Task
+ *  edge). The schema's `{ $ref }` post-hook variant carries the hook
+ *  node's ref. Idempotent. `task_defaults` is created if absent. */
+function pushPostHook(state: BuilderState, hookRef: string): BuilderState {
+  const existing = state.framework.task_defaults?.post_hooks ?? [];
+  if (existing.some((hook) => '$ref' in hook && hook.$ref === hookRef)) {
+    return state; // idempotent — no duplicate post-hook
+  }
+  return {
+    ...state,
+    framework: {
+      ...state.framework,
+      task_defaults: {
+        ...state.framework.task_defaults,
+        post_hooks: [...existing, { $ref: hookRef }],
+      },
+    },
+  };
+}
+
+/**
+ * Map a connection `(sourceId, targetId)` to one of the four spec
+ * Phase 9 edge types and apply the matching `framework` mutation, or
+ * reject every other node-pair. The kind of each endpoint is read off
+ * its node-id prefix (`parseNodeId`):
+ *
+ * - Agent→Skill = an `allowed_skills` entry on the source agent
+ * - Agent→Tool  = an `allowed_tools` entry on the source agent
+ * - Agent→Agent = a `spawns` entry on the source (parent) agent
+ * - Hook→Task   = a `{ $ref }` entry on `task_defaults.post_hooks`
+ *
+ * A rejected pair returns the state unchanged: no `framework` mutation,
+ * so the canvas edge projection — a pure function of `framework` — paints
+ * no wire. The Agent→Agent capability narrowing is NOT computed here;
+ * drawing the edge re-runs `validate_framework`, whose Rust report
+ * carries the intersection (spec §9 — never re-implemented in TS).
+ */
+function connectEdgeReducer(state: BuilderState, sourceId: string, targetId: string): BuilderState {
+  const source = parseNodeId(sourceId);
+  const target = parseNodeId(targetId);
+  switch (`${source.kind}->${target.kind}`) {
+    case 'agent->skill':
+      return pushAgentList(state, source.ref, 'allowed_skills', target.ref);
+    case 'agent->tool':
+      return pushAgentList(state, source.ref, 'allowed_tools', target.ref);
+    case 'agent->agent':
+      return pushAgentList(state, source.ref, 'spawns', target.ref);
+    case 'hook->task':
+      return pushPostHook(state, source.ref);
+    default:
+      // Not one of the four spec edge types — reject. No framework
+      // mutation; the projection paints no edge.
+      return state;
+  }
+}
+
+// Module-scoped debounce handle — one in-flight scheduled validation per
+// store, coalescing a burst of framework mutations into one call.
+let validateTimer: ReturnType<typeof setTimeout> | null = null;
+
+export const useBuilderStore = create<BuilderState>((set, get) => {
+  /**
+   * The debounced continuous-validation trigger (D2.3.4). Every
+   * framework mutation schedules one `validate_framework` call after a
+   * quiet interval; a burst of edits coalesces to a single backend
+   * pass. The Validate button (Stage E) calls the SAME validator with
+   * no debounce — one Rust validator, two triggers (spec §9).
+   */
+  function scheduleValidation(): void {
+    if (validateTimer !== null) {
+      clearTimeout(validateTimer);
+    }
+    validateTimer = setTimeout(() => {
+      validateTimer = null;
+      void validateFramework(get().framework)
+        .then((report) => set({ validation: report }))
+        .catch((error: unknown) => {
+          // A failed pass leaves the prior report in place — no flicker
+          // to "no errors". gotcha #30 — log the structured error
+          // rather than String()-ing it; Stage E's Inspector surfaces
+          // validation failures to the user.
+          console.error('[builder] validate_framework failed:', unwrapCmdError(error));
+        });
+    }, VALIDATION_DEBOUNCE_MS);
+  }
+
+  return {
+    framework: emptyFramework(),
+    diskFramework: null,
+    selectedNodeId: null,
+    validation: null,
+    nodePositions: {},
+    replaceFramework: (fw) => set({ framework: fw }),
+    setDiskFramework: (fw) => set({ diskFramework: fw }),
+    selectNode: (id) => set({ selectedNodeId: id }),
+    addNode: (kind, ref, position) => {
+      set((s) => {
+        const nodeId = `${kind}:${ref}`;
+        if (nodeId in s.nodePositions) {
+          return s; // idempotent on a re-drop of the same Palette item
+        }
+        return {
+          framework: applyDrop(s.framework, kind, ref),
+          nodePositions: { ...s.nodePositions, [nodeId]: position },
+        };
+      });
+      scheduleValidation();
+    },
+    updateNode: (nodeId, patch) => {
+      set((s) => {
+        const agentId = nodeId.replace(/^agent:/, '');
+        const agents = s.framework.agents.map((entry) =>
+          entry.id === agentId ? { ...entry, ...patch } : entry,
+        ) as Framework['agents'];
+        return { framework: { ...s.framework, agents } };
+      });
+      scheduleValidation();
+    },
+    connectEdge: (sourceId, targetId) => {
+      set((s) => connectEdgeReducer(s, sourceId, targetId));
+      scheduleValidation();
+    },
+    // removeNode stays a typed no-op stub — node deletion is not in D2's
+    // scope (no D2 deliverable, no D2 test); a later stage fills it.
+    removeNode: () => set((s) => s),
+    setValidation: (report) => set({ validation: report }),
+    canvasNodes: () => memoizedCanvasNodes(get().framework, get().nodePositions),
+    canvasEdges: () => {
+      const framework = get().framework;
+      const nodeIds = new Set(
+        memoizedCanvasNodes(framework, get().nodePositions).map((node) => node.id),
+      );
+      return memoizedCanvasEdges(framework, nodeIds);
+    },
+    moveNode: (nodeId, position) =>
+      set((s) => ({ nodePositions: { ...s.nodePositions, [nodeId]: position } })),
+  };
+});

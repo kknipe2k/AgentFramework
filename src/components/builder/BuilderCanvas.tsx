@@ -4,11 +4,13 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  type Connection,
   type NodeChange,
   type NodeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import type React from 'react';
+import { useCallback } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useBuilderStore, type BuilderNodeKind } from '../../lib/builderStore';
 import { BuilderAgentNode } from './nodes/BuilderAgentNode';
@@ -59,7 +61,22 @@ function BuilderCanvasInner(): JSX.Element {
   const addNode = useBuilderStore((s) => s.addNode);
   const moveNode = useBuilderStore((s) => s.moveNode);
   const selectNode = useBuilderStore((s) => s.selectNode);
+  const connectEdge = useBuilderStore((s) => s.connectEdge);
   const { screenToFlowPosition } = useReactFlow();
+
+  // React Flow v12 onConnect — fires on a handle-to-handle drag (D2,
+  // filling the slot D1 left unset). connectEdge maps the (source,
+  // target) pair to one of the four spec edge types and rejects every
+  // other pair internally — a rejected pair mutates no `framework` so
+  // the pure edge projection paints no wire.
+  const onConnect = useCallback(
+    (c: Connection) => {
+      if (c.source !== null && c.target !== null) {
+        connectEdge(c.source, c.target);
+      }
+    },
+    [connectEdge],
+  );
 
   function onDragOver(e: React.DragEvent): void {
     e.preventDefault();
@@ -93,6 +110,7 @@ function BuilderCanvasInner(): JSX.Element {
         onNodesChange={(changes) => applyPositionChanges(changes, moveNode)}
         onNodeClick={(_, node) => selectNode(node.id)}
         onPaneClick={() => selectNode(null)}
+        onConnect={onConnect}
         fitView
       >
         <Background />
@@ -103,11 +121,12 @@ function BuilderCanvasInner(): JSX.Element {
 }
 
 /**
- * The interactive Builder Canvas (M08.D1 — spec Phase 9) — a NEW
+ * The interactive Builder Canvas (M08.D1/D2 — spec Phase 9) — a NEW
  * React-Flow node editor distinct from the read-only live-graph
- * `GraphCanvas`. Nodes are a projection of `builderStore.framework`
- * (ADR-0020); a Palette drop instantiates a node, a user drag
- * repositions it. `onConnect` is left unset — edges are D2.
+ * `GraphCanvas`. Nodes and edges are a projection of
+ * `builderStore.framework` (ADR-0020); a Palette drop instantiates a
+ * node, a user drag repositions it, and a handle-to-handle connection
+ * (`onConnect`, D2) records one of the four spec edge types.
  *
  * Wrapped in `ReactFlowProvider` so the drop handler can call
  * `useReactFlow().screenToFlowPosition`.
