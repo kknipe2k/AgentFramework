@@ -51,7 +51,7 @@ tempfile           = { workspace = true }
 # without a live MCP server (mirrors crates/runtime-main's dev-dep
 # choice). `runtime-mcp` is already a normal dependency above; this entry
 # only enables the test-only feature for dev/test builds.
-runtime-mcp        = { path = "../crates/runtime-mcp", features = ["test-helpers"] }
+runtime-mcp        = { path = "../crates/runtime-mcp", version = "0.1.0", features = ["test-helpers"] }
 
 [lints]
 workspace = true

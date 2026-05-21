@@ -78,6 +78,11 @@ pub enum HitlError {
 #[derive(Clone, Default)]
 pub struct HitlSeam {
     pending: Arc<Mutex<HashMap<String, oneshot::Sender<HitlChoice>>>>,
+    /// When `Some`, every [`Self::await_response`] resolves IMMEDIATELY
+    /// with this choice instead of registering a pending await — the
+    /// Builder's Tester variant (M08.F1; ADR-0019). `None` is the live
+    /// channel-backed seam.
+    auto_default: Option<HitlChoice>,
 }
 
 impl HitlSeam {
@@ -100,7 +105,10 @@ impl HitlSeam {
     /// `CapabilityEnforcer::check` is byte-identical to a live session).
     #[must_use]
     pub fn test_defaults() -> Self {
-        todo!("M08.F1 green phase: construct the auto-defaulting test seam")
+        Self {
+            pending: Arc::default(),
+            auto_default: Some(HitlChoice::new(String::new())),
+        }
     }
 
     /// SDK calls this to suspend on a pending HITL request. Future resolves
@@ -119,6 +127,11 @@ impl HitlSeam {
         prompt_id: &str,
         wait: Duration,
     ) -> Result<HitlChoice, HitlError> {
+        // The Tester variant (ADR-0019) resolves every prompt with the
+        // default — a test session never blocks on user input.
+        if let Some(default) = &self.auto_default {
+            return Ok(default.clone());
+        }
         let (tx, rx) = oneshot::channel();
         {
             let mut guard = self.pending.lock().await;

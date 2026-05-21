@@ -1503,7 +1503,7 @@ pub fn list_installed_artifacts_with(lock_path: &Path) -> Result<Vec<InstalledAr
 /// nothing to a user data directory (spec Phase 9; ADR-0019). A fresh
 /// per-run UUID makes concurrent / sequential runs collision-free.
 fn throwaway_test_db_path() -> std::path::PathBuf {
-    todo!("M08.F1 green phase: std::env::temp_dir().join(runtime-tester-<uuid>.sqlite)")
+    std::env::temp_dir().join(format!("runtime-tester-{}.sqlite", uuid::Uuid::new_v4()))
 }
 
 /// Connect the candidate framework's MCP servers for the test session,
@@ -1520,15 +1520,24 @@ pub async fn connect_test_session_mcp(
     dispatcher: &McpDispatcher,
     servers: &[String],
 ) -> Result<Vec<AgentEvent>, McpError> {
-    let _ = (dispatcher, servers);
-    todo!("M08.F1 green phase: on_server_connected per server, NewAmbiguity → ToolAliasAmbiguous")
+    let mut events = Vec::new();
+    for server in servers {
+        for ambiguity in dispatcher.on_server_connected(server).await? {
+            events.push(AgentEvent::ToolAliasAmbiguous {
+                name: ambiguity.short_name,
+                candidates: ambiguity.candidates,
+            });
+        }
+    }
+    Ok(events)
 }
 
 /// Disconnect the test session's MCP servers on teardown — the
 /// production caller of [`McpDispatcher::on_server_disconnected`].
 pub async fn disconnect_test_session_mcp(dispatcher: &McpDispatcher, servers: &[String]) {
-    let _ = (dispatcher, servers);
-    todo!("M08.F1 green phase: on_server_disconnected per server")
+    for server in servers {
+        dispatcher.on_server_disconnected(server).await;
+    }
 }
 
 /// Test-seam for [`test_framework`] (CLAUDE.md §5 `*_with`).
@@ -1550,7 +1559,7 @@ pub async fn test_framework_with<P: LLMProvider + 'static>(
     mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
     session_id: SessionId,
 ) -> Result<TestOutcome, CmdError> {
-    let _ = (
+    runtime_main::builder::run_test_session_with(
         framework_doc,
         task,
         db_path,
@@ -1558,8 +1567,47 @@ pub async fn test_framework_with<P: LLMProvider + 'static>(
         drone,
         mcp_dispatch,
         session_id,
-    );
-    todo!("M08.F1 green phase: delegate to run_test_session_with, map TesterError -> CmdError")
+    )
+    .await
+    .map_err(|e| CmdError::internal(e.to_string()))
+}
+
+/// The MCP server names the candidate framework references via its
+/// `mcp_aliases` — the `<server>` part of each canonical `<server>__<tool>`.
+fn framework_mcp_servers(framework: &Framework) -> Vec<String> {
+    let mut servers: Vec<String> = framework
+        .mcp_aliases
+        .values()
+        .filter_map(|canonical| canonical.split("__").next())
+        .map(str::to_string)
+        .collect();
+    servers.sort();
+    servers.dedup();
+    servers
+}
+
+/// Construct the concrete `McpDispatcher` for the test session — the
+/// `build_mcp_dispatcher` archetype, returning the concrete type so the
+/// §5a connect handler can drive `on_server_connected`.
+fn build_test_mcp_dispatcher(
+    mcp_client: Arc<McpClient>,
+    session_id: &SessionId,
+) -> Arc<McpDispatcher> {
+    use runtime_main::capability::CapabilityEnforcer;
+    use runtime_mcp::{ConnectionResolver, NamespaceResolver};
+    use std::collections::BTreeMap;
+    use tokio::sync::RwLock;
+
+    let resolver = Arc::new(RwLock::new(NamespaceResolver::new(BTreeMap::new())));
+    let enforcer = Arc::new(CapabilityEnforcer::new());
+    let connections: Arc<dyn ConnectionResolver> = mcp_client;
+    Arc::new(McpDispatcher::new(
+        resolver,
+        enforcer,
+        connections,
+        None,
+        session_id.as_string(),
+    ))
 }
 
 /// Run the Builder's Tester against a candidate framework — M08 Stage F1.
@@ -1584,14 +1632,52 @@ pub async fn test_framework(
     framework_doc: Framework,
     task: String,
 ) -> Result<TestOutcome, CmdError> {
-    // The M08.F1 green phase wires the isolated-session lifecycle; the
-    // helpers below are its parts (referenced so each has a caller).
-    let _ = (&app, &framework_doc, &task);
-    let _ = test_framework_with::<AnthropicProvider>;
-    let _ = connect_test_session_mcp;
-    let _ = disconnect_test_session_mcp;
-    let _ = throwaway_test_db_path;
-    todo!("M08.F1 green phase: spawn + run + tear down the isolated test session")
+    let api_key = read_api_key()?;
+    let provider = AnthropicProvider::new(api_key.clone());
+    let db_path = throwaway_test_db_path();
+
+    // Spawn the test-session drone against the THROWAWAY db (ADR-0019) —
+    // never the user session DB.
+    let lifecycle = crate::drone_lifecycle::DroneLifecycle::spawn(db_path.clone()).await?;
+    let session_id = lifecycle.sdk_session_id();
+
+    // Best-effort MCP wiring: when an `McpClient` opened at startup, build
+    // the concrete dispatcher, drive the §5a connect handler for the
+    // candidate framework's servers, and thread it into the run.
+    let mcp_servers = framework_mcp_servers(&framework_doc);
+    let dispatcher = app
+        .try_state::<Arc<McpClient>>()
+        .map(|client| build_test_mcp_dispatcher(client.inner().clone(), &session_id));
+    let mut mcp_dispatch: Option<Arc<dyn McpToolDispatch>> = None;
+    if let Some(ref dispatcher) = dispatcher {
+        match connect_test_session_mcp(dispatcher, &mcp_servers).await {
+            Ok(_) => mcp_dispatch = Some(Arc::clone(dispatcher) as Arc<dyn McpToolDispatch>),
+            Err(e) => {
+                tracing::warn!(error = %e, "test session MCP connect failed; running tool-free");
+            }
+        }
+    }
+
+    let outcome = test_framework_with(
+        &framework_doc,
+        &task,
+        &db_path,
+        provider,
+        Arc::clone(&lifecycle.client),
+        mcp_dispatch,
+        session_id,
+    )
+    .await;
+
+    // Teardown: disconnect MCP, reap the drone, delete the throwaway DB —
+    // the test run persists nothing to a user data directory.
+    if let Some(ref dispatcher) = dispatcher {
+        disconnect_test_session_mcp(dispatcher, &mcp_servers).await;
+    }
+    let _ = lifecycle.shutdown().await;
+    let _ = std::fs::remove_file(&db_path);
+    drop(api_key);
+    outcome
 }
 
 #[cfg(test)]

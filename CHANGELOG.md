@@ -6,6 +6,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M08 Stage F1 (Tester backend — isolated session + the M07.V Dec-6 discharge)
+
+- **`crates/runtime-main/src/builder/tester.rs`** — the Tester backend
+  (spec Phase 9; ADR-0019). `run_test_session_with` runs a candidate
+  framework (loaded from the canvas, never saved) in an **isolated**
+  test session — its own throwaway `SQLite` path, a test-defaults
+  `HitlSeam` so the run never blocks on user input, §8.security L2
+  capability violations collected onto `TestOutcome` as **test
+  failures** — reusing the smoke-session construction
+  (`AgentSdk::with_capability_wiring` → optional `with_mcp_dispatch` →
+  `run_agent`) rather than a new session engine. `TestOutcome` /
+  `CapabilityFailure` / `TokenSpend` cross the Tauri wire to F2;
+  `TesterError` is infrastructure-only (a failed test is
+  `Ok(TestOutcome { passed: false, .. })`, never an `Err`).
+- **`load_verified_artifact`** (`builder::tester`) — the first
+  production load-path caller of `skills_lock::verify` (M07.V 🟡 #2):
+  the test session's integrity pre-flight byte-loads each imported
+  artifact and HARD-BLOCKS on hash drift (`ArtifactHashMismatch` →
+  the run is refused; integrity > availability — ADR-0014).
+- **`HitlSeam::test_defaults()`** (`crates/runtime-main/src/hitl/seam.rs`)
+  — the Tester's auto-resolving HITL seam: `await_response` resolves
+  immediately with the default, registering no pending await, so a test
+  session runs unattended. Changes the HITL *response*, not the
+  capability-enforcement *logic* (Hard Rule 8).
+- **`test_framework`** Tauri command (`src-tauri/src/commands.rs`) — the
+  production wrapper: resolves a throwaway temp-DB path, spawns the
+  test-session drone, drives the run through `test_framework_with`, and
+  tears both down (drone reaped, throwaway DB deleted — no user-data-dir
+  writes). `connect_test_session_mcp` is the first production caller of
+  `McpDispatcher::on_server_connected` (M07.V 🟡 #3 — placed in the
+  shell, the only crate that sees both `runtime-main` and `runtime-mcp`;
+  ADR-0019).
+- The Tester runs a tool-bearing framework through `AgentSdk::run_agent`,
+  dispatching a real `ProviderEvent::ToolUse` through the concrete
+  `McpDispatcher` in a **production** path for the first time (M07.V
+  🟡 #5 — the agent-with-tools production driver, ADR-0011 (d)).
+- **`docs/adr/0019-tester-isolated-session-model.md`** — ADR-0019: the
+  throwaway-DB model, test-defaults for capability violations,
+  discard-on-close, and the §1c-vs-§0d reconciliation (the v0.1 Tester
+  is a sequential, throwaway, build-time session — not the §1c
+  concurrent-session pool).
+- **`crates/runtime-main/tests/tester_isolated_session.rs`** — the
+  assembled regression: a real `runtime-drone` subprocess + a concrete
+  `McpDispatcher` + a tool-bearing framework, asserting signals persist
+  under the test session id, `token_usage > 0`, the throwaway DB is
+  isolated from a user session DB, and teardown removes it.
+
 ### Added — M08 Stage E (Inspector + canvas↔JSON two-way binding)
 
 - **`src/components/builder/Inspector.tsx`** — the right-panel Builder

@@ -2,9 +2,9 @@
 //!
 //! `run_test_session_with` runs a candidate framework (loaded from the
 //! canvas, never saved to disk) in an **isolated** test session: its own
-//! throwaway `SQLite` path, a test-defaults [`HitlSeam`] so the run never
-//! blocks on user input, and §8.security L2 capability violations
-//! collected onto [`TestOutcome`] as **test failures** rather than raised
+//! throwaway `SQLite` path, a test-defaults [`HitlSeam`](crate::hitl::HitlSeam)
+//! so the run never blocks on user input, and §8.security L2 capability
+//! violations collected onto [`TestOutcome`] as **test failures** rather than raised
 //! as live HITL/gap prompts. The session reuses the smoke-session
 //! construction (`AgentSdk::with_capability_wiring` →
 //! optional `with_mcp_dispatch` → `run_agent`); it does NOT rebuild a
@@ -24,14 +24,17 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use runtime_core::event::AgentEvent;
+use runtime_core::event::{AgentEvent, CapabilityKindRef};
 use runtime_core::generated::framework::Framework;
+use tokio::sync::mpsc;
 
+use crate::capability::CapabilityEnforcer;
 use crate::drone_ipc::DroneClient;
-use crate::providers::LLMProvider;
-use crate::sdk::{McpToolDispatch, SessionId};
+use crate::hitl::HitlSeam;
+use crate::providers::{AgentConfig, ContentBlock, LLMProvider, Message, MessageRole};
+use crate::sdk::{AgentSdk, CapabilityWiring, McpToolDispatch, SessionId};
 use crate::skills_lock::LockError;
 
 /// The result of one Tester run. Crosses the Tauri wire to F2 (the modal
@@ -116,8 +119,40 @@ pub enum TesterError {
 /// (or any capability failure) forces `passed = false`.
 #[must_use]
 pub fn fold_outcome(trace: Vec<AgentEvent>, timing: Duration) -> TestOutcome {
-    let _ = (trace, timing);
-    todo!("M08.F1 green phase: fold the trace into a TestOutcome")
+    let mut capability_failures = Vec::new();
+    let mut token_spend = TokenSpend::default();
+    let mut integrity_blocked = false;
+    for event in &trace {
+        match event {
+            AgentEvent::CapabilityViolation {
+                agent_id,
+                capability_kind,
+                declared_scope,
+                requested_action,
+            } => capability_failures.push(CapabilityFailure {
+                agent_id: agent_id.clone(),
+                needed: capability_kind_label(*capability_kind).to_string(),
+                reason: format!(
+                    "requested `{requested_action}` — declared scope `{declared_scope}`"
+                ),
+            }),
+            AgentEvent::TokenUsage { input, output, .. } => {
+                token_spend.input += *input;
+                token_spend.output += *output;
+            }
+            AgentEvent::ArtifactHashMismatch { .. } => integrity_blocked = true,
+            _ => {}
+        }
+    }
+    token_spend.total = token_spend.input + token_spend.output;
+    TestOutcome {
+        passed: capability_failures.is_empty() && !integrity_blocked,
+        capability_failures,
+        token_spend,
+        timing,
+        vdr: serde_json::Value::Null,
+        trace,
+    }
 }
 
 /// Byte-load an imported artifact for execution in the test session,
@@ -143,8 +178,97 @@ pub fn load_verified_artifact(
     bytes: &[u8],
     emit: &impl Fn(AgentEvent),
 ) -> Result<Vec<u8>, LockError> {
-    let _ = (lock_path, artifact_ref, bytes, emit);
-    todo!("M08.F1 green phase: verify against skills.lock, emit + refuse on drift")
+    match crate::skills_lock::verify(lock_path, artifact_ref, bytes) {
+        Ok(()) => Ok(bytes.to_vec()),
+        Err(LockError::HashMismatch {
+            artifact_ref,
+            expected,
+            actual,
+        }) => {
+            emit(AgentEvent::ArtifactHashMismatch {
+                artifact_ref: artifact_ref.clone(),
+                expected: expected.clone(),
+                actual: actual.clone(),
+            });
+            Err(LockError::HashMismatch {
+                artifact_ref,
+                expected,
+                actual,
+            })
+        }
+        Err(other) => Err(other),
+    }
+}
+
+/// The canonical `snake_case` label for a capability kind — surfaced as
+/// [`CapabilityFailure::needed`]. `CapabilityKindRef` is a hand-rolled
+/// enum (no `Display`), so the mapping is explicit; a new kind forces an
+/// update here.
+const fn capability_kind_label(kind: CapabilityKindRef) -> &'static str {
+    match kind {
+        CapabilityKindRef::Read => "read",
+        CapabilityKindRef::Write => "write",
+        CapabilityKindRef::Exec => "exec",
+        CapabilityKindRef::Network => "network",
+        CapabilityKindRef::ProcessSpawn => "process_spawn",
+    }
+}
+
+/// The candidate framework's imported artifacts that carry a filesystem
+/// path — `(name, path)` for every skill / tool the integrity pre-flight
+/// should byte-load.
+fn imported_artifact_refs(framework: &Framework) -> Vec<(String, String)> {
+    let skills = framework
+        .skills
+        .iter()
+        .filter_map(|s| s.path.as_ref().map(|p| (s.name.clone(), p.clone())));
+    let tools = framework
+        .tools
+        .iter()
+        .filter_map(|t| t.path.as_ref().map(|p| (t.name.clone(), p.clone())));
+    skills.chain(tools).collect()
+}
+
+/// Verify the candidate framework's imported artifacts against the
+/// `skills.lock` co-located with the throwaway test DB.
+///
+/// Returns one `AgentEvent::ArtifactHashMismatch` per drifted artifact;
+/// an empty vec when the framework imports nothing or no lock is present
+/// (an un-saved canvas framework legitimately has no lock).
+fn verify_framework_artifacts(framework: &Framework, db_path: &Path) -> Vec<AgentEvent> {
+    let root = db_path.parent().unwrap_or_else(|| Path::new("."));
+    let lock_path = root.join("skills.lock");
+    if !lock_path.exists() {
+        return Vec::new();
+    }
+    let events = std::cell::RefCell::new(Vec::new());
+    for (name, rel) in imported_artifact_refs(framework) {
+        if let Ok(bytes) = std::fs::read(root.join(&rel)) {
+            let _ = load_verified_artifact(&lock_path, &name, &bytes, &|e| {
+                events.borrow_mut().push(e);
+            });
+        }
+    }
+    events.into_inner()
+}
+
+/// Build the `AgentConfig` for the test run from the candidate framework
+/// and the user's task. The candidate's tools reach the run through the
+/// injected MCP dispatcher, not `config.tools` (the smoke / D2 archetype).
+fn test_agent_config(framework: &Framework, task: &str) -> AgentConfig {
+    AgentConfig {
+        model: framework.model.id.as_str().to_string(),
+        messages: vec![Message {
+            role: MessageRole::User,
+            content: vec![ContentBlock::Text {
+                text: task.to_string(),
+            }],
+        }],
+        max_tokens: 4096,
+        temperature: Some(0.0),
+        system_prompt: None,
+        tools: vec![],
+    }
 }
 
 /// Test-seam: run an isolated test session against caller-supplied
@@ -177,16 +301,46 @@ pub async fn run_test_session_with<P: LLMProvider + 'static>(
     mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
     session_id: SessionId,
 ) -> Result<TestOutcome, TesterError> {
-    let _ = (
-        framework,
-        task,
-        db_path,
-        provider,
-        drone,
-        mcp_dispatch,
-        session_id,
+    let started = Instant::now();
+
+    // Artifact-integrity pre-flight (M07.V 🟡 #2): verify every imported
+    // artifact the candidate framework byte-references against its
+    // `skills.lock`. A drift refuses the run (integrity > availability —
+    // ADR-0014), with the `ArtifactHashMismatch` events leading the trace.
+    let preflight = verify_framework_artifacts(framework, db_path);
+    if preflight
+        .iter()
+        .any(|e| matches!(e, AgentEvent::ArtifactHashMismatch { .. }))
+    {
+        return Ok(fold_outcome(preflight, started.elapsed()));
+    }
+
+    // Reuse the smoke-session construction (`with_capability_wiring` →
+    // optional `with_mcp_dispatch` → `run_agent`). The `HitlSeam` is the
+    // test-defaults variant so the run never blocks on user input.
+    let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(1024);
+    let wiring = CapabilityWiring::new(
+        Arc::new(CapabilityEnforcer::new()),
+        Arc::new(framework.clone()),
+        Arc::new(HitlSeam::test_defaults()),
     );
-    todo!("M08.F1 green phase: build the isolated session and fold the outcome")
+    let mut sdk =
+        AgentSdk::with_capability_wiring(Arc::new(provider), event_tx, drone, session_id, wiring);
+    if let Some(dispatch) = mcp_dispatch {
+        sdk = sdk.with_mcp_dispatch(dispatch);
+    }
+    let config = test_agent_config(framework, task);
+    let run = tokio::spawn(async move { sdk.run_agent(config).await });
+
+    let mut trace = preflight;
+    while let Some(event) = event_rx.recv().await {
+        trace.push(event);
+    }
+    run.await
+        .map_err(|e| TesterError::Run(format!("test session task panicked: {e}")))?
+        .map_err(|e| TesterError::Run(e.to_string()))?;
+
+    Ok(fold_outcome(trace, started.elapsed()))
 }
 
 #[cfg(test)]
