@@ -30,5 +30,6 @@ src/types/hitl.ts
 src/types/budget.ts
 src/types/capability.ts
 src/types/mcp.ts
+src/types/framework.ts
 *.yml
 *.yaml

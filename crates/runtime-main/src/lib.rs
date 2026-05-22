@@ -21,6 +21,17 @@ pub mod audit;
 /// (warn / downshift / hitl / hard-stop) + LRU `count_tokens` cache +
 /// hardcoded opus → sonnet → haiku downshift ladder.
 pub mod budget;
+/// Builder backend — spec Phase 9 "Visual Canvas and Tester" (M08 Stage B).
+///
+/// The single backend the Builder Canvas, Inspector, and Tester share:
+/// `validate_framework` (schema-shape + reference + capability
+/// validation, reusing the typify-generated `Framework` type +
+/// `framework_loader` + the `runtime-core` capability primitive — no
+/// duplication of validation logic in TS, spec §9), framework save/load
+/// (path-agnostic `&Path` persistence), the whole-framework capability
+/// summary, and `list_installed` — the first production `skills.lock`
+/// reader.
+pub mod builder;
 /// Capability enforcer — spec §8.security L1 + L2a (M05 Stage B).
 ///
 /// In-process default-deny check fired before every tool dispatch +

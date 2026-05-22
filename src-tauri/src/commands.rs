@@ -34,10 +34,15 @@
 //! struct-variant enum here; M04 Stage A2 migrated to the generated
 //! tuple-variant shape (the wire format is unchanged).
 
+use std::path::Path;
 use std::sync::Arc;
 
 use runtime_core::event::AgentEvent;
+use runtime_core::generated::framework::Framework;
 use runtime_core::CmdError;
+use runtime_main::builder::{
+    Companion, FrameworkValidationReport, InstalledArtifact, LoadedFramework, TestOutcome,
+};
 use runtime_main::drone_ipc::{DroneClient, RecoveredSession};
 use runtime_main::hitl::{HitlChoice, HitlError, HitlSeam};
 use runtime_main::import::fetch::{HttpFetcher, SystemResolver};
@@ -61,6 +66,7 @@ use runtime_main::tier::{save_tier, Tier, TierPersistenceError};
 use runtime_mcp::client::registry::{McpServerRecord, Registry};
 use runtime_mcp::client::{McpClient, McpServerSummary};
 use runtime_mcp::transport::McpTool;
+use runtime_mcp::{McpDispatcher, McpError};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
@@ -102,6 +108,30 @@ where
     }
     tracing::info!("set_api_key succeeded");
     Ok(())
+}
+
+/// Whether an Anthropic API key is present in the OS keychain.
+///
+/// The renderer reads this at mount to seed `hasKey` so a key entered
+/// once survives an app restart (M07-IRL #7 — the root cause was the
+/// absent startup read, not a keychain write failure).
+///
+/// # Errors
+///
+/// Infallible in practice — the presence probe (`key_store::has_api_key`)
+/// maps every keychain outcome to a `bool`; the `Result` shape is the
+/// Tauri-command convention so the renderer's `unwrapCmdError` path
+/// stays uniform.
+#[tauri::command]
+pub async fn has_api_key() -> Result<bool, CmdError> {
+    Ok(has_api_key_with(runtime_main::key_store::has_api_key))
+}
+
+/// Test-seam for [`has_api_key`] (CLAUDE.md §5 `*_with` archetype).
+/// Accepts an injectable presence probe so unit tests exercise the
+/// command surface without touching the real OS keychain.
+pub fn has_api_key_with(probe: impl Fn() -> bool) -> bool {
+    probe()
 }
 
 /// Run the M02 smoke session against the live Anthropic API.
@@ -400,11 +430,12 @@ where
 ///   the awaiting task was cancelled mid-flight).
 ///
 /// **Note on no-pending-await:** if no SDK task is currently awaiting on
-/// `plan_id` (e.g., the M04 v0.1 `plan_loop` driver is deferred per Stage B
-/// retro `[LIVE]` ambiguity-events; the renderer can dispatch this command
-/// before any SDK awaiter exists), the command returns `Ok(())` and
-/// warn-logs. Per `CLAUDE.md` §12 user-flow ergonomics: do not 500 the
-/// renderer's click on a soft-state issue.
+/// `plan_id` (the M04 `plan_loop` driver shell landed at M08.A —
+/// `runtime_main::plan::plan_loop` — but has no production caller yet, so
+/// the renderer can dispatch this command before any SDK awaiter exists),
+/// the command returns `Ok(())` and warn-logs. Per `CLAUDE.md` §12
+/// user-flow ergonomics: do not 500 the renderer's click on a soft-state
+/// issue.
 #[tauri::command]
 pub async fn approve_plan(
     plan_id: String,
@@ -1342,6 +1373,313 @@ pub async fn cancel_pending_import(
     Ok(())
 }
 
+// ── M08 Stage B — Builder backend commands ──────────────────────────
+//
+// Four thin shell wrappers over the `runtime_main::builder` seams. The
+// `*_with` function is the unit-tested core (CLAUDE.md §5 `*_with`
+// archetype); the `#[tauri::command]` wrapper is the §5 tauri-shell
+// holdout. `validate_framework` returns its report as the command's
+// return value — a §12-owned wire decision: continuous editor
+// validation is a request/response interaction, the shape M07's
+// `import_artifact` established (spec Phase 9 says "events", written
+// before the IPC matured to command returns). The wrappers are `async`
+// to match the existing command surface (the existing commands are all
+// `async`).
+
+/// Validate an in-progress framework document.
+///
+/// The Builder Canvas (D2 red badges) + the Inspector (E) call this
+/// continuously as the user edits. The document may be incomplete or
+/// invalid — that is the point.
+#[tauri::command]
+pub async fn validate_framework(doc: Value) -> FrameworkValidationReport {
+    validate_framework_with(&doc)
+}
+
+/// Test-seam for [`validate_framework`] (CLAUDE.md §5 `*_with`).
+#[must_use]
+pub fn validate_framework_with(doc: &Value) -> FrameworkValidationReport {
+    runtime_main::builder::validate_framework(doc)
+}
+
+/// Save a framework + its companion markdown files to `dir`.
+///
+/// # Errors
+///
+/// [`CmdError::Internal`] on a non-directory target or any filesystem
+/// write failure.
+#[tauri::command]
+pub async fn save_framework(
+    dir: String,
+    framework: Framework,
+    companions: Vec<Companion>,
+) -> Result<(), CmdError> {
+    save_framework_with(Path::new(&dir), &framework, &companions)
+}
+
+/// Test-seam for [`save_framework`] (CLAUDE.md §5 `*_with`).
+///
+/// # Errors
+///
+/// [`CmdError::Internal`] wrapping any `runtime_main::builder::BuilderError`.
+pub fn save_framework_with(
+    dir: &Path,
+    framework: &Framework,
+    companions: &[Companion],
+) -> Result<(), CmdError> {
+    runtime_main::builder::save_framework(dir, framework, companions)
+        .map_err(|e| CmdError::internal(e.to_string()))
+}
+
+/// Load a framework + its companion markdown files from `dir`.
+///
+/// # Errors
+///
+/// [`CmdError::Internal`] when `framework.json` is missing/unreadable or
+/// fails to parse.
+#[tauri::command]
+pub async fn load_framework(dir: String) -> Result<LoadedFramework, CmdError> {
+    load_framework_with(Path::new(&dir))
+}
+
+/// Test-seam for [`load_framework`] (CLAUDE.md §5 `*_with`).
+///
+/// # Errors
+///
+/// [`CmdError::Internal`] wrapping any `runtime_main::builder::BuilderError`.
+pub fn load_framework_with(dir: &Path) -> Result<LoadedFramework, CmdError> {
+    runtime_main::builder::load_framework(dir).map_err(|e| CmdError::internal(e.to_string()))
+}
+
+/// List the artifacts recorded in the framework's `skills.lock`.
+///
+/// The lock lives at `<app_local_data_dir>/skills.lock` — the same path
+/// `import_artifact` writes (the path-agnostic archetype; the shell
+/// resolves the directory). An absent lock yields an empty list — the
+/// M07-IRL #6 fix (the Import panel reads this on startup).
+///
+/// # Errors
+///
+/// [`CmdError::Internal`] when the data directory cannot be resolved or
+/// the lock file exists but is corrupt.
+#[tauri::command]
+pub async fn list_installed_artifacts(app: AppHandle) -> Result<Vec<InstalledArtifact>, CmdError> {
+    let dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| CmdError::internal(format!("app_local_data_dir: {e}")))?;
+    list_installed_artifacts_with(&dir.join("skills.lock"))
+}
+
+/// Test-seam for [`list_installed_artifacts`] (CLAUDE.md §5 `*_with`).
+///
+/// # Errors
+///
+/// [`CmdError::Internal`] wrapping a corrupt-lock
+/// `runtime_main::builder::BuilderError`.
+pub fn list_installed_artifacts_with(lock_path: &Path) -> Result<Vec<InstalledArtifact>, CmdError> {
+    runtime_main::builder::list_installed(lock_path).map_err(|e| CmdError::internal(e.to_string()))
+}
+
+// ── M08 Stage F1 — the Tester backend (isolated test session) ────────
+//
+// `test_framework` is the production wrapper (the OS-touching half — it
+// resolves the throwaway DB path, spawns the test-session drone, and
+// tears both down), mirroring how `run_smoke_session` wraps
+// `run_smoke_session_with`. `test_framework_with` is the `*_with` seam
+// (CLAUDE.md §5): provider / drone / MCP dispatch injected, delegating
+// to `runtime_main::builder::run_test_session_with`.
+//
+// `connect_test_session_mcp` is the FIRST production caller of
+// `McpDispatcher::on_server_connected` (M07.V 🟡 #3): runtime-main cannot
+// reference `runtime_mcp::McpDispatcher` (runtime-mcp depends on
+// runtime-main — the reverse edge would be a Cargo cycle), so the §5a
+// re-resolution connect handler lives here in the shell, where both
+// crates are visible. ADR-0019 records the placement.
+
+/// Resolve a throwaway test-session `SQLite` path under the OS temp dir.
+///
+/// NEVER the user session DB (`app_local_data_dir`): the Tester writes
+/// nothing to a user data directory (spec Phase 9; ADR-0019). A fresh
+/// per-run UUID makes concurrent / sequential runs collision-free.
+fn throwaway_test_db_path() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("runtime-tester-{}.sqlite", uuid::Uuid::new_v4()))
+}
+
+/// Connect the candidate framework's MCP servers for the test session,
+/// driving the §5a re-resolution — the FIRST production caller of
+/// [`McpDispatcher::on_server_connected`] (M07.V 🟡 #3 — discharged).
+///
+/// Returns one `AgentEvent::ToolAliasAmbiguous` per `NewAmbiguity` the
+/// re-resolution surfaced (spec §5a step 5), in connect order.
+///
+/// # Errors
+///
+/// [`McpError`] when a server's connection / `list_tools` fails.
+pub async fn connect_test_session_mcp(
+    dispatcher: &McpDispatcher,
+    servers: &[String],
+) -> Result<Vec<AgentEvent>, McpError> {
+    let mut events = Vec::new();
+    for server in servers {
+        for ambiguity in dispatcher.on_server_connected(server).await? {
+            events.push(AgentEvent::ToolAliasAmbiguous {
+                name: ambiguity.short_name,
+                candidates: ambiguity.candidates,
+            });
+        }
+    }
+    Ok(events)
+}
+
+/// Disconnect the test session's MCP servers on teardown — the
+/// production caller of [`McpDispatcher::on_server_disconnected`].
+pub async fn disconnect_test_session_mcp(dispatcher: &McpDispatcher, servers: &[String]) {
+    for server in servers {
+        dispatcher.on_server_disconnected(server).await;
+    }
+}
+
+/// Test-seam for [`test_framework`] (CLAUDE.md §5 `*_with`).
+///
+/// Delegates to [`runtime_main::builder::run_test_session_with`] and maps
+/// a `TesterError` onto the wire-format [`CmdError`]. A *failed test* is
+/// `Ok(TestOutcome { passed: false, .. })`, not an `Err`.
+///
+/// # Errors
+///
+/// [`CmdError::Internal`] wrapping a `TesterError` (infrastructure
+/// failure — drone spawn / temp-DB setup).
+pub async fn test_framework_with<P: LLMProvider + 'static>(
+    framework_doc: &Framework,
+    task: &str,
+    db_path: &Path,
+    provider: P,
+    drone: Arc<DroneClient>,
+    mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
+    session_id: SessionId,
+) -> Result<TestOutcome, CmdError> {
+    runtime_main::builder::run_test_session_with(
+        framework_doc,
+        task,
+        db_path,
+        provider,
+        drone,
+        mcp_dispatch,
+        session_id,
+    )
+    .await
+    .map_err(|e| CmdError::internal(e.to_string()))
+}
+
+/// The MCP server names the candidate framework references via its
+/// `mcp_aliases` — the `<server>` part of each canonical `<server>__<tool>`.
+fn framework_mcp_servers(framework: &Framework) -> Vec<String> {
+    let mut servers: Vec<String> = framework
+        .mcp_aliases
+        .values()
+        .filter_map(|canonical| canonical.split("__").next())
+        .map(str::to_string)
+        .collect();
+    servers.sort();
+    servers.dedup();
+    servers
+}
+
+/// Construct the concrete `McpDispatcher` for the test session — the
+/// `build_mcp_dispatcher` archetype, returning the concrete type so the
+/// §5a connect handler can drive `on_server_connected`.
+fn build_test_mcp_dispatcher(
+    mcp_client: Arc<McpClient>,
+    session_id: &SessionId,
+) -> Arc<McpDispatcher> {
+    use runtime_main::capability::CapabilityEnforcer;
+    use runtime_mcp::{ConnectionResolver, NamespaceResolver};
+    use std::collections::BTreeMap;
+    use tokio::sync::RwLock;
+
+    let resolver = Arc::new(RwLock::new(NamespaceResolver::new(BTreeMap::new())));
+    let enforcer = Arc::new(CapabilityEnforcer::new());
+    let connections: Arc<dyn ConnectionResolver> = mcp_client;
+    Arc::new(McpDispatcher::new(
+        resolver,
+        enforcer,
+        connections,
+        None,
+        session_id.as_string(),
+    ))
+}
+
+/// Run the Builder's Tester against a candidate framework — M08 Stage F1.
+///
+/// Spawns an ISOLATED test session: a throwaway `SQLite` DB resolved
+/// here in the shell ([`throwaway_test_db_path`]; never the user DB —
+/// ADR-0019), a test-defaults `HitlSeam` (capability violations → test
+/// failures, not live HITL), no user-data-dir writes. The candidate
+/// `framework_doc` crosses the wire straight from the canvas (spec
+/// Phase 9 "does NOT need to save first"). The throwaway DB + the
+/// test-session drone are torn down before returning.
+///
+/// # Errors
+///
+/// - [`CmdError::SetupRequired`] if no API key is in the keychain.
+/// - [`CmdError::Internal`] for a `TesterError` (drone spawn / temp-DB
+///   setup failed). A *failed test* is `Ok(TestOutcome { passed: false,
+///   .. })`, not an `Err`.
+#[tauri::command]
+pub async fn test_framework(
+    app: AppHandle,
+    framework_doc: Framework,
+    task: String,
+) -> Result<TestOutcome, CmdError> {
+    let api_key = read_api_key()?;
+    let provider = AnthropicProvider::new(api_key.clone());
+    let db_path = throwaway_test_db_path();
+
+    // Spawn the test-session drone against the THROWAWAY db (ADR-0019) —
+    // never the user session DB.
+    let lifecycle = crate::drone_lifecycle::DroneLifecycle::spawn(db_path.clone()).await?;
+    let session_id = lifecycle.sdk_session_id();
+
+    // Best-effort MCP wiring: when an `McpClient` opened at startup, build
+    // the concrete dispatcher, drive the §5a connect handler for the
+    // candidate framework's servers, and thread it into the run.
+    let mcp_servers = framework_mcp_servers(&framework_doc);
+    let dispatcher = app
+        .try_state::<Arc<McpClient>>()
+        .map(|client| build_test_mcp_dispatcher(client.inner().clone(), &session_id));
+    let mut mcp_dispatch: Option<Arc<dyn McpToolDispatch>> = None;
+    if let Some(ref dispatcher) = dispatcher {
+        match connect_test_session_mcp(dispatcher, &mcp_servers).await {
+            Ok(_) => mcp_dispatch = Some(Arc::clone(dispatcher) as Arc<dyn McpToolDispatch>),
+            Err(e) => {
+                tracing::warn!(error = %e, "test session MCP connect failed; running tool-free");
+            }
+        }
+    }
+
+    let outcome = test_framework_with(
+        &framework_doc,
+        &task,
+        &db_path,
+        provider,
+        Arc::clone(&lifecycle.client),
+        mcp_dispatch,
+        session_id,
+    )
+    .await;
+
+    // Teardown: disconnect MCP, reap the drone, delete the throwaway DB —
+    // the test run persists nothing to a user data directory.
+    if let Some(ref dispatcher) = dispatcher {
+        disconnect_test_session_mcp(dispatcher, &mcp_servers).await;
+    }
+    let _ = lifecycle.shutdown().await;
+    let _ = std::fs::remove_file(&db_path);
+    drop(api_key);
+    outcome
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1985,6 +2323,24 @@ mod tests {
         );
     }
 
+    // ── M08.A — has_api_key startup-read seam (M07-IRL #7) ──
+    // The renderer seeds `hasKey` from the has_api_key command at launch
+    // so a key entered once survives an app restart; the root cause was
+    // the absent startup read, not a keychain write failure.
+
+    #[test]
+    fn has_api_key_with_returns_true_when_probe_reports_present() {
+        assert!(has_api_key_with(|| true), "a present-key probe yields true");
+    }
+
+    #[test]
+    fn has_api_key_with_returns_false_when_probe_reports_absent() {
+        assert!(
+            !has_api_key_with(|| false),
+            "an absent-key probe yields false"
+        );
+    }
+
     #[tokio::test]
     async fn query_session_db_with_returns_rows_from_querier() {
         let rows = query_session_db_with("SELECT id FROM signals".to_string(), |sql| async move {
@@ -2125,10 +2481,12 @@ mod tests {
 
     #[tokio::test]
     async fn approve_plan_with_no_pending_awaiter_returns_ok_with_warn() {
-        // Per CLAUDE.md §12 ergonomics: the SDK plan_loop driver is deferred
-        // to M07 (Stage B retro [LIVE] ambiguity-events), so the renderer
-        // can dispatch approve_plan with no awaiter present. Treat as
-        // soft-Ok (warn-logged) rather than 500 the user's click.
+        // Per CLAUDE.md §12 ergonomics: the M04 plan_loop driver shell
+        // landed at M08.A (`runtime_main::plan::plan_loop`) but has no
+        // production caller yet (v0.1's session path is the no-plan smoke
+        // session), so the renderer can still dispatch approve_plan with
+        // no awaiter present. Treat as soft-Ok (warn-logged) rather than
+        // 500 the user's click.
         let seam = ApprovalSeam::new();
         let result = approve_plan_with("ghost".into(), &seam).await;
         assert!(result.is_ok(), "got {result:?}");
@@ -2489,5 +2847,216 @@ mod tests {
         // ReceiverDropped (also soft-translated to internal). Both
         // outcomes are accepted: the function must NOT panic.
         let _ = respond_hitl_with("u-drop".into(), "skip".into(), &seam).await;
+    }
+
+    // ── M08 Stage B — Builder backend command seams ─────────────────
+
+    /// Minimal valid framework JSON for the builder-command seam tests.
+    fn builder_seam_framework() -> Value {
+        serde_json::json!({
+            "name": "test",
+            "version": "1.0.0",
+            "description": "test framework",
+            "model": { "provider": "anthropic", "id": "claude-sonnet-4-6" },
+            "agents": [{
+                "id": "worker",
+                "role": "worker",
+                "model": { "provider": "anthropic", "id": "claude-sonnet-4-6" },
+                "capabilities": {
+                    "tools_called": [], "skills_loaded": [],
+                    "file_access": { "read": [], "write": [] },
+                    "network": [], "shell": false, "spawn_agents": []
+                },
+                "allowed_tools": [], "allowed_skills": [], "spawns": []
+            }],
+            "tools": [],
+            "skills": [],
+            "session_root_agent": "worker"
+        })
+    }
+
+    #[test]
+    fn validate_framework_with_valid_doc_reports_ok() {
+        let report = validate_framework_with(&builder_seam_framework());
+        assert!(
+            report.ok,
+            "a valid framework validates clean through the seam"
+        );
+    }
+
+    #[test]
+    fn validate_framework_with_schema_invalid_doc_reports_not_ok() {
+        let report = validate_framework_with(&serde_json::json!({ "not": "a framework" }));
+        assert!(!report.ok);
+        assert!(report.capability_summary.is_none());
+    }
+
+    #[test]
+    fn save_and_load_framework_with_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let fw: Framework = serde_json::from_value(builder_seam_framework()).unwrap();
+        save_framework_with(dir.path(), &fw, &[]).expect("save seam succeeds");
+        let loaded = load_framework_with(dir.path()).expect("load seam succeeds");
+        assert_eq!(loaded.framework.agents.len(), 1);
+    }
+
+    #[test]
+    fn load_framework_with_missing_dir_returns_cmd_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = load_framework_with(dir.path()).expect_err("missing framework.json errs");
+        // The seam maps builder::BuilderError onto the wire-format CmdError.
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn list_installed_artifacts_with_absent_lock_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let installed = list_installed_artifacts_with(&dir.path().join("skills.lock"))
+            .expect("an absent lock is not an error");
+        assert!(installed.is_empty());
+    }
+
+    // ── M08 Stage F1 — the Tester backend (isolated test session) ────
+    mod tester_backend {
+        use super::*;
+
+        use std::collections::BTreeMap;
+
+        use async_trait::async_trait;
+        use runtime_main::capability::CapabilityEnforcer;
+        use runtime_mcp::transport::{Connection, MockTransport, Transport};
+        use runtime_mcp::{ConnectionResolver, McpDispatcher, NamespaceResolver};
+        use tokio::sync::RwLock;
+
+        /// A `ConnectionResolver` returning a single `MockTransport`-backed
+        /// connection for every server (mirrors `agent_with_tools_loop.rs`).
+        struct MockConnResolver {
+            transport: MockTransport,
+        }
+
+        #[async_trait]
+        impl ConnectionResolver for MockConnResolver {
+            async fn connection(
+                &self,
+                _server: &str,
+            ) -> Result<Arc<dyn Connection>, runtime_mcp::McpError> {
+                Ok(Arc::from(self.transport.connect().await?))
+            }
+        }
+
+        /// A concrete `McpDispatcher` whose `MockTransport`-backed servers
+        /// all expose the short tool name `read` — so a second connected
+        /// server makes `read` ambiguous (§5a step 5).
+        fn build_test_dispatcher() -> McpDispatcher {
+            let transport = MockTransport::new()
+                .with_tool("read", None, serde_json::json!({ "type": "object" }))
+                .with_tool_result("read", serde_json::json!({ "ok": true }));
+            McpDispatcher::new(
+                Arc::new(RwLock::new(NamespaceResolver::new(BTreeMap::new()))),
+                Arc::new(CapabilityEnforcer::new()),
+                Arc::new(MockConnResolver { transport }),
+                None,
+                "m08-f1-test",
+            )
+        }
+
+        fn f1_framework() -> Framework {
+            serde_json::from_value(builder_seam_framework()).expect("fixture framework")
+        }
+
+        #[tokio::test]
+        async fn connect_test_session_mcp_calls_on_server_connected_per_server() {
+            // The production connect handler drives on_server_connected
+            // for each candidate-framework MCP server (M07.V 🟡 #3).
+            let dispatcher = build_test_dispatcher();
+            connect_test_session_mcp(&dispatcher, &["fs".to_string()])
+                .await
+                .expect("connecting a single server through the production handler succeeds");
+        }
+
+        #[tokio::test]
+        async fn connect_test_session_mcp_new_ambiguity_emits_tool_alias_ambiguous() {
+            // Two connected servers exposing the same short name make it
+            // ambiguous; the §5a re-resolution surfaces ToolAliasAmbiguous.
+            let dispatcher = build_test_dispatcher();
+            let events =
+                connect_test_session_mcp(&dispatcher, &["fs".to_string(), "other".to_string()])
+                    .await
+                    .expect("connect both servers");
+            assert!(
+                events.iter().any(|e| matches!(
+                    e,
+                    AgentEvent::ToolAliasAmbiguous { name, .. } if name.as_str() == "read"
+                )),
+                "two servers exposing `read` emit ToolAliasAmbiguous; events: {events:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn disconnect_test_session_mcp_drops_servers_so_a_reconnect_is_unambiguous() {
+            // on_server_disconnected must actually remove the server: after
+            // a teardown, a lone reconnect of one of the two colliding
+            // servers is no longer ambiguous.
+            let dispatcher = build_test_dispatcher();
+            let first =
+                connect_test_session_mcp(&dispatcher, &["fs".to_string(), "other".to_string()])
+                    .await
+                    .expect("connect both");
+            assert!(
+                first
+                    .iter()
+                    .any(|e| matches!(e, AgentEvent::ToolAliasAmbiguous { .. })),
+                "two colliding servers must surface an ambiguity first"
+            );
+            disconnect_test_session_mcp(&dispatcher, &["fs".to_string(), "other".to_string()])
+                .await;
+            let second = connect_test_session_mcp(&dispatcher, &["fs".to_string()])
+                .await
+                .expect("reconnect one");
+            assert!(
+                !second
+                    .iter()
+                    .any(|e| matches!(e, AgentEvent::ToolAliasAmbiguous { .. })),
+                "after on_server_disconnected dropped both servers, a lone reconnect is unambiguous"
+            );
+        }
+
+        #[tokio::test]
+        async fn test_framework_with_returns_test_outcome_for_a_clean_run() {
+            // The commands.rs `*_with` seam composes the Tester and maps
+            // TesterError -> CmdError; a clean run is Ok(TestOutcome).
+            let dir = tempfile::tempdir().expect("tempdir");
+            let db_path = dir.path().join("runtime-tester.sqlite");
+            let outcome = test_framework_with(
+                &f1_framework(),
+                "summarize the input",
+                &db_path,
+                StubProvider,
+                Arc::new(DroneClient::noop()),
+                None,
+                SessionId::new(),
+            )
+            .await
+            .expect("the Tester seam returns Ok(TestOutcome) for a clean run");
+            assert!(outcome.passed, "a clean tool-free run passes");
+        }
+
+        #[test]
+        fn throwaway_test_db_path_is_under_the_os_temp_dir() {
+            let path = throwaway_test_db_path();
+            assert!(
+                path.starts_with(std::env::temp_dir()),
+                "the test DB lives under the OS temp dir, never the user data dir; got {path:?}"
+            );
+        }
+
+        #[test]
+        fn throwaway_test_db_path_is_unique_per_call() {
+            assert_ne!(
+                throwaway_test_db_path(),
+                throwaway_test_db_path(),
+                "each test run resolves a fresh throwaway DB path"
+            );
+        }
     }
 }

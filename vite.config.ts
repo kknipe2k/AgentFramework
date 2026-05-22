@@ -26,6 +26,10 @@ export default defineConfig({
     include: [
       '@tauri-apps/api/core',
       '@tauri-apps/api/event',
+      // M08 Stage C — the dialog plugin is imported by src/lib/ipc.ts,
+      // which loads at app startup; pre-bundle it so Playwright's first
+      // page.goto doesn't pay an optimizer reload mid-request.
+      '@tauri-apps/plugin-dialog',
       'react',
       'react-dom',
       'react-dom/client',

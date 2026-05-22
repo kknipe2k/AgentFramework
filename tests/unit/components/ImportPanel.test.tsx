@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // M07.5 / ADR-0017 — ImportPanel renderer tests. The invoke boundary is
@@ -14,6 +16,14 @@ const invokeMock = vi.fn(async (..._args: unknown[]) => undefined as unknown);
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (command: string, args?: unknown) => invokeMock(command, args),
+}));
+
+// M08.C — the @tauri-apps/plugin-dialog native file picker. `open`
+// resolves the chosen absolute path, or null when the user cancels.
+const openMock = vi.fn(async (..._args: unknown[]) => undefined as unknown);
+
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  open: (...args: unknown[]) => openMock(...args),
 }));
 
 import { act, render, screen, waitFor } from '@testing-library/react';
@@ -41,6 +51,31 @@ function dispatch(events: AgentEvent[]): void {
   });
 }
 
+/**
+ * Order-independent invoke mock (M08.C). ImportPanel now calls
+ * `list_installed_artifacts` on mount (M07-IRL #6), so a queued
+ * `mockResolvedValueOnce` would be consumed by that mount call rather
+ * than by the command under test. `resolved` maps a command name to its
+ * resolved value; `rejected` maps a command name to a pre-formatted
+ * error message it rejects with. `list_installed_artifacts` defaults to
+ * `[]`; any unlisted command resolves `undefined`.
+ */
+function routeInvoke(
+  resolved: Record<string, unknown>,
+  rejected: Record<string, string> = {},
+): void {
+  invokeMock.mockImplementation(async (cmd: unknown) => {
+    const key = String(cmd);
+    if (key in rejected) {
+      throw new Error(rejected[key]);
+    }
+    if (key in resolved) {
+      return resolved[key];
+    }
+    return key === 'list_installed_artifacts' ? [] : undefined;
+  });
+}
+
 describe('ImportPanel', () => {
   beforeEach(() => {
     invokeMock.mockReset();
@@ -51,7 +86,7 @@ describe('ImportPanel', () => {
   });
 
   it('pasting_a_url_and_importing_invokes_import_artifact_with_pinned_args', async () => {
-    invokeMock.mockResolvedValueOnce(pendingOutcome);
+    routeInvoke({ import_artifact: pendingOutcome });
     render(<ImportPanel />);
 
     await userEvent.type(
@@ -71,7 +106,7 @@ describe('ImportPanel', () => {
   });
 
   it('review_modal_renders_disclosure_l3_provenance_and_secrets', async () => {
-    invokeMock.mockResolvedValueOnce(pendingOutcome);
+    routeInvoke({ import_artifact: pendingOutcome });
     render(<ImportPanel />);
     await userEvent.type(screen.getByTestId('import-url'), 'https://x/y.json');
     await userEvent.click(screen.getByTestId('import-submit'));
@@ -91,7 +126,7 @@ describe('ImportPanel', () => {
   });
 
   it('trust_line_says_no_provenance_when_share_provenance_is_null', async () => {
-    invokeMock.mockResolvedValueOnce({ ...pendingOutcome, share_provenance: null });
+    routeInvoke({ import_artifact: { ...pendingOutcome, share_provenance: null } });
     render(<ImportPanel />);
     await userEvent.type(screen.getByTestId('import-url'), 'https://x/y.json');
     await userEvent.click(screen.getByTestId('import-submit'));
@@ -103,7 +138,7 @@ describe('ImportPanel', () => {
     // M07.5 / ADR-0017 — Install at the tier-gate review must run the
     // backend install half the A.fix pipeline held back. The load-bearing
     // assertion is the BACKEND invoke, not merely the store transition.
-    invokeMock.mockResolvedValueOnce(pendingOutcome);
+    routeInvoke({ import_artifact: pendingOutcome });
     render(<ImportPanel />);
     await userEvent.type(screen.getByTestId('import-url'), 'https://x/y.json');
     await userEvent.click(screen.getByTestId('import-submit'));
@@ -121,7 +156,7 @@ describe('ImportPanel', () => {
   });
 
   it('install_confirms_the_review_and_closes_the_modal', async () => {
-    invokeMock.mockResolvedValueOnce(pendingOutcome);
+    routeInvoke({ import_artifact: pendingOutcome });
     render(<ImportPanel />);
     await userEvent.type(screen.getByTestId('import-url'), 'https://x/y.json');
     await userEvent.click(screen.getByTestId('import-submit'));
@@ -137,9 +172,10 @@ describe('ImportPanel', () => {
   it('install_surfaces_an_error_when_complete_import_artifact_fails', async () => {
     // A backend failure of the held install half surfaces via setError;
     // the record stays in 'review' — it is NOT promoted to 'installed'.
-    invokeMock
-      .mockResolvedValueOnce(pendingOutcome) // import_artifact
-      .mockRejectedValueOnce({ type: 'internal', message: 'install failed' });
+    routeInvoke(
+      { import_artifact: pendingOutcome },
+      { complete_import_artifact: 'internal: install failed' },
+    );
     render(<ImportPanel />);
     await userEvent.type(screen.getByTestId('import-url'), 'https://x/y.json');
     await userEvent.click(screen.getByTestId('import-submit'));
@@ -156,7 +192,7 @@ describe('ImportPanel', () => {
     // never that the backend was told to drop the held PendingImport.
     // That store-only check was the precise Stage-V blind spot. This
     // test pins the BACKEND command fire.
-    invokeMock.mockResolvedValueOnce(pendingOutcome);
+    routeInvoke({ import_artifact: pendingOutcome });
     render(<ImportPanel />);
     await userEvent.type(screen.getByTestId('import-url'), 'https://x/y.json');
     await userEvent.click(screen.getByTestId('import-submit'));
@@ -171,7 +207,7 @@ describe('ImportPanel', () => {
   });
 
   it('reject_dismisses_the_import_record', async () => {
-    invokeMock.mockResolvedValueOnce(pendingOutcome);
+    routeInvoke({ import_artifact: pendingOutcome });
     render(<ImportPanel />);
     await userEvent.type(screen.getByTestId('import-url'), 'https://x/y.json');
     await userEvent.click(screen.getByTestId('import-submit'));
@@ -185,9 +221,10 @@ describe('ImportPanel', () => {
     // A backend failure of cancel_pending_import surfaces via setError;
     // the local record is NOT dismissed (the store action runs only
     // after the IPC resolves).
-    invokeMock
-      .mockResolvedValueOnce(pendingOutcome) // import_artifact
-      .mockRejectedValueOnce({ type: 'internal', message: 'cancel failed' });
+    routeInvoke(
+      { import_artifact: pendingOutcome },
+      { cancel_pending_import: 'internal: cancel failed' },
+    );
     render(<ImportPanel />);
     await userEvent.type(screen.getByTestId('import-url'), 'https://x/y.json');
     await userEvent.click(screen.getByTestId('import-submit'));
@@ -214,12 +251,18 @@ describe('ImportPanel', () => {
         },
       },
     });
+    routeInvoke({});
     render(<ImportPanel />);
     await screen.findByTestId('import-review-modal');
 
     await userEvent.click(screen.getByTestId('import-install'));
     await userEvent.click(screen.getByTestId('import-reject'));
-    expect(invokeMock).not.toHaveBeenCalled();
+    // The mount-time list_installed_artifacts call (M07-IRL #6) is
+    // expected; the load-bearing assertion is that NO backend
+    // install/reject command fired for a pending-id-less record.
+    expect(invokeMock).not.toHaveBeenCalledWith('import_artifact', expect.anything());
+    expect(invokeMock).not.toHaveBeenCalledWith('complete_import_artifact', expect.anything());
+    expect(invokeMock).not.toHaveBeenCalledWith('cancel_pending_import', expect.anything());
   });
 
   it('artifact_hash_mismatch_surfaces_a_blocking_reinstall_remove_prompt', async () => {
@@ -239,5 +282,130 @@ describe('ImportPanel', () => {
 
     await userEvent.click(screen.getByTestId('import-remove-fs-test@2.0.0'));
     await waitFor(() => expect(useGraphStore.getState().imports['fs-test@2.0.0']).toBeUndefined());
+  });
+});
+
+// ── M08.A: import-panel contrast (M07-IRL #3) ──
+// The .import-* selectors set `background` but never `color`, so the
+// import UI text rendered ≈ the dark panel background. The fix pins each
+// selector to the established --node-fg / --node-fg-muted theme tokens.
+// Asserted against the stylesheet source: vitest's happy-dom does not
+// apply Vite-imported CSS to getComputedStyle, so the rule's declared
+// color is the deterministic regression surface.
+
+/**
+ * Return the declaration body of the CSS rule whose comma-separated
+ * selector list contains `selector` exactly. Throws if absent.
+ */
+function ruleBodyFor(css: string, selector: string): string {
+  const ruleRe = /([^{}]+)\{([^{}]*)\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = ruleRe.exec(css)) !== null) {
+    const selectorList = m[1] ?? '';
+    const body = m[2] ?? '';
+    const selectors = selectorList.split(',').map((s) => s.trim());
+    if (selectors.includes(selector)) {
+      return body;
+    }
+  }
+  throw new Error(`no CSS rule found for selector ${selector}`);
+}
+
+describe('ImportPanel contrast (M07-IRL #3)', () => {
+  const css = readFileSync(resolve(__dirname, '../../../src/styles.css'), 'utf8');
+
+  it('import_panel_title_uses_node_fg_theme_token', () => {
+    expect(ruleBodyFor(css, '.import-panel__title')).toMatch(/color:\s*var\(--node-fg\)/);
+  });
+
+  it('import_row_ref_uses_node_fg_theme_token', () => {
+    expect(ruleBodyFor(css, '.import-row__ref')).toMatch(/color:\s*var\(--node-fg\)/);
+  });
+
+  it('import_review_modal_title_uses_node_fg_theme_token', () => {
+    const body = ruleBodyFor(css, '.import-review-modal__title');
+    expect(body).toMatch(/color:\s*var\(--node-fg\)/);
+    expect(body).not.toMatch(/color:\s*var\(--node-bg\)/);
+  });
+});
+
+// ── M08.C: local-file picker + skills.lock-on-mount reload ──
+// M07.V 🟡 #4 — the @tauri-apps/plugin-dialog "Browse…" companion to the
+// URL field (the backend already accepted ImportSource::File; only the
+// renderer surface was missing). M07-IRL #6 — the panel was empty after
+// an app restart because nothing read the durable skills.lock on
+// startup; list_installed_artifacts (Stage B) is the production reader.
+
+describe('ImportPanel — file picker + skills.lock reload (M08.C)', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    openMock.mockReset();
+    useGraphStore.setState({ imports: {} });
+  });
+  afterEach(() => {
+    useGraphStore.setState({ imports: {} });
+  });
+
+  it('calls_list_installed_artifacts_on_mount_and_renders_the_rows', async () => {
+    // M07-IRL #6 — reload the durable skills.lock so installed artifacts
+    // survive an app restart.
+    invokeMock.mockImplementation(async (cmd: unknown) => {
+      if (cmd === 'list_installed_artifacts') {
+        return [
+          {
+            key: 'demo-agent@1.0.0',
+            kind: 'agent',
+            source: { type: 'url', url: 'https://example.com/a.json' },
+            installed_at: '2026-05-21T00:00:00Z',
+          },
+        ];
+      }
+      return undefined;
+    });
+    render(<ImportPanel />);
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('list_installed_artifacts', undefined),
+    );
+    expect(await screen.findByTestId('import-lock-row-demo-agent@1.0.0')).toBeInTheDocument();
+  });
+
+  it('clicking_browse_opens_the_picker_and_imports_the_chosen_file', async () => {
+    // M07.V 🟡 #4 — Browse → native picker → import_artifact('file', …).
+    openMock.mockResolvedValue('C:/tmp/demo-skill.json');
+    invokeMock.mockImplementation(async (cmd: unknown) => {
+      if (cmd === 'list_installed_artifacts') return [];
+      return {
+        status: 'installed',
+        lock_key: 'demo-skill@1.0.0',
+        capabilities: [],
+        l3_report: { report_id: 'vr-1', passed: true, reasons: [] },
+        requires_secrets: [],
+        share_provenance: null,
+      };
+    });
+    render(<ImportPanel />);
+    await userEvent.click(screen.getByTestId('import-browse'));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('import_artifact', {
+        sourceKind: 'file',
+        location: 'C:/tmp/demo-skill.json',
+        artifactKind: 'skill',
+      }),
+    );
+  });
+
+  it('cancelling_the_picker_does_not_call_importArtifact', async () => {
+    // A cancelled picker resolves null — a normal user action, not an
+    // error. import_artifact must not fire.
+    openMock.mockResolvedValue(null);
+    invokeMock.mockImplementation(async (cmd: unknown) => {
+      if (cmd === 'list_installed_artifacts') return [];
+      return undefined;
+    });
+    render(<ImportPanel />);
+    await userEvent.click(screen.getByTestId('import-browse'));
+    await waitFor(() => expect(openMock).toHaveBeenCalled());
+    const importCalls = invokeMock.mock.calls.filter((c) => c[0] === 'import_artifact');
+    expect(importCalls).toHaveLength(0);
   });
 });

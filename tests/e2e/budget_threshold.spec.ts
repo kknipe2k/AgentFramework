@@ -57,6 +57,12 @@ async function clearStore(page: Page): Promise<void> {
 }
 
 test.describe('M04.F budget threshold flow', () => {
+  // gotcha #53 — whichever spec runs first pays the Vite cold-start
+  // optimizer pass on its first `page.goto` (~30–60s+ on Windows); the
+  // default 60s per-test timeout is too tight. 120s holds margin above
+  // `webServer.timeout`, matching the 8 sibling specs.
+  test.describe.configure({ timeout: 120_000 });
+
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await clearStore(page);

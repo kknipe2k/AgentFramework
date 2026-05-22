@@ -71,6 +71,19 @@ pub fn read_api_key() -> Result<SecretString, KeyStoreError> {
     }
 }
 
+/// Whether an Anthropic API key is present in the OS keychain.
+///
+/// `read_api_key().is_ok()`: [`KeyStoreError::NotFound`] → `false`, any
+/// other backend error → `false`. The renderer treats "can't tell" the
+/// same as "absent" — the user can always re-enter the key, and an app
+/// launch must not fail on a transiently locked keychain. M08 Stage A
+/// (M07-IRL #7) — the renderer reads this at mount to seed `hasKey` so
+/// a key entered once survives an app restart.
+#[must_use]
+pub fn has_api_key() -> bool {
+    read_api_key().is_ok()
+}
+
 /// Write the Anthropic API key to the OS keychain. Overwrites any prior value.
 ///
 /// # Errors

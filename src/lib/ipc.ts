@@ -1,7 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { AgentEvent } from '../types/agent_event';
+import { open } from '@tauri-apps/plugin-dialog';
+import type { AgentEvent, TierRef } from '../types/agent_event';
+import type { CapabilityDeclaration } from '../types/capability';
 import type { CmdError } from '../types/error';
+import type { Framework } from '../types/framework';
 import type { McpServerConfig } from '../types/mcp';
 
 /**
@@ -35,6 +38,16 @@ export async function invokeRunSmokeSession(): Promise<void> {
 
 export async function invokeSetApiKey(key: string): Promise<void> {
   await invoke('set_api_key', { key });
+}
+
+/**
+ * Whether an Anthropic API key is present in the OS keychain. The App
+ * mount reads this so a key entered once survives an app restart
+ * (M07-IRL #7). Resolves `false` on any keychain error — the renderer
+ * treats "can't tell" as "absent" (the user can re-enter the key).
+ */
+export async function invokeHasApiKey(): Promise<boolean> {
+  return await invoke<boolean>('has_api_key');
 }
 
 /**
@@ -167,6 +180,32 @@ export async function invokeSetGlobalBudget(usdCap: number): Promise<void> {
 }
 
 /**
+ * Request a Novice ↔ Promoted tier transition (M05 Stage D — spec
+ * §8.security L4). Wraps the EXISTING `request_tier_transition` Tauri
+ * command (`src-tauri/src/commands.rs:573`) — M08 Stage G surfaces it,
+ * it does NOT reimplement tier logic.
+ *
+ * The backend persists the new tier to `<app_data_dir>/tier.json`,
+ * updates its in-memory cache, and emits a `tier_transition` event on
+ * the `agent_event` channel — which `graphStore.applyEvent` already
+ * reduces into `currentTier` (graphStore.ts:1549). The Settings panel's
+ * displayed tier therefore updates through the EXISTING event path; the
+ * wrapper does not return the new tier and the caller does not set it.
+ *
+ * Idempotent when `targetTier` equals the current tier (the backend
+ * returns `Ok` for the no-op — commands.rs:621), so the panel may call
+ * freely without a pre-check.
+ *
+ * `targetTier` is the generated {@link TierRef} ('novice' | 'promoted')
+ * — byte-identical to the Rust `Tier` enum's serde form. Operator is
+ * NOT a `TierRef` member (v1.0, §0d). Errors surface as the Tauri
+ * `CmdError` shape — render via {@link unwrapCmdError}.
+ */
+export async function requestTierTransition(targetTier: TierRef, reason: string): Promise<void> {
+  await invoke('request_tier_transition', { targetTier, reason });
+}
+
+/**
  * Register a new MCP server (M06 Stage E → Stage C `mcp_add_server`).
  * `config` is the schema-generated {@link McpServerConfig}; `auth` is
  * the optional per-server secret (null for unauthenticated servers).
@@ -295,6 +334,305 @@ export async function completeImportArtifact(pendingReviewId: string): Promise<I
  */
 export async function cancelPendingImport(pendingReviewId: string): Promise<void> {
   await invoke('cancel_pending_import', { pendingReviewId });
+}
+
+/**
+ * One installed / imported artifact row. Mirrors the serde shape of
+ * `runtime_main::builder::InstalledArtifact` (M08 Stage B — NOT
+ * schema-generated; the struct crosses the Tauri bridge as-is, the
+ * `McpServerSummary` / `McpTool` precedent). `list_installed_artifacts`
+ * returns `InstalledArtifact[]`. The field set is PINNED to the Stage
+ * B-shipped struct: `{ key, kind, source, installed_at }`.
+ */
+export interface InstalledArtifact {
+  /** The `name@version` skills.lock key. */
+  key: string;
+  /** Artifact kind — the skills.lock `ArtifactKind`. */
+  kind: 'skill' | 'tool' | 'agent' | 'mcp_server';
+  /**
+   * Where the artifact was imported from (the lock entry's `Source` — a
+   * typify `oneOf`). Opaque here; the Palette keys items on `kind`.
+   */
+  source: unknown;
+  /** RFC-3339 install timestamp (from the lock entry's `installed_at`). */
+  installed_at: string;
+}
+
+/**
+ * List artifacts recorded in `skills.lock` — M08 Stage B's
+ * `list_installed_artifacts`, the first production `skills.lock` reader.
+ *
+ * The command takes ZERO JS args: the Tauri shell resolves
+ * `<app_local_data_dir>/skills.lock` internally (wire PINNED to the
+ * shipped Stage B signature `list_installed_artifacts(app: AppHandle)`).
+ * An absent lock resolves to `[]` (Stage B: absent → empty, not an
+ * error). The Palette + the ImportPanel call this on mount so installed
+ * artifacts survive an app restart (M07-IRL #6).
+ */
+export async function listInstalledArtifacts(): Promise<InstalledArtifact[]> {
+  const result = await invoke<InstalledArtifact[]>('list_installed_artifacts');
+  // The command always resolves an array (Stage B — Result<Vec<_>>);
+  // coerce defensively so a malformed bridge payload cannot crash a
+  // consumer's `.length` / `.filter` / `.map`.
+  return Array.isArray(result) ? result : [];
+}
+
+/**
+ * One validation problem keyed to the offending node / JSON-path.
+ * Mirrors `runtime_main::builder::NodeError` (M08 Stage B).
+ */
+export interface NodeError {
+  /**
+   * JSON-path or node id the error attaches to (`(root)` for a
+   * whole-document schema-shape failure).
+   */
+  node_path: string;
+  message: string;
+}
+
+/**
+ * One Agent→Agent (`spawns`) edge's §8.security L2a narrowing decision.
+ * Mirrors the serde shape of `runtime_main::builder::SpawnEdgeNarrowing`
+ * (M08 Stage B — hand-mirrored, the `McpServerSummary` precedent; the
+ * struct derives `serde::Serialize` and crosses the Tauri bridge as-is).
+ *
+ * The decision is computed by `capability/narrowing.rs::narrow()` in the
+ * Rust main process (M05.B). Spec §9 forbids a second copy of that
+ * intersection in TS — D2 SURFACES this record, it never recomputes it.
+ *
+ * `narrowed_caps` is a serde-serialized Rust `Result`, externally
+ * tagged: `{ Ok: [...] }` carries the surviving set (L2a is
+ * all-or-nothing — `Ok` is the child's declared set verbatim, there is
+ * no partial clamp), `{ Err: "..." }` names the capability the parent
+ * does not hold (Stage B folds that `Err` into `capability_errors`).
+ */
+export interface SpawnEdgeNarrowing {
+  parent_id: string;
+  child_id: string;
+  parent_caps: CapabilityDeclaration[];
+  child_declared_caps: CapabilityDeclaration[];
+  narrowed_caps: { Ok: CapabilityDeclaration[] } | { Err: string };
+}
+
+/**
+ * The whole-framework capability picture (spec Phase 9 Inspector).
+ * Mirrors the serde shape of
+ * `runtime_main::builder::FrameworkCapabilitySummary` (M08 Stage B).
+ * Rides on `FrameworkValidationReport.capability_summary`; D2 reads its
+ * `spawn_edges` for the Agent→Agent narrowing notice, and Stage E reads
+ * the whole-framework totals — both off the one report, no separate
+ * command.
+ */
+export interface FrameworkCapabilitySummary {
+  files_read: string[];
+  files_written: string[];
+  network_hosts: string[];
+  any_shell: boolean;
+  spawn_edges: SpawnEdgeNarrowing[];
+}
+
+/**
+ * The structured framework-validation report. Mirrors the serde shape of
+ * `runtime_main::builder::FrameworkValidationReport` (M08 Stage B —
+ * hand-mirrored, the `McpServerSummary` precedent). Stage B's
+ * `validate_framework` command returns it; D2's continuous validation
+ * and E's Validate button consume it. `capability_summary` rides on this
+ * report (Stage B B.3.4) and is `null` when schema validation fails (no
+ * parsed framework to summarize).
+ */
+export interface FrameworkValidationReport {
+  schema_errors: NodeError[];
+  capability_errors: NodeError[];
+  ok: boolean;
+  capability_summary: FrameworkCapabilitySummary | null;
+}
+
+/**
+ * Validate an in-progress framework document against the schema-derived
+ * types + the capability primitive — M08 Stage B's `validate_framework`
+ * command. The report is keyed to offending node paths; D2's continuous
+ * debounced pass and Stage E's explicit Validate button both call this
+ * (one Rust validator, two triggers — spec §9, no TS duplication). `doc`
+ * is the canvas's serialized `framework.json` candidate; it MAY be
+ * invalid — that is the point of continuous validation. The command
+ * returns the report synchronously (Stage B's §12-owned wire decision —
+ * the `import_artifact` precedent).
+ */
+export async function validateFramework(doc: unknown): Promise<FrameworkValidationReport> {
+  return await invoke<FrameworkValidationReport>('validate_framework', { doc });
+}
+
+/**
+ * One inline-defined artifact's companion markdown file. Mirrors the
+ * serde shape of `runtime_main::builder::Companion`
+ * (`crates/runtime-main/src/builder/persist.rs` — M08 Stage B;
+ * hand-mirrored, the `McpServerSummary` precedent). It crosses the
+ * Tauri bridge both ways: a `save_framework` argument and a
+ * `load_framework` return field.
+ */
+export interface Companion {
+  /** File name relative to the framework directory (e.g.
+   *  `summarize.skill.md`). */
+  file_name: string;
+  /** Full markdown body (frontmatter + content), written verbatim. */
+  body: string;
+}
+
+/**
+ * A framework reloaded from disk — Stage B's `load_framework` return.
+ * Mirrors the serde shape of `runtime_main::builder::LoadedFramework`
+ * (M08 Stage B). The renderer feeds `framework` to
+ * `builderStore.replaceFramework`; the canvas re-derives (ADR-0020).
+ */
+export interface LoadedFramework {
+  /** The parsed `framework.json`. */
+  framework: Framework;
+  /** The companion `.md` files found alongside `framework.json`. */
+  companions: Companion[];
+}
+
+/**
+ * Write `framework.json` + companion `.md` files to `dir` — M08 Stage B
+ * `save_framework`. Params are PINNED to the SHIPPED command signature
+ * `save_framework(dir, framework, companions)` at
+ * `src-tauri/src/commands.rs` — NOT the phase-doc-assumed `{ dir, fw }`
+ * (the v1.8 `<wire_signature_audit>` drift caught at Stage E authoring;
+ * the `importArtifact` / `mcpTestConnection` reconciliations above).
+ *
+ * `dir` is the directory the `@tauri-apps/plugin-dialog` picker
+ * returned (Stage C); the backend persistence is path-agnostic
+ * (CLAUDE.md §9). `companions` defaults to `[]` — the v0.1 canvas
+ * authors no inline markdown bodies (M09's Generators will). Errors
+ * surface as the Tauri `CmdError` shape — render via
+ * {@link unwrapCmdError}.
+ */
+export async function saveFramework(
+  dir: string,
+  framework: Framework,
+  companions: Companion[] = [],
+): Promise<void> {
+  await invoke('save_framework', { dir, framework, companions });
+}
+
+/**
+ * Read `framework.json` + its companion `.md` files from `dir` — M08
+ * Stage B `load_framework`. Param PINNED to the shipped signature
+ * `load_framework(dir)`. A save→load→save cycle is byte-stable (Stage
+ * B B.3.2). Errors surface as the Tauri `CmdError` shape — render via
+ * {@link unwrapCmdError}.
+ */
+export async function loadFramework(dir: string): Promise<LoadedFramework> {
+  return await invoke<LoadedFramework>('load_framework', { dir });
+}
+
+/**
+ * Mirrors serde's wire form for a Rust `std::time::Duration` — a
+ * `#[derive(Serialize)]` struct field of type `Duration` crosses the
+ * Tauri bridge as `{ secs, nanos }`, NOT a bare millisecond count.
+ * Rides on {@link TestOutcome.timing}.
+ */
+export interface WireDuration {
+  /** Whole seconds. */
+  secs: number;
+  /** Sub-second nanoseconds (0–999_999_999). */
+  nanos: number;
+}
+
+/**
+ * One §8.security L2 capability violation observed in a Tester run.
+ * Mirrors the serde shape of `runtime_main::builder::CapabilityFailure`
+ * (M08 Stage F1 — NOT schema-generated; the struct crosses the Tauri
+ * bridge as-is, the `McpTool` / `McpServerSummary` precedent). F2
+ * renders each as a test-failure line, never a HITL prompt (spec
+ * Phase 9; F1.3.3).
+ */
+export interface CapabilityFailure {
+  /** The runtime agent id that attempted the denied action. */
+  agent_id: string;
+  /** The capability that was missing/denied (human-readable). */
+  needed: string;
+  /** The enforcer's reason string. */
+  reason: string;
+}
+
+/**
+ * Token in / out / total for a Tester run. Mirrors
+ * `runtime_main::builder::TokenSpend` (M08 Stage F1).
+ */
+export interface TokenSpend {
+  /** Input tokens summed across the run. */
+  input: number;
+  /** Output tokens summed across the run. */
+  output: number;
+  /** `input + output`. */
+  total: number;
+}
+
+/**
+ * The result of one Tester run. Mirrors the serde shape of
+ * `runtime_main::builder::TestOutcome` (M08 Stage F1 — hand-mirrored,
+ * the `McpTool` / `McpServerSummary` precedent; not schema-generated).
+ * `test_framework` returns it; F2's modal renders every field.
+ *
+ * `passed === false` covers BOTH a capability violation / integrity
+ * block AND a clean run the user judged wrong — a failed test is never
+ * a thrown error (those are infrastructure-only).
+ */
+export interface TestOutcome {
+  /** Whether the run completed with no capability failure / integrity block. */
+  passed: boolean;
+  /**
+   * §8.security L2 violations observed during the run. F2 surfaces these
+   * as test failures, never as live HITL prompts. Non-empty ⇒ `passed`
+   * is `false`.
+   */
+  capability_failures: CapabilityFailure[];
+  /** Token spend for the run (in / out / total). */
+  token_spend: TokenSpend;
+  /** Wall-clock duration — serde's Duration shape (see {@link WireDuration}). */
+  timing: WireDuration;
+  /** The Verification & Decision Record the run produced, or `null`. */
+  vdr: unknown;
+  /**
+   * The full ordered `AgentEvent` trace — F2 reduces it into the scoped
+   * test-session graph after the run resolves.
+   */
+  trace: AgentEvent[];
+}
+
+/**
+ * Run the Builder's Tester against a candidate framework — M08 Stage F1
+ * `test_framework`. The candidate `framework` crosses the wire straight
+ * from the canvas (spec Phase 9 — no disk round-trip). Params are
+ * PINNED to the SHIPPED F1 command signature
+ * `test_framework(app, framework_doc, task)` at
+ * `src-tauri/src/commands.rs` — Tauri auto-converts the snake_case Rust
+ * `framework_doc` to the camelCase JS key `frameworkDoc` (the
+ * `importArtifact` precedent).
+ *
+ * A *failed test* resolves `TestOutcome { passed: false, .. }`; only an
+ * infrastructure failure (drone spawn / temp-DB setup) throws a
+ * `CmdError` — render it via {@link unwrapCmdError}.
+ */
+export async function testFramework(framework: Framework, task: string): Promise<TestOutcome> {
+  return await invoke<TestOutcome>('test_framework', { frameworkDoc: framework, task });
+}
+
+/**
+ * Open the native file picker for a local artifact file (M07.V 🟡 #4 —
+ * `@tauri-apps/plugin-dialog`). Returns the chosen absolute path, or
+ * `null` when the user cancels — a cancel is a normal user action, not
+ * an error, so the caller short-circuits on `null`. The caller passes
+ * the path to `importArtifact('file', path, kind)`; the backend already
+ * accepts `ImportSource::File` — only this renderer surface was missing.
+ */
+export async function pickLocalArtifactFile(): Promise<string | null> {
+  const picked = await open({
+    multiple: false,
+    directory: false,
+    filters: [{ name: 'Artifact', extensions: ['json', 'md'] }],
+  });
+  return typeof picked === 'string' ? picked : null;
 }
 
 export async function subscribeAgentEvents(

@@ -51,8 +51,14 @@ fn main() {
         // Verified against https://v2.tauri.app/plugin/notification/ at
         // 2026-05-10 (gotcha #32).
         .plugin(tauri_plugin_notification::init())
+        // M08 Stage C (spec §M7) — dialog plugin for the local-file
+        // picker. Permission granted via src-tauri/capabilities/default.json
+        // `dialog:allow-open`. Verified against
+        // https://v2.tauri.app/plugin/dialog/ at 2026-05-21 (gotcha #32).
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::set_api_key,
+            commands::has_api_key,
             commands::run_smoke_session,
             commands::query_session_db,
             commands::replay_session,
@@ -75,6 +81,13 @@ fn main() {
             // M07.5 — import validate/commit lifecycle (ADR-0017)
             commands::complete_import_artifact,
             commands::cancel_pending_import,
+            // M08 Stage B — Builder backend
+            commands::validate_framework,
+            commands::save_framework,
+            commands::load_framework,
+            commands::list_installed_artifacts,
+            // M08 Stage F1 — the Tester backend
+            commands::test_framework,
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();

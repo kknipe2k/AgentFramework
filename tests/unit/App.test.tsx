@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Hoisted mocks for the @tauri-apps/api modules so App's IPC layer
-// resolves to test-controlled functions before App is imported.
-const invokeMock = vi.fn(async (..._args: unknown[]) => undefined);
+// resolves to test-controlled functions before App is imported. The
+// return is `unknown` so a per-command mockImplementation can resolve
+// non-undefined values (e.g. has_api_key → boolean).
+const invokeMock = vi.fn(async (..._args: unknown[]) => undefined as unknown);
 const listenMock =
   vi.fn<(channel: string, cb: (e: { payload: AgentEvent }) => void) => Promise<() => void>>();
 
@@ -105,7 +107,16 @@ describe('App (renderer-level state machine)', () => {
   it('surfaces_command_error_via_error_paragraph', async () => {
     listenMock.mockImplementation(async () => () => undefined);
     invokeMock.mockReset();
-    invokeMock.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('API key not set'));
+    // Order-independent per command — the mount-time has_api_key probe
+    // and the set_api_key save both resolve; only run_smoke_session
+    // rejects (a `mockResolvedValueOnce` chain would be consumed by the
+    // mount probe and mis-route the rejection).
+    invokeMock.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === 'run_smoke_session') {
+        throw new Error('API key not set');
+      }
+      return undefined;
+    });
 
     const user = userEvent.setup();
     render(<App />);
@@ -201,5 +212,71 @@ describe('App (renderer-level state machine)', () => {
     });
     expect(localStorage.getItem('lastSessionId')).toBe('new-session-abc');
     localStorage.removeItem('lastSessionId');
+  });
+
+  // ---- M08.A: has_api_key startup read (M07-IRL #7) ----
+  // A key entered once must survive an app restart. The root cause was
+  // the absent startup read — App.tsx hardcoded `hasKey` false and only
+  // flipped it inside handleSetKey. App now reads the keychain on mount.
+
+  it('app_calls_has_api_key_on_mount_and_enables_smoke_button_when_present', async () => {
+    listenMock.mockImplementation(async () => () => undefined);
+    invokeMock.mockImplementation(async (...args: unknown[]) =>
+      args[0] === 'has_api_key' ? true : undefined,
+    );
+    render(<App />);
+    await waitFor(() => {
+      const calls = invokeMock.mock.calls.map((c) => String(c[0]));
+      expect(calls).toContain('has_api_key');
+    });
+    const runButton = await screen.findByRole('button', { name: /run smoke test/i });
+    await waitFor(() => expect(runButton).toBeEnabled());
+  });
+
+  it('app_keeps_smoke_button_disabled_when_has_api_key_returns_false', async () => {
+    listenMock.mockImplementation(async () => () => undefined);
+    invokeMock.mockImplementation(async (...args: unknown[]) =>
+      args[0] === 'has_api_key' ? false : undefined,
+    );
+    render(<App />);
+    await waitFor(() => {
+      const calls = invokeMock.mock.calls.map((c) => String(c[0]));
+      expect(calls).toContain('has_api_key');
+    });
+    expect(screen.getByRole('button', { name: /run smoke test/i })).toBeDisabled();
+  });
+
+  // ---- M08.A: stale Test error banner (M06.5 IRL 🟡-3) ----
+  // handleSmoke clears `error` at run start; the banner is bound to the
+  // same App `error` slot and no racing handler re-sets it. A stale
+  // banner from a prior failed run is gone before the next run begins.
+
+  it('smoke_error_banner_cleared_when_new_run_starts', async () => {
+    listenMock.mockImplementation(async () => () => undefined);
+    let smokeCalls = 0;
+    invokeMock.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === 'run_smoke_session') {
+        smokeCalls += 1;
+        if (smokeCalls === 1) {
+          throw new Error('first run boom');
+        }
+        return undefined;
+      }
+      return undefined;
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(screen.getByLabelText(/anthropic api key/i), 'sk-ant-fixture');
+    await user.click(screen.getByRole('button', { name: /save key/i }));
+    const runButton = await screen.findByRole('button', { name: /run smoke test/i });
+    await waitFor(() => expect(runButton).toBeEnabled());
+
+    // First run fails — the error banner surfaces.
+    await user.click(runButton);
+    expect(await screen.findByText(/first run boom/i)).toBeInTheDocument();
+
+    // A subsequent run clears the stale banner at run start.
+    await user.click(runButton);
+    await waitFor(() => expect(screen.queryByText(/first run boom/i)).toBeNull());
   });
 });

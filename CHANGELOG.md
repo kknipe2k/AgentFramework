@@ -6,6 +6,406 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed — M08 Stage H (closeout — gap-analysis, summary, simplify pass, coverage-policy reconciliation)
+
+- **M08 milestone closeout.** `docs/build-prompts/retrospectives/M08-summary.md`
+  aggregates Stages A, B, C, D1, D2, E, F1, F2, G + the M08.V verifier
+  (verdict: "Pattern held but with friction"; aggregate Process
+  37.9/40, Product 37.8/40, Pattern 28.9/35; deliverable time-box
+  ~0.73×). The immutable M08 `docs/gap-analysis.md` entry (six sections
+  + gotchas-graduation A–G + V + the simplify-pass subsection) records
+  spec Phase 9 delivered — the Workbench / Builder Canvas (ADR-0020),
+  the sandboxed Tester (ADR-0019), the Settings panel — and the
+  **entire** post-M07 carry-forward backlog discharged: M07.V 🟡
+  #2/#3/#4/#5 RESOLVED, M07-IRL #5/#2/#3/#6/#7 RESOLVED, M06.5 IRL
+  🟡-1..4 RESOLVED, the M04 `plan_loop` driver shell RESOLVED-as-
+  contracted. All eight MVP §M8 acceptance criteria cited with
+  file:line (criterion 5 is 4/5 — `TestOutcome.vdr` structurally dead).
+- **M08.V verifier handoff** — 0🔴 / 2🟡 / 2🟢 (a clean handoff, no
+  D.fix, no waiver). The two 🟡 (`TestOutcome.vdr` always `Value::Null`;
+  `plan_loop`/`drive_plan` has no production caller) carry to M09 Stage
+  A; the two 🟢 are `docs/tech-debt.md` TD-019 / TD-020. M06.5 IRL 🔴-1
+  (MCP-registry) is recorded re-confirmable in the post-M08 IRL pass
+  since Stage G unblocked the Promoted tier.
+- **Spec refinements recorded** — the §1c-multi-session-vs-Tester-
+  isolated-session clarification (the Tester is a sequential build-time
+  throwaway session, NOT the §0d-❌ §1c concurrent-session pool —
+  ADR-0019) and the `validate_framework` command-return-vs-spec-§9-
+  "posts events" refinement (continuous validation is request/response;
+  IPC matured to synchronous command returns).
+- **v1.8 `<coverage_policy_reconciliation>`.** `docs/coverage-policy.md`
+  §B per-module baseline (the new `runtime-main` `builder` module —
+  `validate.rs`/`persist.rs`/`summary.rs`/`tester.rs`) + a §C M08
+  milestone entry appended. **No threshold and no `--ignore-filename-
+  regex` value changed** — the `builder` module and the Tester module
+  entered the existing runtime-main ≥95 package gate with no new
+  exclusion (pure / seam / `tempfile`-tested). The four mirrors
+  (CLAUDE.md §5/§6, `codecov.yml`, coverage-policy §A) verified
+  byte-consistent.
+- **v1.6 `<simplify_pass>`** — three review agents against `main..HEAD`
+  (98 files / +14,862 / −92; verdict: the diff is structurally sound).
+  15 proposals; **empty maintainer-approved subset** (no apply-now
+  refactor — every finding is pre-M08 debt, cross-crate, immaterial at
+  v0.1 scale, or a low-severity smell best landed at the next builder
+  touch); the deferred set logged to `docs/tech-debt.md` TD-021..TD-024.
+  No finding of correctness/security significance the verifier missed.
+- **`docs/tech-debt.md`** — TD-021..TD-024 (the M08 simplify-pass
+  deferrals) + TD-025/026/027 (the M07-IRL 🟢 #1/#4/#8 — smoke run too
+  fast to observe streaming · no bundled importable example artifact ·
+  graph minimap renders blank; routed to tech-debt by the M07-IRL pass
+  but never logged — completed at this closeout).
+- ADR-0019 (the Tester isolated-session model) + ADR-0020 (the Builder
+  canvas↔`framework.json` state model) flip `Proposed → Accepted` in
+  the M08 PR before merge (CLAUDE.md §11).
+
+### Added — M08 Stage G (Settings panel + Novice↔Promoted tier promotion)
+
+- **`src/components/SettingsPanel.tsx`** — a new focused settings
+  surface (spec §8.security L4; §2a). `TierControl` shows the current
+  capability tier and a single Novice↔Promoted button that calls the
+  **existing** `request_tier_transition` backend command (M05 Stage D);
+  `BudgetControl` is the global per-day budget-cap input. Closes the
+  M07-IRL #5 🔴-candidate — there was no UI anywhere to promote
+  Novice→Promoted, so the **Promoted tier (a §0d v0.1-scope
+  capability) and, through it, MCP-server management were unreachable**.
+  Operator is **not** surfaced (v1.0 — §0d locks v0.1 to Novice +
+  Promoted; `TierRef` has no Operator member). Not a catch-all — the
+  Anthropic API key stays in `SetupPanel`.
+- **`requestTierTransition`** (`src/lib/ipc.ts`) — a typed wrapper over
+  the existing `request_tier_transition` Tauri command, params pinned
+  to the shipped signature (`commands.rs:573`) via the v1.8
+  `wire_signature_audit`. Stage G **surfaces** the command — it does
+  **not** reimplement tier-transition or enforcement logic (Hard
+  Rule 8). The new tier arrives via the `tier_transition` event the
+  backend emits, already reduced into `graphStore.currentTier`
+  (`:1549`); the panel never optimistically sets the tier.
+- **`globalBudgetCap`** slot + **`setGlobalBudgetCap`** action
+  (`src/lib/graphStore.ts`) — closes M06.5 IRL 🟡-4 (budget settings
+  not state-wired): the budget-cap input now reflects + persists the
+  configured cap via the existing `set_global_budget` command.
+  Preserved across `clear()` like `currentTier` (a user preference,
+  not per-session graph state).
+- **`src/App.tsx`** — `<SettingsPanel />` mounts at App top level,
+  outside the Runtime↔Builder `view` conditional, as cross-mode chrome
+  alongside `BudgetHeaderBar` / `ViewSwitch` (C.3.2) — so the tier
+  control is reachable in **both** modes.
+- **`src/styles.css`** — `.settings-panel` + descendant classes,
+  theme-variable-driven; every className paired with a CSS rule
+  (gotcha #67).
+- **`tests/unit/components/SettingsPanel.test.tsx`** +
+  **`tests/e2e/settings_tier_promotion.spec.ts`** — 14 vitest behavior
+  tests + 1 styles-contract test + 4 Playwright tests (promote updates
+  the tier through the existing reducer, Operator never offered, the
+  budget cap reflects/persists, the panel is reachable in Builder mode).
+
+### Added — M08 Stage F2 (Tester modal renderer)
+
+- **`src/components/builder/TesterModal.tsx`** — the Builder Tester modal
+  (spec Phase 9; MVP §M8 criterion 5; ADR-0019). Opens on
+  `builderStore.testerOpen` (Stage E's Inspector Test button); takes a
+  natural-language task; runs the candidate framework — straight from
+  the canvas, no disk round-trip — through Stage F1's `test_framework`;
+  and renders the run: a smaller graph pane + the result surfaces (the
+  pass/fail verdict, capability violations as **test-failure lines**
+  rather than HITL prompts per F1.3.3, token in/out/total + timing, and
+  the VDR record). Discard-on-close is the default; the explicit
+  **"Promote to main session"** affordance is the only persist path —
+  it replays the run's trace into the live `useGraphStore`.
+- **`src/components/builder/TesterGraphPane.tsx`** — the Tester's
+  smaller graph pane. Reuses the live-graph rendering verbatim (the
+  module-level 11-entry `nodeTypes` map + the pure `layoutGraph` dagre
+  pass) over a graph store **scoped to the test session** — a test run
+  never writes into the live `useGraphStore` module singleton.
+- **`createGraphStore`** (`src/lib/graphStore.ts`) — the graph-store
+  factory. `useGraphStore` (the live runtime graph) is now built from
+  it; `builderStore.ts`'s `useTestGraphStore` is a second, independent
+  instance reusing the exact `applyEvent` reducer. Behavior-neutral
+  refactor — the live store is unchanged.
+- **`useTestGraphStore`** (`src/lib/builderStore.ts`) — the Tester's
+  scoped graph store; `closeTester` clears it (discard-on-close).
+- **`testFramework`** + the `TestOutcome` / `CapabilityFailure` /
+  `TokenSpend` / `WireDuration` TS types (`src/lib/ipc.ts`) — the typed
+  wrapper over Stage F1's `test_framework` command and the hand-mirrored
+  serde shape it returns (the `McpTool` / `McpServerSummary` precedent).
+  `timing` crosses the bridge as serde's Duration `{ secs, nanos }`
+  struct, folded to a millisecond label by the modal.
+- **`tests/unit/components/builder/TesterModal.test.tsx`** +
+  **`tests/e2e/tester_modal.spec.ts`** — the vitest + Playwright suites
+  for the modal, the scoped-graph invariant (a run never touches the
+  live singleton), discard-on-close, and the gotcha #67 CSS contract.
+
+### Added — M08 Stage F1 (Tester backend — isolated session + the M07.V Dec-6 discharge)
+
+- **`crates/runtime-main/src/builder/tester.rs`** — the Tester backend
+  (spec Phase 9; ADR-0019). `run_test_session_with` runs a candidate
+  framework (loaded from the canvas, never saved) in an **isolated**
+  test session — its own throwaway `SQLite` path, a test-defaults
+  `HitlSeam` so the run never blocks on user input, §8.security L2
+  capability violations collected onto `TestOutcome` as **test
+  failures** — reusing the smoke-session construction
+  (`AgentSdk::with_capability_wiring` → optional `with_mcp_dispatch` →
+  `run_agent`) rather than a new session engine. `TestOutcome` /
+  `CapabilityFailure` / `TokenSpend` cross the Tauri wire to F2;
+  `TesterError` is infrastructure-only (a failed test is
+  `Ok(TestOutcome { passed: false, .. })`, never an `Err`).
+- **`load_verified_artifact`** (`builder::tester`) — the first
+  production load-path caller of `skills_lock::verify` (M07.V 🟡 #2):
+  the test session's integrity pre-flight byte-loads each imported
+  artifact and HARD-BLOCKS on hash drift (`ArtifactHashMismatch` →
+  the run is refused; integrity > availability — ADR-0014).
+- **`HitlSeam::test_defaults()`** (`crates/runtime-main/src/hitl/seam.rs`)
+  — the Tester's auto-resolving HITL seam: `await_response` resolves
+  immediately with the default, registering no pending await, so a test
+  session runs unattended. Changes the HITL *response*, not the
+  capability-enforcement *logic* (Hard Rule 8).
+- **`test_framework`** Tauri command (`src-tauri/src/commands.rs`) — the
+  production wrapper: resolves a throwaway temp-DB path, spawns the
+  test-session drone, drives the run through `test_framework_with`, and
+  tears both down (drone reaped, throwaway DB deleted — no user-data-dir
+  writes). `connect_test_session_mcp` is the first production caller of
+  `McpDispatcher::on_server_connected` (M07.V 🟡 #3 — placed in the
+  shell, the only crate that sees both `runtime-main` and `runtime-mcp`;
+  ADR-0019).
+- The Tester runs a tool-bearing framework through `AgentSdk::run_agent`,
+  dispatching a real `ProviderEvent::ToolUse` through the concrete
+  `McpDispatcher` in a **production** path for the first time (M07.V
+  🟡 #5 — the agent-with-tools production driver, ADR-0011 (d)).
+- **`docs/adr/0019-tester-isolated-session-model.md`** — ADR-0019: the
+  throwaway-DB model, test-defaults for capability violations,
+  discard-on-close, and the §1c-vs-§0d reconciliation (the v0.1 Tester
+  is a sequential, throwaway, build-time session — not the §1c
+  concurrent-session pool).
+- **`crates/runtime-main/tests/tester_isolated_session.rs`** — the
+  assembled regression: a real `runtime-drone` subprocess + a concrete
+  `McpDispatcher` + a tool-bearing framework, asserting signals persist
+  under the test session id, `token_usage > 0`, the throwaway DB is
+  isolated from a user session DB, and teardown removes it.
+
+### Added — M08 Stage E (Inspector + canvas↔JSON two-way binding)
+
+- **`src/components/builder/Inspector.tsx`** — the right-panel Builder
+  Inspector (spec Phase 9): a live `framework.json` preview, a disk
+  diff (`framework` vs `diskFramework`), the whole-framework capability
+  summary read from the `validate_framework` report's
+  `capability_summary` field (Stage B B.3.4 — a report field, not a
+  separate command), an explicit **Validate** button (the same
+  `validate_framework` D2's continuous pass uses — spec §9, one
+  validator, two triggers), and a **Test** button (sets
+  `builderStore.openTester`; INERT-but-wired — Stage F2 delivers the
+  modal). Save/Load wire the `@tauri-apps/plugin-dialog` directory
+  picker to Stage B's `save_framework` / `load_framework` (MVP §M8
+  criteria 7 + 8).
+- **`src/components/builder/JsonView.tsx`** — the Canvas | JSON
+  binding's JSON tab: a raw-JSON editor over `builderStore.framework`.
+  A valid edit routes through `replaceFramework` and the canvas
+  re-derives (ADR-0020); an invalid (malformed / half-typed) edit
+  surfaces an inline parse error and leaves the store **untouched** —
+  the load-bearing no-desync guard (MVP §M8 criterion 6).
+- **`src/lib/frameworkDiff.ts`** — `diffFramework`, the pure
+  prefix/suffix-trim line diff backing the Inspector's "Changes since
+  save" section.
+- **`src/components/builder/BuilderShell.tsx`** — the center-region
+  **Canvas | JSON** tab toggle; mounts the `Inspector` in the
+  right-region stub Stage C shipped.
+- **`src/lib/builderStore.ts`** — `testerOpen` slot + `openTester` /
+  `closeTester` (the Inspector Test button's target — F2's modal
+  renders on `testerOpen`; INERT-but-wired at E).
+- **`src/lib/ipc.ts`** — `saveFramework` / `loadFramework` wrappers +
+  the `Companion` / `LoadedFramework` types, PINNED to the shipped
+  Stage B `save_framework(dir, framework, companions)` /
+  `load_framework(dir)` signatures (the v1.8 `wire_signature_audit`
+  reconciled the phase doc's assumed `{ dir, fw }`).
+
+### Added — M08 Stage D2 (Builder Canvas — edges, narrowing, validation)
+
+- **`src/lib/builderStore.ts`** — `connectEdge` implemented (Stage C
+  shipped it as a typed no-op stub): maps a connection's
+  `(sourceKind, targetKind)` pair to one of the four spec Phase 9 edge
+  types — Agent→Skill = `allowed_skills`, Agent→Tool = `allowed_tools`,
+  Agent→Agent = `spawns`, Hook→Task = `task_defaults.post_hooks` — and
+  rejects every other node-pair (no `framework` mutation, no edge).
+  Idempotent. The `canvasEdges` projection derives React-Flow edges
+  from `framework` (the ADR-0020 source-of-truth model for edges); a
+  module-level debounced trigger fires one `validate_framework` call
+  after a burst of `framework` mutations. Exports `parseNodeId` (the
+  shared node-id parser) and `VALIDATION_DEBOUNCE_MS`.
+- **`src/components/builder/BuilderCanvas.tsx`** — `onConnect` wired to
+  `<ReactFlow>` (the slot D1 left unset), routing handle-to-handle
+  connections to `builderStore.connectEdge`.
+- **`src/components/builder/NarrowingNotice.tsx`** — surfaces an
+  Agent→Agent (`spawns`) edge's §8.security L2a narrowing decision read
+  from the `validate_framework` report's
+  `capability_summary.spawn_edges[]`. Renders the backend's
+  `narrowed_caps` arm verbatim — the surviving set on an `Ok` edge, the
+  rejection on an `Err` edge. The intersection is Rust
+  (`capability/narrowing.rs`) — spec §9 forbids a TS re-implementation,
+  so the component computes nothing.
+- **`src/components/builder/nodes/NodeValidationBadge.tsx`** — the
+  shared red-badge surface: `nodeErrorsFor` (the per-node error filter),
+  `useNodeErrors` (the `useShallow` selector hook), and the
+  `NodeValidationBadge` count badge. Each builder node component renders
+  it and carries the `builder-node--invalid` modifier when the
+  continuous validation keys an error to that node (spec Phase 9 "errors
+  surfaced as red badges").
+- **`src/lib/ipc.ts`** — the `validateFramework` wrapper over Stage B's
+  `validate_framework` command + the hand-mirrored `SpawnEdgeNarrowing`
+  / `FrameworkCapabilitySummary` wire types; `FrameworkValidationReport`
+  `capability_summary` pinned to `FrameworkCapabilitySummary | null`.
+- MVP §M8 criteria 2 + 3 + the badge half of 4 demonstrated end-to-end
+  in Playwright: connect Agent→Skill, connect Agent→Agent with the
+  narrowing surfaced, and a red badge on an invalid node.
+
+### Added — M08 Stage D1 (Builder Canvas — node editor)
+
+- **`src/components/builder/BuilderCanvas.tsx`** — the interactive
+  React-Flow node editor, a NEW component distinct from the read-only
+  live-graph `GraphCanvas`. A drop target; renders nodes from the
+  `builderStore.framework` projection; module-level `builderNodeTypes`
+  (the GraphCanvas re-mount trap). `onConnect` is left unset — edges
+  are D2.
+- **`src/components/builder/nodes/Builder{Agent,Tool,Skill,Hitl,Hook}Node.tsx`**
+  — the five interactive Builder node components; reuse the §3 node CSS
+  class families plus a thin `builder-*-node` drag-affordance layer.
+- **`src/components/builder/NodeConfigPanel.tsx`** — the inline
+  node-configuration surface: `role`, `model` (Anthropic model
+  dropdown), and the `allowed_tools` / `allowed_skills` editable lists;
+  every edit calls `builderStore.updateNode`.
+- **`src/components/CapabilityDisclosure.tsx`** — the shared
+  plain-English capability-disclosure surface (the M05 §8.security L1
+  disclosure), extracted from `ImportPanel`'s import-review modal as a
+  behavior-preserving lift so the Builder nodes reuse it (its third
+  reuse); `ImportPanel` now consumes the extracted component.
+- **`src/lib/builderStore.ts`** — `addNode` / `updateNode` implemented
+  (Stage C shipped them as typed no-op stubs); the `nodePositions`
+  slot, the `moveNode` action (React Flow v12 controlled drag), and the
+  memoized `canvasNodes` / `canvasEdges` framework→React-Flow
+  projection selectors (the ADR-0020 model in code). `addNode` is
+  idempotent on a re-drop of the same Palette item.
+- MVP §M8 criterion 1 demonstrated end-to-end in Playwright: drag an
+  Agent onto the empty canvas → set role/model → the plain-English
+  capability disclosure renders below the node.
+
+### Added — M08 Stage C (Builder shell + Palette + local-file picker)
+
+- **Runtime ↔ Builder view switch (`src/App.tsx`).** A top-level `view`
+  state + a `ViewSwitch` chrome toggle; the existing live-graph layout
+  is extracted verbatim into a `RuntimeLayout` component and
+  conditionally rendered, `<BuilderShell/>` rendering for the Builder
+  view. The `subscribeAgentEvents` effect, replay-on-mount, and the
+  `__graphStore` Playwright affordance are unchanged.
+- **`src/lib/builderStore.ts` — the Builder Zustand store (ADR-0020).**
+  Holds the in-progress `framework.json` as the single source of truth;
+  the canvas (D1/D2) is a projection. SEPARATE from `graphStore`. C
+  ships `replaceFramework` / `setDiskFramework` / `selectNode` /
+  `setValidation`; the canvas-mutation actions ship as typed no-op stubs
+  D1/D2 fill, so the store shape is final at C.
+- **`src/components/builder/BuilderShell.tsx`** — the three-panel grid:
+  a working `Palette`, an empty Canvas region (a React-Flow drop target
+  D1 fills), an empty Inspector region (a stub E fills).
+- **`src/components/builder/Palette.tsx`** — the five-tab filterable
+  drag-source Palette (Tools / Skills / Agents / HITL / Hooks); every
+  item carries an `application/x-builder-node` drag payload (the C↔D1
+  contract). Tools/Skills/Agents list built-ins + installed artifacts.
+- **`src/lib/ipc.ts`** — `listInstalledArtifacts` (Stage B's
+  `list_installed_artifacts`, zero JS args) + `pickLocalArtifactFile`
+  (a `@tauri-apps/plugin-dialog` wrapper); the `InstalledArtifact` /
+  `FrameworkValidationReport` / `NodeError` hand-mirrored serde types.
+- **Local-file picker (M07.V 🟡 #4).** `@tauri-apps/plugin-dialog`
+  registered three places (npm dep, `src-tauri` `Cargo.toml` + the
+  builder `.plugin()` call, the `dialog:allow-open` capability entry);
+  wired into `ImportPanel` as a "Browse…" companion to the URL field.
+- **`skills.lock`-on-mount reload (M07-IRL #6).** `ImportPanel` + the
+  Palette call `list_installed_artifacts` on mount, so installed
+  artifacts survive an app restart.
+- **`src/types/framework.ts`** — the generated `Framework` TS type;
+  `crates/xtask` adds `framework.v1.json` to its TS-codegen targets
+  (CLAUDE.md §14) and runs `json-schema-to-typescript` from the schema
+  directory so external `$ref`s resolve.
+- **ADR-0020** — the Builder canvas ↔ `framework.json` state model.
+
+### Added — M08 Stage B (Builder backend)
+
+- **`crates/runtime-main/src/builder/` — the Builder backend.** The
+  single backend the Builder Canvas (Stages D1/D2), the Inspector (E),
+  and the Tester (F1) share — one validator, one capability summary,
+  one save/load path (spec §9 forbids duplicating validation logic
+  between TS and Rust).
+- **`validate_framework`.** Composes schema-shape validation (serde
+  deserialization into the typify-generated `Framework` type — the
+  schema-as-source-of-truth check; v0.1 has no Rust JSON-Schema
+  library), reference validation (reuses `framework_loader::walk`), and
+  the whole-framework capability summary into one
+  `FrameworkValidationReport`, keyed to the offending node / JSON-path.
+  An over-declaring Agent→Agent edge folds into `capability_errors`.
+- **`framework_capability_summary`.** Whole-framework capability totals
+  (file globs, network hosts, shell) aggregated from
+  `framework_loader/capability_map.rs`, carrying per-Agent→Agent-edge
+  the narrowing triple `{parent, child_declared, narrowed}` via the
+  reused `capability/narrowing.rs::narrow` (M05.B L2a). Rides on the
+  `validate_framework` report — there is no separate command.
+- **`save_framework` / `load_framework`.** Path-agnostic `&Path`
+  persistence (CLAUDE.md §9): `framework.json` + companion
+  `*.skill.md` / `*.tool.md` / `*.agent.md` files; a save→load→save
+  cycle is byte-stable (MVP §M8 criterion 8).
+- **`list_installed` — the first production `skills.lock` reader.**
+  Flattens the lock's `installed` map for the Palette / Import panel
+  (closes M07-IRL #6 + the read half of M07.V 🟡 #2). An absent lock
+  returns an empty list; a present-but-corrupt lock returns an error.
+- **Four Tauri commands** — `validate_framework`, `save_framework`,
+  `load_framework`, `list_installed_artifacts` — thin wrappers over the
+  `builder` seams, registered in the `invoke_handler`.
+
+### Fixed — M08 Stage A (post-M07 carry-forward absorption)
+
+- **`plan_loop` driver shell (M04 carry-forward).** A new
+  `crates/runtime-main/src/plan/plan_loop.rs` ships `drive_plan` — the
+  M04-deferred driver that walks a `PlanStateMachine` from
+  `PendingApproval` through `Complete`, routing the approval gate
+  through the in-process `HitlSeam` (ADR-0007) and emitting the
+  `plan_approval_requested` / `plan_approved` / `plan_complete` /
+  `plan_aborted` lifecycle events. Task execution stays
+  `AgentSdk::run_agent` — this is the FSM-driver shell only and has no
+  production caller yet (v0.1's session path is the no-plan smoke
+  session).
+- **Token in/out breakdown now populated (M07-IRL #2).** The agent-node
+  inspector showed `tokensIn:0 / tokensOut:0` against a non-zero
+  `tokensTotal`. The renderer dropped `AgentEvent::TokenUsage` (a no-op
+  arm in `graphStore.applyEvent`); the SDK + drone projector were
+  already correct. The `token_usage` reducer now attributes the
+  input/output to the running agent node — `TokenUsage` carries no
+  `agent_id`, so it uses the single-active-agent assumption.
+- **API key persists across an app restart (M07-IRL #7).** The root
+  cause was the absent startup read — `App.tsx` hardcoded `hasKey`
+  false and only flipped it inside `handleSetKey`. Adds
+  `key_store::has_api_key`, the `has_api_key` Tauri command + its
+  `has_api_key_with` seam, the `invokeHasApiKey` IPC wrapper, and an
+  `App` mount read that seeds `hasKey` from the keychain.
+- **Import-panel text contrast (M07-IRL #3).** The `.import-*` selectors
+  set `background` but no `color`, so the import UI text rendered ≈ the
+  dark panel background. Each text-bearing selector is pinned to the
+  `--node-fg` / `--node-fg-muted` theme tokens.
+- **`npx` MCP servers spawn on Windows (M06.5 IRL 🟡-2).** `npm` ships
+  `npx` / `npm` as `npx.cmd` / `npm.cmd` batch shims on Windows;
+  `tokio::process::Command` does not auto-resolve the `.cmd` extension.
+  `transport::stdio::build_command` now resolves the platform-correct
+  program name.
+
+### Recorded — M08 Stage A (carry-forward dispositions)
+
+- **HITL `ui_variant` routing (M06.5 IRL 🟡-1) — already-closed.** All
+  three HITL components branch on `uiVariant` and the `graphStore`
+  reducer maps `event.ui_variant`; the finding closed in an intervening
+  stage. A cross-variant regression test now pins it.
+- **Stale Test error banner (M06.5 IRL 🟡-3) — already-closed.**
+  `handleSmoke` clears the `error` slot at run start and no racing
+  handler re-sets it; the finding closed in an intervening stage. A
+  regression test now pins it.
+- **M07-IRL #5 (tier-promotion UI) → Stage G.** Dispositioned to the
+  M08 Settings panel; M06.5 IRL 🟡-4 (budget settings) likewise. The
+  M05.D gap-analysis already referenced a "Settings panel" consumer for
+  `request_tier_transition` that was never built — a documented-gap
+  re-confirmation. No Settings code ships in Stage A.
+
 ### Fixed — M07.5 Stage A.fix (tier-gate lifecycle — M07.V 🔴 #1, backend)
 
 - **The import pipeline now enforces the Novice tier-gate review.**

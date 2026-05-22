@@ -1125,13 +1125,18 @@ p.error {
   padding: 0.1rem 0;
 }
 
-/* ── M07.E Import panel + tier-gate review modal (ADR-0015) ────────── */
+/* ── M07.E Import panel + tier-gate review modal (ADR-0015) ──────────
+   M08.A (M07-IRL #3): the .import-* selectors set `background` but no
+   `color`, so the import UI text rendered ≈ the dark panel background.
+   Each text-bearing selector is pinned to the --node-fg / --node-fg-muted
+   theme tokens (styles.css:18-19). */
 
 .import-panel {
   border: 1px solid var(--node-border, #444);
   border-radius: 6px;
   padding: 0.6rem 0.8rem;
   background: var(--node-bg, #1c1c1c);
+  color: var(--node-fg);
 }
 .import-panel__header {
   display: flex;
@@ -1142,6 +1147,7 @@ p.error {
 .import-panel__title {
   font-size: 14px;
   margin: 0;
+  color: var(--node-fg);
 }
 .import-panel__error {
   color: #e66;
@@ -1158,6 +1164,7 @@ p.error {
   flex-direction: column;
   gap: 0.2rem;
   font-size: 12px;
+  color: var(--node-fg-muted);
 }
 .import-panel__reinstall-prompt {
   margin-top: 0.6rem;
@@ -1188,9 +1195,10 @@ p.error {
 }
 .import-row__ref {
   font-family: monospace;
+  color: var(--node-fg);
 }
 .import-row__status {
-  color: #8a8;
+  color: var(--node-fg-muted);
   margin-left: auto;
 }
 .import-row__error {
@@ -1220,15 +1228,17 @@ p.error {
   width: min(560px, 90vw);
   max-height: 90vh;
   overflow: auto;
+  color: var(--node-fg);
 }
 .import-review-modal__title {
   margin: 0 0 0.5rem;
   font-size: 15px;
+  color: var(--node-fg);
 }
 .import-review-modal__intro {
   margin: 0 0 0.6rem;
   font-size: 12px;
-  color: #bbb;
+  color: var(--node-fg-muted);
 }
 .import-review-modal__section {
   margin-bottom: 0.6rem;
@@ -1270,4 +1280,709 @@ p.error {
   display: flex;
   gap: 0.4rem;
   justify-content: flex-end;
+}
+
+/* ---- M08.C Builder workbench — view switch + three-panel shell ----
+ * All colors reference the --node-* theme tokens (M07-IRL #3 — no
+ * literal colors against the dark theme). */
+
+.view-switch {
+  display: inline-flex;
+  margin: 0.5rem 0;
+  border: 1px solid var(--node-base-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.view-switch__option {
+  padding: 0.35rem 0.9rem;
+  font-size: 0.85rem;
+  background: var(--node-bg);
+  color: var(--node-fg-muted);
+  border: none;
+  cursor: pointer;
+}
+
+.view-switch__option--active {
+  background: var(--node-active);
+  color: var(--node-hitl);
+}
+
+.builder-shell {
+  display: grid;
+  grid-template-columns: 220px 1fr 320px;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  height: 70vh;
+  color: var(--node-fg);
+}
+
+.builder-shell__palette,
+.builder-shell__canvas,
+.builder-shell__inspector {
+  background: var(--node-bg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 4px;
+  overflow: auto;
+}
+
+.builder-shell__canvas {
+  background: var(--node-bg-alt);
+  /* anchor for the absolutely-positioned NodeConfigPanel overlay (D1) */
+  position: relative;
+  /* A flex column so M08.E's Canvas | JSON tab bar takes its natural
+   * height and the canvas / JSON editor fills exactly the rest — the
+   * canvas must not overflow the section (it would scroll and mis-place
+   * React Flow's pane). */
+  display: flex;
+  flex-direction: column;
+}
+
+.builder-palette {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  color: var(--node-fg);
+}
+
+.builder-palette__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--node-base-border);
+}
+
+.builder-palette__tab {
+  flex: 1 1 auto;
+  padding: 0.35rem 0.4rem;
+  font-size: 0.72rem;
+  text-transform: capitalize;
+  background: var(--node-bg);
+  color: var(--node-fg-muted);
+  border: none;
+  cursor: pointer;
+}
+
+.builder-palette__tab--active {
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border-bottom: 2px solid var(--node-active);
+}
+
+.builder-palette__filter {
+  margin: 0.5rem;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.8rem;
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+}
+
+.builder-palette__list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0.5rem 0.5rem;
+  overflow: auto;
+}
+
+.builder-palette__item {
+  padding: 0.35rem 0.5rem;
+  margin-bottom: 0.3rem;
+  font-size: 0.8rem;
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+  cursor: grab;
+}
+
+.builder-palette__empty {
+  margin: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--node-fg-muted);
+}
+
+/* ---- M08.D1 Builder Canvas — node editor ----
+ * The interactive React-Flow canvas + the five Builder node components
+ * (a thin interactive layer over the §3 node CSS) + the inline
+ * NodeConfigPanel. Theme variables only (M07-IRL #3 — no literals). */
+
+.builder-canvas {
+  width: 100%;
+  /* flex-fill the canvas section below the M08.E Canvas | JSON tab bar
+   * (was height:100% — which overflowed once the tab bar was added). */
+  flex: 1;
+  min-height: 0;
+  background: var(--node-bg-alt);
+}
+
+/* The Builder nodes reuse the §3 agent-node / tool-node / … CSS; this
+ * thin layer adds the interactive drag affordance + a positioning
+ * context for the absolute-positioned D2 validation badge. */
+.builder-agent-node,
+.builder-tool-node,
+.builder-skill-node,
+.builder-hitl-node,
+.builder-hook-node {
+  cursor: grab;
+  position: relative;
+}
+
+.builder-node-config {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 240px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.6rem;
+  background: var(--node-bg);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 4px;
+}
+
+.builder-node-config__title {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--node-fg);
+}
+
+.builder-node-config__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.72rem;
+  color: var(--node-fg-muted);
+}
+
+.builder-node-config__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.builder-node-config__list-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--node-fg);
+}
+
+.builder-node-config__add {
+  display: flex;
+  gap: 0.25rem;
+}
+
+/* The empty-state line of the shared CapabilityDisclosure surface. */
+.import-capability-disclosure--empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--node-fg-muted);
+}
+
+/* M08.D2 — Builder Canvas edges, validation badges, narrowing notice.
+ * Theme variables only (no literal colors — M07-IRL #3). */
+
+/* The four edge types share one wire style — v0.1 has no per-type
+ * edge colors (spec §M8). */
+.builder-edge .react-flow__edge-path {
+  stroke: var(--node-fg-muted);
+  stroke-width: 1.5;
+}
+
+/* A node the continuous validation keyed an error to — red border, the
+ * same --node-error token as the live-graph `error` status. */
+.builder-node--invalid {
+  border-color: var(--node-error);
+}
+
+/* The at-a-glance error count, top-right of the offending node. */
+.builder-node__badge {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--node-error);
+  color: var(--node-fg);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+/* The Agent→Agent capability-narrowing callout below a child node. */
+.narrowing-notice {
+  margin-top: 0.35rem;
+  padding: 0.35rem 0.5rem;
+  border-left: 3px solid var(--node-fg-muted);
+  background: var(--node-bg-alt);
+  color: var(--node-fg-muted);
+  font-size: 11px;
+}
+
+.narrowing-notice h4 {
+  margin: 0 0 0.2rem;
+  font-size: 11px;
+  color: var(--node-fg);
+}
+
+.narrowing-notice p {
+  margin: 0.1rem 0;
+}
+
+/* The narrowing-rejected line — child over-declared the parent's grant. */
+.narrowing-notice__rejected {
+  color: var(--node-error);
+}
+
+/* ---- M08.E Inspector + Canvas | JSON two-way binding ----
+ * The center-region Canvas | JSON tab toggle, the right-panel
+ * Inspector, and the raw JSON editor. Theme variables only (M07-IRL #3
+ * — no literal colors against the dark theme). */
+
+.builder-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--node-base-border);
+  background: var(--node-bg);
+}
+
+.builder-tab {
+  padding: 0.3rem 0.9rem;
+  font-size: 0.78rem;
+  background: var(--node-bg);
+  color: var(--node-fg-muted);
+  border: none;
+  cursor: pointer;
+}
+
+.builder-tab--active {
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border-bottom: 2px solid var(--node-active);
+}
+
+.builder-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.6rem;
+  height: 100%;
+  color: var(--node-fg);
+}
+
+.inspector-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+}
+
+.inspector-section h3 {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--node-fg);
+}
+
+.inspector-section p {
+  margin: 0;
+  color: var(--node-fg-muted);
+}
+
+.inspector-section--preview pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 0.4rem;
+  font-size: 0.72rem;
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+}
+
+.inspector-section--capabilities dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.15rem 0.6rem;
+  margin: 0;
+  color: var(--node-fg);
+}
+
+.inspector-section--capabilities dt {
+  color: var(--node-fg-muted);
+}
+
+.inspector-section--capabilities dd {
+  margin: 0;
+}
+
+.inspector__diff pre {
+  margin: 0;
+  padding: 0.4rem;
+  max-height: 200px;
+  overflow: auto;
+  font-size: 0.72rem;
+  background: var(--node-bg-alt);
+  color: var(--node-fg-muted);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+}
+
+/* Diff additions / removals — the live-graph complete / error tokens. */
+.inspector__diff-add {
+  color: var(--node-complete);
+}
+
+.inspector__diff-remove {
+  color: var(--node-error);
+}
+
+.inspector__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: auto;
+}
+
+.inspector__actions button {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.78rem;
+  background: var(--node-active);
+  color: var(--node-hitl);
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.inspector__errors {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  color: var(--node-error);
+}
+
+.json-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.json-view textarea {
+  flex: 1;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  padding: 0.5rem;
+  font-family: monospace;
+  font-size: 0.78rem;
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border: none;
+}
+
+.json-view__error {
+  margin: 0;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.75rem;
+  background: var(--node-bg);
+  color: var(--node-error);
+  border-top: 1px solid var(--node-error);
+}
+
+/* ── M08.F2 Tester modal (spec Phase 9; ADR-0019) ────────────────────
+   A non-blocking modal — a fixed, centered panel over the Builder
+   shell; closing it discards the run (discard-on-close). Theme-token
+   driven (--node-*) per gotcha #67 + M07-IRL #3. */
+.tester-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  width: 540px;
+  max-width: 92vw;
+  max-height: 88vh;
+  background: var(--node-bg);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.tester-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid var(--node-base-border);
+}
+
+.tester-modal__header h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--node-fg);
+}
+
+.tester-modal__close {
+  background: none;
+  border: none;
+  color: var(--node-fg-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tester-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.8rem;
+  overflow-y: auto;
+}
+
+.tester-modal__task-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 56px;
+  resize: vertical;
+  padding: 0.5rem;
+  font-family: inherit;
+  font-size: 0.8rem;
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+}
+
+.tester-modal__run {
+  align-self: flex-start;
+  padding: 0.35rem 1rem;
+  font-size: 0.8rem;
+  background: var(--node-active);
+  color: var(--node-hitl);
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.tester-modal__run:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tester-modal__error {
+  margin: 0;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.78rem;
+  color: var(--node-error);
+  background: var(--node-bg-alt);
+  border-left: 3px solid var(--node-error);
+  border-radius: 3px;
+}
+
+.tester-graph-pane {
+  height: 220px;
+  background: var(--node-bg-alt);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+}
+
+.tester-result {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.6rem;
+  font-size: 0.78rem;
+  background: var(--node-bg-alt);
+  border: 1px solid var(--node-base-border);
+  border-left-width: 3px;
+  border-radius: 3px;
+}
+
+.tester-result--pass {
+  border-left-color: var(--node-complete);
+}
+
+.tester-result--fail {
+  border-left-color: var(--node-error);
+}
+
+.tester-result__verdict {
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--node-fg);
+}
+
+.tester-result--pass .tester-result__verdict {
+  color: var(--node-complete);
+}
+
+.tester-result--fail .tester-result__verdict {
+  color: var(--node-error);
+}
+
+.tester-capability-failures {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.tester-capability-failure {
+  padding: 0.3rem 0.4rem;
+  color: var(--node-error);
+  background: var(--node-bg);
+  border-radius: 3px;
+}
+
+.tester-result__tokens {
+  color: var(--node-fg-muted);
+}
+
+.tester-result__vdr {
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  padding: 0.4rem;
+  font-size: 0.72rem;
+  background: var(--node-bg);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+}
+
+.tester-result__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.tester-promote {
+  padding: 0.3rem 0.8rem;
+  font-size: 0.78rem;
+  background: var(--node-complete);
+  color: var(--node-hitl);
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+/* M08 Stage G — the Settings panel (tier + budget controls). Cross-mode
+   chrome; theme-variable-driven so it inherits the M07-IRL #3 contrast
+   fix rather than hard-coding colours. */
+.settings-panel {
+  background: var(--node-bg);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 6px;
+  padding: 0.75rem;
+  margin: 0.5rem 0;
+  font-size: 13px;
+}
+.settings-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.settings-panel__title {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0;
+}
+.settings-panel__section {
+  padding-top: 0.6rem;
+}
+.settings-panel__section--tier {
+  /* First section — sits directly under the header, tighter spacing. */
+  margin-top: 0.4rem;
+}
+.settings-panel__section--budget {
+  /* Second section — a separator rule divides it from the tier block. */
+  margin-top: 0.6rem;
+  border-top: 1px solid var(--node-base-border);
+}
+.settings-panel__section-title {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0 0 0.3rem;
+}
+.settings-panel__tier-current {
+  margin: 0 0 0.3rem;
+}
+.settings-panel__tier-value {
+  font-weight: 700;
+  text-transform: capitalize;
+}
+.settings-panel__tier-value--novice {
+  color: var(--node-fg-muted);
+}
+.settings-panel__tier-value--promoted {
+  color: var(--node-complete);
+}
+.settings-panel__tier-explainer {
+  margin: 0 0 0.4rem;
+  font-size: 12px;
+  color: var(--node-fg-muted);
+}
+.settings-panel__tier-button {
+  padding: 0.3rem 0.8rem;
+  font-size: 12px;
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.settings-panel__tier-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.settings-panel__error {
+  margin: 0.3rem 0 0;
+  font-size: 12px;
+  color: var(--node-error);
+}
+.settings-panel__budget-label {
+  font-size: 12px;
+  color: var(--node-fg);
+}
+.settings-panel__budget-input {
+  width: 6rem;
+  padding: 0.2rem 0.3rem;
+  font-size: 12px;
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+}
+.settings-panel__budget-button {
+  padding: 0.3rem 0.8rem;
+  font-size: 12px;
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.settings-panel__budget-hint {
+  margin: 0.3rem 0 0;
+  font-size: 11px;
+  color: var(--node-fg-muted);
 }

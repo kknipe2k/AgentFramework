@@ -1,5 +1,5 @@
 import type { Edge, Node } from '@xyflow/react';
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
 import type {
   AgentEvent,
   CapabilityKindRef2,
@@ -552,6 +552,16 @@ interface GraphState {
    * installation/integrity state, not per-session graph state).
    */
   imports: Record<string, ImportRecord>;
+  /**
+   * Spec §2a (M08 Stage G — M06.5 IRL 🟡-4): the user-configured global
+   * per-day budget cap in USD, set via the Settings panel. `0` means no
+   * cap. Distinct from `budget` (the per-session SPEND snapshot from
+   * budget_* events) — this is the CONFIGURED cap. Persisted to the
+   * runtime via `set_global_budget`; held here so the Settings panel's
+   * input reflects the live value. Preserved across `clear()` (a user
+   * preference, like `currentTier`, not per-session graph state).
+   */
+  globalBudgetCap: number;
 
   /**
    * Single entry point for translating AgentEvent into node + edge
@@ -595,6 +605,13 @@ interface GraphState {
 
   /** M07.E: drop a record (user Reject on review, or Remove on blocked). */
   dismissImport: (ref: string) => void;
+
+  /**
+   * M08 Stage G (M06.5 IRL 🟡-4): set the user-configured global budget
+   * cap. The Settings panel calls this after `set_global_budget`
+   * persists so the budget-cap input reflects the committed value.
+   */
+  setGlobalBudgetCap: (cap: number) => void;
 }
 
 const AGENT_X_STRIDE = 220;
@@ -749,7 +766,13 @@ function mountOrUpdateGap(state: GraphState, data: GapNodeData): GraphState {
   return { ...state, nodes: [...state.nodes, newNode] };
 }
 
-export const useGraphStore = create<GraphState>((set) => ({
+// The shared StateCreator for a graph store. Both the live
+// `useGraphStore` module singleton and the Tester's scoped per-run graph
+// (M08.F2 — `useTestGraphStore` in `builderStore.ts`) are built from
+// this one initializer, so a scoped instance reuses the EXACT
+// `applyEvent` reducer — a test run renders identically to a live
+// session, without ever writing into the live singleton.
+const graphStoreInitializer: StateCreator<GraphState> = (set) => ({
   nodes: [],
   edges: [],
   selectedNodeId: null,
@@ -766,6 +789,7 @@ export const useGraphStore = create<GraphState>((set) => ({
   toolAliasWarnings: [],
   activeMcpCalls: {},
   imports: {},
+  globalBudgetCap: 0,
 
   applyEvent: (event) =>
     set((state) => {
@@ -1547,12 +1571,11 @@ export const useGraphStore = create<GraphState>((set) => ({
           return { ...state, currentTier: event.current };
         }
 
-        // No-op variants — stream_text + decision_record + token_usage
-        // feed the inspector, not the graph; session_end + tool_error +
-        // mode_changed are graph-no-op by design. The exhaustive default
-        // below is the forcing function: any new variant added to the
-        // schema breaks the compile until handled.
-        //
+        // stream_text + decision_record feed the inspector, not the
+        // graph; session_end + tool_error + mode_changed are graph-no-op
+        // by design (handled in the no-op group below). The exhaustive
+        // default at the end is the forcing function: any new variant
+        // added to the schema breaks the compile until handled.
         case 'mcp_installed': {
           // Spec §5 (M06.D): server installed → track live status keyed
           // by name. currentMcpServers is registry-backed install state
@@ -1669,15 +1692,47 @@ export const useGraphStore = create<GraphState>((set) => ({
           };
         }
 
-        // No-op variants — stream_text + decision_record + token_usage
-        // feed the inspector, not the graph; session_end + tool_error +
+        case 'token_usage': {
+          // M07-IRL #2: the agent-node inspector showed tokensIn:0 /
+          // tokensOut:0 against a non-zero tokensTotal — the renderer
+          // dropped this event (it was a no-op switch arm). The SDK
+          // emits AgentEvent::TokenUsage and the drone projects it
+          // correctly; the drop was renderer-side. TokenUsage carries no
+          // agent_id (event.v1.json), so attribute the usage to the
+          // running agent — the single-active-agent assumption
+          // tool_result already relies on. A multi-turn loop emits one
+          // token_usage per turn; the in/out split accumulates.
+          const runningAgent = state.nodes.find(
+            (n) => n.type === 'agent' && n.data.status === 'active',
+          );
+          if (runningAgent === undefined) {
+            return state;
+          }
+          return {
+            ...state,
+            nodes: state.nodes.map((n) =>
+              n.id === runningAgent.id && n.type === 'agent'
+                ? {
+                    ...n,
+                    data: {
+                      ...n.data,
+                      tokensIn: n.data.tokensIn + event.input,
+                      tokensOut: n.data.tokensOut + event.output,
+                    },
+                  }
+                : n,
+            ),
+          };
+        }
+
+        // No-op variants — stream_text + decision_record feed the
+        // inspector, not the graph; session_end + tool_error +
         // mode_changed are graph-no-op by design.
         case 'session_end':
         case 'tool_error':
         case 'mode_changed':
         case 'stream_text':
         case 'decision_record':
-        case 'token_usage':
           return state;
 
         default: {
@@ -1718,9 +1773,14 @@ export const useGraphStore = create<GraphState>((set) => ({
       // preserved across session clears so a blocked-by-hash-mismatch
       // artifact stays blocked until the user reinstalls or removes.
       imports: state.imports,
+      // globalBudgetCap is a user preference (like currentTier), not
+      // per-session graph state — the configured cap survives a clear().
+      globalBudgetCap: state.globalBudgetCap,
     })),
 
   selectNode: (id) => set({ selectedNodeId: id }),
+
+  setGlobalBudgetCap: (cap) => set({ globalBudgetCap: cap }),
 
   recordUncertainInvocation: (invocation) =>
     set((state) => {
@@ -1786,4 +1846,22 @@ export const useGraphStore = create<GraphState>((set) => ({
       delete next[ref];
       return { ...state, imports: next };
     }),
-}));
+});
+
+/**
+ * Build a fresh, independent graph store. Both the live
+ * {@link useGraphStore} singleton and the Tester's scoped per-run graph
+ * (M08.F2) are built from this factory, so a scoped instance reuses the
+ * EXACT `applyEvent` reducer — a test run renders identically to a live
+ * session without ever writing into the live singleton.
+ */
+export function createGraphStore() {
+  return create<GraphState>(graphStoreInitializer);
+}
+
+/**
+ * The live runtime graph store — the single session the runtime view
+ * renders. The Tester scopes its own instance via {@link createGraphStore}
+ * so a test run never mutates this graph.
+ */
+export const useGraphStore = createGraphStore();

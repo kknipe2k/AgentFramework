@@ -76,9 +76,11 @@ impl StdioTransport {
 
     /// Build a `tokio::process::Command` from this transport's config,
     /// without spawning. This is the pure-logic seam tested by the
-    /// `build_command_*` test family.
+    /// `build_command_*` test family. The program name is run through
+    /// [`resolve_program`] so an npm-shipped CLI resolves to its Windows
+    /// `.cmd` shim (M06.5 IRL 🟡-2).
     pub(crate) fn build_command(&self) -> Command {
-        let mut cmd = Command::new(&self.command);
+        let mut cmd = Command::new(resolve_program(&self.command));
         for arg in &self.args {
             cmd.arg(arg);
         }
@@ -90,6 +92,26 @@ impl StdioTransport {
         }
         cmd
     }
+}
+
+/// Map an npm-shipped CLI name to its platform-correct program name.
+///
+/// The npm CLI ships `npx` / `npm` as `npx.cmd` / `npm.cmd` batch shims
+/// on Windows; `tokio::process::Command` does not auto-resolve the
+/// `.cmd` extension, so a bare `npx` MCP server fails to spawn there
+/// (M06.5 IRL 🟡-2). On Linux/macOS the bare names are real executables
+/// and pass through unchanged. Any non-npm command passes through on
+/// every platform — the rewrite is scoped to the two npm shims.
+fn resolve_program(command: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        match command {
+            "npx" => return "npx.cmd".to_string(),
+            "npm" => return "npm.cmd".to_string(),
+            _ => {}
+        }
+    }
+    command.to_string()
 }
 
 #[async_trait]
@@ -270,5 +292,59 @@ mod tests {
                 "expected ConnectFailed, got {err:?}"
             ),
         }
+    }
+
+    // ── M08.A — npx/npm Windows `.cmd` shim resolution (M06.5 IRL 🟡-2) ──
+    // The npm CLI ships `npx`/`npm` as `npx.cmd`/`npm.cmd` batch shims on
+    // Windows; `tokio::process::Command` does not auto-resolve the `.cmd`
+    // extension, so a bare `npx` MCP server fails to spawn. `build_command`
+    // resolves the platform-correct program name.
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn build_command_resolves_npx_to_npx_cmd_on_windows() {
+        let t = StdioTransport::new("npx");
+        let cmd = t.build_command();
+        assert_eq!(
+            cmd.as_std().get_program(),
+            std::ffi::OsStr::new("npx.cmd"),
+            "on Windows a bare `npx` must resolve to the `npx.cmd` shim"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn build_command_resolves_npm_to_npm_cmd_on_windows() {
+        let t = StdioTransport::new("npm");
+        let cmd = t.build_command();
+        assert_eq!(
+            cmd.as_std().get_program(),
+            std::ffi::OsStr::new("npm.cmd"),
+            "on Windows a bare `npm` must resolve to the `npm.cmd` shim"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn build_command_keeps_bare_npx_on_non_windows() {
+        let t = StdioTransport::new("npx");
+        let cmd = t.build_command();
+        assert_eq!(
+            cmd.as_std().get_program(),
+            std::ffi::OsStr::new("npx"),
+            "on Linux/macOS `npx` is a real executable — no `.cmd` rewrite"
+        );
+    }
+
+    #[test]
+    fn build_command_keeps_non_npm_command_unchanged() {
+        // A non-npm program is never rewritten on any platform — the
+        // resolution is scoped to the npm-shipped batch shims.
+        let t = StdioTransport::new("my-mcp-server");
+        let cmd = t.build_command();
+        assert_eq!(
+            cmd.as_std().get_program(),
+            std::ffi::OsStr::new("my-mcp-server"),
+        );
     }
 }

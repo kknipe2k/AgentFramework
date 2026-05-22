@@ -15,6 +15,11 @@ tauri              = { version = "2", features = [] }
 # notifier (spec §6a). Wired through `runtime_main::hitl::notifiers::desktop`
 # via a Tauri-side dispatcher closure (gotcha #32 cross-stack discipline).
 tauri-plugin-notification = { workspace = true }
+# M08 Stage C — Tauri 2.x dialog plugin powering the local-file picker
+# (`pickLocalArtifactFile` in src/lib/ipc.ts). Registered via
+# `.plugin(tauri_plugin_dialog::init())`; permission granted in
+# src-tauri/capabilities/default.json `dialog:allow-open`.
+tauri-plugin-dialog = { workspace = true }
 runtime-core       = { workspace = true }
 runtime-main       = { path = "../crates/runtime-main", version = "0.1.0" }
 # M06.C — Tauri shell holds the McpClient + KeyringSecretStore; constructs
@@ -41,6 +46,12 @@ keyring            = { workspace = true }
 # (`request_tier_transition_with_*`). Same workspace dep as the other
 # crates use for filesystem-isolation tests.
 tempfile           = { workspace = true }
+# M08 Stage F1 — the `test-helpers` feature exposes `MockTransport` so the
+# `connect_test_session_mcp` tests drive a concrete `McpDispatcher`
+# without a live MCP server (mirrors crates/runtime-main's dev-dep
+# choice). `runtime-mcp` is already a normal dependency above; this entry
+# only enables the test-only feature for dev/test builds.
+runtime-mcp        = { path = "../crates/runtime-mcp", version = "0.1.0", features = ["test-helpers"] }
 
 [lints]
 workspace = true

@@ -412,3 +412,183 @@ All correct; all immaterial at v0.1 scale (single-session, a handful of aliases 
 ### Recommended approach (when addressed)
 
 (a) hoist the `aliases` binding out of the event loop (or pass `&HashMap` into `dispatch_if_mcp`) — pairs with EFF-1 / TD-012. (b) construct `ToolInvoked.input` before the dispatch call, or have the trait take `&Value` — bundle with the TD-015 `try_mcp_dispatch` enum work at M07.5. (c) combine into one reduce pass behind a stable `useShallow` selector — pairs with TD-013. (d) add a `tracing::warn!` before `.unwrap_or(0)`, mirroring the `vdr.rs` projector observability pattern. All low priority; roll into the relevant M07+ touch.
+
+## TD-019 — `builderStore.replaceFramework` does not re-trigger continuous validation
+
+**Date logged:** 2026-05-21
+**Found by:** Stage V verifier run M08.V (finding 🟢 #3)
+**Pass that surfaced it:** Wire
+**Category:** observability (stale validation badges after a JSON-tab edit / load)
+**Resolution status:** open
+
+### Description
+
+`src/lib/builderStore.ts:466` `replaceFramework: (fw) => set({ framework: fw })` — the action a valid `JsonView` JSON-tab edit and the Inspector's Load both call — does NOT call `scheduleValidation()`, unlike the three canvas-mutation actions `addNode` / `updateNode` / `connectEdge`. The M08.D2 phase doc (D2.3.4) specifies the debounced continuous-validation trigger fires on "every `framework` mutation"; `replaceFramework` is a `framework` mutation that omits it. After a JSON-tab edit or a `load_framework`, the canvas red badges (`builderStore.validation`) reflect the pre-edit state until the user clicks the explicit Validate button or makes a canvas edit.
+
+### Why it's debt not bug
+
+MVP §M8 criterion 6 (the canvas re-derives on a JSON edit) still passes — the `canvasNodes` / `canvasEdges` projection is unconditional and updates correctly. The explicit Inspector Validate button works. Only the *badge freshness* lags after a JSON / load path; a workaround (click Validate) exists. No incorrect computation, only stale display.
+
+### Recommended approach (when addressed)
+
+Add a `scheduleValidation()` call to `replaceFramework` (the same trigger `addNode` / `updateNode` / `connectEdge` use). One-line change in `src/lib/builderStore.ts`. Roll into any M09+ builder-store touch.
+
+## TD-020 — `builderStore.removeNode` is a permanent no-op stub
+
+**Date logged:** 2026-05-21
+**Found by:** Stage V verifier run M08.V (finding 🟢 #4)
+**Pass that surfaced it:** Multi-call invariants
+**Category:** extensibility (dead public-interface surface)
+**Resolution status:** open
+
+### Description
+
+`src/lib/builderStore.ts:498` `removeNode: () => set((s) => s)` is a typed no-op exposed on the `BuilderState` public interface, documented "node deletion is not in D2's scope; a later stage fills it" (ADR-0020 — Stage C ships the canvas-mutation actions as no-op stubs D1/D2 fill; `removeNode` is the one D1/D2 never filled). No component calls it (grep: zero non-store references), so it is harmless dead interface surface today.
+
+### Why it's debt not bug
+
+Node deletion is genuinely out of M08 scope — no MVP §M8 criterion requires it, and nothing calls `removeNode`, so the no-op cannot misbehave. The risk is latent: a future delete affordance wired to `removeNode` before it is implemented would silently no-op (no error, no deletion).
+
+### Recommended approach (when addressed)
+
+Implement `removeNode` (drop the node from `framework` + `nodePositions`, prune any edge referencing it) when node deletion enters scope, or remove it from the `BuilderState` interface until then. Roll into whichever milestone adds canvas node deletion.
+
+## TD-021 — `kind_to_ref` / `capability_kind_label` capability-label duplication (M08 simplify pass)
+
+**Date logged:** 2026-05-21
+**Found by:** M08.H closeout `<simplify_pass>` (code-reuse axis — RU-M08-1, RU-M08-2)
+**Pass that surfaced it:** N/A (closeout simplify pass)
+**Category:** structural
+**Resolution status:** open
+
+### Description
+
+Two related capability-label duplications surfaced in the M08 simplify pass. **RU-M08-1:** `const fn kind_to_ref(k: CapabilityKind) -> CapabilityKindRef` is a byte-identical five-arm match defined independently in two private `sdk` submodules — `crates/runtime-main/src/sdk/agent_sdk.rs:756` and `crates/runtime-main/src/sdk/event_pipeline.rs:322`. This is **pre-M08 duplication** (TD-007's class — `kind_to_ref`/`tier_to_ref` mapping growth) and was not introduced by M08; the simplify pass re-surfaced it. **RU-M08-2:** `const fn capability_kind_label(kind: CapabilityKindRef) -> &'static str` (`crates/runtime-main/src/builder/tester.rs:207`) hand-maps `CapabilityKindRef` to a snake_case label string — `CapabilityKindRef` is a hand-rolled `runtime-core` enum with no `Display` impl, so the Tester derives the label by hand.
+
+### Why it's debt not bug
+
+Both are correct today. `kind_to_ref`'s match is compiler-exhaustiveness-checked — a new `CapabilityKind` variant forces a compile error in both copies, so they cannot silently diverge. `capability_kind_label` is isolated, indirectly tested, and its comment already explains why it exists. No behavior risk.
+
+### Recommended approach (when addressed)
+
+Fold into TD-007's resolution: a single `pub(crate)` capability-label helper in `runtime-main/src/sdk/mod.rs` (or a `sdk/capability_labels.rs`) for `kind_to_ref`; for `capability_kind_label`, the right fix is a `Display` or `label()` impl on `CapabilityKindRef` in `runtime-core` — a cross-crate change best landed when `runtime-core`'s event types are next touched.
+
+## TD-022 — `BuilderToolNode` / `BuilderSkillNode` structural duplication (M08 simplify pass)
+
+**Date logged:** 2026-05-21
+**Found by:** M08.H closeout `<simplify_pass>` (code-reuse axis — RU-M08-3)
+**Pass that surfaced it:** N/A (closeout simplify pass)
+**Category:** structural
+**Resolution status:** open
+
+### Description
+
+`src/components/builder/nodes/BuilderToolNode.tsx` and `BuilderSkillNode.tsx` are structurally identical — `Handle(top) + NodeValidationBadge + div.{type}-node__name + Handle(bottom)`. The only differences are the CSS class names (`tool-node`/`skill-node`, `builder-tool-node`/`builder-skill-node`) and the `data-testid` prefix. A shared `BuilderLeafNode` wrapper taking `baseClass` / `label` / `testIdPrefix` would collapse the leaf node components.
+
+### Why it's debt not bug
+
+Both components render correctly and are 100%-covered. The CSS classes are intentionally distinct (`tool-node__name` is monospace, `skill-node__name` is italic), so the components are not byte-identical *presentations* — only structurally parallel. The net gain of collapsing two ~30-line files is small.
+
+### Recommended approach (when addressed)
+
+Re-evaluate at M09: if `BuilderHitlNode` and `BuilderHookNode` exhibit the same leaf-node shape (four leaf-alike components), extract a `BuilderLeafNode` wrapper. Touches `builderNodeTypes` registration and the class-name-querying tests. Skip if the four nodes diverge.
+
+## TD-023 — Builder canvas-projection / summary efficiency cluster (M08 simplify pass)
+
+**Date logged:** 2026-05-21
+**Found by:** M08.H closeout `<simplify_pass>` (efficiency axis — EFF-M08-1, EFF-M08-4, EFF-M08-5, EFF-M08-6)
+**Pass that surfaced it:** N/A (closeout simplify pass)
+**Category:** scalability
+**Resolution status:** open
+
+### Description
+
+Four immaterial-at-v0.1-scale efficiency findings. **EFF-M08-1** (`src/lib/builderStore.ts:327`): `canvasEdges()` rebuilds the `nodeIds` `Set` from a re-projected node list on every call. **EFF-M08-4** (`crates/runtime-main/src/builder/validate.rs:87`): `serde_json::from_value(doc.clone())` clones the whole JSON tree — `from_value` consumes the value, so the clone is forced by the `&Value` parameter; the Tauri command wrapper could pass an owned `Value` instead. **EFF-M08-5** (`crates/runtime-main/src/builder/summary.rs:111/114`): `parent_grants_for_agent` is re-computed once per child inside the spawn-edge loop — a parent with K children pays K re-computations. **EFF-M08-6** (`summary.rs:120`): `parent_caps.clone()` per child edge, pairing with EFF-M08-5.
+
+### Why it's debt not bug
+
+All four are correct. v0.1 framework sizes are tens of nodes and tens of spawn edges; the redundant work is microseconds. None is on a tight render loop that would be perceptible. The canvas projection's module-level memoization (correctly keyed on `framework`/`nodePositions` identity) already prevents the `useSyncExternalStore` infinite-loop hazard.
+
+### Recommended approach (when addressed)
+
+EFF-M08-5/6 is the only one worth a one-line hoist (compute `parent_grants_for_agent` once outside the inner `for child_id` loop in `summary.rs`); the rest are immaterial. Address opportunistically on any M09+ builder-backend touch, or leave until a framework grows to hundreds of nodes (a v1.0 multi-framework-comparison concern).
+
+## TD-024 — `builderStore` code-quality cluster (M08 simplify pass)
+
+**Date logged:** 2026-05-21
+**Found by:** M08.H closeout `<simplify_pass>` (code-quality axis — CQ-M08-1, CQ-M08-2, CQ-M08-3, CQ-M08-4)
+**Pass that surfaced it:** N/A (closeout simplify pass)
+**Category:** structural
+**Resolution status:** open
+
+### Description
+
+Four low/medium structural smells in the Builder store and crate surface. **CQ-M08-1** (`src/lib/builderStore.ts:484`): `updateNode` extracts the agent id with an ad-hoc `nodeId.replace(/^agent:/,'')` regex instead of the already-exported `parseNodeId` helper used elsewhere; the regex passes a non-agent id (e.g. `tool:Read`) through unchanged, causing a silent no-op match against `agents`. **CQ-M08-2** (`builderStore.ts:327`): `memoizedCanvasEdges` accepts a `nodeIds: Set<string>` parameter the memoization cache key ignores (the cache keys on `framework` alone) — a signature trap for a future caller. **CQ-M08-3** (`crates/runtime-main/src/builder/mod.rs:44`): `fold_outcome` / `load_verified_artifact` are re-exported from the `builder` crate surface but have no external consumer — unnecessary public-API surface. **CQ-M08-4** (`builderStore.ts:69`): `updateNode`'s `patch` parameter is `Record<string, unknown>` — stringly-typed; `Partial<Pick<Agent, 'role'|'model'|'allowed_tools'|'allowed_skills'|'spawns'>>` would compile-guard the keys.
+
+### Why it's debt not bug
+
+All four are correct under current callers. `updateNode`'s only callers (`NodeConfigPanel.tsx`) pass agent ids and known-correct `patch` keys; `memoizedCanvasEdges` has one caller passing the matching `nodeIds`; the over-exported seams are harmless. None touches a safety-critical surface, and none is a behavior change today.
+
+### Recommended approach (when addressed)
+
+Land at the next builder-store touch (M09+) alongside `removeNode`/TD-020: route `updateNode` through `parseNodeId` (CQ-M08-1 — the highest-value fix, since a filled-in `removeNode` could broaden the caller set); either drop the `nodeIds` parameter from `memoizedCanvasEdges` or document the cache ignores it (CQ-M08-2); narrow the `builder` crate re-exports (CQ-M08-3); type `patch` as a `Partial<Pick<Agent,…>>` (CQ-M08-4).
+
+## TD-025 — Smoke run too fast to observe streaming (M07-IRL 🟢 #1)
+
+**Date logged:** 2026-05-21
+**Found by:** post-M07.5 gate-7 IRL walk-through (`docs/M07-irl-findings.md` 🟢 #1); logged at the M08.H closeout (the M07-IRL routing to `docs/tech-debt.md` was not completed during the M07-IRL pass)
+**Pass that surfaced it:** N/A (post-merge IRL test)
+**Category:** observability
+**Resolution status:** open
+
+### Description
+
+The smoke prompt ("say only the word: hello") is a ~1-second round trip, so token streaming into the live graph is not perceptible — the agent node goes spawned → complete with nothing visibly streaming. Not a defect (the minimal prompt is by design and the end state verifies correctly), but the live-graph streaming surface is hard to observe out of the box.
+
+### Why it's debt not bug
+
+The smoke session works correctly and its end state is verified; the streaming pipeline is exercised by the M02/M03 tests. Only the *demo observability* of streaming is poor.
+
+### Recommended approach (when addressed)
+
+Ship a longer demo prompt, or a replay-at-speed control on the live graph. Cosmetic / demo-quality; queue for v1.0 or any milestone touching the smoke-session UX.
+
+## TD-026 — No bundled importable example artifact (M07-IRL 🟢 #4)
+
+**Date logged:** 2026-05-21
+**Found by:** post-M07.5 gate-7 IRL walk-through (`docs/M07-irl-findings.md` 🟢 #4); logged at the M08.H closeout
+**Pass that surfaced it:** N/A (post-merge IRL test)
+**Category:** other (out-of-box UX)
+**Resolution status:** open
+
+### Description
+
+The import URL field carries only a placeholder; the repo's own skills are `.md` files (the import pipeline validates JSON), and no example importable JSON artifact ships. A user cannot exercise the import feature out-of-the-box without sourcing or hosting a JSON artifact externally.
+
+### Why it's debt not bug
+
+The import pipeline works correctly against a valid JSON artifact (verified IRL with a hand-made gist). Only the first-run discoverability of the feature is poor.
+
+### Recommended approach (when addressed)
+
+Ship an example importable artifact in the repo (a minimal valid agent/tool/skill JSON), or pre-fill a working example URL in the import field. Pairs naturally with M09's Generators (a generated artifact is itself an importable example) or the §14 first-run UX work.
+
+## TD-027 — Graph minimap renders blank / unthemed (M07-IRL 🟢 #8)
+
+**Date logged:** 2026-05-21
+**Found by:** post-M07.5 gate-7 IRL walk-through (`docs/M07-irl-findings.md` 🟢 #8); logged at the M08.H closeout
+**Pass that surfaced it:** N/A (post-merge IRL test)
+**Category:** cosmetic
+**Resolution status:** open
+
+### Description
+
+The React Flow `MiniMap` on the live graph renders as a blank white square — it functions as a click-to-navigate control but shows no miniature node representation, and it is unthemed (white against the dark canvas).
+
+### Why it's debt not bug
+
+The minimap's navigation function works; only the miniature rendering + theming is missing. The live graph itself renders correctly.
+
+### Recommended approach (when addressed)
+
+Pass a `nodeColor` / `nodeStrokeColor` callback to React Flow's `<MiniMap>` keyed on node kind, and theme the minimap background to the dark canvas tokens. Small CSS + one prop. Applies to both the live `GraphCanvas` and (if a minimap is added) the Builder canvas; roll into any M09+ canvas touch.

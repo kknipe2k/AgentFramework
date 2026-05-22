@@ -673,7 +673,9 @@ describe('graphStore.applyEvent', () => {
       { type: 'budget_downshift', from_model: 'a', to_model: 'b', reason: 'r' },
       { type: 'budget_suspended', spent_usd: 9, cap_usd: 10 },
       { type: 'budget_exceeded', spent_usd: 11, cap_usd: 10 },
-      { type: 'token_usage', input: 100, output: 50, model: 'haiku', cost_usd: 0.01 },
+      // M08.A: token_usage moved to the dedicated "token_usage in/out
+      // split (M07-IRL #2)" block below — it now mutates the running
+      // AgentNode's tokensIn/tokensOut, so it is no longer a node no-op.
     ];
     for (const e of noopVariants) {
       useGraphStore.getState().applyEvent(e);
@@ -1156,6 +1158,84 @@ describe('graphStore.applyEvent', () => {
     expect(tool.data).toMatchObject({ tokensIn: 0, tokensOut: 0 });
     const agent = useGraphStore.getState().nodes.find((n) => n.id === 'agent:a1')!;
     expect(agent.data).toMatchObject({ tokensIn: 0, tokensOut: 0 });
+  });
+
+  // ── M08.A: token_usage in/out split (M07-IRL #2) ──
+  // The smoke-run inspector showed tokensIn:0 / tokensOut:0 against a
+  // non-zero tokensTotal — the renderer dropped the token_usage event
+  // (a no-op switch arm). The SDK emits AgentEvent::TokenUsage and the
+  // drone projects it correctly; the drop is renderer-side. TokenUsage
+  // carries no agent_id (event.v1.json), so the reducer attributes the
+  // usage to the running agent — the single-active-agent assumption
+  // tool_result already relies on.
+
+  it('token_usage_event_populates_running_agent_tokens_in_and_out', () => {
+    useGraphStore.getState().applyEvent(spawnA);
+    useGraphStore.getState().applyEvent({
+      type: 'token_usage',
+      input: 120,
+      output: 48,
+      model: 'haiku',
+      cost_usd: 0.01,
+    });
+    const agent = useGraphStore.getState().nodes.find((n) => n.id === 'agent:a1')!;
+    expect(agent.data).toMatchObject({ tokensIn: 120, tokensOut: 48 });
+  });
+
+  it('token_usage_event_accumulates_across_multiple_turns', () => {
+    useGraphStore.getState().applyEvent(spawnA);
+    // A multi-turn agent-with-tools loop emits one token_usage per turn.
+    useGraphStore.getState().applyEvent({
+      type: 'token_usage',
+      input: 100,
+      output: 40,
+      model: 'haiku',
+      cost_usd: 0.01,
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'token_usage',
+      input: 30,
+      output: 12,
+      model: 'haiku',
+      cost_usd: 0.004,
+    });
+    const agent = useGraphStore.getState().nodes.find((n) => n.id === 'agent:a1')!;
+    expect(agent.data).toMatchObject({ tokensIn: 130, tokensOut: 52 });
+  });
+
+  it('token_usage_event_with_no_running_agent_is_a_noop', () => {
+    const before = useGraphStore.getState();
+    useGraphStore.getState().applyEvent({
+      type: 'token_usage',
+      input: 99,
+      output: 99,
+      model: 'haiku',
+      cost_usd: 0.01,
+    });
+    const after = useGraphStore.getState();
+    expect(after.nodes).toEqual(before.nodes);
+  });
+
+  it('agent_complete_still_sets_tokens_total_and_does_not_zero_in_out', () => {
+    useGraphStore.getState().applyEvent(spawnA);
+    useGraphStore.getState().applyEvent({
+      type: 'token_usage',
+      input: 200,
+      output: 75,
+      model: 'haiku',
+      cost_usd: 0.02,
+    });
+    useGraphStore.getState().applyEvent({
+      type: 'agent_complete',
+      agent_id: 'a1',
+      result: 'done',
+      tokens_total: 275,
+    });
+    const agent = useGraphStore.getState().nodes.find((n) => n.id === 'agent:a1')!;
+    // agent_complete sets tokensTotal without clobbering the in/out
+    // split token_usage accumulated; in + out is consistent with the
+    // total a real run reports (gotcha #66 — not merely non-zero).
+    expect(agent.data).toMatchObject({ tokensIn: 200, tokensOut: 75, tokensTotal: 275 });
   });
 
   // ── M04 Stage D: verify / hook / rail event-driven mutations (spec §4a) ──

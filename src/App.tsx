@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { ApprovalPanel } from './components/ApprovalPanel';
 import { BudgetHeaderBar } from './components/BudgetHeaderBar';
+import { BuilderShell } from './components/builder/BuilderShell';
+import { ViewSwitch, type AppView } from './components/builder/ViewSwitch';
 import { GapPanel } from './components/GapPanel';
 import { GraphCanvas } from './components/GraphCanvas';
 import { HITLModal } from './components/HITLModal';
@@ -10,11 +12,13 @@ import { ImportPanel } from './components/ImportPanel';
 import { InspectorPanel } from './components/InspectorPanel';
 import { MCPServerSettings } from './components/MCPServerSettings';
 import { RecoveryDialog } from './components/RecoveryDialog';
+import { SettingsPanel } from './components/SettingsPanel';
 import { SetupPanel } from './components/SetupPanel';
 import { SmokeButton } from './components/SmokeButton';
 import { SqlInspector } from './components/SqlInspector';
 import { UncertaintyPrompt } from './components/UncertaintyPrompt';
 import {
+  invokeHasApiKey,
   invokeReplaySession,
   invokeRunSmokeSession,
   invokeSetApiKey,
@@ -47,12 +51,69 @@ if (typeof window !== 'undefined') {
   window.__graphStore = useGraphStore;
 }
 
+interface RuntimeLayoutProps {
+  hasKey: boolean;
+  running: boolean;
+  error: string | null;
+  onSetKey: (key: string) => Promise<void>;
+  onSmoke: () => Promise<void>;
+  lastSessionId: string | null;
+}
+
+// RuntimeLayout — the live-execution view (SetupPanel + SmokeButton +
+// the `graph-layout` panels + the modal/dialog overlays). Extracted
+// verbatim from App's return so the Runtime view is a clean unit and the
+// M08.C Builder view is a sibling, not a rewrite. Behavior is unchanged:
+// App still owns the hasKey / running / error state, the
+// subscribeAgentEvents effect, and the replay-on-mount.
+function RuntimeLayout({
+  hasKey,
+  running,
+  error,
+  onSetKey,
+  onSmoke,
+  lastSessionId,
+}: RuntimeLayoutProps): JSX.Element {
+  return (
+    <>
+      <SetupPanel onSave={onSetKey} />
+      <SmokeButton disabled={!hasKey || running} onClick={onSmoke} />
+      {error && <p className="error">{error}</p>}
+      <div className="graph-layout">
+        <GraphCanvas />
+        <InspectorPanel />
+        <ApprovalPanel />
+        <HITLPanel />
+        <GapPanel />
+        <MCPServerSettings />
+        <ImportPanel />
+      </div>
+      <HITLModal />
+      <HITLToast />
+      <RecoveryDialog />
+      <UncertaintyPrompt sessionId={lastSessionId ?? ''} />
+      <SqlInspector />
+    </>
+  );
+}
+
 export function App(): JSX.Element {
+  const [view, setView] = useState<AppView>('runtime');
   const [hasKey, setHasKey] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // M07-IRL #7: seed `hasKey` from the OS keychain so a key entered in
+    // a prior session survives an app restart. The root cause of the
+    // finding was the absent startup read — `hasKey` was hardcoded false
+    // and only flipped inside handleSetKey.
+    void invokeHasApiKey()
+      .then((present) => setHasKey(present))
+      .catch((e) => {
+        console.error('has_api_key error:', e);
+      });
+
     // Replay-on-mount: if a previous session id was stashed in
     // localStorage by a prior session_start, ask main to read its
     // signal log and re-emit AgentEvents through the existing
@@ -113,23 +174,20 @@ export function App(): JSX.Element {
     <main>
       <BudgetHeaderBar />
       <h1>Agent Runtime — M03 live graph</h1>
-      <SetupPanel onSave={handleSetKey} />
-      <SmokeButton disabled={!hasKey || running} onClick={handleSmoke} />
-      {error && <p className="error">{error}</p>}
-      <div className="graph-layout">
-        <GraphCanvas />
-        <InspectorPanel />
-        <ApprovalPanel />
-        <HITLPanel />
-        <GapPanel />
-        <MCPServerSettings />
-        <ImportPanel />
-      </div>
-      <HITLModal />
-      <HITLToast />
-      <RecoveryDialog />
-      <UncertaintyPrompt sessionId={lastSessionId ?? ''} />
-      <SqlInspector />
+      <ViewSwitch value={view} onChange={setView} />
+      <SettingsPanel />
+      {view === 'runtime' ? (
+        <RuntimeLayout
+          hasKey={hasKey}
+          running={running}
+          error={error}
+          onSetKey={handleSetKey}
+          onSmoke={handleSmoke}
+          lastSessionId={lastSessionId}
+        />
+      ) : (
+        <BuilderShell />
+      )}
     </main>
   );
 }

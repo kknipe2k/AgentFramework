@@ -31,6 +31,7 @@ export default tseslint.config(
       'src/types/budget.ts',
       'src/types/capability.ts',
       'src/types/mcp.ts',
+      'src/types/framework.ts',
     ],
   },
   js.configs.recommended,
