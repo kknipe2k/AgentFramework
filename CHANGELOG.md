@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed — M08.5 Stage A.fix (revive the real-app tauri-driver regression gate)
+
+- **The `e2e-tauri-driver` CI job is revived as a required, blocking
+  gate** (ADR-0021, Accepted). It drives the built Tauri binary via
+  `tauri-driver` + WebdriverIO on `ubuntu-latest` + `windows-latest` —
+  the first automated gate that exercises the real desktop window (the
+  Playwright `e2e` job mocks `@tauri-apps/api` in a plain Chromium and
+  is structurally blind to Tauri-shell behavior). The job had been
+  `if: false` since M03 PR #47; the M03 disable was re-diagnosed to two
+  concrete config bugs — the app-binary path in `wdio.conf.ts` (the
+  binary is emitted to the workspace-root `target/`, not
+  `src-tauri/target/`) and a missing Windows `msedgedriver` setup — not
+  a wdio/`tauri-driver` version incompatibility. The six existing
+  `tests/e2e-tauri/smoke.e2e.ts` tests are the gate's coverage; one
+  selector drift (`table.sql-results` → `table.sql-inspector__results`)
+  was fixed. macOS stays on the Playwright `e2e` job (`tauri-driver`
+  has no WKWebView driver — gotcha #23). Discharges the M03 PR #47
+  carry-forward (gotcha #54).
+
 ### Changed — M08 Stage H (closeout — gap-analysis, summary, simplify pass, coverage-policy reconciliation)
 
 - **M08 milestone closeout.** `docs/build-prompts/retrospectives/M08-summary.md`

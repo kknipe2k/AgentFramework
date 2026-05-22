@@ -88,7 +88,7 @@ describe('Tauri shell E2E — M03 live graph', () => {
     // response — what we're asserting at the E2E layer.
     await browser.waitUntil(
       async () => {
-        const tableCount = await $$('table.sql-results').length;
+        const tableCount = await $$('table.sql-inspector__results').length;
         const errorCount = await $$('p[role="alert"]').length;
         return tableCount > 0 || errorCount > 0;
       },

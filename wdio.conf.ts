@@ -28,7 +28,14 @@ if (process.platform === 'darwin') {
 
 const TAURI_DRIVER_PORT = 4444;
 const APP_BIN_NAME = process.platform === 'win32' ? 'agent-runtime.exe' : 'agent-runtime';
-const APP_BIN_PATH = resolve(process.cwd(), 'src-tauri', 'target', 'release', APP_BIN_NAME);
+// `src-tauri` is a member of the Cargo workspace rooted at the repo root
+// (root `Cargo.toml` `members = [.., "src-tauri"]`), so `cargo` / `tauri
+// build` emit the binary to the SHARED workspace target dir at the repo
+// root — `target/release/`, NOT `src-tauri/target/release/`. Handing
+// tauri-driver the latter is the M03 PR #47 Linux failure ("could not
+// exec the app binary"). `process.cwd()` is the repo root: wdio runs from
+// there via the `test:e2e:tauri` npm script.
+const APP_BIN_PATH = resolve(process.cwd(), 'target', 'release', APP_BIN_NAME);
 
 let tauriDriverProc: ChildProcess | undefined;
 

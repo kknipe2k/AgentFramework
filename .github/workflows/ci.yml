@@ -567,34 +567,27 @@ jobs:
           retention-days: 7
 
   # ────────────────────────────────────────────────────────────────────────
-  # DISABLED — deferred to M04 carry-forward.
+  # Real-app regression gate (ADR-0021). Drives the built Tauri binary via
+  # `tauri-driver` + WebdriverIO on Linux + Windows — the only gate that
+  # exercises the real desktop window. The Playwright `e2e` job above mocks
+  # `@tauri-apps/api` in a plain Chromium and is structurally blind to
+  # Tauri-shell behavior (native drag-drop, WebView2 events, the real
+  # window). macOS is excluded — `tauri-driver` has no WKWebView driver
+  # (gotcha #23); macOS renderer logic is covered by the Playwright `e2e`
+  # job. A failure blocks the workflow — the same standing as `e2e`.
   #
-  # Disabled per CLAUDE.md §7 self-correction-budget escalation on PR #47.
-  # Three iterations on `wdio.conf.ts` capabilities did not clear both
-  # platforms; iteration history:
-  #   1. browserName: 'edge' / 'webkit2gtk'   — failed both platforms
-  #   2. browserName: 'wry'                   — Linux: capability mismatch
-  #   3. browserName omitted (per official docs) — Linux: tauri-driver could
-  #      not exec the app binary; Windows: msedgedriver not on PATH (fell
-  #      back to treating the app path as the Edge binary)
-  # Each fix advanced the error but never cleared both Linux + Windows.
-  #
-  # Upstream wdio v9 + tauri-driver 2.x compat is unresolved:
-  #   - https://github.com/tauri-apps/tauri/issues/10670
-  #   - https://github.com/tauri-apps/tauri/issues/9203
-  # The only confirmed-working community example pins wdio@7.
-  #
-  # Deferred to M04. The renderer-level Playwright `e2e` job above remains
-  # the E2E proof for M03's deliverables (live graph, VDR projection, SQL
-  # inspector, replay-on-mount); tauri-driver was an additive desktop-shell
-  # test, not an M03 acceptance gate. The wdio.conf.ts + tests/e2e-tauri/**
-  # infrastructure stays in the tree so `npm run test:e2e:tauri` is still
-  # available locally for M04 fix work.
+  # Revived at M08.5 Stage A.fix after being `if: false` since M03 PR #47.
+  # The M03 disable was diagnosed (grep-verified) to two concrete config
+  # bugs, NOT a wdio/tauri-driver version incompatibility: (1) the app
+  # binary path — `src-tauri` is a Cargo workspace member so the binary is
+  # emitted to the workspace-root `target/`, not `src-tauri/target/`
+  # (fixed in `wdio.conf.ts`); (2) no Windows msedgedriver setup (fixed by
+  # the `msedgedriver-tool` step below).
   # ────────────────────────────────────────────────────────────────────────
   e2e-tauri-driver:
     name: E2E (Tauri-driver desktop shell)
     needs: [detect-cargo, frontend]
-    if: false && needs.detect-cargo.outputs.has_cargo == 'true' && needs.detect-cargo.outputs.has_npm == 'true'
+    if: needs.detect-cargo.outputs.has_cargo == 'true' && needs.detect-cargo.outputs.has_npm == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -628,6 +621,21 @@ jobs:
             curl \
             wget \
             file
+      # Windows: tauri-driver proxies WebDriver requests to msedgedriver,
+      # which must be on PATH and version-matched to the runner's Edge
+      # WebView2. The M03 disable's Windows failure was exactly this —
+      # msedgedriver absent from PATH, so tauri-driver fell back to
+      # treating the app binary as the Edge executable. msedgedriver-tool
+      # downloads the version-matched driver. The `run:` block is quoted
+      # verbatim from the official Tauri WebDriver CI reference (gotcha
+      # #32): tauri-apps/tauri-docs @ a9d8348ff518e4a052bcd7435c07e34a9dfe1af1,
+      # src/content/docs/develop/Tests/WebDriver/ci.md.
+      - name: Install msedgedriver (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cargo install --git https://github.com/chippers/msedgedriver-tool
+          & "$HOME/.cargo/bin/msedgedriver-tool.exe"
+          $PWD.Path >> $env:GITHUB_PATH
       - run: npm ci
       # tauri-driver is the WebDriver bridge for Tauri 2.x apps. The npm
       # package distributes prebuilt binaries; the cargo binary is the older
