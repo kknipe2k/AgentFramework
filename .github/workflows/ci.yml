@@ -165,10 +165,13 @@ jobs:
     name: Detect Cargo workspace
     runs-on: ubuntu-latest
     outputs:
-      has_cargo: ${{ steps.check.outputs.has_cargo }}
-      has_npm:   ${{ steps.check.outputs.has_npm }}
+      has_cargo:    ${{ steps.check.outputs.has_cargo }}
+      has_npm:      ${{ steps.check.outputs.has_npm }}
+      code_changed: ${{ steps.changed.outputs.code_changed }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - id: check
         run: |
           if [ -f "Cargo.toml" ]; then
@@ -181,11 +184,50 @@ jobs:
           else
             echo "has_npm=false" >> "$GITHUB_OUTPUT"
           fi
+      # Docs-only short-circuit. The heavy code jobs (rust, cargo-audit,
+      # cargo-deny, fuzz-smoke, coverage, frontend, e2e) additionally
+      # gate on `code_changed`. A change touching ONLY docs/** or a
+      # root-level *.md skips them — there is no code to gate. A skipped
+      # job reports "success", so a docs-only PR stays mergeable even
+      # when these are required status checks (GitHub treats a skipped
+      # required check as passing). Anything outside docs/** + root *.md
+      # — schemas/, examples/, .github/, crates/, src/, src-tauri/,
+      # tests/, Cargo.*, package*.json, bin/ — runs the full suite. The
+      # always-on jobs (schema-validate, markdown-lint, spec-link-check,
+      # stage-prompts-validate, gap-analysis-append-only) run regardless.
+      # Fail-safe: if the diff cannot be computed, code_changed=true.
+      - id: changed
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            files=$(git diff --name-only "${{ github.event.pull_request.base.sha }}...HEAD")
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            before="${{ github.event.before }}"
+            if [ "$before" != "0000000000000000000000000000000000000000" ] \
+               && git cat-file -e "$before" 2>/dev/null; then
+              files=$(git diff --name-only "$before" HEAD)
+            else
+              files=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+            fi
+          else
+            files=""
+          fi
+          echo "Changed files:"
+          echo "$files"
+          code_changed=true
+          if [ -n "$files" ]; then
+            non_docs=$(echo "$files" | grep -vE '^docs/|^[^/]+\.md$' || true)
+            if [ -z "$non_docs" ]; then
+              code_changed=false
+            fi
+          fi
+          echo "code_changed=$code_changed" >> "$GITHUB_OUTPUT"
+          echo "Result: code_changed=$code_changed"
 
   rust:
     name: Rust ${{ matrix.os }} / ${{ matrix.toolchain }}
     needs: detect-cargo
-    if: needs.detect-cargo.outputs.has_cargo == 'true'
+    if: needs.detect-cargo.outputs.has_cargo == 'true' && needs.detect-cargo.outputs.code_changed == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -246,7 +288,7 @@ jobs:
   cargo-audit:
     name: cargo audit
     needs: detect-cargo
-    if: needs.detect-cargo.outputs.has_cargo == 'true'
+    if: needs.detect-cargo.outputs.has_cargo == 'true' && needs.detect-cargo.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -285,7 +327,7 @@ jobs:
   cargo-deny:
     name: cargo deny
     needs: detect-cargo
-    if: needs.detect-cargo.outputs.has_cargo == 'true'
+    if: needs.detect-cargo.outputs.has_cargo == 'true' && needs.detect-cargo.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -294,7 +336,7 @@ jobs:
   fuzz-smoke:
     name: Fuzz smoke (30s)
     needs: detect-cargo
-    if: needs.detect-cargo.outputs.has_cargo == 'true'
+    if: needs.detect-cargo.outputs.has_cargo == 'true' && needs.detect-cargo.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -332,7 +374,7 @@ jobs:
   coverage:
     name: Coverage (Rust)
     needs: detect-cargo
-    if: needs.detect-cargo.outputs.has_cargo == 'true'
+    if: needs.detect-cargo.outputs.has_cargo == 'true' && needs.detect-cargo.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -522,7 +564,7 @@ jobs:
   frontend:
     name: Frontend (TypeScript)
     needs: detect-cargo
-    if: needs.detect-cargo.outputs.has_npm == 'true'
+    if: needs.detect-cargo.outputs.has_npm == 'true' && needs.detect-cargo.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -544,7 +586,7 @@ jobs:
   e2e:
     name: E2E (Playwright renderer)
     needs: [detect-cargo, frontend]
-    if: needs.detect-cargo.outputs.has_npm == 'true'
+    if: needs.detect-cargo.outputs.has_npm == 'true' && needs.detect-cargo.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
