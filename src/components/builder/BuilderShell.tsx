@@ -4,6 +4,7 @@ import { Inspector } from './Inspector';
 import { JsonView } from './JsonView';
 import { NodeConfigPanel } from './NodeConfigPanel';
 import { Palette } from './Palette';
+import { TesterModal } from './TesterModal';
 
 /** The center-region editor tab — the visual canvas or the raw JSON. */
 type CenterTab = 'canvas' | 'json';
@@ -22,6 +23,10 @@ const CENTER_TABS: readonly { id: CenterTab; label: string }[] = [
  * a Canvas | JSON tab toggle — the JSON tab is just another editor over
  * `builderStore.framework`, exactly as the canvas is (ADR-0020) — and
  * the Inspector region mounts the live `Inspector`.
+ *
+ * M08.F2 mounts the `TesterModal` — a non-blocking modal that renders
+ * over the shell on `builderStore.testerOpen` (the Inspector's Test
+ * button); it returns `null` while closed.
  */
 export function BuilderShell(): JSX.Element {
   const [centerTab, setCenterTab] = useState<CenterTab>('canvas');
@@ -58,6 +63,8 @@ export function BuilderShell(): JSX.Element {
       <aside className="builder-shell__inspector" data-testid="builder-inspector-region">
         <Inspector />
       </aside>
+      {/* The Tester modal — renders over the shell on testerOpen (F2). */}
+      <TesterModal />
     </div>
   );
 }

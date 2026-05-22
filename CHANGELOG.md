@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M08 Stage F2 (Tester modal renderer)
+
+- **`src/components/builder/TesterModal.tsx`** — the Builder Tester modal
+  (spec Phase 9; MVP §M8 criterion 5; ADR-0019). Opens on
+  `builderStore.testerOpen` (Stage E's Inspector Test button); takes a
+  natural-language task; runs the candidate framework — straight from
+  the canvas, no disk round-trip — through Stage F1's `test_framework`;
+  and renders the run: a smaller graph pane + the result surfaces (the
+  pass/fail verdict, capability violations as **test-failure lines**
+  rather than HITL prompts per F1.3.3, token in/out/total + timing, and
+  the VDR record). Discard-on-close is the default; the explicit
+  **"Promote to main session"** affordance is the only persist path —
+  it replays the run's trace into the live `useGraphStore`.
+- **`src/components/builder/TesterGraphPane.tsx`** — the Tester's
+  smaller graph pane. Reuses the live-graph rendering verbatim (the
+  module-level 11-entry `nodeTypes` map + the pure `layoutGraph` dagre
+  pass) over a graph store **scoped to the test session** — a test run
+  never writes into the live `useGraphStore` module singleton.
+- **`createGraphStore`** (`src/lib/graphStore.ts`) — the graph-store
+  factory. `useGraphStore` (the live runtime graph) is now built from
+  it; `builderStore.ts`'s `useTestGraphStore` is a second, independent
+  instance reusing the exact `applyEvent` reducer. Behavior-neutral
+  refactor — the live store is unchanged.
+- **`useTestGraphStore`** (`src/lib/builderStore.ts`) — the Tester's
+  scoped graph store; `closeTester` clears it (discard-on-close).
+- **`testFramework`** + the `TestOutcome` / `CapabilityFailure` /
+  `TokenSpend` / `WireDuration` TS types (`src/lib/ipc.ts`) — the typed
+  wrapper over Stage F1's `test_framework` command and the hand-mirrored
+  serde shape it returns (the `McpTool` / `McpServerSummary` precedent).
+  `timing` crosses the bridge as serde's Duration `{ secs, nanos }`
+  struct, folded to a millisecond label by the modal.
+- **`tests/unit/components/builder/TesterModal.test.tsx`** +
+  **`tests/e2e/tester_modal.spec.ts`** — the vitest + Playwright suites
+  for the modal, the scoped-graph invariant (a run never touches the
+  live singleton), discard-on-close, and the gotcha #67 CSS contract.
+
 ### Added — M08 Stage F1 (Tester backend — isolated session + the M07.V Dec-6 discharge)
 
 - **`crates/runtime-main/src/builder/tester.rs`** — the Tester backend

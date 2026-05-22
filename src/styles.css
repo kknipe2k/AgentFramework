@@ -1702,3 +1702,184 @@ p.error {
   color: var(--node-error);
   border-top: 1px solid var(--node-error);
 }
+
+/* ── M08.F2 Tester modal (spec Phase 9; ADR-0019) ────────────────────
+   A non-blocking modal — a fixed, centered panel over the Builder
+   shell; closing it discards the run (discard-on-close). Theme-token
+   driven (--node-*) per gotcha #67 + M07-IRL #3. */
+.tester-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  width: 540px;
+  max-width: 92vw;
+  max-height: 88vh;
+  background: var(--node-bg);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.tester-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid var(--node-base-border);
+}
+
+.tester-modal__header h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--node-fg);
+}
+
+.tester-modal__close {
+  background: none;
+  border: none;
+  color: var(--node-fg-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tester-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.8rem;
+  overflow-y: auto;
+}
+
+.tester-modal__task-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 56px;
+  resize: vertical;
+  padding: 0.5rem;
+  font-family: inherit;
+  font-size: 0.8rem;
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+}
+
+.tester-modal__run {
+  align-self: flex-start;
+  padding: 0.35rem 1rem;
+  font-size: 0.8rem;
+  background: var(--node-active);
+  color: var(--node-hitl);
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.tester-modal__run:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tester-modal__error {
+  margin: 0;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.78rem;
+  color: var(--node-error);
+  background: var(--node-bg-alt);
+  border-left: 3px solid var(--node-error);
+  border-radius: 3px;
+}
+
+.tester-graph-pane {
+  height: 220px;
+  background: var(--node-bg-alt);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+}
+
+.tester-result {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.6rem;
+  font-size: 0.78rem;
+  background: var(--node-bg-alt);
+  border: 1px solid var(--node-base-border);
+  border-left-width: 3px;
+  border-radius: 3px;
+}
+
+.tester-result--pass {
+  border-left-color: var(--node-complete);
+}
+
+.tester-result--fail {
+  border-left-color: var(--node-error);
+}
+
+.tester-result__verdict {
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--node-fg);
+}
+
+.tester-result--pass .tester-result__verdict {
+  color: var(--node-complete);
+}
+
+.tester-result--fail .tester-result__verdict {
+  color: var(--node-error);
+}
+
+.tester-capability-failures {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.tester-capability-failure {
+  padding: 0.3rem 0.4rem;
+  color: var(--node-error);
+  background: var(--node-bg);
+  border-radius: 3px;
+}
+
+.tester-result__tokens {
+  color: var(--node-fg-muted);
+}
+
+.tester-result__vdr {
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  padding: 0.4rem;
+  font-size: 0.72rem;
+  background: var(--node-bg);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+}
+
+.tester-result__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.tester-promote {
+  padding: 0.3rem 0.8rem;
+  font-size: 0.78rem;
+  background: var(--node-complete);
+  color: var(--node-hitl);
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
