@@ -182,6 +182,27 @@ signal→`token_usage` projector, INSIDE the runtime-drone ≥95 gate
 transaction as `vdr` + `plan_projector`; idempotent via PK = the
 contributing signal id.
 
+**runtime-main `builder`** (M08.B/F1, measured Windows-local): the new
+`crates/runtime-main/src/builder/` module — INSIDE the existing
+runtime-main ≥95 package gate, NOT a separate `cargo llvm-cov
+--package` gate and NOT excluded. `validate.rs` 100% line (M08.B);
+`persist.rs` 97.67% line (M08.B; 1 missed = the non-UTF-8
+directory-entry `continue` in `read_companions`, unreachable on a
+normal filesystem); `summary.rs` 96.23% line (M08.B; 2 missed in the
+`dedup_sorted` / cold paths); `error.rs` is `thiserror`-derive-only
+(no instrumentable lines; the `From<FrameworkLoadError>` conversion is
+forward-looking surface). `tester.rs` 93.52% line (M08.F1 — the
+isolated-session Tester; residual missed lines are test-scaffold stub
+methods the run loop never invokes + the rare `SdkError`-infra error
+map; the package gate 96.57% ≥95 holds). The whole module is pure /
+seam / `tempfile`-tested — every filesystem call is `&Path`-
+parameterised; the OS-touching wrappers (`test_framework`, the drone
+spawn, teardown) live in `src-tauri/src/commands.rs`, not in the
+`builder` module — so M08 added **no new `--ignore-filename-regex`
+exclusion**. The Builder backend is exercised end-to-end by
+`crates/runtime-main/tests/builder.rs` + the assembled Tester
+regression `crates/runtime-main/tests/tester_isolated_session.rs`.
+
 ---
 
 ## C. Per-milestone exclusion history & carry-forwards (append-only ledger)
@@ -369,6 +390,48 @@ History is immutable (a measurement true for M0X stays true for M0X).
   CI-parity correction so CI measures the same runtime-main surface as
   the local §6 gate. After this fix all five surfaces — §A, CLAUDE.md
   §5, CLAUDE.md §6, `codecov.yml`, `ci.yml` — are byte-consistent.
+- **M08 (closeout `<coverage_policy_reconciliation>` — Stage H)** — **no
+  threshold and no `--ignore-filename-regex` value changed anywhere in
+  M08.** M08 added two modules to the existing **runtime-main ≥95**
+  package gate but **no new exclusion**, per stage:
+  - **M08.A** — `crates/runtime-main/src/plan/plan_loop.rs` (the M04
+    `plan_loop` driver shell) is new, pure-logic, `tempfile`-free, 100%
+    line — INSIDE the runtime-main ≥95 gate, not excluded. `key_store.rs`
+    gained one thin-wrapper line (`has_api_key`) untested by design —
+    the same OS-keychain holdout as `read_api_key`/`write_api_key`/
+    `delete_api_key` (the §A note already covers `key_store.rs`); the
+    package gate absorbs it (95.53% ≥95). The `runtime-mcp` `stdio.rs`
+    `resolve_program` addition is inside the already-excluded
+    `transport/stdio.rs` (Category-3 OS-call holdout). No exclusion or
+    threshold change; no four-mirror change.
+  - **M08.B** — the new `crates/runtime-main/src/builder/` module
+    (`validate.rs`/`persist.rs`/`summary.rs`/`error.rs`) entered the
+    runtime-main ≥95 package gate. It is **not** a new `cargo llvm-cov
+    --package` gate — it is a module *inside* the existing runtime-main
+    gate, so no §6 command, no §5 category, and no `codecov.yml` change.
+    Pure / seam / `&Path`+`tempfile`-tested — **no new exclusion** (the
+    M07.B `skills_lock` precedent). runtime-main aggregate 96.72%. §B
+    baseline appended.
+  - **M08.C / D1 / D2 / E / F2 / G** — renderer-only stages; no
+    `crates/**` or gated `src-tauri/src/` code touched (the
+    `crates/xtask/src/main.rs` + `src-tauri/src/main.rs` C edits are in
+    the coverage-excluded `src.main\.rs` pattern). No Rust coverage gate
+    moved; the Vitest renderer gate (≥80% on `src/`) held every stage
+    (97.07–97.38% line).
+  - **M08.F1** — `crates/runtime-main/src/builder/tester.rs` (the
+    isolated-session Tester) entered the runtime-main ≥95 package gate.
+    Pure / seam / `tempfile`-tested; the OS-touching wrapper
+    (`test_framework`, drone spawn, teardown) lives in
+    `src-tauri/src/commands.rs` (the §D Tauri patch-gate surface), NOT
+    in `tester.rs` — so **no new exclusion**, no four-mirror change.
+    `tester.rs` itself 93.52% line; runtime-main aggregate 96.57% ≥95.
+    §B baseline appended.
+  The M08.H reconciliation appends the §B `runtime-main builder`
+  per-module baseline (above) and this §C entry. The four canonical
+  mirrors — CLAUDE.md §5 exclusion-category list, CLAUDE.md §6
+  `cargo llvm-cov` commands, `codecov.yml`, and §A above — were
+  **unchanged by M08** and are verified byte-consistent as of M08.H.
+  No drift found.
 
 ---
 

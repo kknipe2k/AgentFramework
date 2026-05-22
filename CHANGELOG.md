@@ -6,6 +6,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed — M08 Stage H (closeout — gap-analysis, summary, simplify pass, coverage-policy reconciliation)
+
+- **M08 milestone closeout.** `docs/build-prompts/retrospectives/M08-summary.md`
+  aggregates Stages A, B, C, D1, D2, E, F1, F2, G + the M08.V verifier
+  (verdict: "Pattern held but with friction"; aggregate Process
+  37.9/40, Product 37.8/40, Pattern 28.9/35; deliverable time-box
+  ~0.73×). The immutable M08 `docs/gap-analysis.md` entry (six sections
+  + gotchas-graduation A–G + V + the simplify-pass subsection) records
+  spec Phase 9 delivered — the Workbench / Builder Canvas (ADR-0020),
+  the sandboxed Tester (ADR-0019), the Settings panel — and the
+  **entire** post-M07 carry-forward backlog discharged: M07.V 🟡
+  #2/#3/#4/#5 RESOLVED, M07-IRL #5/#2/#3/#6/#7 RESOLVED, M06.5 IRL
+  🟡-1..4 RESOLVED, the M04 `plan_loop` driver shell RESOLVED-as-
+  contracted. All eight MVP §M8 acceptance criteria cited with
+  file:line (criterion 5 is 4/5 — `TestOutcome.vdr` structurally dead).
+- **M08.V verifier handoff** — 0🔴 / 2🟡 / 2🟢 (a clean handoff, no
+  D.fix, no waiver). The two 🟡 (`TestOutcome.vdr` always `Value::Null`;
+  `plan_loop`/`drive_plan` has no production caller) carry to M09 Stage
+  A; the two 🟢 are `docs/tech-debt.md` TD-019 / TD-020. M06.5 IRL 🔴-1
+  (MCP-registry) is recorded re-confirmable in the post-M08 IRL pass
+  since Stage G unblocked the Promoted tier.
+- **Spec refinements recorded** — the §1c-multi-session-vs-Tester-
+  isolated-session clarification (the Tester is a sequential build-time
+  throwaway session, NOT the §0d-❌ §1c concurrent-session pool —
+  ADR-0019) and the `validate_framework` command-return-vs-spec-§9-
+  "posts events" refinement (continuous validation is request/response;
+  IPC matured to synchronous command returns).
+- **v1.8 `<coverage_policy_reconciliation>`.** `docs/coverage-policy.md`
+  §B per-module baseline (the new `runtime-main` `builder` module —
+  `validate.rs`/`persist.rs`/`summary.rs`/`tester.rs`) + a §C M08
+  milestone entry appended. **No threshold and no `--ignore-filename-
+  regex` value changed** — the `builder` module and the Tester module
+  entered the existing runtime-main ≥95 package gate with no new
+  exclusion (pure / seam / `tempfile`-tested). The four mirrors
+  (CLAUDE.md §5/§6, `codecov.yml`, coverage-policy §A) verified
+  byte-consistent.
+- **v1.6 `<simplify_pass>`** — three review agents against `main..HEAD`
+  (98 files / +14,862 / −92; verdict: the diff is structurally sound).
+  15 proposals; **empty maintainer-approved subset** (no apply-now
+  refactor — every finding is pre-M08 debt, cross-crate, immaterial at
+  v0.1 scale, or a low-severity smell best landed at the next builder
+  touch); the deferred set logged to `docs/tech-debt.md` TD-021..TD-024.
+  No finding of correctness/security significance the verifier missed.
+- **`docs/tech-debt.md`** — TD-021..TD-024 (the M08 simplify-pass
+  deferrals) + TD-025/026/027 (the M07-IRL 🟢 #1/#4/#8 — smoke run too
+  fast to observe streaming · no bundled importable example artifact ·
+  graph minimap renders blank; routed to tech-debt by the M07-IRL pass
+  but never logged — completed at this closeout).
+- ADR-0019 (the Tester isolated-session model) + ADR-0020 (the Builder
+  canvas↔`framework.json` state model) flip `Proposed → Accepted` in
+  the M08 PR before merge (CLAUDE.md §11).
+
 ### Added — M08 Stage G (Settings panel + Novice↔Promoted tier promotion)
 
 - **`src/components/SettingsPanel.tsx`** — a new focused settings
