@@ -695,6 +695,21 @@ jobs:
           # When the secret is unset, the build proceeds; the test will
           # fail with a clear message about the missing key in keychain.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_TEST_KEY }}
+      # `tauri build` only builds the src-tauri crate (the main app). The
+      # runtime-drone binary is a SEPARATE workspace member, not a dep of
+      # src-tauri, so it is NOT built by `tauri build`. The main app's
+      # Tauri setup hook spawns `runtime-drone[.exe]` alongside its own
+      # exe — see src-tauri/src/drone_lifecycle.rs::locate_drone_binary
+      # (`current_exe().parent().push("runtime-drone[.exe]")`). Without
+      # this step the app panics on launch:
+      #   "drone IPC unavailable: spawn drone subprocess:
+      #    The system cannot find the file specified (os error 2)"
+      # — diagnosed from the iteration-2 CI smoke-launch step's stderr.
+      # `cargo build` writes into the workspace-root target/release/
+      # (same as the Tauri build), so it ends up at the path the app
+      # expects.
+      - name: Build runtime-drone binary (release)
+        run: cargo build --release -p runtime-drone --bin runtime-drone
       # Windows pre-test smoke-launch — instrumentation added by the M08.5
       # A.fix follow-up #2 after the first CI run on this branch (run
       # 26314395512). The wdio session attached cleanly but every element
