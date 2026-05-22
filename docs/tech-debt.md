@@ -412,3 +412,43 @@ All correct; all immaterial at v0.1 scale (single-session, a handful of aliases 
 ### Recommended approach (when addressed)
 
 (a) hoist the `aliases` binding out of the event loop (or pass `&HashMap` into `dispatch_if_mcp`) — pairs with EFF-1 / TD-012. (b) construct `ToolInvoked.input` before the dispatch call, or have the trait take `&Value` — bundle with the TD-015 `try_mcp_dispatch` enum work at M07.5. (c) combine into one reduce pass behind a stable `useShallow` selector — pairs with TD-013. (d) add a `tracing::warn!` before `.unwrap_or(0)`, mirroring the `vdr.rs` projector observability pattern. All low priority; roll into the relevant M07+ touch.
+
+## TD-019 — `builderStore.replaceFramework` does not re-trigger continuous validation
+
+**Date logged:** 2026-05-21
+**Found by:** Stage V verifier run M08.V (finding 🟢 #3)
+**Pass that surfaced it:** Wire
+**Category:** observability (stale validation badges after a JSON-tab edit / load)
+**Resolution status:** open
+
+### Description
+
+`src/lib/builderStore.ts:466` `replaceFramework: (fw) => set({ framework: fw })` — the action a valid `JsonView` JSON-tab edit and the Inspector's Load both call — does NOT call `scheduleValidation()`, unlike the three canvas-mutation actions `addNode` / `updateNode` / `connectEdge`. The M08.D2 phase doc (D2.3.4) specifies the debounced continuous-validation trigger fires on "every `framework` mutation"; `replaceFramework` is a `framework` mutation that omits it. After a JSON-tab edit or a `load_framework`, the canvas red badges (`builderStore.validation`) reflect the pre-edit state until the user clicks the explicit Validate button or makes a canvas edit.
+
+### Why it's debt not bug
+
+MVP §M8 criterion 6 (the canvas re-derives on a JSON edit) still passes — the `canvasNodes` / `canvasEdges` projection is unconditional and updates correctly. The explicit Inspector Validate button works. Only the *badge freshness* lags after a JSON / load path; a workaround (click Validate) exists. No incorrect computation, only stale display.
+
+### Recommended approach (when addressed)
+
+Add a `scheduleValidation()` call to `replaceFramework` (the same trigger `addNode` / `updateNode` / `connectEdge` use). One-line change in `src/lib/builderStore.ts`. Roll into any M09+ builder-store touch.
+
+## TD-020 — `builderStore.removeNode` is a permanent no-op stub
+
+**Date logged:** 2026-05-21
+**Found by:** Stage V verifier run M08.V (finding 🟢 #4)
+**Pass that surfaced it:** Multi-call invariants
+**Category:** extensibility (dead public-interface surface)
+**Resolution status:** open
+
+### Description
+
+`src/lib/builderStore.ts:498` `removeNode: () => set((s) => s)` is a typed no-op exposed on the `BuilderState` public interface, documented "node deletion is not in D2's scope; a later stage fills it" (ADR-0020 — Stage C ships the canvas-mutation actions as no-op stubs D1/D2 fill; `removeNode` is the one D1/D2 never filled). No component calls it (grep: zero non-store references), so it is harmless dead interface surface today.
+
+### Why it's debt not bug
+
+Node deletion is genuinely out of M08 scope — no MVP §M8 criterion requires it, and nothing calls `removeNode`, so the no-op cannot misbehave. The risk is latent: a future delete affordance wired to `removeNode` before it is implemented would silently no-op (no error, no deletion).
+
+### Recommended approach (when addressed)
+
+Implement `removeNode` (drop the node from `framework` + `nodePositions`, prune any edge referencing it) when node deletion enters scope, or remove it from the `BuilderState` interface until then. Roll into whichever milestone adds canvas node deletion.
