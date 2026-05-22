@@ -104,30 +104,65 @@ async function drawEdge(
 }
 
 /**
- * Drag the child agent node clear below the parent.
+ * Drag an agent node so its centre sits at (toX, toY). Grabs the node
+ * at its centre — clear of the top and bottom connection handles — so
+ * the drag repositions the node rather than starting a connection;
+ * routes through onNodesChange → moveNode.
+ */
+async function dragAgentNodeTo(
+  page: Page,
+  nodeTestId: string,
+  toX: number,
+  toY: number,
+): Promise<void> {
+  const box = await page.getByTestId(nodeTestId).boundingBox();
+  if (box === null) {
+    throw new Error(`${nodeTestId} is not measurable`);
+  }
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(toX, toY, { steps: 12 });
+  await page.mouse.up();
+}
+
+/**
+ * Position the two agent nodes for a clean handle-to-handle edge drag.
  *
- * M08.E added the Canvas | JSON tab bar above the Builder Canvas, which
- * shrank the canvas — React Flow's fitView can now land the two large
- * agent nodes overlapping, which buries the parent's source handle
- * under the child node and the handle-to-handle edge drag cannot
- * connect. Re-positioning the child by a measured drag (it routes
- * through onNodesChange → moveNode) guarantees distinct, unobscured
- * handles regardless of the fitView zoom.
+ * M08.E added the Canvas | JSON tab bar and M08.G the cross-mode
+ * Settings panel above the Builder Canvas — each shrank the canvas, and
+ * React Flow's fitView lands the two large agent nodes at max zoom,
+ * too tall to stack with unobscured handles. Zoom out until both node
+ * boxes together use under 60% of the canvas height, then place the
+ * parent near the top and the child near the bottom — distinct,
+ * unobscured, in-pane handles at any canvas height. The child moves
+ * first: it is the last-added node so it sits on top, and clearing it
+ * leaves the parent alone to grab.
  */
 async function separateAgentNodes(page: Page): Promise<void> {
-  const parent = await page.getByTestId('builder-agent-node-parent-agent').boundingBox();
-  const child = await page.getByTestId('builder-agent-node-child-agent').boundingBox();
-  if (parent === null || child === null) {
-    throw new Error('agent nodes are not measurable');
+  const canvas = await page.getByTestId('builder-canvas').boundingBox();
+  if (canvas === null) {
+    throw new Error('builder-canvas is not measurable');
   }
-  // Grab the child by its body (clear of the top connection handle) and
-  // drag it to ~120px below the parent's bottom edge.
-  const grabX = child.x + 40;
-  const grabY = child.y + 26;
-  await page.mouse.move(grabX, grabY);
-  await page.mouse.down();
-  await page.mouse.move(grabX, parent.y + parent.height + 120, { steps: 12 });
-  await page.mouse.up();
+  const zoomOut = page.getByRole('button', { name: 'Zoom Out' });
+  for (let i = 0; i < 6; i += 1) {
+    const p = await page.getByTestId('builder-agent-node-parent-agent').boundingBox();
+    const c = await page.getByTestId('builder-agent-node-child-agent').boundingBox();
+    if (p !== null && c !== null && p.height + c.height < canvas.height * 0.6) {
+      break;
+    }
+    if (!(await zoomOut.isEnabled())) {
+      break;
+    }
+    await zoomOut.click();
+  }
+  const colX = canvas.x + canvas.width / 2;
+  await dragAgentNodeTo(
+    page,
+    'builder-agent-node-child-agent',
+    colX,
+    canvas.y + canvas.height - 70,
+  );
+  await dragAgentNodeTo(page, 'builder-agent-node-parent-agent', colX, canvas.y + 70);
 }
 
 function agentArtifact(key: string): Record<string, unknown> {
