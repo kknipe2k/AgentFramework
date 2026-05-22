@@ -662,7 +662,8 @@ jobs:
             build-essential \
             curl \
             wget \
-            file
+            file \
+            libseccomp-dev
       # Windows: tauri-driver proxies WebDriver requests to msedgedriver,
       # which must be on PATH and version-matched to the runner's Edge
       # WebView2. The M03 disable's Windows failure was exactly this —
@@ -694,6 +695,38 @@ jobs:
           # When the secret is unset, the build proceeds; the test will
           # fail with a clear message about the missing key in keychain.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_TEST_KEY }}
+      # Windows pre-test smoke-launch — instrumentation added by the M08.5
+      # A.fix follow-up #2 after the first CI run on this branch (run
+      # 26314395512). The wdio session attached cleanly but every element
+      # query immediately failed with "no such window: target window already
+      # closed", with no app-side output captured (tauri-driver swallows the
+      # child app's stdio). This step launches the binary directly for 8s
+      # to surface any release-mode startup panic before tauri-driver runs.
+      # `continue-on-error: true` — this is diagnostic only, NOT a gate.
+      - name: Smoke-launch the app (Windows) — diagnostic
+        if: matrix.os == 'windows-latest'
+        continue-on-error: true
+        run: |
+          Write-Host "Smoke-launching agent-runtime.exe for 8 seconds to capture any startup output..."
+          $proc = Start-Process -FilePath ".\target\release\agent-runtime.exe" `
+            -RedirectStandardError app-stderr.log -RedirectStandardOutput app-stdout.log `
+            -PassThru
+          Start-Sleep -Seconds 8
+          if ($proc.HasExited) {
+            Write-Host "App EXITED within 8s. Exit code: $($proc.ExitCode)"
+          } else {
+            Write-Host "App still running after 8s (no immediate crash). Stopping it."
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
+          Write-Host "=== app-stdout.log ==="
+          if (Test-Path app-stdout.log) { Get-Content app-stdout.log } else { Write-Host "(no stdout file)" }
+          Write-Host "=== app-stderr.log ==="
+          if (Test-Path app-stderr.log) { Get-Content app-stderr.log } else { Write-Host "(no stderr file)" }
+          Write-Host "=== Recent Windows Application Event Log (agent-runtime / Error Reporting) ==="
+          Get-WinEvent -LogName Application -MaxEvents 200 -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -like '*agent-runtime*' -or $_.ProviderName -like '*Error Reporting*' -or $_.ProviderName -eq 'Application Error' } |
+            Select-Object -First 20 |
+            Format-List TimeCreated, ProviderName, LevelDisplayName, Id, Message
       # Linux WebKitGTK requires a display server; xvfb provides a virtual
       # one. Windows uses the real desktop on the runner (msedgedriver +
       # Edge WebView2 are pre-installed on windows-latest).
@@ -703,3 +736,29 @@ jobs:
       - name: Run Tauri-driver E2E (Windows native)
         if: matrix.os == 'windows-latest'
         run: npm run test:e2e:tauri
+      # Post-failure diagnostic dump (Windows) — capture any Application
+      # Error / WER entries logged while tauri-driver was running the app.
+      # Pairs with the pre-test smoke-launch above. Diagnostic only.
+      - name: Post-test diagnostics (Windows) — Event Log
+        if: failure() && matrix.os == 'windows-latest'
+        continue-on-error: true
+        run: |
+          Write-Host "=== Windows Application Event Log (last 30 min, agent-runtime / Error Reporting) ==="
+          $since = (Get-Date).AddMinutes(-30)
+          Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=$since} -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -like '*agent-runtime*' -or $_.ProviderName -like '*Error Reporting*' -or $_.ProviderName -eq 'Application Error' -or $_.ProviderName -like '*Wer*' } |
+            Select-Object -First 30 |
+            Format-List TimeCreated, ProviderName, LevelDisplayName, Id, Message |
+            Tee-Object -FilePath wer-events.log
+      # Upload all diagnostic artifacts on any failure of this job.
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-tauri-driver-diagnostics-${{ matrix.os }}
+          path: |
+            app-stdout.log
+            app-stderr.log
+            wer-events.log
+          retention-days: 7
+          if-no-files-found: ignore
