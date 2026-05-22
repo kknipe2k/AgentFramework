@@ -552,6 +552,16 @@ interface GraphState {
    * installation/integrity state, not per-session graph state).
    */
   imports: Record<string, ImportRecord>;
+  /**
+   * Spec §2a (M08 Stage G — M06.5 IRL 🟡-4): the user-configured global
+   * per-day budget cap in USD, set via the Settings panel. `0` means no
+   * cap. Distinct from `budget` (the per-session SPEND snapshot from
+   * budget_* events) — this is the CONFIGURED cap. Persisted to the
+   * runtime via `set_global_budget`; held here so the Settings panel's
+   * input reflects the live value. Preserved across `clear()` (a user
+   * preference, like `currentTier`, not per-session graph state).
+   */
+  globalBudgetCap: number;
 
   /**
    * Single entry point for translating AgentEvent into node + edge
@@ -595,6 +605,13 @@ interface GraphState {
 
   /** M07.E: drop a record (user Reject on review, or Remove on blocked). */
   dismissImport: (ref: string) => void;
+
+  /**
+   * M08 Stage G (M06.5 IRL 🟡-4): set the user-configured global budget
+   * cap. The Settings panel calls this after `set_global_budget`
+   * persists so the budget-cap input reflects the committed value.
+   */
+  setGlobalBudgetCap: (cap: number) => void;
 }
 
 const AGENT_X_STRIDE = 220;
@@ -772,6 +789,7 @@ const graphStoreInitializer: StateCreator<GraphState> = (set) => ({
   toolAliasWarnings: [],
   activeMcpCalls: {},
   imports: {},
+  globalBudgetCap: 0,
 
   applyEvent: (event) =>
     set((state) => {
@@ -1755,9 +1773,14 @@ const graphStoreInitializer: StateCreator<GraphState> = (set) => ({
       // preserved across session clears so a blocked-by-hash-mismatch
       // artifact stays blocked until the user reinstalls or removes.
       imports: state.imports,
+      // globalBudgetCap is a user preference (like currentTier), not
+      // per-session graph state — the configured cap survives a clear().
+      globalBudgetCap: state.globalBudgetCap,
     })),
 
   selectNode: (id) => set({ selectedNodeId: id }),
+
+  setGlobalBudgetCap: (cap) => set({ globalBudgetCap: cap }),
 
   recordUncertainInvocation: (invocation) =>
     set((state) => {

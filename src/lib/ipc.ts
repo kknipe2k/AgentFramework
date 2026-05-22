@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { AgentEvent } from '../types/agent_event';
+import type { AgentEvent, TierRef } from '../types/agent_event';
 import type { CapabilityDeclaration } from '../types/capability';
 import type { CmdError } from '../types/error';
 import type { Framework } from '../types/framework';
@@ -177,6 +177,32 @@ export async function invokeRespondUncertainty(
  */
 export async function invokeSetGlobalBudget(usdCap: number): Promise<void> {
   await invoke('set_global_budget', { usdCap });
+}
+
+/**
+ * Request a Novice ↔ Promoted tier transition (M05 Stage D — spec
+ * §8.security L4). Wraps the EXISTING `request_tier_transition` Tauri
+ * command (`src-tauri/src/commands.rs:573`) — M08 Stage G surfaces it,
+ * it does NOT reimplement tier logic.
+ *
+ * The backend persists the new tier to `<app_data_dir>/tier.json`,
+ * updates its in-memory cache, and emits a `tier_transition` event on
+ * the `agent_event` channel — which `graphStore.applyEvent` already
+ * reduces into `currentTier` (graphStore.ts:1549). The Settings panel's
+ * displayed tier therefore updates through the EXISTING event path; the
+ * wrapper does not return the new tier and the caller does not set it.
+ *
+ * Idempotent when `targetTier` equals the current tier (the backend
+ * returns `Ok` for the no-op — commands.rs:621), so the panel may call
+ * freely without a pre-check.
+ *
+ * `targetTier` is the generated {@link TierRef} ('novice' | 'promoted')
+ * — byte-identical to the Rust `Tier` enum's serde form. Operator is
+ * NOT a `TierRef` member (v1.0, §0d). Errors surface as the Tauri
+ * `CmdError` shape — render via {@link unwrapCmdError}.
+ */
+export async function requestTierTransition(targetTier: TierRef, reason: string): Promise<void> {
+  await invoke('request_tier_transition', { targetTier, reason });
 }
 
 /**
