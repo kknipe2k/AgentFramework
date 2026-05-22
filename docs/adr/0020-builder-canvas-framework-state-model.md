@@ -1,6 +1,6 @@
 # ADR-0020: Builder canvas ↔ framework.json state model
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-05-21
 **Deciders:** @kknipe2k
 **Tags:** architecture, state, renderer

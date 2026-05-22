@@ -1,6 +1,6 @@
 # ADR-0019: The Tester isolated-session model
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-05-21
 **Deciders:** @kknipe2k
 **Tags:** scope, capability, security, isolation, builder
