@@ -112,7 +112,11 @@ Always, before acting:
 
 - Brief and exact. Include **only what it does not already know** — filter
   every line through "does it know this?"
-- State the decision + the load-bearing constraints. No rationale-dump.
+- **The paste block is DO-ONLY.** It contains the directive — what the build
+  must act on — and nothing else: no reasoning, no "because", no adjudication
+  rationale, no restating what the build already surfaced or already plans to
+  do. If a line is not an instruction the build must act on, it does not go in
+  the block. ALL editorial goes in the message to the user, OUTSIDE the block.
 - A fresh stage session needs the context it lacks; a continuing session must
   not be told what it already surfaced.
 - The build executes; it does not orchestrate.
@@ -160,6 +164,7 @@ Always, before acting:
 | Reset prompt issued after the user had sent finish-it | One instruction in flight; reconcile first |
 | Relays restating what the build already surfaced | Relay only what the build doesn't know |
 | Walls of reasoning sent to the user | Brief narrative + option + prompt |
+| Reasoning / rationale / restated build-plan inside the CLI paste block | The paste block is DO-only; editorial goes to the user, outside it |
 
 ## 9. Current state (live — rewrite at every handoff)
 
