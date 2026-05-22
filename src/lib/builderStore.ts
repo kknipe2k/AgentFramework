@@ -1,6 +1,7 @@
 import type { Edge, Node } from '@xyflow/react';
 import { create } from 'zustand';
 import type { Agent, Framework } from '../types/framework';
+import { createGraphStore } from './graphStore';
 import { unwrapCmdError, validateFramework, type FrameworkValidationReport } from './ipc';
 
 // M08.C/D1/D2 — the Builder store (ADR-0020). builderStore holds the
@@ -419,6 +420,16 @@ function connectEdgeReducer(state: BuilderState, sourceId: string, targetId: str
 // store, coalescing a burst of framework mutations into one call.
 let validateTimer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * The Tester's SCOPED graph store (M08.F2 — spec Phase 9; ADR-0019). A
+ * SECOND, independent graph-store instance, distinct from the live
+ * `useGraphStore` module singleton. F2's Tester modal reduces the test
+ * session's `AgentEvent` trace into THIS store, so a test run renders in
+ * the modal's smaller graph pane WITHOUT ever mutating the runtime
+ * graph. `closeTester` clears it — discard-on-close.
+ */
+export const useTestGraphStore = createGraphStore();
+
 export const useBuilderStore = create<BuilderState>((set, get) => {
   /**
    * The debounced continuous-validation trigger (D2.3.4). Every
@@ -491,7 +502,14 @@ export const useBuilderStore = create<BuilderState>((set, get) => {
     // `testerOpen`. The M07.E "wired-but-pending" incremental-
     // construction precedent, not dead code.
     openTester: () => set({ testerOpen: true }),
-    closeTester: () => set({ testerOpen: false }),
+    closeTester: () => {
+      // Discard-on-close (spec Phase 9; ADR-0019): drop the scoped
+      // test-session graph so a re-open starts fresh. F1's backend
+      // already deleted the throwaway test DB; the modal drops its
+      // TestOutcome in its own close handler.
+      useTestGraphStore.getState().clear();
+      set({ testerOpen: false });
+    },
     canvasNodes: () => memoizedCanvasNodes(get().framework, get().nodePositions),
     canvasEdges: () => {
       const framework = get().framework;

@@ -19,7 +19,11 @@ import { VerifyNode } from './nodes/VerifyNode';
 // a stable-reference map; redefining it on each render forces React Flow
 // to re-mount every node, which kills the streaming UX. The trap
 // re-applies with 11 entries — keep it module-level.
-const nodeTypes: NodeTypes = {
+//
+// Exported so the M08.F2 Tester graph pane reuses the SAME 11-entry map
+// (a stable reference — importing it, never redefining it, keeps the
+// @xyflow/react v12 stable-reference contract).
+export const nodeTypes: NodeTypes = {
   agent: AgentNode as NodeTypes[string],
   tool: ToolNode as NodeTypes[string],
   skill: SkillNode as NodeTypes[string],

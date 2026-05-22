@@ -1,5 +1,5 @@
 import type { Edge, Node } from '@xyflow/react';
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
 import type {
   AgentEvent,
   CapabilityKindRef2,
@@ -749,7 +749,13 @@ function mountOrUpdateGap(state: GraphState, data: GapNodeData): GraphState {
   return { ...state, nodes: [...state.nodes, newNode] };
 }
 
-export const useGraphStore = create<GraphState>((set) => ({
+// The shared StateCreator for a graph store. Both the live
+// `useGraphStore` module singleton and the Tester's scoped per-run graph
+// (M08.F2 — `useTestGraphStore` in `builderStore.ts`) are built from
+// this one initializer, so a scoped instance reuses the EXACT
+// `applyEvent` reducer — a test run renders identically to a live
+// session, without ever writing into the live singleton.
+const graphStoreInitializer: StateCreator<GraphState> = (set) => ({
   nodes: [],
   edges: [],
   selectedNodeId: null,
@@ -1817,4 +1823,22 @@ export const useGraphStore = create<GraphState>((set) => ({
       delete next[ref];
       return { ...state, imports: next };
     }),
-}));
+});
+
+/**
+ * Build a fresh, independent graph store. Both the live
+ * {@link useGraphStore} singleton and the Tester's scoped per-run graph
+ * (M08.F2) are built from this factory, so a scoped instance reuses the
+ * EXACT `applyEvent` reducer — a test run renders identically to a live
+ * session without ever writing into the live singleton.
+ */
+export function createGraphStore() {
+  return create<GraphState>(graphStoreInitializer);
+}
+
+/**
+ * The live runtime graph store — the single session the runtime view
+ * renders. The Tester scopes its own instance via {@link createGraphStore}
+ * so a test run never mutates this graph.
+ */
+export const useGraphStore = createGraphStore();

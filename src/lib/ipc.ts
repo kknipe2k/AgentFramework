@@ -500,6 +500,99 @@ export async function loadFramework(dir: string): Promise<LoadedFramework> {
 }
 
 /**
+ * Mirrors serde's wire form for a Rust `std::time::Duration` — a
+ * `#[derive(Serialize)]` struct field of type `Duration` crosses the
+ * Tauri bridge as `{ secs, nanos }`, NOT a bare millisecond count.
+ * Rides on {@link TestOutcome.timing}.
+ */
+export interface WireDuration {
+  /** Whole seconds. */
+  secs: number;
+  /** Sub-second nanoseconds (0–999_999_999). */
+  nanos: number;
+}
+
+/**
+ * One §8.security L2 capability violation observed in a Tester run.
+ * Mirrors the serde shape of `runtime_main::builder::CapabilityFailure`
+ * (M08 Stage F1 — NOT schema-generated; the struct crosses the Tauri
+ * bridge as-is, the `McpTool` / `McpServerSummary` precedent). F2
+ * renders each as a test-failure line, never a HITL prompt (spec
+ * Phase 9; F1.3.3).
+ */
+export interface CapabilityFailure {
+  /** The runtime agent id that attempted the denied action. */
+  agent_id: string;
+  /** The capability that was missing/denied (human-readable). */
+  needed: string;
+  /** The enforcer's reason string. */
+  reason: string;
+}
+
+/**
+ * Token in / out / total for a Tester run. Mirrors
+ * `runtime_main::builder::TokenSpend` (M08 Stage F1).
+ */
+export interface TokenSpend {
+  /** Input tokens summed across the run. */
+  input: number;
+  /** Output tokens summed across the run. */
+  output: number;
+  /** `input + output`. */
+  total: number;
+}
+
+/**
+ * The result of one Tester run. Mirrors the serde shape of
+ * `runtime_main::builder::TestOutcome` (M08 Stage F1 — hand-mirrored,
+ * the `McpTool` / `McpServerSummary` precedent; not schema-generated).
+ * `test_framework` returns it; F2's modal renders every field.
+ *
+ * `passed === false` covers BOTH a capability violation / integrity
+ * block AND a clean run the user judged wrong — a failed test is never
+ * a thrown error (those are infrastructure-only).
+ */
+export interface TestOutcome {
+  /** Whether the run completed with no capability failure / integrity block. */
+  passed: boolean;
+  /**
+   * §8.security L2 violations observed during the run. F2 surfaces these
+   * as test failures, never as live HITL prompts. Non-empty ⇒ `passed`
+   * is `false`.
+   */
+  capability_failures: CapabilityFailure[];
+  /** Token spend for the run (in / out / total). */
+  token_spend: TokenSpend;
+  /** Wall-clock duration — serde's Duration shape (see {@link WireDuration}). */
+  timing: WireDuration;
+  /** The Verification & Decision Record the run produced, or `null`. */
+  vdr: unknown;
+  /**
+   * The full ordered `AgentEvent` trace — F2 reduces it into the scoped
+   * test-session graph after the run resolves.
+   */
+  trace: AgentEvent[];
+}
+
+/**
+ * Run the Builder's Tester against a candidate framework — M08 Stage F1
+ * `test_framework`. The candidate `framework` crosses the wire straight
+ * from the canvas (spec Phase 9 — no disk round-trip). Params are
+ * PINNED to the SHIPPED F1 command signature
+ * `test_framework(app, framework_doc, task)` at
+ * `src-tauri/src/commands.rs` — Tauri auto-converts the snake_case Rust
+ * `framework_doc` to the camelCase JS key `frameworkDoc` (the
+ * `importArtifact` precedent).
+ *
+ * A *failed test* resolves `TestOutcome { passed: false, .. }`; only an
+ * infrastructure failure (drone spawn / temp-DB setup) throws a
+ * `CmdError` — render it via {@link unwrapCmdError}.
+ */
+export async function testFramework(framework: Framework, task: string): Promise<TestOutcome> {
+  return await invoke<TestOutcome>('test_framework', { frameworkDoc: framework, task });
+}
+
+/**
  * Open the native file picker for a local artifact file (M07.V 🟡 #4 —
  * `@tauri-apps/plugin-dialog`). Returns the chosen absolute path, or
  * `null` when the user cancels — a cancel is a normal user action, not
