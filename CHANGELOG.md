@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M08 Stage G (Settings panel + Novice↔Promoted tier promotion)
+
+- **`src/components/SettingsPanel.tsx`** — a new focused settings
+  surface (spec §8.security L4; §2a). `TierControl` shows the current
+  capability tier and a single Novice↔Promoted button that calls the
+  **existing** `request_tier_transition` backend command (M05 Stage D);
+  `BudgetControl` is the global per-day budget-cap input. Closes the
+  M07-IRL #5 🔴-candidate — there was no UI anywhere to promote
+  Novice→Promoted, so the **Promoted tier (a §0d v0.1-scope
+  capability) and, through it, MCP-server management were unreachable**.
+  Operator is **not** surfaced (v1.0 — §0d locks v0.1 to Novice +
+  Promoted; `TierRef` has no Operator member). Not a catch-all — the
+  Anthropic API key stays in `SetupPanel`.
+- **`requestTierTransition`** (`src/lib/ipc.ts`) — a typed wrapper over
+  the existing `request_tier_transition` Tauri command, params pinned
+  to the shipped signature (`commands.rs:573`) via the v1.8
+  `wire_signature_audit`. Stage G **surfaces** the command — it does
+  **not** reimplement tier-transition or enforcement logic (Hard
+  Rule 8). The new tier arrives via the `tier_transition` event the
+  backend emits, already reduced into `graphStore.currentTier`
+  (`:1549`); the panel never optimistically sets the tier.
+- **`globalBudgetCap`** slot + **`setGlobalBudgetCap`** action
+  (`src/lib/graphStore.ts`) — closes M06.5 IRL 🟡-4 (budget settings
+  not state-wired): the budget-cap input now reflects + persists the
+  configured cap via the existing `set_global_budget` command.
+  Preserved across `clear()` like `currentTier` (a user preference,
+  not per-session graph state).
+- **`src/App.tsx`** — `<SettingsPanel />` mounts at App top level,
+  outside the Runtime↔Builder `view` conditional, as cross-mode chrome
+  alongside `BudgetHeaderBar` / `ViewSwitch` (C.3.2) — so the tier
+  control is reachable in **both** modes.
+- **`src/styles.css`** — `.settings-panel` + descendant classes,
+  theme-variable-driven; every className paired with a CSS rule
+  (gotcha #67).
+- **`tests/unit/components/SettingsPanel.test.tsx`** +
+  **`tests/e2e/settings_tier_promotion.spec.ts`** — 14 vitest behavior
+  tests + 1 styles-contract test + 4 Playwright tests (promote updates
+  the tier through the existing reducer, Operator never offered, the
+  budget cap reflects/persists, the panel is reachable in Builder mode).
+
 ### Added — M08 Stage F2 (Tester modal renderer)
 
 - **`src/components/builder/TesterModal.tsx`** — the Builder Tester modal

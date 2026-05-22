@@ -1883,3 +1883,106 @@ p.error {
   border-radius: 3px;
   cursor: pointer;
 }
+
+/* M08 Stage G — the Settings panel (tier + budget controls). Cross-mode
+   chrome; theme-variable-driven so it inherits the M07-IRL #3 contrast
+   fix rather than hard-coding colours. */
+.settings-panel {
+  background: var(--node-bg);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 6px;
+  padding: 0.75rem;
+  margin: 0.5rem 0;
+  font-size: 13px;
+}
+.settings-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.settings-panel__title {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0;
+}
+.settings-panel__section {
+  padding-top: 0.6rem;
+}
+.settings-panel__section--tier {
+  /* First section — sits directly under the header, tighter spacing. */
+  margin-top: 0.4rem;
+}
+.settings-panel__section--budget {
+  /* Second section — a separator rule divides it from the tier block. */
+  margin-top: 0.6rem;
+  border-top: 1px solid var(--node-base-border);
+}
+.settings-panel__section-title {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0 0 0.3rem;
+}
+.settings-panel__tier-current {
+  margin: 0 0 0.3rem;
+}
+.settings-panel__tier-value {
+  font-weight: 700;
+  text-transform: capitalize;
+}
+.settings-panel__tier-value--novice {
+  color: var(--node-fg-muted);
+}
+.settings-panel__tier-value--promoted {
+  color: var(--node-complete);
+}
+.settings-panel__tier-explainer {
+  margin: 0 0 0.4rem;
+  font-size: 12px;
+  color: var(--node-fg-muted);
+}
+.settings-panel__tier-button {
+  padding: 0.3rem 0.8rem;
+  font-size: 12px;
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.settings-panel__tier-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.settings-panel__error {
+  margin: 0.3rem 0 0;
+  font-size: 12px;
+  color: var(--node-error);
+}
+.settings-panel__budget-label {
+  font-size: 12px;
+  color: var(--node-fg);
+}
+.settings-panel__budget-input {
+  width: 6rem;
+  padding: 0.2rem 0.3rem;
+  font-size: 12px;
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+}
+.settings-panel__budget-button {
+  padding: 0.3rem 0.8rem;
+  font-size: 12px;
+  background: var(--node-bg-alt);
+  color: var(--node-fg);
+  border: 1px solid var(--node-base-border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.settings-panel__budget-hint {
+  margin: 0.3rem 0 0;
+  font-size: 11px;
+  color: var(--node-fg-muted);
+}

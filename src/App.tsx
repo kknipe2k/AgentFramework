@@ -12,6 +12,7 @@ import { ImportPanel } from './components/ImportPanel';
 import { InspectorPanel } from './components/InspectorPanel';
 import { MCPServerSettings } from './components/MCPServerSettings';
 import { RecoveryDialog } from './components/RecoveryDialog';
+import { SettingsPanel } from './components/SettingsPanel';
 import { SetupPanel } from './components/SetupPanel';
 import { SmokeButton } from './components/SmokeButton';
 import { SqlInspector } from './components/SqlInspector';
@@ -174,6 +175,7 @@ export function App(): JSX.Element {
       <BudgetHeaderBar />
       <h1>Agent Runtime — M03 live graph</h1>
       <ViewSwitch value={view} onChange={setView} />
+      <SettingsPanel />
       {view === 'runtime' ? (
         <RuntimeLayout
           hasKey={hasKey}
