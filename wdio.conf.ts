@@ -1,4 +1,4 @@
-// Tauri 2.x desktop-shell E2E config (M03.F).
+// Tauri 2.x desktop-shell E2E config (M03.F; M08.5-era hardening).
 //
 // Runs the WebdriverIO v9 test runner against the built Tauri binary via
 // `tauri-driver`. Per the official Tauri 2.x docs
@@ -18,8 +18,29 @@
 // matching the WebdriverIO v9 default. They are intentionally separate from
 // the renderer-level Playwright suite at `tests/e2e/` (different test type,
 // different driver, different CI job).
+//
+// .env.local loader (M08.5-era addition): allows local developers to set
+// ANTHROPIC_TEST_KEY + ANTHROPIC_API_KEY without committing them. The file
+// is gitignored via .gitignore:38 (.env.*). CI relies on the
+// ANTHROPIC_TEST_KEY GitHub secret instead.
 import { spawn, type ChildProcess } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+
+if (existsSync('.env.local')) {
+  for (const line of readFileSync('.env.local', 'utf8').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    const value = trimmed
+      .slice(eq + 1)
+      .trim()
+      .replace(/^['"]|['"]$/g, '');
+    process.env[key] = value;
+  }
+}
 
 if (process.platform === 'darwin') {
   console.log('tauri-driver E2E skipped on macOS (unsupported by tauri-driver upstream).');
@@ -28,7 +49,14 @@ if (process.platform === 'darwin') {
 
 const TAURI_DRIVER_PORT = 4444;
 const APP_BIN_NAME = process.platform === 'win32' ? 'agent-runtime.exe' : 'agent-runtime';
-const APP_BIN_PATH = resolve(process.cwd(), 'src-tauri', 'target', 'release', APP_BIN_NAME);
+// Workspace layout fix (M08.5-era): src-tauri is a Cargo workspace member, so
+// the release binary lands at workspace-root `target/release/`, NOT at
+// `src-tauri/target/release/`. The old path was a stale M03.F default that
+// CI tolerated (because GitHub runners may handle the path differently) but
+// breaks local Windows installs. Junction workaround documented at
+// docs/build-machine-tauri-driver-setup.md Phase 3.5 for users on older
+// checkouts.
+const APP_BIN_PATH = resolve(process.cwd(), 'target', 'release', APP_BIN_NAME);
 
 let tauriDriverProc: ChildProcess | undefined;
 
