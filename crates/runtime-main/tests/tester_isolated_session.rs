@@ -24,6 +24,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use runtime_core::event::AgentEvent;
 use runtime_core::generated::framework::Framework;
 use runtime_main::builder::run_test_session_with;
 use runtime_main::capability::CapabilityEnforcer;
@@ -436,6 +437,113 @@ async fn tester_throwaway_db_is_isolated_from_a_user_session_db() {
     assert!(
         !has_signals_table,
         "the Tester wrote no signals into the user DB"
+    );
+
+    child.start_kill().ok();
+    let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
+}
+
+/// M08.5 🔴-2 closure. Builds a candidate framework whose root agent
+/// id is `"orchestrator"` and whose inline `role` is the distinctive
+/// `"lead-orchestrator"`; drives the real `run_test_session_with`; finds
+/// the root `AgentSpawned` (`parent_id == None`) in `outcome.trace`;
+/// asserts the trace's root `agent_name` equals the candidate's root
+/// `role` AND is NOT `"smoke"`. **This test fails on pre-fix `main`** —
+/// today `session_prelude` hardcodes `agent_name: "smoke"` at
+/// `crates/runtime-main/src/sdk/agent_sdk.rs:350`, so the assertion
+/// fires the right-reason failure.
+///
+/// This is the assertion the existing four tests structurally lack
+/// (gotcha #66 — they all assert "a run happened" / "tokens captured" /
+/// "isolation held", not "WHICH agent ran" — the V/F1 blind spot). The
+/// fixture uses `"worker"` everywhere; a trace carrying `agent_id:
+/// "worker", agent_name: "smoke"` still satisfies their assertions but
+/// would have surfaced 🔴-2 at the demo.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tester_emits_the_candidate_framework_root_agent_not_smoke() {
+    ensure_drone_built();
+    let dir = TempDir::new().expect("tempdir");
+    let db_path = dir.path().join("runtime-tester.sqlite");
+    let socket = make_socket(dir.path());
+
+    let session = SessionId::new();
+    let sid = session.as_string();
+    let mut child = spawn_drone(&sid, &db_path, &socket);
+    let client = connect_with_retry(&socket.to_string_lossy()).await;
+
+    // Distinctive root role so the failure mode is unambiguous: the
+    // SDK on `main` emits `"smoke"`; the C.fix derivation emits
+    // `"lead-orchestrator"`. Asserting both `==` and `!=` pins the
+    // contract on both axes.
+    let framework: Framework = serde_json::from_value(json!({
+        "name": "m08-5-c-fix-root-role-fixture",
+        "version": "1.0.0",
+        "description": "M08.5.C.fix root-agent-name regression fixture",
+        "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+        "agents": [{
+            "id": "orchestrator",
+            "role": "lead-orchestrator",
+            "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+            "capabilities": {
+                "tools_called": [],
+                "skills_loaded": [],
+                "file_access": { "read": [], "write": [] },
+                "network": [],
+                "shell": false,
+                "spawn_agents": []
+            },
+            "allowed_tools": [],
+            "allowed_skills": [],
+            "spawns": []
+        }],
+        "tools": [],
+        "skills": [],
+        "session_root_agent": "orchestrator",
+    }))
+    .expect("the root-role fixture round-trips through the schema");
+
+    let dispatcher = build_concrete_dispatcher("orchestrator", &sid);
+    let outcome = run_test_session_with(
+        &framework,
+        "run the candidate framework",
+        &db_path,
+        tool_using_provider(),
+        Arc::new(client),
+        Some(dispatcher as Arc<dyn McpToolDispatch>),
+        session,
+    )
+    .await
+    .expect("the assembled Tester run completes");
+
+    // Find the root `AgentSpawned` — the only one with `parent_id ==
+    // None`. (Sub-agents emit AgentSpawned with `parent_id = Some(root)`
+    // per `spawn_framework_subagents`.)
+    let root = outcome
+        .trace
+        .iter()
+        .find_map(|e| match e {
+            AgentEvent::AgentSpawned {
+                agent_id,
+                agent_name,
+                parent_id: None,
+                ..
+            } => Some((agent_id.clone(), agent_name.clone())),
+            _ => None,
+        })
+        .expect("the trace must carry exactly one root AgentSpawned (parent_id == None)");
+
+    assert_eq!(
+        root.0, "orchestrator",
+        "the root agent_id is the framework's session_root_agent (this already passes on main)"
+    );
+    assert_ne!(
+        root.1, "smoke",
+        "M08 🔴-2: the candidate framework's root agent must NOT be labelled \"smoke\""
+    );
+    assert_eq!(
+        root.1, "lead-orchestrator",
+        "the root agent_name is the candidate framework root agent's `role`, \
+         mirroring how `spawn_framework_subagents` names every sub-agent"
     );
 
     child.start_kill().ok();

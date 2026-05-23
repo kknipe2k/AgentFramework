@@ -907,6 +907,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn smoke_session_root_agent_is_named_smoke() {
+        // M08.5.C.fix guard: the no-wiring path (`AgentSdk::new`, the
+        // real smoke session — `src-tauri/src/commands.rs:233`
+        // `run_smoke_session_with`) MUST keep emitting
+        // `agent_name: "smoke"` on its root `AgentSpawned`. The
+        // C.fix derivation applies ONLY when `capability_wiring` is
+        // present; this test pins the byte-stability of the smoke
+        // path against any future regression that derives the name
+        // unconditionally.
+        let provider = Arc::new(InlineStub);
+        let drone = Arc::new(DroneClient::noop());
+        let (tx, mut rx) = mpsc::channel(8);
+        let sdk = AgentSdk::new(provider, tx, drone, SessionId::new());
+        let config = AgentConfig {
+            model: "x".into(),
+            messages: vec![],
+            max_tokens: 16,
+            temperature: None,
+            system_prompt: None,
+            tools: vec![],
+        };
+        sdk.run_agent(config).await.expect("run_agent ok");
+        drop(sdk);
+        let mut root_name: Option<String> = None;
+        while let Some(e) = rx.recv().await {
+            if let AgentEvent::AgentSpawned {
+                agent_name,
+                parent_id: None,
+                ..
+            } = &e
+            {
+                root_name = Some(agent_name.clone());
+                break;
+            }
+        }
+        assert_eq!(
+            root_name.as_deref(),
+            Some("smoke"),
+            "the un-wired smoke session must label its root agent \"smoke\" (byte-stable)"
+        );
+    }
+
+    #[tokio::test]
     async fn end_of_stream_flushes_residual_text_buffer() {
         // Stream ends WITHOUT MessageStop, leaving text in the buffer.
         // The final `pipeline.flush()` must emit a StreamText.
