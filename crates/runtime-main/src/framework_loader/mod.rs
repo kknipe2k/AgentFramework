@@ -29,7 +29,7 @@ pub mod walker;
 
 pub use capability_map::{
     capabilities_for_tool, capabilities_to_declarations, declaration_to_narrowed_from_str,
-    inline_agents, parent_grants_for_agent, CapabilityLookupError, FrameworkRef,
+    inline_agents, parent_grants_for_agent, root_agent_role, CapabilityLookupError, FrameworkRef,
 };
 pub use error::FrameworkLoadError;
 pub use walker::{walk, Gap, GapKind};

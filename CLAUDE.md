@@ -133,7 +133,8 @@ The **exact `cargo llvm-cov` commands + the current `--ignore-filename-regex` ex
 | Fuzz (Rust) | `cargo-fuzz` | When parsers exist (M1 has the IPC frame parser; M2 has SSE; M6 has MCP JSON-RPC) — short fuzz on PR, long fuzz nightly |
 | Integration (Rust) | `cargo test --features integration` + `wiremock` | M2 onward |
 | Unit (TS) | Vitest | M3 onward |
-| E2E (Playwright) | `npm run test:e2e` against built app | M3 onward — required from when the renderer can run a session |
+| E2E renderer-level (Playwright) | `npm run test:e2e` against the Vite dev server with `@tauri-apps/api` mocked | M3 onward — required from when the renderer can run a session |
+| E2E real-app (WebdriverIO + `tauri-driver`) | `npm run test:e2e:tauri` against the BUILT Tauri binary | M08.5 onward — required for every renderer/shell defect fix per ADR-0021 (`e2e-tauri-driver` CI job is merge-blocking) |
 | Doc tests | `cargo test --doc` + `tsc` on TS examples | Any milestone that adds public API |
 
 ### Behavior tests vs implementation tests
@@ -242,18 +243,32 @@ npm audit --audit-level=high
 These gates must pass on every PR from M02 onward. Vitest coverage threshold
 ≥80% on `src/` (configured in `vitest.config.ts`).
 
-### E2E gates (Playwright renderer-level — active from M02 Stage E)
+### E2E gates (renderer-level Playwright + real-app `tauri-driver`)
 
 ```bash
-npm run test:e2e   # Playwright against the Vite dev server
+npm run test:e2e         # Playwright renderer-level against the Vite dev server (M02.E+)
+npm run test:e2e:tauri   # WebdriverIO + tauri-driver against the BUILT Tauri app (M08.5.A.fix+)
 ```
 
-Stage E ships Playwright tests that drive the renderer against the Vite dev
-server with `@tauri-apps/api` module-mocked. Full desktop-shell E2E (driving
-the WebView2 / WebKitGTK window) requires `tauri-driver` + WebdriverIO per
-the official Tauri 2.x docs (<https://v2.tauri.app/develop/tests/webdriver/>);
-that is a M03 carry-forward — Playwright with `_electron` cannot drive a
-Tauri 2.x app, and `tauri-driver` does not support macOS.
+**Renderer-level Playwright** (active from M02 Stage E). Drives the
+renderer against the Vite dev server with `@tauri-apps/api`
+module-mocked. Fast, covers all three OSes, but structurally blind to
+Tauri-shell behavior (the OS drag-drop handler, WebView2-only event
+interception, Tauri config-file flags) — it runs in a plain Chromium.
+
+**Real-app `tauri-driver` + WebdriverIO** (active from M08.5 Stage
+A.fix per ADR-0021 Accepted; the `e2e-tauri-driver` CI job is a
+required, merge-blocking gate). Drives the built Tauri binary through
+`tauri-driver` + `msedgedriver` (Windows) / `webkit2gtk-driver`
+(Linux) per the official Tauri 2.x WebDriver docs
+(<https://v2.tauri.app/develop/tests/webdriver/>). This is the gate
+that catches renderer/shell defects the Playwright job cannot — the
+three M08-IRL 🔴 (palette drag dead, Tester mislabel, MCP modal dead)
+escaped because no gate ran the real app. macOS stays on the
+Playwright `e2e` job — `tauri-driver` has no WKWebView driver (gotcha
+#23). Every renderer/shell 🔴 fix from M08.5 onward lands a
+`tests/e2e-tauri/` regression test against the real running app (the
+M08.5.B.fix / D.fix precedent — gotcha #82 + ADR-0021).
 
 ### Schema gates (always — already in CI)
 

@@ -6,11 +6,18 @@
 // click-to-inspect; SQL inspector execute; reload reconstructs graph from
 // persisted signals.
 //
-// Tests 3 and 6 require a real Anthropic API key — the smoke session calls
-// `/v1/messages` against Haiku 4.5. CI provides this via the
-// `ANTHROPIC_TEST_KEY` repo secret (~$0.001 per CI run × 2 OS = ~$0.002 per
-// PR run). Locally, the key is read from the user's OS keychain after
-// running test 2 to set it through the UI; manual runs only.
+// Tests 3–6 form one real-session chain: test 3 runs the smoke session
+// (a real Anthropic `/v1/messages` call against Haiku 4.5), test 4 inspects
+// the agent node it spawns, test 5 queries the signals it writes, test 6
+// reloads and expects the graph it built. They are runtime-skip-guarded as
+// a group: they run only when an Anthropic key is exposed to this process
+// via the `ANTHROPIC_API_KEY` env var, and `this.skip()` otherwise. CI
+// provides no key — the maintainer keeps no `ANTHROPIC_TEST_KEY` secret;
+// the real-Anthropic path is covered by the HITL/IRL pass — so in CI
+// tests 3–6 skip and the job gates on the key-independent tests 1 & 2
+// (2 passed + 4 skipped). To run all six locally, export `ANTHROPIC_API_KEY`
+// and ensure the app can reach a real key (set it through the UI as in
+// test 2's flow).
 //
 // The four test.skip()-with-rationale entries that M02.E carried forward in
 // `tests/e2e/smoke.spec.ts` are deleted in this stage; this file is the
@@ -30,6 +37,12 @@
 import type {} from 'webdriverio';
 import { $, $$, browser } from '@wdio/globals';
 import { expect } from 'chai';
+
+// Tests 3–6 run only when a real Anthropic key is reachable by this
+// process. Evaluated once at load — the env does not change mid-run. The
+// guarded tests use `this.skip()`, which requires a non-arrow callback so
+// `this` is the Mocha context.
+const hasAnthropicKey = (process.env.ANTHROPIC_API_KEY ?? '').trim().length > 0;
 
 describe('Tauri shell E2E — M03 live graph', () => {
   it('app launches with SetupPanel visible', async () => {
@@ -51,7 +64,10 @@ describe('Tauri shell E2E — M03 live graph', () => {
     expect(await savedIndicator.getText()).to.include('stored in OS keychain');
   });
 
-  it('graph renders after smoke test (real Anthropic API call)', async () => {
+  it('graph renders after smoke test (real Anthropic API call)', async function () {
+    if (!hasAnthropicKey) {
+      this.skip();
+    }
     const smokeButton = $('button*=Run smoke test');
     await smokeButton.click();
     const agentNode = $('[data-testid^="agent-node-"]');
@@ -67,7 +83,11 @@ describe('Tauri shell E2E — M03 live graph', () => {
     );
   });
 
-  it('click AgentNode → InspectorPanel opens with node data', async () => {
+  it('click AgentNode → InspectorPanel opens with node data', async function () {
+    // Depends on the agent node test 3's session spawns — guarded with it.
+    if (!hasAnthropicKey) {
+      this.skip();
+    }
     const agentNode = $('[data-testid^="agent-node-"]');
     await agentNode.click();
     const inspector = $('[role="dialog"][aria-label="node inspector"]');
@@ -77,7 +97,11 @@ describe('Tauri shell E2E — M03 live graph', () => {
     expect(inspectorText).to.include('status');
   });
 
-  it('SQL inspector executes SELECT * FROM signals LIMIT 5', async () => {
+  it('SQL inspector executes SELECT * FROM signals LIMIT 5', async function () {
+    // Depends on the signals test 3's session writes — guarded with it.
+    if (!hasAnthropicKey) {
+      this.skip();
+    }
     const sqlTextarea = $('textarea[aria-label="SQL query"]');
     await sqlTextarea.setValue('SELECT * FROM signals LIMIT 5;');
     const executeButton = $('button*=Execute');
@@ -88,7 +112,7 @@ describe('Tauri shell E2E — M03 live graph', () => {
     // response — what we're asserting at the E2E layer.
     await browser.waitUntil(
       async () => {
-        const tableCount = await $$('table.sql-results').length;
+        const tableCount = await $$('table.sql-inspector__results').length;
         const errorCount = await $$('p[role="alert"]').length;
         return tableCount > 0 || errorCount > 0;
       },
@@ -96,7 +120,11 @@ describe('Tauri shell E2E — M03 live graph', () => {
     );
   });
 
-  it('reload reconstructs the graph from persisted signals', async () => {
+  it('reload reconstructs the graph from persisted signals', async function () {
+    // Depends on the session test 3 persists — guarded with it.
+    if (!hasAnthropicKey) {
+      this.skip();
+    }
     // tauri-driver does not currently expose a "restart application" hook,
     // so we use WebdriverIO's `reloadSession` which re-attaches to a fresh
     // window. The persisted `lastSessionId` in localStorage drives the
