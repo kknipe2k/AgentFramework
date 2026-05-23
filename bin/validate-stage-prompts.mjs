@@ -37,7 +37,12 @@ import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const PHASE_DOC_DIR = 'docs/build-prompts';
-const ID_PATTERN = /^M\d{2}(\.\d+)?\.[A-Z]\d?(\.fix)?$/;
+// Allow zero or more `.<minor>` components to support X.5.5 nested fix
+// cycles (the M08.5.5 MCP-resilience cycle on top of M08.5 — first repo
+// case 2026-05-23). Pattern was `(\.\d+)?` (zero-or-one); now `(\.\d+)*`
+// (zero-or-more). Backward-compatible: M01.A, M03.5.A, M04.B.fix all
+// still match.
+const ID_PATTERN = /^M\d{2}(\.\d+)*\.[A-Z]\d?(\.fix)?$/;
 
 const KNOWN_ROOTS = new Set([
   'work_stage_prompt',
