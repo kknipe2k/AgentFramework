@@ -211,10 +211,18 @@ cargo build --workspace
 
 **Expected wait**: a few minutes each if recently run; longer if not.
 
-### 3.3 — Build the release Tauri binary
+### 3.3 — Build the release Tauri binary AND the sibling subprocess binaries
+
+The Tauri app launches `runtime-drone.exe` and `runtime-sandbox.exe` as
+sibling subprocesses at startup. `npx tauri build` only builds the Tauri
+app itself — you also need the two sibling binaries in `target/release/`,
+or the app will crash with `drone IPC unavailable: spawn drone subprocess:
+The system cannot find the file specified`. CI builds these in two named
+steps (A.fix follow-ups #3 and #4); local install needs both.
 
 ```powershell
 npx tauri build --no-bundle
+cargo build --release -p runtime-drone -p runtime-sandbox
 ```
 
 The `--no-bundle` flag matches CI — it skips the MSI/NSIS installer
