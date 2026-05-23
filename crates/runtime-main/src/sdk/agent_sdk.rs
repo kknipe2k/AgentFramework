@@ -49,7 +49,7 @@ use crate::capability::{narrow, CapabilityEnforcer};
 use crate::drone_ipc::{DroneClient, DroneIpcError};
 use crate::framework_loader::{
     capabilities_to_declarations, declaration_to_narrowed_from_str, inline_agents,
-    parent_grants_for_agent, FrameworkRef,
+    parent_grants_for_agent, root_agent_role, FrameworkRef,
 };
 use crate::hitl::HitlSeam;
 use crate::providers::{
@@ -340,6 +340,17 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
             || format!("agent_{}", Uuid::new_v4()),
             |w| w.framework.session_root_agent.clone(),
         );
+        // The root agent's display name: with capability wiring (the
+        // Tester / a framework run) it is the framework root agent's
+        // `role` — the same source `spawn_framework_subagents` uses for
+        // every sub-agent (agent_sdk.rs:480 below). Without wiring (the
+        // smoke / streaming-only session — commands.rs:233
+        // `AgentSdk::new`) there is no framework, so the literal "smoke"
+        // stays correct. M08.5 🔴-2.
+        let agent_name = self.capability_wiring.as_ref().map_or_else(
+            || "smoke".to_string(),
+            |w| root_agent_role(&w.framework, &agent_id),
+        );
         // The smoke / streaming-only spawn site predates the L2a wire-up
         // (M06 Stage A); top-level agents have no parent grants to narrow
         // against, so `narrowed_from` is empty here. The framework-walk
@@ -347,7 +358,7 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
         // every sub-agent that flowed through `narrow()`.
         self.emit(AgentEvent::AgentSpawned {
             agent_id: agent_id.clone(),
-            agent_name: "smoke".to_string(),
+            agent_name,
             parent_id: None,
             session_id: self.session_id.as_string(),
             narrowed_from: Vec::new(),

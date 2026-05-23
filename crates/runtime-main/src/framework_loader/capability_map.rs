@@ -302,14 +302,15 @@ pub fn declaration_to_narrowed_from_str(decl: &CapabilityDeclaration) -> String 
 ///
 /// Pure; safe to call on every session start.
 #[must_use]
-pub fn root_agent_role(_framework: &Framework, _agent_id: &str) -> String {
-    // M08.5.C.fix red phase — `unimplemented!()` panics deliberately so
-    // every unit test that calls this resolver fails for the right
-    // reason (gotcha #66). The green-phase impl removes the underscores
-    // and walks `framework.agents[]`.
-    unimplemented!(
-        "M08.5.C.fix red phase — green phase derives root agent_name from framework.agents[]"
-    )
+pub fn root_agent_role(framework: &Framework, agent_id: &str) -> String {
+    framework
+        .agents
+        .iter()
+        .find_map(|item| match item {
+            FrameworkAgentsItem::Agent(a) if a.id.as_str() == agent_id => Some(a.role.to_string()),
+            _ => None,
+        })
+        .unwrap_or_else(|| agent_id.to_string())
 }
 
 /// All declared inline agents in spawn order.
