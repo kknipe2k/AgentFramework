@@ -282,6 +282,37 @@ pub fn declaration_to_narrowed_from_str(decl: &CapabilityDeclaration) -> String 
     .to_lowercase()
 }
 
+/// Resolve a framework agent id to its display name (`role`).
+///
+/// M08.5 🔴-2 — the Builder's Tester emits the session root agent as
+/// `AgentSpawned { agent_id, agent_name }`. The id derives from
+/// `framework.session_root_agent`; the name must derive from the matching
+/// inline agent's `role`, mirroring how `spawn_framework_subagents`
+/// already names every sub-agent (`crates/runtime-main/src/sdk/agent_sdk.rs:480`).
+///
+/// Returns:
+///
+/// - the inline agent's `role` when `agent_id` matches a
+///   `FrameworkAgentsItem::Agent`;
+/// - the literal `agent_id` for the `{ id, path }` path-ref form (no
+///   inline `role` available; resolving the external `.md` is M08.6's
+///   loader work, ADR-0022);
+/// - the literal `agent_id` when no `framework.agents[]` entry matches
+///   (the same id-as-name fallback as the path-ref case).
+///
+/// Pure; safe to call on every session start.
+#[must_use]
+pub fn root_agent_role(framework: &Framework, agent_id: &str) -> String {
+    framework
+        .agents
+        .iter()
+        .find_map(|item| match item {
+            FrameworkAgentsItem::Agent(a) if a.id.as_str() == agent_id => Some(a.role.to_string()),
+            _ => None,
+        })
+        .unwrap_or_else(|| agent_id.to_string())
+}
+
 /// All declared inline agents in spawn order.
 ///
 /// Used by the M06.A L2a wire-up at the SDK to walk children of
@@ -537,6 +568,138 @@ mod tests {
         let agents = inline_agents(&fw);
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0].id.as_str(), "inline");
+    }
+
+    // ── root_agent_role (M08.5.C.fix 🔴-2) ───────────────────────────
+
+    /// Build a framework with one inline `Agent` carrying a distinct
+    /// `id` + `role`. The Tester uses this shape: the candidate
+    /// framework's root agent is declared inline, and its `role` is the
+    /// display name `session_prelude` must emit.
+    fn fw_one_inline_agent(id: &str, role: &str) -> Framework {
+        serde_json::from_value(json!({
+            "name": "m08-5-c-fix-fixture",
+            "version": "1.0.0",
+            "description": "M08.5.C.fix root_agent_role fixture",
+            "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+            "agents": [{
+                "id": id,
+                "role": role,
+                "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+                "capabilities": {
+                    "tools_called": [], "skills_loaded": [],
+                    "file_access": { "read": [], "write": [] },
+                    "network": [], "shell": false, "spawn_agents": []
+                },
+                "allowed_tools": [], "allowed_skills": [], "spawns": []
+            }],
+            "tools": [],
+            "skills": [],
+            "session_root_agent": id,
+        }))
+        .expect("inline-agent fixture round-trips")
+    }
+
+    #[test]
+    fn root_agent_role_returns_role_for_inline_agent() {
+        // The candidate framework's inline root agent declares both an
+        // `id` and a distinct `role`. The resolver MUST return the
+        // `role` — that is the contract the smoke-vs-candidate root
+        // labelling enforces (M08 🔴-2). A resolver that returned
+        // `id` here would still produce a non-"smoke" label and SEEM
+        // correct, but would not match the sub-agent naming pattern
+        // (`spawn_framework_subagents` uses `role`, not `id`).
+        let fw = fw_one_inline_agent("alpha", "lead");
+        assert_eq!(
+            root_agent_role(&fw, "alpha"),
+            "lead",
+            "inline agent: resolver returns the `role`, not the `id`"
+        );
+    }
+
+    #[test]
+    fn root_agent_role_falls_back_to_id_for_path_ref_agent() {
+        // The `{ id, path }` form has no inline `role` (resolving the
+        // referenced .md is M08.6's loader work, ADR-0022). The
+        // resolver MUST fall back to the `id` — the common production
+        // case for the archetype frameworks (examples/aria,
+        // examples/ralph) whose agents are all path-refs.
+        let fw: Framework = serde_json::from_value(json!({
+            "name": "m08-5-c-fix-path-ref-fixture",
+            "version": "1.0.0",
+            "description": "M08.5.C.fix path-ref fallback fixture",
+            "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+            "agents": [
+                { "id": "alpha", "path": "agents/alpha.md" }
+            ],
+            "tools": [],
+            "skills": [],
+            "session_root_agent": "alpha",
+        }))
+        .expect("path-ref fixture round-trips");
+        assert_eq!(
+            root_agent_role(&fw, "alpha"),
+            "alpha",
+            "path-ref form has no inline `role`; resolver falls back to the id"
+        );
+    }
+
+    #[test]
+    fn root_agent_role_falls_back_to_id_when_not_found() {
+        // A `session_root_agent` not declared in `framework.agents[]`
+        // is technically a schema-invalid framework, but the resolver
+        // must not panic — falling back to the id is the same shape
+        // as the path-ref case and produces a stable display name.
+        let fw = fw_one_inline_agent("alpha", "lead");
+        assert_eq!(
+            root_agent_role(&fw, "ghost"),
+            "ghost",
+            "unknown id falls back to the literal id (never panics; never returns empty)"
+        );
+    }
+
+    #[test]
+    fn root_agent_role_picks_the_matching_agent_when_multiple_inline_agents_declared() {
+        // A framework declares two inline agents; the resolver must
+        // pick the one whose `id` matches, not the first listed.
+        // Guards against an off-by-one walker bug.
+        let fw: Framework = serde_json::from_value(json!({
+            "name": "m08-5-c-fix-multi-fixture",
+            "version": "1.0.0",
+            "description": "M08.5.C.fix multi-agent fixture",
+            "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+            "agents": [
+                {
+                    "id": "alpha", "role": "alpha-lead",
+                    "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+                    "capabilities": {
+                        "tools_called": [], "skills_loaded": [],
+                        "file_access": { "read": [], "write": [] },
+                        "network": [], "shell": false, "spawn_agents": []
+                    },
+                    "allowed_tools": [], "allowed_skills": [], "spawns": []
+                },
+                {
+                    "id": "beta", "role": "beta-worker",
+                    "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+                    "capabilities": {
+                        "tools_called": [], "skills_loaded": [],
+                        "file_access": { "read": [], "write": [] },
+                        "network": [], "shell": false, "spawn_agents": []
+                    },
+                    "allowed_tools": [], "allowed_skills": [], "spawns": []
+                }
+            ],
+            "tools": [],
+            "skills": [],
+            "session_root_agent": "beta",
+        }))
+        .expect("multi-agent fixture round-trips");
+        assert_eq!(
+            root_agent_role(&fw, "beta"),
+            "beta-worker",
+            "resolver matches by id, not by position"
+        );
     }
 
     #[test]

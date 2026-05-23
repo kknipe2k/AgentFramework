@@ -6,6 +6,201 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed — M08.5 Stage E.fix (re-verification + reconciliation; M08 demo unblocked)
+
+- **M08.5 IRL fix-cycle closed.** All three 🔴 from
+  `docs/M08-irl-findings.md` are RESOLVED and re-tested green;
+  `docs/M08-irl-findings.md` carries an appended `## Resolution (M08.5
+  fix cycle)` section (prior lines byte-untouched) recording the impl
+  commits, the regression test names, and the manual re-run results
+  against the built app on Windows. The two `## Sign-off` boxes flip
+  `[x]`. Per `CLAUDE.md` §20 this work-stage-class cycle (ADR-0008) adds
+  no `docs/gap-analysis.md` entry — the resolution flows into M08.6's
+  gap-analysis Carry-forward.
+- **Cross-stage contract-fidelity pass** (the V-substitute for the
+  no-Stage-V D.fix-class cycle): each 🔴's regression test
+  demonstrably fails on pre-fix `main`, and the strict-TDD v1.8
+  `git diff <red>..<impl>` test-path-EMPTY invariant held for B, C, and
+  D (B: `tests/e2e-tauri/**`; C: `crates/runtime-main/tests/**` plus
+  the binary-crate-variant in-source `#[cfg(test)]` block byte-identity
+  in `capability_map.rs` + `agent_sdk.rs`; D: `tests/e2e-tauri/**` +
+  the two renderer test files). No test was weakened to make an impl
+  commit pass.
+- **`CLAUDE.md` §6 E2E-gates section reconciled** (`CLAUDE.md` §18
+  gate-list update). The "M03 carry-forward / deferred" language is
+  removed; the now-active `e2e-tauri-driver` real-app gate (ADR-0021,
+  Accepted at A.fix) is named. The Playwright `e2e` job stays in the
+  list for renderer-level coverage and as the macOS path
+  (`tauri-driver` has no WKWebView driver — gotcha #23). Not a protocol
+  change; a gate-list reconciliation.
+- **Carry-forward routed.** 🟡 #4 (loaded-framework stacks at {0,0}) +
+  the framework-representation gap (the post-findings review:
+  `examples/aria/` + `examples/ralph/` are modular `{id,path}`
+  multi-file frameworks the loader doesn't resolve) → **M08.6**
+  (ADR-0022 — the modular-canonical, loader-boundary resolution
+  milestone). 🟡 #5 (blank Inspector capability summary on ARIA) + 🟡
+  #6 (UI does not disclosure-gate by tier) → **M08.6 Stage A intake**
+  (the M06.5→M07 / M07.5→M08 carry-forward pattern; the next
+  milestone re-routes them to M08.6 scope or M09 as it triages). The
+  `system_prompt_template` runtime-wide non-application gap (defined in
+  `agent.v1.json` / `crates/runtime-core/src/generated/agent.rs:194`,
+  consumed nowhere in `runtime-main`) → **M09** (M08.6's loader
+  captures the agent `.md` body; M09 decides whether applying it is
+  v0.1 or v1.0). The 3 🟢 (#7 first-run token-spend `0·0·0`; #8 Budget
+  "Save cap" no click feedback; #9 stale `<h1>` "M03 live graph"
+  label) remain in `docs/tech-debt.md`, unchanged.
+- **`docs/build-prompts/retrospectives/M08.5-summary.md`** records the
+  five-stage roll-up + the contract-fidelity pass + the verdict
+  ("Pattern held but with friction" — every stage's S4 time-box
+  under-run is the consistent soft-gate finding).
+
+### Changed — M08.5 Stage D.fix (the Add MCP Server modal buttons respond — IRL 🔴-3)
+
+- **The "Add MCP Server" modal's Test / Add / Cancel buttons now
+  respond in the real Tauri app.** Closes
+  `docs/M08-irl-findings.md` 🔴-3. The modal component, its handlers,
+  and its CSS were each correct in isolation — the dead buttons were a
+  real-WebView2-runtime behavior the static code did not explain
+  (gotcha #41 — the phase doc honestly did not assert an unverified
+  root cause). Live-DOM diagnosis was not feasible on the build machine
+  (no `tauri-driver`/`msedgedriver` locally; A.fix / B.fix
+  CI-as-verifier precedent); per phase doc D.3.2's defensive-fallback
+  authorization, the fix ships the multi-cause-robust portal triple
+  that defends against trapped-stacking-context, transparent-overlay,
+  and off-viewport-action-row interceptions simultaneously:
+  - `ReactDOM.createPortal(…, document.body)` in
+    `src/components/MCPServerAddModal.tsx` so the modal escapes any
+    ancestor stacking context;
+  - backdrop `z-index: 1000` matching `.import-review-modal`;
+  - panel `max-height: 90vh; overflow: auto` so a tall form never
+    pushes its action row off-viewport.
+- **Real-app regression test** —
+  `tests/e2e-tauri/mcp_modal.e2e.ts::mcp_add_server_modal_buttons_are_responsive`
+  opens the modal in the running Tauri app, clicks Cancel
+  (`[data-testid="mcp-add-cancel"]`), and asserts the modal is removed
+  (`waitForExist({ reverse: true })`). Cancel is the cleanest
+  assertion: pure renderer state (`onClose` → `setShowAdd(false)`), no
+  IPC. **Fails on pre-fix `main`** (Cancel intercepted / unreachable).
+  The existing `tests/e2e/mcp_server_add.spec.ts` Playwright only
+  opened the modal and never clicked a button inside it — that is why
+  🔴-3 escaped (gotcha #66 — tests-pass-contract-fails).
+- **The 8 existing `MCPServerAddModal.test.tsx` Vitest tests stayed
+  green post-portal**, first-run, zero changes. RTL's `screen.*`
+  queries resolve from `document.body` — which IS the portal target —
+  so the portal preserves the render contract by construction (a
+  candidate `docs/style.md` note for the next style-guide pass).
+- **Strict v1.8 two-commit TDD** — `git diff c9ed631..caf6f13 --
+  'tests/e2e-tauri/**' 'tests/unit/components/MCPServerAddModal.test.tsx'
+  'tests/unit/components/MCPServerSettings.test.tsx'` EMPTY (verified
+  in the E.fix contract-fidelity pass).
+
+### Changed — M08.5 Stage C.fix (Tester emits the candidate's root agent — IRL 🔴-2)
+
+- **The Builder's Tester now labels the candidate framework's root
+  agent with the framework's own `role`, not the hardcoded `"smoke"`.**
+  Closes `docs/M08-irl-findings.md` 🔴-2.
+  `AgentSdk::session_prelude` (`crates/runtime-main/src/sdk/agent_sdk.rs:333-390`)
+  derived the runtime `agent_id` correctly from the framework but
+  emitted the root `AgentSpawned` with `agent_name: "smoke".to_string()`
+  HARDCODED (`agent_sdk.rs:350`); `spawn_framework_subagents`
+  (`agent_sdk.rs:480`) already named every SUB-agent from its `role`
+  — only the root was mis-named. The Tester WAS running the candidate
+  framework end-to-end (capability wiring + model + every sub-agent
+  substituted); the **one** thing it wasn't substituting was the root
+  agent's display name, which is what made the IRL observer correctly
+  conclude the Tester appeared to run a hardcoded smoke session.
+- Fix: `session_prelude` derives the root `agent_name` from the
+  framework root agent's `role` via the new pure `root_agent_role`
+  resolver in `crates/runtime-main/src/framework_loader/capability_map.rs`
+  (the M06.A walker archetype's natural home — next to
+  `inline_agents` / `parent_grants_for_agent` /
+  `capabilities_for_tool`, all pure free functions over `Framework`,
+  unit-testable directly). When `capability_wiring` is `None` (the
+  real smoke session — `AgentSdk::new`, no framework), the literal
+  `"smoke"` stays correct; a `#[cfg(test)]` guard pins byte-stability
+  of the no-wiring path so a future regression cannot rename the smoke
+  root.
+- **Assembled regression test** (the V/F1 blind spot the four existing
+  `tester_isolated_session.rs` tests structurally lacked — they assert
+  signals/token/isolation/teardown, which all pass with
+  `agent_name:"smoke"`):
+  `crates/runtime-main/tests/tester_isolated_session.rs::tester_emits_the_candidate_framework_root_agent_not_smoke`
+  drives the real `run_test_session_with` (real drone subprocess,
+  concrete `McpDispatcher`, stub provider — no live Anthropic per
+  `CLAUDE.md` §10) and asserts the trace's root
+  `AgentSpawned.agent_name == "lead-orchestrator"` AND `!= "smoke"`.
+  **Fails on pre-fix `main`** (`assert_ne!` panics on `"smoke" !=
+  "smoke"`). Four unit tests pin the inline-role, path-ref-fallback
+  (the path-ref form is the v0.1 reference frameworks' common case —
+  `examples/aria/` + `examples/ralph/` are `{id,path}` refs; the
+  resolver falls back to the agent `id`), id-not-found, and
+  position-disambiguation branches of the resolver directly.
+- `test_agent_config` is unchanged: `system_prompt_template` is
+  consumed nowhere in `runtime-main` (verified by grep) — wiring it
+  Tester-only would be scope creep (a runtime-wide feature under cover
+  of a fix). Routed to M09 as the
+  `system_prompt_template`-non-application carry-forward.
+- **Strict v1.8 two-commit TDD** — `git diff 452f259..eaaddda --
+  'crates/runtime-main/tests/**'` EMPTY; the in-source `#[cfg(test)]`
+  blocks in `capability_map.rs` + `agent_sdk.rs` are byte-identical
+  red→impl (the binary-crate-variant invariant; verified at E.fix).
+  Coverage: workspace 92.11% line / `runtime-main` 95.53% line /
+  `capability_map.rs` 96.64% line, 98.04% region.
+
+### Changed — M08.5 Stage B.fix (enable HTML5 drag-drop on the Builder canvas — IRL 🔴-1)
+
+- **Dragging a Palette item onto the Builder canvas now instantiates a
+  node in the real Tauri app.** Closes `docs/M08-irl-findings.md`
+  🔴-1. The renderer was already correct end-to-end
+  (`src/components/builder/Palette.tsx:138-156` HTML5 `draggable` +
+  `dataTransfer.setData('application/x-builder-node', …)`;
+  `src/components/builder/BuilderCanvas.tsx:81-97`
+  `onDragOver`/`onDrop`); the defect was the Tauri shell:
+  `src-tauri/tauri.conf.json` declared the `main` window with **no**
+  `dragDropEnabled` key, so it took Tauri 2.x's default `true`, which
+  per the official Tauri docs *"enables Tauri's internal drag-and-drop
+  system and disables DOM drag-and-drop."* On Windows (the v0.1
+  target) `dragDropEnabled: false` is **required** for HTML5 DnD on
+  the frontend.
+- Fix: `"dragDropEnabled": false` on the `main` window in
+  `src-tauri/tauri.conf.json`. Safety-grep confirmed zero hits for
+  `onDragDrop` / `getCurrentWebview` / `file_drop` / `fileDrop` across
+  `src/` + `src-tauri/src/` — nothing uses Tauri's native drag-drop,
+  so this removes no feature.
+- **Real-app regression test** —
+  `tests/e2e-tauri/builder_drag.e2e.ts::palette_drag_instantiates_a_canvas_node`
+  drives a W3C WebDriver Actions API multi-step pointer drag (the
+  Chromium-webview workaround — bare `dragAndDrop()` does not fire
+  `dragstart` per webdriverio#274 / chromedriver#841; an intermediate
+  ~5px move past Chromium's `dragstart` threshold is required) from a
+  Palette built-in tool to the canvas and asserts a
+  `[data-testid^="builder-tool-node-"]` appears. **Fails on pre-fix
+  `main`** (the OS handler swallows HTML5 DnD; no node). A Playwright
+  test cannot catch this — it runs in a plain Chromium where HTML5
+  DnD works natively and the Tauri-shell `dragDropEnabled` default is
+  invisible.
+- **Strict v1.8 two-commit TDD** — `git diff ef62ffa..bdb76e5 --
+  'tests/e2e-tauri/**'` EMPTY (verified at E.fix).
+
+### Changed — M08.5 Stage A.fix (revive the real-app tauri-driver regression gate)
+
+- **The `e2e-tauri-driver` CI job is revived as a required, blocking
+  gate** (ADR-0021, Accepted). It drives the built Tauri binary via
+  `tauri-driver` + WebdriverIO on `ubuntu-latest` + `windows-latest` —
+  the first automated gate that exercises the real desktop window (the
+  Playwright `e2e` job mocks `@tauri-apps/api` in a plain Chromium and
+  is structurally blind to Tauri-shell behavior). The job had been
+  `if: false` since M03 PR #47; the M03 disable was re-diagnosed to two
+  concrete config bugs — the app-binary path in `wdio.conf.ts` (the
+  binary is emitted to the workspace-root `target/`, not
+  `src-tauri/target/`) and a missing Windows `msedgedriver` setup — not
+  a wdio/`tauri-driver` version incompatibility. The six existing
+  `tests/e2e-tauri/smoke.e2e.ts` tests are the gate's coverage; one
+  selector drift (`table.sql-results` → `table.sql-inspector__results`)
+  was fixed. macOS stays on the Playwright `e2e` job (`tauri-driver`
+  has no WKWebView driver — gotcha #23). Discharges the M03 PR #47
+  carry-forward (gotcha #54).
+
 ### Changed — M08 Stage H (closeout — gap-analysis, summary, simplify pass, coverage-policy reconciliation)
 
 - **M08 milestone closeout.** `docs/build-prompts/retrospectives/M08-summary.md`

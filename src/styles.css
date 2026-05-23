@@ -1056,6 +1056,13 @@ p.error {
 .mcp-server-row__confirm {
   font-size: 11px;
 }
+/* M08.5 🔴-3: raised to 1000 to match .import-review-modal-backdrop —
+   the modal mounts via `createPortal(…, document.body)` so it is a
+   direct child of <body> (not a descendant of .graph-layout), and the
+   z-index value places it above every other floating element in the
+   Runtime view (.gap-panel at 50, .tester-modal at 60, and any other
+   chrome). Pair: the panel gets max-height/overflow below so a tall
+   form never pushes its action row off-viewport. */
 .mcp-server-add-modal-backdrop {
   position: fixed;
   inset: 0;
@@ -1063,7 +1070,7 @@ p.error {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 50;
+  z-index: 1000;
 }
 .mcp-server-add-modal {
   background: var(--node-bg);
@@ -1073,6 +1080,8 @@ p.error {
   padding: 1rem;
   min-width: 360px;
   max-width: 480px;
+  max-height: 90vh;
+  overflow: auto;
 }
 .mcp-server-add-modal__title {
   font-size: 15px;

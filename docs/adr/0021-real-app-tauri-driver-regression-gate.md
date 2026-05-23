@@ -1,6 +1,6 @@
 # ADR-0021: The real-app (tauri-driver) regression gate
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-05-22
 **Deciders:** @kknipe2k
 **Tags:** ci, testing, quality-gate, builder, process
@@ -163,3 +163,54 @@ flips `Proposed → Accepted` in the Stage A impl commit — the
 M06.5.A.fix / ADR-0012 precedent (the stage that implements an ADR flips
 it). CLAUDE.md §6 (the gate lists) and the §"E2E gates" section are
 reconciled to reflect the now-active gate in M08.5 Stage E.
+
+### Resolved version matrix (M08.5 Stage A.fix)
+
+The WebdriverIO ↔ `tauri-driver` combination kept is the repo's existing
+stack — **WebdriverIO 9.27.1** (the version `package-lock.json` already
+pins; `package.json` declares `^9.0.0`, and the official Tauri
+WebdriverIO example verifies `^9.19.0`) + **`tauri-driver` latest via
+`cargo install tauri-driver --locked`** (2.0.6 as of 2026-05). No version
+downgrade, no WebdriverIO-v7 pin, and no `@wdio/tauri-service` /
+`@crabnebula/tauri-driver` fallback were needed; the A.3.2 decision
+procedure's Primary path cleared.
+
+The M03 PR #47 disable attributed the failure to "wdio v9 ↔ tauri-driver
+2.x compat unresolved." Stage A.fix re-diagnosed it (grep-verified
+against the codebase) to **two concrete config bugs, neither
+version-related**:
+
+1. **Linux** (`could not exec the app binary`) — `wdio.conf.ts` pointed
+   `APP_BIN_PATH` at `src-tauri/target/release/`, but `src-tauri` is a
+   member of the Cargo workspace rooted at the repo root, so `cargo` /
+   `tauri build` emit the binary to the shared workspace-root
+   `target/release/`. Fixed in `wdio.conf.ts`.
+2. **Windows** (`msedgedriver not on PATH`) — the CI job had no
+   msedgedriver setup; `tauri-driver` requires `msedgedriver.exe` on
+   `PATH`, version-matched to the runner's Edge WebView2. Fixed by adding
+   the official `msedgedriver-tool` step to the `e2e-tauri-driver` job.
+
+The existing `wdio.conf.ts` capabilities object (`browserName` omitted,
+`tauri:options.application`) was already the correct official shape — the
+M03 capability-string iteration churn ('edge'/'webkit2gtk' → 'wry' →
+omit) had been chasing the wrong cause.
+
+**Upstream references** (gotcha #32 — cross-stack config quoted verbatim,
+never hand-authored): the official Tauri 2.x WebDriver docs,
+`tauri-apps/tauri-docs` @ `v2` branch, commit
+`a9d8348ff518e4a052bcd7435c07e34a9dfe1af1` —
+`src/content/docs/develop/Tests/WebDriver/ci.md` (the Windows
+`msedgedriver-tool` step, quoted verbatim into `ci.yml`) and
+`src/content/docs/develop/Tests/WebDriver/Example/webdriverio.mdx` (the
+WebdriverIO config shape, which the existing `wdio.conf.ts` already
+matched).
+
+**Branch protection:** the repo's `main` branch carries no GitHub branch
+protection at all, so neither the `e2e` (Playwright) job nor any other
+job is a branch-protection "required check." "The same standing as the
+`e2e` job" (Decision, above) is therefore satisfied by the job running
+unconditionally on every PR and `main` push and being non-advisory (no
+`continue-on-error`) — which un-disabling it achieves. If the maintainer
+later enables branch protection on `main`, `e2e-tauri-driver` should be
+added to the required-checks list alongside `e2e` and the Rust gates;
+that is a repo-settings action, not a workflow-file change.

@@ -609,34 +609,27 @@ jobs:
           retention-days: 7
 
   # ────────────────────────────────────────────────────────────────────────
-  # DISABLED — deferred to M04 carry-forward.
+  # Real-app regression gate (ADR-0021). Drives the built Tauri binary via
+  # `tauri-driver` + WebdriverIO on Linux + Windows — the only gate that
+  # exercises the real desktop window. The Playwright `e2e` job above mocks
+  # `@tauri-apps/api` in a plain Chromium and is structurally blind to
+  # Tauri-shell behavior (native drag-drop, WebView2 events, the real
+  # window). macOS is excluded — `tauri-driver` has no WKWebView driver
+  # (gotcha #23); macOS renderer logic is covered by the Playwright `e2e`
+  # job. A failure blocks the workflow — the same standing as `e2e`.
   #
-  # Disabled per CLAUDE.md §7 self-correction-budget escalation on PR #47.
-  # Three iterations on `wdio.conf.ts` capabilities did not clear both
-  # platforms; iteration history:
-  #   1. browserName: 'edge' / 'webkit2gtk'   — failed both platforms
-  #   2. browserName: 'wry'                   — Linux: capability mismatch
-  #   3. browserName omitted (per official docs) — Linux: tauri-driver could
-  #      not exec the app binary; Windows: msedgedriver not on PATH (fell
-  #      back to treating the app path as the Edge binary)
-  # Each fix advanced the error but never cleared both Linux + Windows.
-  #
-  # Upstream wdio v9 + tauri-driver 2.x compat is unresolved:
-  #   - https://github.com/tauri-apps/tauri/issues/10670
-  #   - https://github.com/tauri-apps/tauri/issues/9203
-  # The only confirmed-working community example pins wdio@7.
-  #
-  # Deferred to M04. The renderer-level Playwright `e2e` job above remains
-  # the E2E proof for M03's deliverables (live graph, VDR projection, SQL
-  # inspector, replay-on-mount); tauri-driver was an additive desktop-shell
-  # test, not an M03 acceptance gate. The wdio.conf.ts + tests/e2e-tauri/**
-  # infrastructure stays in the tree so `npm run test:e2e:tauri` is still
-  # available locally for M04 fix work.
+  # Revived at M08.5 Stage A.fix after being `if: false` since M03 PR #47.
+  # The M03 disable was diagnosed (grep-verified) to two concrete config
+  # bugs, NOT a wdio/tauri-driver version incompatibility: (1) the app
+  # binary path — `src-tauri` is a Cargo workspace member so the binary is
+  # emitted to the workspace-root `target/`, not `src-tauri/target/`
+  # (fixed in `wdio.conf.ts`); (2) no Windows msedgedriver setup (fixed by
+  # the `msedgedriver-tool` step below).
   # ────────────────────────────────────────────────────────────────────────
   e2e-tauri-driver:
     name: E2E (Tauri-driver desktop shell)
     needs: [detect-cargo, frontend]
-    if: false && needs.detect-cargo.outputs.has_cargo == 'true' && needs.detect-cargo.outputs.has_npm == 'true'
+    if: needs.detect-cargo.outputs.has_cargo == 'true' && needs.detect-cargo.outputs.has_npm == 'true' && needs.detect-cargo.outputs.code_changed == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -669,7 +662,23 @@ jobs:
             build-essential \
             curl \
             wget \
-            file
+            file \
+            libseccomp-dev
+      # Windows: tauri-driver proxies WebDriver requests to msedgedriver,
+      # which must be on PATH and version-matched to the runner's Edge
+      # WebView2. The M03 disable's Windows failure was exactly this —
+      # msedgedriver absent from PATH, so tauri-driver fell back to
+      # treating the app binary as the Edge executable. msedgedriver-tool
+      # downloads the version-matched driver. The `run:` block is quoted
+      # verbatim from the official Tauri WebDriver CI reference (gotcha
+      # #32): tauri-apps/tauri-docs @ a9d8348ff518e4a052bcd7435c07e34a9dfe1af1,
+      # src/content/docs/develop/Tests/WebDriver/ci.md.
+      - name: Install msedgedriver (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cargo install --git https://github.com/chippers/msedgedriver-tool
+          & "$HOME/.cargo/bin/msedgedriver-tool.exe"
+          $PWD.Path >> $env:GITHUB_PATH
       - run: npm ci
       # tauri-driver is the WebDriver bridge for Tauri 2.x apps. The npm
       # package distributes prebuilt binaries; the cargo binary is the older
@@ -686,6 +695,55 @@ jobs:
           # When the secret is unset, the build proceeds; the test will
           # fail with a clear message about the missing key in keychain.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_TEST_KEY }}
+      # `tauri build` only builds the src-tauri crate (the main app). The
+      # `runtime-drone` and `runtime-sandbox` binaries are SEPARATE
+      # workspace members, neither a dep of src-tauri, so neither is
+      # built by `tauri build`. The main app's Tauri setup hook spawns
+      # both alongside its own exe — see
+      # src-tauri/src/drone_lifecycle.rs::locate_drone_binary and
+      # src-tauri/src/sandbox_lifecycle.rs::locate_sandbox_binary, both
+      # using `current_exe().parent().push("<name>[.exe]")`. Without
+      # this step the app panics on launch:
+      #   "drone IPC unavailable: spawn drone subprocess: ... (os error 2)"
+      #   "drone IPC unavailable: spawn sandbox subprocess: ... (os error 2)"
+      # — diagnosed from the iteration-2 and iteration-3 CI smoke-launch
+      # step's stderr. `cargo build` writes into the workspace-root
+      # target/release/ (same as the Tauri build), so the binaries land
+      # at the path the app expects.
+      - name: Build runtime-drone + runtime-sandbox binaries (release)
+        run: cargo build --release -p runtime-drone -p runtime-sandbox --bins
+      # Windows pre-test smoke-launch — instrumentation added by the M08.5
+      # A.fix follow-up #2 after the first CI run on this branch (run
+      # 26314395512). The wdio session attached cleanly but every element
+      # query immediately failed with "no such window: target window already
+      # closed", with no app-side output captured (tauri-driver swallows the
+      # child app's stdio). This step launches the binary directly for 8s
+      # to surface any release-mode startup panic before tauri-driver runs.
+      # `continue-on-error: true` — this is diagnostic only, NOT a gate.
+      - name: Smoke-launch the app (Windows) — diagnostic
+        if: matrix.os == 'windows-latest'
+        continue-on-error: true
+        run: |
+          Write-Host "Smoke-launching agent-runtime.exe for 8 seconds to capture any startup output..."
+          $proc = Start-Process -FilePath ".\target\release\agent-runtime.exe" `
+            -RedirectStandardError app-stderr.log -RedirectStandardOutput app-stdout.log `
+            -PassThru
+          Start-Sleep -Seconds 8
+          if ($proc.HasExited) {
+            Write-Host "App EXITED within 8s. Exit code: $($proc.ExitCode)"
+          } else {
+            Write-Host "App still running after 8s (no immediate crash). Stopping it."
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
+          Write-Host "=== app-stdout.log ==="
+          if (Test-Path app-stdout.log) { Get-Content app-stdout.log } else { Write-Host "(no stdout file)" }
+          Write-Host "=== app-stderr.log ==="
+          if (Test-Path app-stderr.log) { Get-Content app-stderr.log } else { Write-Host "(no stderr file)" }
+          Write-Host "=== Recent Windows Application Event Log (agent-runtime / Error Reporting) ==="
+          Get-WinEvent -LogName Application -MaxEvents 200 -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -like '*agent-runtime*' -or $_.ProviderName -like '*Error Reporting*' -or $_.ProviderName -eq 'Application Error' } |
+            Select-Object -First 20 |
+            Format-List TimeCreated, ProviderName, LevelDisplayName, Id, Message
       # Linux WebKitGTK requires a display server; xvfb provides a virtual
       # one. Windows uses the real desktop on the runner (msedgedriver +
       # Edge WebView2 are pre-installed on windows-latest).
@@ -695,3 +753,29 @@ jobs:
       - name: Run Tauri-driver E2E (Windows native)
         if: matrix.os == 'windows-latest'
         run: npm run test:e2e:tauri
+      # Post-failure diagnostic dump (Windows) — capture any Application
+      # Error / WER entries logged while tauri-driver was running the app.
+      # Pairs with the pre-test smoke-launch above. Diagnostic only.
+      - name: Post-test diagnostics (Windows) — Event Log
+        if: failure() && matrix.os == 'windows-latest'
+        continue-on-error: true
+        run: |
+          Write-Host "=== Windows Application Event Log (last 30 min, agent-runtime / Error Reporting) ==="
+          $since = (Get-Date).AddMinutes(-30)
+          Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=$since} -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -like '*agent-runtime*' -or $_.ProviderName -like '*Error Reporting*' -or $_.ProviderName -eq 'Application Error' -or $_.ProviderName -like '*Wer*' } |
+            Select-Object -First 30 |
+            Format-List TimeCreated, ProviderName, LevelDisplayName, Id, Message |
+            Tee-Object -FilePath wer-events.log
+      # Upload all diagnostic artifacts on any failure of this job.
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-tauri-driver-diagnostics-${{ matrix.os }}
+          path: |
+            app-stdout.log
+            app-stderr.log
+            wer-events.log
+          retention-days: 7
+          if-no-files-found: ignore
