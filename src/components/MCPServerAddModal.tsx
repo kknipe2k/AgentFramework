@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { mcpAddServer, mcpTestConnection, unwrapCmdError, type McpTool } from '../lib/ipc';
 import { useGraphStore } from '../lib/graphStore';
 import type { McpServerConfig, McpTransport } from '../types/mcp';
@@ -86,7 +87,19 @@ export function MCPServerAddModal({ onClose }: MCPServerAddModalProps): JSX.Elem
       ? 'Promoted tier — MCP Exec tools auto-accept on install.'
       : 'MCP tools run with the Exec capability — install requires Promoted tier (Novice forbids Exec at §8.security L4).';
 
-  return (
+  // Render through a portal to `document.body` so the modal escapes
+  // any ancestor stacking context — the parent path is
+  // App → <main> → .graph-layout → MCPServerSettings → … and the
+  // modal must overlay the entire viewport irrespective of how those
+  // ancestors lay out (M08.5 🔴-3: the modal mounted inside the
+  // .graph-layout flex tree had its buttons non-responsive in the
+  // real Tauri/WebView2 app; the portal + the z-index + the
+  // max-height/overflow hardening in styles.css are the defensive
+  // triple that matches .import-review-modal's robust pattern). The
+  // existing 8 MCPServerAddModal.test.tsx Vitest tests stay green —
+  // RTL's `screen` queries from `document.body`, which IS the portal
+  // target.
+  const modal = (
     <div className="mcp-server-add-modal-backdrop" data-testid="mcp-server-add-modal-backdrop">
       <div
         className="mcp-server-add-modal"
@@ -200,4 +213,6 @@ export function MCPServerAddModal({ onClose }: MCPServerAddModalProps): JSX.Elem
       </div>
     </div>
   );
+
+  return createPortal(modal, document.body);
 }
