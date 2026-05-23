@@ -89,10 +89,15 @@ cargo install tauri-driver --locked
 ### 1.1 — Verify
 
 ```powershell
-tauri-driver --version
+tauri-driver --help
 ```
 
-**Expected output**: `tauri-driver 0.1.x` (or whatever current is).
+**Expected output**: the tauri-driver usage menu listing `--port`,
+`--native-port`, `--native-host`, `--native-driver`, `-h, --help`. (Note:
+tauri-driver does NOT support `--version` despite the common convention —
+running `tauri-driver --version` returns `Error: unused arguments left:
+["--version"]`. That error itself confirms the binary is installed and on
+PATH — but use `--help` for the clean verify.)
 
 If you get "command not found", PowerShell is using a stale PATH — close
 and reopen.
@@ -221,14 +226,49 @@ much faster (~5-10 min).
 **Expected output ending**: `Finished `release` profile [optimized] target(s)`
 + a path to the produced binary.
 
-### 3.4 — Verify the binary exists
+### 3.4 — Verify the binary exists (workspace-layout note)
+
+`npx tauri build --no-bundle` prints the binary's actual path at the end —
+read that line carefully. In THIS repo's workspace layout (src-tauri is a
+Cargo workspace member, shares the root `target/`), the build lands at:
+
+```
+C:\agent-runtime\target\release\agent-runtime.exe
+```
+
+NOT at `src-tauri\target\release\` (the non-workspace default). Verify:
 
 ```powershell
-Get-Item "C:\agent-runtime\src-tauri\target\release\agent-runtime.exe"
+Get-Item "C:\agent-runtime\target\release\agent-runtime.exe"
 ```
 
 **Expected output**: a file listing showing `agent-runtime.exe` with a
 reasonable size (50-150 MB) and recent timestamp.
+
+### 3.5 — Junction so wdio.conf.ts finds the binary (workaround)
+
+`wdio.conf.ts:31` hardcodes `src-tauri/target/release/` — stale path
+from the M03.F harness, never updated for the workspace layout. The
+binary IS at workspace-root `target/release/`. Create a Windows junction
+so the harness's hardcoded path resolves correctly without a commit:
+
+```powershell
+New-Item -ItemType Directory -Path "C:\agent-runtime\src-tauri\target" -Force | Out-Null
+if (Test-Path "C:\agent-runtime\src-tauri\target\release") {
+    Remove-Item "C:\agent-runtime\src-tauri\target\release" -Recurse -Force
+}
+New-Item -ItemType Junction -Path "C:\agent-runtime\src-tauri\target\release" -Target "C:\agent-runtime\target\release"
+Get-Item "C:\agent-runtime\src-tauri\target\release\agent-runtime.exe"
+```
+
+**Junction vs symlink on Windows**: junction needs NO admin (unlike
+symlinks, which require admin or Developer Mode). Junction works on the
+local volume only — fine since both source and target are on C:.
+
+The last `Get-Item` should now show the file (resolved through the
+junction). This is a workaround — the real fix is updating
+`wdio.conf.ts:31` to use workspace-root `target/release/`. Logged as a
+🟡 finding for Revision 1's protocol commit (`docs/protocol-revisions-irl-fail-rate.md`).
 
 ---
 
