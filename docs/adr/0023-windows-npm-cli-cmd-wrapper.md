@@ -1,7 +1,7 @@
 # ADR-0023: Windows `.cmd` / `.bat` invocation via `cmd.exe /C` wrapper (BatBadBut-safe)
 
-**Status:** Proposed
-**Date:** 2026-05-23
+**Status:** Accepted
+**Date:** 2026-05-23 (Proposed); 2026-05-24 (Accepted at M08.5.5 Stage B.fix impl commit)
 **Deciders:** @kknipe2k
 **Tags:** persistence, ipc-adjacent, security, dev-experience
 
@@ -36,8 +36,9 @@ package (irrelevant to the spawn-level failure). The defect is at the
 
 ## Decision
 
-When the resolved program ends in `.cmd` or `.bat` on Windows, wrap the
-invocation in `cmd.exe /C "<full command line>"` using
+When the resolved program ends in `.cmd` or `.bat` on Windows **AND
+the args list is non-empty**, wrap the invocation in
+`cmd.exe /C "<full command line>"` using
 `std::os::windows::process::CommandExt::raw_arg`. The full command line
 (program + args) is constructed as a single Windows-quoted string and
 passed as the only `raw_arg` to `cmd.exe`. This bypasses the BatBadBut
@@ -45,11 +46,28 @@ escaping entirely (which is intended for the case where Rust constructs
 the arguments; here, we construct the full command line ourselves with
 full control over quoting).
 
-Concretely (full diff in
-`docs/build-prompts/M08.5.5-mcp-resilience.md` § B.3.1):
+The non-empty-args guard preserves the M06.5 IRL 🟡-2 bare-shim
+contract pinned by
+`build_command_resolves_npx_to_npx_cmd_on_windows` /
+`build_command_resolves_npm_to_npm_cmd_on_windows`: bare `npx` / `npm`
+(no args) is rewritten to `npx.cmd` / `npm.cmd` and then spawned
+directly via `Command::new("npx.cmd")`. The BatBadBut OS-level
+command-line-parse error fires only when args are present (an arg-less
+batch invocation has no per-arg quoting for the BatBadBut layer to
+mangle), so narrowing the wrap to non-empty-args adds no behavioral
+gap. This narrowing was settled at M08.5.5 Stage B.fix red-phase entry
+when the maintainer answered the surfaced design conflict between
+this ADR's literal wording and the stage's
+`<retrospective_requirements>` "M06.5 IRL 🟡-2 tests still pass"
+clause.
+
+Concretely (full impl in
+`crates/runtime-mcp/src/transport/stdio.rs::build_command`):
 
 ```rust
-if resolved.ends_with(".cmd") || resolved.ends_with(".bat") {
+if (resolved.ends_with(".cmd") || resolved.ends_with(".bat"))
+    && !self.args.is_empty()
+{
     use std::os::windows::process::CommandExt;
     let mut cmd = Command::new("cmd.exe");
     let full_command_line = build_quoted_command_line(&resolved, &self.args);
@@ -143,7 +161,9 @@ for the quoting.
   correctness this ADR's tests guard).
 - Findings: `docs/M08-irl-findings.md` § Resolution 🔴 #6 (MCP
   Add/Test on Windows infinite loop).
-- Code: `crates/runtime-mcp/src/transport/stdio.rs:82-94,105-115`.
+- Code: `crates/runtime-mcp/src/transport/stdio.rs::build_command` +
+  `resolve_program` (the BatBadBut wrap + the M06.5 IRL 🟡-2 shim
+  resolver, respectively).
 - External: CVE-2024-24576
   (<https://nvd.nist.gov/vuln/detail/cve-2024-24576>); Rust 1.77.2
   release notes
@@ -155,8 +175,21 @@ for the quoting.
 
 ## Notes
 
-Status flips `Proposed → Accepted` in the M08.5.5 Stage B.fix impl
-commit per CLAUDE.md §11. The assembled regression test in
-`crates/runtime-mcp/tests/mcp_add_with_path_args.rs` is the permanent
-guard; it fails on pre-fix `main` with the OS-level error and passes
-on the cmd.exe-wrapper fix.
+Status flipped `Proposed → Accepted` in the M08.5.5 Stage B.fix impl
+commit per CLAUDE.md §11.
+
+Three Windows-cfg-gated unit tests in
+`crates/runtime-mcp/src/transport/stdio.rs::tests` pin the wrapper
+shape (program == `cmd.exe` for `.cmd`-with-args; non-batch programs
+unchanged; IRL-failing combo wrapped). The assembled regression test
+in `crates/runtime-mcp/tests/mcp_add_with_path_args.rs` is the
+permanent defense-in-depth guard. On the build machine's current
+toolchain (Windows + Rust 1.95.0 + Node 2026's npm-shipped batch
+shims) the integration test passes on pre-fix code as well — the
+BatBadBut command-line-parse error does not fire deterministically
+for `TempDir`-generated path args, which suggests the IRL repro
+involved a different toolchain at build time, a different process
+context, or an arg shape with shell metacharacters. The two unit
+tests carry the empirical right-reason RED weight for this stage;
+the integration test catches future regressions in older Rust
+versions or differently-configured envs.

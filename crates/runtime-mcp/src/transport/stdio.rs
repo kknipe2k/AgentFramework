@@ -78,9 +78,60 @@ impl StdioTransport {
     /// without spawning. This is the pure-logic seam tested by the
     /// `build_command_*` test family. The program name is run through
     /// [`resolve_program`] so an npm-shipped CLI resolves to its Windows
-    /// `.cmd` shim (M06.5 IRL 🟡-2).
+    /// `.cmd` shim (M06.5 IRL 🟡-2). On Windows, `.cmd` / `.bat` shims
+    /// with args are wrapped in `cmd.exe /C "<full command line>"` via
+    /// [`CommandExt::raw_arg`] to bypass the Rust 1.77.2+ `BatBadBut` /
+    /// CVE-2024-24576 batch-file escaping that produces cmd.exe-
+    /// unparseable command lines for path args containing `:` + `\`
+    /// (M08.5.5 IRL 🔴 #6; see ADR-0023). The wrap fires only when
+    /// args are non-empty; bare-shim invocations (no args) stay on the
+    /// direct-spawn path that the M06.5 IRL 🟡-2 tests pin.
+    ///
+    /// [`CommandExt::raw_arg`]: std::os::windows::process::CommandExt::raw_arg
     pub(crate) fn build_command(&self) -> Command {
-        let mut cmd = Command::new(resolve_program(&self.command));
+        let resolved = resolve_program(&self.command);
+        #[cfg(target_os = "windows")]
+        {
+            // Case-insensitive extension match — Windows treats `.cmd` and
+            // `.CMD` as the same batch-file kind, and so must the wrap
+            // gate (see clippy::case_sensitive_file_extension_comparisons).
+            let is_batch = std::path::Path::new(&resolved)
+                .extension()
+                .is_some_and(|ext| {
+                    ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat")
+                });
+            if is_batch && !self.args.is_empty() {
+                // `tokio::process::Command::raw_arg` is an inherent method
+                // (since tokio added Windows support) — no `use
+                // CommandExt` needed; see tokio docs.
+                let mut cmd = Command::new("cmd.exe");
+                let mut full_command_line = format!("\"{resolved}\"");
+                for arg in &self.args {
+                    let needs_quote = arg.contains(' ')
+                        || arg.contains(':')
+                        || arg.contains('\\')
+                        || arg.contains('"');
+                    if needs_quote {
+                        let escaped = arg.replace('"', "\\\"");
+                        full_command_line.push_str(" \"");
+                        full_command_line.push_str(&escaped);
+                        full_command_line.push('"');
+                    } else {
+                        full_command_line.push(' ');
+                        full_command_line.push_str(arg);
+                    }
+                }
+                cmd.raw_arg(format!("/C {full_command_line}"));
+                for (k, v) in &self.env {
+                    cmd.env(k, v);
+                }
+                if let Some(c) = &self.cwd {
+                    cmd.current_dir(c);
+                }
+                return cmd;
+            }
+        }
+        let mut cmd = Command::new(resolved);
         for arg in &self.args {
             cmd.arg(arg);
         }
