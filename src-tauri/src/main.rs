@@ -15,6 +15,7 @@ use runtime_main::drone_ipc::DroneClient;
 use runtime_main::hitl::HitlSeam;
 use runtime_main::sandbox_ipc::SandboxClient;
 use runtime_main::sdk::{ApprovalSeam, SessionId};
+use runtime_main::stray_db_cleanup;
 use runtime_main::tier::{load_tier, Tier};
 use runtime_mcp::client::{
     InMemorySecretStore, KeyringSecretStore, McpClient, Registry, SecretStore,
@@ -136,6 +137,31 @@ fn main() {
             };
             let tier_state: CurrentTierState = Mutex::new(tier_from_disk);
             app_handle.manage(tier_state);
+            // M08.5.5 Stage C.fix (M06.5 🔴-1 closure): detect + rename
+            // any pre-ADR-0012 stray `mcp.sqlite` BEFORE any code path
+            // opens the canonical `session.sqlite`. Best-effort — a
+            // failed cleanup logs at WARN and continues startup (a stray
+            // file is a recoverable state; rename failures don't block
+            // the runtime). The renamed file (`.stray-mcp.sqlite.bak`)
+            // preserves all original bytes for forensic recovery.
+            match app_handle.path().app_local_data_dir() {
+                Ok(dir) => match stray_db_cleanup::cleanup_stray_db(&dir) {
+                    Ok(stray_db_cleanup::CleanupOutcome::NotPresent
+                    | stray_db_cleanup::CleanupOutcome::Cleaned { .. }) => {}
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "stray mcp.sqlite cleanup failed; continuing startup"
+                        );
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "app_local_data_dir unavailable; skipping stray mcp.sqlite cleanup"
+                    );
+                }
+            }
             // M05 Stage E §8.security L5: best-effort audit log open.
             let audit_writer_opt = open_audit_writer(&app_handle);
             if let Some(ref w) = audit_writer_opt {

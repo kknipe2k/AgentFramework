@@ -25,6 +25,7 @@
 //! approval surface.
 
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Outcome of one startup cleanup pass.
 #[derive(Debug, PartialEq, Eq)]
@@ -75,15 +76,38 @@ pub enum CleanupError {
 /// is a different filesystem on Windows). The Tauri shell logs at
 /// WARN and continues startup — a stray file is a recoverable state.
 pub fn cleanup_stray_db(dir: &Path) -> Result<CleanupOutcome, CleanupError> {
-    // STUB (red phase): probes the stray path but always returns
-    // NotPresent so the behavioral tests (2, 3, 4) fail right-reason
-    // when the stray IS present (assertions on Cleaned-outcome shape
-    // + .bak existence). Replaced by the impl commit per the strict-
-    // TDD v1.8 invariant. The `dir.join` is intentional — keeps the
-    // function non-const so the impl doesn't have to remove a
-    // `const` qualifier added by clippy::missing_const_for_fn.
-    let _stray_path = dir.join("mcp.sqlite");
-    Ok(CleanupOutcome::NotPresent)
+    let stray = dir.join("mcp.sqlite");
+    if !stray.exists() {
+        return Ok(CleanupOutcome::NotPresent);
+    }
+    let target = pick_rename_target(dir);
+    std::fs::rename(&stray, &target)?;
+    tracing::info!(
+        original = %stray.display(),
+        renamed_to = %target.display(),
+        "M08.5.5: pre-ADR-0012 stray mcp.sqlite renamed; bytes preserved for forensic recovery"
+    );
+    Ok(CleanupOutcome::Cleaned {
+        original: stray,
+        renamed_to: target,
+    })
+}
+
+/// Pick the rename target inside `dir`. Defaults to
+/// `.stray-mcp.sqlite.bak`; if that already exists (a prior cleanup
+/// pass already produced one), falls back to
+/// `.stray-mcp.sqlite.bak.<unix-ms>` so the rename never clobbers an
+/// existing backup. Pre-1970 system clocks fall back to a `0` suffix —
+/// same posture as `tier::persistence::now_unix_ms`.
+fn pick_rename_target(dir: &Path) -> PathBuf {
+    let canonical = dir.join(".stray-mcp.sqlite.bak");
+    if !canonical.exists() {
+        return canonical;
+    }
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+    dir.join(format!(".stray-mcp.sqlite.bak.{ts}"))
 }
 
 #[cfg(test)]
