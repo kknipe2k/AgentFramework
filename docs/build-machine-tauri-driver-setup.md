@@ -73,6 +73,34 @@ Then **close and reopen PowerShell** for the change to take effect.
 
 ---
 
+## Phase 0.5 — Install gitleaks (PowerShell, NO ADMIN)
+
+Required for the lefthook pre-commit hook (ADR-0024). Without
+gitleaks on PATH, `lefthook install` succeeds but the pre-commit
+hook fails with `command not found` on every commit — annoying but
+better than a silent skip. The CI `gitleaks` job is the
+authoritative enforcement either way (a developer who bypasses the
+hook still cannot merge), but the local hook gives immediate
+feedback before push.
+
+```powershell
+winget install gitleaks.gitleaks --accept-source-agreements --accept-package-agreements
+```
+
+winget modifies the user PATH. Close and reopen PowerShell, then
+verify:
+
+```powershell
+gitleaks version
+# Expected: 8.x.x (matches the upstream release)
+```
+
+If you do not have winget (Windows 10 pre-1809), use `cargo install
+gitleaks` instead — slower (~3–5 min compile) but cross-platform
+and uses your already-installed Rust toolchain.
+
+---
+
 ## Phase 1 — Install tauri-driver (PowerShell, NO ADMIN)
 
 The Tauri WebDriver bridge. Installs to `%USERPROFILE%\.cargo\bin\tauri-driver.exe`
@@ -253,53 +281,54 @@ Get-Item "C:\agent-runtime\target\release\agent-runtime.exe"
 **Expected output**: a file listing showing `agent-runtime.exe` with a
 reasonable size (50-150 MB) and recent timestamp.
 
-### 3.5 — Junction so wdio.conf.ts finds the binary (workaround)
-
-`wdio.conf.ts:31` hardcodes `src-tauri/target/release/` — stale path
-from the M03.F harness, never updated for the workspace layout. The
-binary IS at workspace-root `target/release/`. Create a Windows junction
-so the harness's hardcoded path resolves correctly without a commit:
-
-```powershell
-New-Item -ItemType Directory -Path "C:\agent-runtime\src-tauri\target" -Force | Out-Null
-if (Test-Path "C:\agent-runtime\src-tauri\target\release") {
-    Remove-Item "C:\agent-runtime\src-tauri\target\release" -Recurse -Force
-}
-New-Item -ItemType Junction -Path "C:\agent-runtime\src-tauri\target\release" -Target "C:\agent-runtime\target\release"
-Get-Item "C:\agent-runtime\src-tauri\target\release\agent-runtime.exe"
-```
-
-**Junction vs symlink on Windows**: junction needs NO admin (unlike
-symlinks, which require admin or Developer Mode). Junction works on the
-local volume only — fine since both source and target are on C:.
-
-The last `Get-Item` should now show the file (resolved through the
-junction). This is a workaround — the real fix is updating
-`wdio.conf.ts:31` to use workspace-root `target/release/`. Logged as a
-🟡 finding for Revision 1's protocol commit (`docs/protocol-revisions-irl-fail-rate.md`).
+> **Note:** the previous Phase 3.5 (Windows junction workaround for
+> `wdio.conf.ts`'s stale `src-tauri/target/release/` path) is no
+> longer needed. M08.5.5 Stage A.fix landed the workspace-path fix
+> + `onPrepare()` cargo-build hook in `wdio.conf.ts`, so the
+> harness now points at the canonical `target/release/` directly
+> AND builds all three release binaries idempotently before
+> spawning tauri-driver. Skip ahead to Phase 4.
 
 ---
 
 ## Phase 4 — Run the harness (PowerShell, NO ADMIN)
 
-### 4.1 — Run the tests
+### 4.1 — Optional: provide a real API key for the full smoke suite
+
+The smoke tests #3–#6 (`smoke.e2e.ts`) chain off a session that
+hits the real Anthropic API and skip cleanly when neither
+`ANTHROPIC_TEST_KEY` nor `ANTHROPIC_API_KEY` is set. To run them
+locally, create a gitignored `.env.local` at the repo root:
+
+```ini
+ANTHROPIC_TEST_KEY=sk-ant-api03-…
+ANTHROPIC_API_KEY=sk-ant-api03-…
+```
+
+`.env.local` is matched by `.gitignore:38` (`.env.*`) and is loaded
+by `wdio.conf.ts` (M08.5.5 Stage A.fix) before tauri-driver
+spawns. The runtime's `read_api_key` reads `ANTHROPIC_API_KEY`
+first (ADR-0025), so the env var outranks any stale OS-keychain
+placeholder a prior smoke-test #2 may have saved.
+
+### 4.2 — Run the tests
 
 ```powershell
 npm run test:e2e:tauri
 ```
 
 **Expected output**: WebdriverIO + tauri-driver launch in sequence, the
-app window briefly opens (you may see it flash), the 8 tests run, and a
+app window briefly opens (you may see it flash), the tests run, and a
 summary at the end.
 
-**Expected result**: of 8 tests, **2 should pass** (tests 1 + 2 — the
-key-independent smoke tests) and **6 should skip** (tests 3-6 chain off
-test 3's session which requires an Anthropic API key; the runtime
-skip-guard added in M08.5 A.fix follow-up #1 makes them gracefully skip
-when `ANTHROPIC_TEST_KEY` is unset). Plus the two M08.5 regression tests
-(B.fix builder_drag + D.fix mcp_modal) should also pass.
+**Expected result**: of 8 tests across 3 spec files, **at least 4
+pass unconditionally** — `app launches with SetupPanel visible`,
+`save-key flow`, `mcp_add_server_modal_buttons_are_responsive`,
+and `palette_drag_instantiates_a_canvas_node` (M08.5.5 Stage A.fix
+revived). Smoke #3–#6 pass when `.env.local` provides a real API
+key (Phase 4.1) or skip cleanly when it does not.
 
-**Expected total**: 2 + 2 = 4 passed, 4 skipped, 0 failed.
+**Expected total**: 4–8 passed, 0–4 skipped, 0 failed.
 
 If you see failures, **paste the output back** when this session resumes.
 Common first-run failures:

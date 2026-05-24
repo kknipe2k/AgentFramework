@@ -1,0 +1,32 @@
+# Pre-commit hook configuration. Install once locally: `lefthook install`.
+#
+# Hooks block the commit on failure rather than auto-fixing — surfacing
+# the issue early keeps the canonical CI gate suite the single source of
+# truth (each hook below mirrors its corresponding CI job).
+#
+# Adding a hook here REQUIRES the corresponding CI job to stay in lockstep
+# per CLAUDE.md §6 CI-parity. Local + CI must run the exact same command;
+# any divergence is a bug.
+
+pre-commit:
+  parallel: true
+  commands:
+    # Secret scan — M08.5.5 Stage A.fix; ADR-0024. Blocks the commit when
+    # any secret pattern matches the staged diff. gitleaks ships its
+    # default rule set covering ~150 provider patterns (Anthropic,
+    # OpenAI, AWS, GCP, GitHub PAT, generic API keys). Mirrors the
+    # `.github/workflows/ci.yml::gitleaks` job.
+    #
+    # Install (one-time, per docs/build-machine-tauri-driver-setup.md
+    # Phase 0.5):
+    #   - Windows: `winget install gitleaks.gitleaks`
+    #   - Linux:   `apt install gitleaks` (or release tarball)
+    #   - macOS:   `brew install gitleaks`
+    #
+    # If gitleaks is not on PATH the hook fails with "command not found"
+    # — annoying but better than silent skip. The CI job is the
+    # authoritative enforcement either way (a developer who bypasses
+    # the hook still cannot merge).
+    gitleaks:
+      run: gitleaks git --staged --no-banner
+      tags: secrets

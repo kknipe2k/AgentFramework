@@ -56,13 +56,27 @@ impl From<KeyStoreError> for CmdError {
     }
 }
 
-/// Read the Anthropic API key from the OS keychain.
+/// Read the Anthropic API key — env var first, OS keychain fallback.
+///
+/// `ANTHROPIC_API_KEY` takes precedence over the OS keychain when it
+/// is set and non-empty. Empty or unset env falls through to the
+/// keychain. The env var name matches the upstream Anthropic SDK
+/// convention so local devs and CI share one variable across the
+/// toolchain. ADR-0025.
 ///
 /// # Errors
 ///
-/// Returns [`KeyStoreError::NotFound`] if no entry exists,
-/// [`KeyStoreError::Keyring`] for any other backend failure.
+/// Returns [`KeyStoreError::NotFound`] when neither path produces a
+/// key (env var unset / empty AND no keychain entry);
+/// [`KeyStoreError::Keyring`] for any non-`NoEntry` backend failure on
+/// the keychain path. The env-var path itself does not fail —
+/// `std::env::var` errors degrade gracefully to the keychain.
 pub fn read_api_key() -> Result<SecretString, KeyStoreError> {
+    if let Ok(env_key) = std::env::var("ANTHROPIC_API_KEY") {
+        if !env_key.is_empty() {
+            return Ok(SecretString::from(env_key));
+        }
+    }
     let entry = Entry::new(SERVICE, USER)?;
     match entry.get_password() {
         Ok(s) => Ok(SecretString::from(s)),

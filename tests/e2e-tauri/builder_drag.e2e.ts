@@ -1,4 +1,5 @@
-// Tauri 2.x desktop-shell E2E regression test — M08.5 Stage B.fix (🔴-1).
+// Tauri 2.x desktop-shell E2E regression test — M08.5 Stage B.fix (🔴-1)
+// + M08.5.5 Stage A.fix (mechanism revival).
 //
 // Closes docs/M08-irl-findings.md 🔴-1 — Palette → Builder-canvas
 // drag-to-instantiate was dead in the real app on `main`. The renderer DnD
@@ -19,34 +20,45 @@
 // `dragDropEnabled` default is invisible to it. Only the real running app
 // exhibits the bug; only the Stage A.fix `tauri-driver` harness catches it.
 //
-// WebDriver HTML5-DnD mechanism (gotcha #32 — cross-stack integration,
-// quoted from an upstream reference, not hand-authored). The W3C
-// WebDriver Actions API is the gesture path that engages the Tauri OS
-// drag-drop handler (msedgedriver on Windows / WebKitWebDriver on Linux
-// pushes real OS pointer events into the platform driver, which the
-// `dragDropEnabled: true` handler intercepts at OS level). A bare
-// `dragAndDrop()` / two-point pointer sequence does NOT fire HTML5
-// `dragstart` on Chromium-based webviews — the documented Chromium
-// constraint (https://github.com/webdriverio/webdriverio/issues/274,
-// https://bugs.chromium.org/p/chromedriver/issues/detail?id=841). The
-// well-established workaround is the multi-step pointer sequence: a
-// small intermediate move past Chromium's `dragstart` threshold (~5px)
-// after `pointerDown`, then a duration-paced move to the target, then
-// `pointerUp`. Pattern per the WebdriverIO v9 Actions API docs at
-// https://webdriver.io/docs/api/browser/action and the W3C WebDriver
-// Actions specification at
-// https://www.w3.org/TR/webdriver2/#dfn-perform-actions.
+// Drag mechanism (M08.5.5 Stage A.fix — gotcha #32 cross-stack
+// integration, quoted from upstream not hand-authored). The W3C
+// WebDriver Actions API multi-step pointer drag no longer synthesizes
+// HTML5 `dragstart` on Chromium 148+ (the threshold tightened; a 5px
+// intermediate `pointerMove` no longer trips it). The previous test
+// (M08.5 commit 00e4f5e — the `it.skip` precursor) carried four
+// candidate fixes documented at docs/M08-irl-findings.md 🟡 #11; the
+// chosen path is JavaScript event dispatch via `browser.executeScript`,
+// which bypasses the WebDriver / OS-driver layer entirely and reaches
+// the WebView2 / WebKitGTK DOM directly.
 //
-// The hypothesis the red phase must falsify (per CLAUDE.md §6 v1.8 +
-// gotcha #82): on `main` (dragDropEnabled defaults true), the multi-step
-// pointer sequence reaches the OS handler, the OS handler swallows the
-// drag, no HTML5 dragstart fires in the webview, BuilderCanvas's onDrop
-// never runs, and no `[data-testid^="builder-tool-node-"]` element is
-// rendered on the canvas — the `waitForExist` assertion times out. After
-// `dragDropEnabled: false` lands in `tauri.conf.json`, the OS handler is
-// disabled, the same pointer sequence reaches the WebView2/WebKitGTK
-// directly, HTML5 DnD synthesizes, `addNode('tool', 'Read', …)` runs,
-// and the `[data-testid="builder-tool-node-Read"]` element renders.
+// The DISPATCH SEQUENCE — dragstart on source, dragover then drop on
+// target, dragend on source — is quoted from
+// ePages-de/chromedriver-html5-dragdrop @ commit
+// 201e5a26e926547368c6618a66a9010ee93ce245 (master HEAD, dated
+// 2019-01-08), file dragdrop-chromedriver.js, the `dragstartIfDraggable`
+// / `dragoverAndCheckIfValidDropTarget` / `drop` / `dragend`
+// sub-helpers. The per-event constructor is modernized: the 2019
+// upstream uses plain `new Event('dragstart', {bubbles: true})` (Chrome
+// did not yet support the `DragEvent` constructor) and warns synthetic
+// events have no usable `dataTransfer`; 2026 WebView2 + Chromium-Edge
+// support `new DragEvent(type, { dataTransfer: new DataTransfer(),
+// clientX, clientY, bubbles, cancelable })` natively per the HTML
+// living spec (https://html.spec.whatwg.org/multipage/dnd.html#the-dragevent-interface),
+// so the test constructs a single `DataTransfer` and threads it across
+// the dragstart → dragover → drop chain. This lets the production
+// handlers (Palette.tsx `setData` + BuilderCanvas.tsx `getData`)
+// receive a real DataTransfer without modification — the cross-stack
+// integration the rest of v0.1 depends on.
+//
+// The hypothesis the red phase falsifies (per CLAUDE.md §6 v1.8 +
+// gotcha #82): on M08.5 + M08.5.5-pre `main` the `it.skip` decorates
+// out and the regression is uncaught; replacing the W3C Actions API
+// drag with `executeScript`-driven event dispatch routes around the
+// Chromium 148+ dragstart-synthesis threshold and the test becomes a
+// real green-pass against the assembled Tauri app — the
+// `[data-testid="builder-tool-node-Read"]` element renders after the
+// drop because BuilderCanvas's onDrop runs `addNode('tool', 'Read',
+// position)` and React Flow commits the projection.
 //
 // Selectors chosen to require no backend data: the Tools tab is the
 // default Palette tab; `Read` is a runtime built-in tool (BUILTIN_TOOLS
@@ -64,63 +76,137 @@ import { $, $$, browser } from '@wdio/globals';
 import { expect } from 'chai';
 
 describe('Builder palette drag — M08.5 🔴-1 (real-app regression)', () => {
-  // SKIPPED: WebDriver Actions multi-step pointer drag no longer
-  // synthesizes HTML5 dragstart on Chromium 148+ (today's CI evidence
-  // 2026-05-23 — both runners). Impl works (IRL-verified). Mechanism
-  // fix lands at M08.5.5 Stage A.fix. See docs/M08-irl-findings.md
-  // 🟡 #11 for the four candidate fixes.
-  it.skip('palette_drag_instantiates_a_canvas_node', async () => {
-    // Wait past app launch — the SetupPanel is the M03 first-paint
-    // surface used by the smoke tests; once it is visible the renderer
-    // is mounted and the ViewSwitch is reachable.
-    const setupPanel = $('section[aria-label="api key setup"]');
-    await setupPanel.waitForDisplayed({ timeout: 10_000 });
-
-    // Switch to the Builder view (ViewSwitch.tsx data-testid).
+  it('palette_drag_instantiates_a_canvas_node', async () => {
+    // Wait for the ViewSwitch — it mounts unconditionally after
+    // first paint, independent of `has_api_key()` (the SetupPanel
+    // is hidden when the OS keychain already holds a key, e.g.
+    // after a prior smoke-test #2 run on the same machine, so the
+    // earlier `section[aria-label="api key setup"]` wait is
+    // brittle across machines).
     const builderTab = $('[data-testid="view-switch-builder"]');
-    await builderTab.waitForDisplayed({ timeout: 5_000 });
+    await builderTab.waitForDisplayed({ timeout: 10_000 });
     await builderTab.click();
 
     // The drag source — `Read` is a BUILTIN_TOOL (Palette.tsx
     // BUILTIN_TOOLS) on the Tools tab (the default tab), so the
     // selector resolves with no backend data + no test fixture.
-    const paletteItem = $('[data-testid="palette-item-Read"]');
-    await paletteItem.waitForDisplayed({ timeout: 5_000 });
+    await $('[data-testid="palette-item-Read"]').waitForDisplayed({ timeout: 5_000 });
 
     // The drop target.
-    const canvas = $('[data-testid="builder-canvas"]');
-    await canvas.waitForDisplayed({ timeout: 5_000 });
+    await $('[data-testid="builder-canvas"]').waitForDisplayed({ timeout: 5_000 });
 
     // Pre-condition: no tool nodes on the canvas yet.
     const preDrop = await $$('[data-testid^="builder-tool-node-"]').length;
     expect(preDrop, 'no tool nodes should exist before the drag').to.equal(0);
 
-    // W3C Actions API multi-step pointer drag (see file header for the
-    // upstream-reference rationale; the small intermediate move past
-    // Chromium's ~5px dragstart threshold is the load-bearing step).
+    // Dispatch sequence quoted verbatim from
+    // https://github.com/ePages-de/chromedriver-html5-dragdrop/blob/201e5a26e926547368c6618a66a9010ee93ce245/dragdrop-chromedriver.js
+    // (the `dragstartIfDraggable` / `dragoverAndCheckIfValidDropTarget`
+    // / `drop` / `dragend` sub-helpers, lines ~95–174). Per-event
+    // constructor modernized to `DragEvent` + `new DataTransfer()` for
+    // WebView2 2026 — see file header for the full rationale.
     //
-    // `origin: <element>` places the pointer at the element's center.
-    // The intermediate `move({ origin: paletteItem, x: 5, y: 5 })`
-    // crosses the dragstart threshold while the pointer is still over
-    // the source; the duration-paced second move emulates a real user
-    // drag (WebView2 synthesizes a smooth move from the duration field
-    // per the W3C WebDriver Actions algorithm).
-    await browser
-      .action('pointer', { parameters: { pointerType: 'mouse' } })
-      .move({ origin: paletteItem })
-      .down({ button: 0 })
-      .move({ origin: paletteItem, x: 5, y: 5 })
-      .move({ duration: 200, origin: canvas })
-      .up({ button: 0 })
-      .perform();
+    // Single `executeScript` so the full chain runs in one browser-side
+    // pass; each individual `dispatchEvent` is synchronous within the
+    // script, so React's onDragStart / onDragOver / onDrop fire before
+    // the next event is constructed.
+    await browser.executeScript(
+      `
+      // Resolve source + target inside the browser context. Passing
+      // wdio v9 chainables as executeScript args sends a deferred
+      // proxy object, not a DOM Element — querySelector inside the
+      // script is the documented browser-side path (and what the
+      // upstream chromedriver-html5-dragdrop did via its inner
+      // helpers that took raw element references).
+      var sourceElement = document.querySelector(
+        '[data-testid="palette-item-Read"]'
+      );
+      var targetElement = document.querySelector(
+        '[data-testid="builder-canvas"]'
+      );
+      if (!sourceElement) {
+        throw new Error('source element not found in DOM');
+      }
+      if (!targetElement) {
+        throw new Error('target element not found in DOM');
+      }
+
+      // One DataTransfer threaded across the chain so the Palette's
+      // setData('application/x-builder-node', …) survives into the
+      // BuilderCanvas onDrop getData(...). The 2019 upstream omits
+      // dataTransfer entirely (Chrome had no constructor); modern
+      // WebView2 + Chromium-Edge support new DataTransfer() per the
+      // HTML living spec.
+      var dataTransfer = new DataTransfer();
+
+      // Drop point at the center of the canvas (BuilderCanvas onDrop
+      // uses e.clientX / e.clientY via screenToFlowPosition, so the
+      // synthetic events need real client coordinates — the 2019
+      // upstream wrote pageX / pageY post-construction which is
+      // fragile on read-only properties; modern DragEvent accepts
+      // clientX / clientY in the options bag).
+      var targetRect = targetElement.getBoundingClientRect();
+      var dropClientX = Math.round(targetRect.left + targetRect.width / 2);
+      var dropClientY = Math.round(targetRect.top + targetRect.height / 2);
+
+      // — upstream sub-helper: dragstartIfDraggable — dispatch
+      // dragstart on the source element. Palette.tsx onDragStart runs
+      // and calls dataTransfer.setData(…) + sets effectAllowed.
+      if (sourceElement.draggable) {
+        sourceElement.dispatchEvent(new DragEvent('dragstart', {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: dataTransfer,
+        }));
+      } else {
+        throw new Error('trying to drag non-draggable element');
+      }
+
+      // — upstream sub-helper: dragoverAndCheckIfValidDropTarget —
+      // dispatch dragover on the target. BuilderCanvas.tsx onDragOver
+      // runs and calls e.preventDefault() + sets dropEffect = 'copy'.
+      targetElement.dispatchEvent(new DragEvent('dragover', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: dataTransfer,
+        clientX: dropClientX,
+        clientY: dropClientY,
+      }));
+
+      // — upstream sub-helper: drop — dispatch drop on the target.
+      // BuilderCanvas.tsx onDrop runs and reads
+      // dataTransfer.getData('application/x-builder-node'), parses
+      // the JSON payload, calls addNode('tool', 'Read', position) via
+      // screenToFlowPosition({x: clientX, y: clientY}).
+      targetElement.dispatchEvent(new DragEvent('drop', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: dataTransfer,
+        clientX: dropClientX,
+        clientY: dropClientY,
+      }));
+
+      // — upstream sub-helper: dragend — dispatch dragend on the
+      // source so any onDragEnd cleanup runs.
+      sourceElement.dispatchEvent(new DragEvent('dragend', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: dataTransfer,
+      }));
+      `,
+      [],
+    );
 
     // Post-condition: BuilderCanvas's onDrop ran addNode('tool', 'Read', …)
     // and the projection rendered a BuilderToolNode whose testid is
-    // `builder-tool-node-Read` (BuilderToolNode.tsx:23). The 5s budget
-    // gives WebView2 time to synthesize the HTML5 DnD events and React
-    // Flow to commit the node — typical observed latency is <100ms.
+    // `builder-tool-node-Read` (BuilderToolNode.tsx:23). `waitForDisplayed`
+    // polls visibility with a budget — `isDisplayed()` called
+    // synchronously after `waitForExist` flakes when React Flow's
+    // commit lands a render-tick after the DOM insertion (typical
+    // observed latency <100ms but the prior synchronous form raced
+    // it on slower machines).
     const droppedNode = $('[data-testid="builder-tool-node-Read"]');
     await droppedNode.waitForExist({ timeout: 5_000 });
-    expect(await droppedNode.isDisplayed()).to.equal(true);
+    await droppedNode.waitForDisplayed({ timeout: 5_000 });
   });
 });
