@@ -1,7 +1,8 @@
 # ADR-0024: Gitleaks secret-scan as required merge gate + lefthook pre-commit hook
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-05-24
+**Accepted:** 2026-05-24 (M08.5.5 Stage A.fix impl commit per CLAUDE.md §11)
 **Deciders:** @kknipe2k
 **Tags:** security, ci, dev-experience
 

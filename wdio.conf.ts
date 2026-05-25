@@ -1,4 +1,4 @@
-// Tauri 2.x desktop-shell E2E config (M03.F).
+// Tauri 2.x desktop-shell E2E config (M03.F; M08.5 + M08.5.5 hardening).
 //
 // Runs the WebdriverIO v9 test runner against the built Tauri binary via
 // `tauri-driver`. Per the official Tauri 2.x docs
@@ -18,8 +18,33 @@
 // matching the WebdriverIO v9 default. They are intentionally separate from
 // the renderer-level Playwright suite at `tests/e2e/` (different test type,
 // different driver, different CI job).
-import { spawn, type ChildProcess } from 'node:child_process';
+//
+// .env.local loader (M08.5.5 Stage A.fix; drafted on review branch
+// 0239804). Allows local devs to set ANTHROPIC_TEST_KEY +
+// ANTHROPIC_API_KEY without committing them. File is gitignored via
+// `.gitignore:38` (.env.*). CI uses the ANTHROPIC_TEST_KEY GitHub
+// secret directly; the local-loader path complements that. Pair with
+// the ADR-0025 env-var override in `crates/runtime-main/src/key_store.rs`
+// so a key in .env.local outranks any stale OS-keychain placeholder
+// the M08.5 smoke-test #2 may have saved.
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+
+if (existsSync('.env.local')) {
+  for (const line of readFileSync('.env.local', 'utf8').split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0 || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    const value = trimmed
+      .slice(eq + 1)
+      .trim()
+      .replace(/^['"]|['"]$/g, '');
+    process.env[key] = value;
+  }
+}
 
 if (process.platform === 'darwin') {
   console.log('tauri-driver E2E skipped on macOS (unsupported by tauri-driver upstream).');
@@ -69,9 +94,53 @@ export const config = {
   port: TAURI_DRIVER_PORT,
   logLevel: 'info' as const,
 
-  // Lifecycle: spawn tauri-driver before WebdriverIO connects; SIGTERM it
+  // Lifecycle: build the Tauri app + sibling subprocess binaries
+  // (idempotent — both invocations are no-ops when already up-to-date),
+  // then spawn tauri-driver before WebdriverIO connects; SIGTERM it
   // after. Per https://v2.tauri.app/develop/tests/webdriver/example/webdriverio/.
+  //
+  // M08.5.5 Stage A.fix: the build sequence closes the
+  // missing-sibling-subprocesses install-pain — `npx tauri build`
+  // only emits `agent-runtime.exe`, but the app spawns
+  // `runtime-drone` + `runtime-sandbox` as subprocesses at startup
+  // and crashes immediately if they are absent from the workspace-
+  // root `target/release/` directory. CI builds them in two named
+  // steps; the local harness now does the same in one shot here.
+  //
+  // The two invocations exist for a Tauri compile-mode reason:
+  // `npx tauri build` (NOT `cargo build -p agent-runtime`) is what
+  // produces a release binary that serves the bundled `dist/`
+  // assets — running raw `cargo build --release -p agent-runtime`
+  // omits the Tauri build env vars and the resulting binary tries
+  // to load the renderer from `tauri.conf.json`'s `devUrl`
+  // (`http://localhost:1420`), which is unreachable at e2e-run
+  // time. The sibling crates are plain bins and `cargo build`
+  // suffices for them. This matches the CI `e2e-tauri-driver` job
+  // (.github/workflows/ci.yml:723 + :747).
   onPrepare(): void {
+    console.log('M08.5.5 wdio.conf.ts: building agent-runtime via tauri (idempotent)…');
+    // `shell: true` routes through cmd.exe on Windows so the `npx.cmd`
+    // batch shim resolves correctly. Direct invocation of `npx` from a
+    // Node `spawn` produces `exit null` (signal-terminated) on Windows
+    // because `spawn` does not interpret `.cmd` extensions without a
+    // shell. Same pattern matches the CI step `run: npx tauri build
+    // --no-bundle` (which runs in `bash` on Linux + `bash` on Windows
+    // GHA runners, where shell-interpretation is automatic).
+    const tauriBuild = spawnSync('npx tauri build --no-bundle', {
+      stdio: 'inherit',
+      shell: true,
+    });
+    if (tauriBuild.status !== 0) {
+      throw new Error(`npx tauri build --no-bundle failed with exit ${String(tauriBuild.status)}`);
+    }
+    console.log('M08.5.5 wdio.conf.ts: building runtime-drone + runtime-sandbox (release)…');
+    const cargoBuild = spawnSync(
+      'cargo build --release -p runtime-drone -p runtime-sandbox --bins',
+      { stdio: 'inherit', shell: true },
+    );
+    if (cargoBuild.status !== 0) {
+      throw new Error(`cargo build --release failed with exit ${String(cargoBuild.status)}`);
+    }
     tauriDriverProc = spawn('tauri-driver', ['--port', String(TAURI_DRIVER_PORT)], {
       stdio: 'inherit',
     });

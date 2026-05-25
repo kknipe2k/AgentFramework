@@ -224,6 +224,39 @@ jobs:
           echo "code_changed=$code_changed" >> "$GITHUB_OUTPUT"
           echo "Result: code_changed=$code_changed"
 
+  # Secret-scan gate (M08.5.5 Stage A.fix; ADR-0024). Runs gitleaks
+  # over the full git history per the upstream
+  # gitleaks/gitleaks-action@v2 README (https://github.com/gitleaks/gitleaks-action).
+  # `fetch-depth: 0` is REQUIRED for full-history scanning; the
+  # default `actions/checkout@v4` shallow clone would only scan the
+  # PR's HEAD commit. `GITHUB_TOKEN` enables PR-level commenting
+  # when leaks are found (the action posts an inline comment with
+  # the leaked-pattern + commit; no leak → no comment).
+  # `GITLEAKS_LICENSE` is NOT required for personal accounts (the
+  # kknipe2k/AgentFramework repo); register the free license at
+  # gitleaks.io if/when the repo transfers to an org account.
+  #
+  # Gated by `detect-cargo.outputs.code_changed` so docs-only PRs
+  # skip the job — matches the PR #98 docs-only-skip pattern that
+  # the rust + cargo-audit + cargo-deny + e2e-tauri-driver jobs use.
+  # The local pre-commit lefthook hook is the safety net for the
+  # narrow case of a docs-only PR containing a leaked secret.
+  gitleaks:
+    name: Secret scan
+    needs: detect-cargo
+    if: needs.detect-cargo.outputs.code_changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   rust:
     name: Rust ${{ matrix.os }} / ${{ matrix.toolchain }}
     needs: detect-cargo

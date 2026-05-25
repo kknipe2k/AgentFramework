@@ -77,10 +77,69 @@ impl StdioTransport {
     /// Build a `tokio::process::Command` from this transport's config,
     /// without spawning. This is the pure-logic seam tested by the
     /// `build_command_*` test family. The program name is run through
-    /// [`resolve_program`] so an npm-shipped CLI resolves to its Windows
-    /// `.cmd` shim (M06.5 IRL 🟡-2).
-    pub(crate) fn build_command(&self) -> Command {
-        let mut cmd = Command::new(resolve_program(&self.command));
+    /// `resolve_program` so an npm-shipped CLI resolves to its Windows
+    /// `.cmd` shim (M06.5 IRL 🟡-2). On Windows, `.cmd` / `.bat` shims
+    /// with args are wrapped in `cmd.exe /C "<full command line>"` via
+    /// `CommandExt::raw_arg` (the Windows-only `std::os::windows::
+    /// process::CommandExt` trait, also available as an inherent method
+    /// on `tokio::process::Command`) to bypass the Rust 1.77.2+
+    /// `BatBadBut` / CVE-2024-24576 batch-file escaping. That escaping
+    /// produces cmd.exe-unparseable command lines for path args
+    /// containing a drive letter together with backslashes (M08.5.5
+    /// IRL 🔴 #6; see ADR-0023). The wrap fires only when args are
+    /// non-empty; bare-shim invocations (no args) stay on the
+    /// direct-spawn path that the M06.5 IRL 🟡-2 tests pin.
+    ///
+    /// Note: the `CommandExt` mention above is plain text rather than
+    /// an intra-doc link because `std::os::windows` is cfg-gated to
+    /// Windows; an intra-doc link to it breaks the
+    /// `cargo doc -D rustdoc::broken_intra_doc_links` gate on
+    /// Linux/macOS (the post-M08.5.5 hotfix discovery).
+    #[must_use]
+    pub fn build_command(&self) -> Command {
+        let resolved = resolve_program(&self.command);
+        #[cfg(target_os = "windows")]
+        {
+            // Case-insensitive extension match — Windows treats `.cmd` and
+            // `.CMD` as the same batch-file kind, and so must the wrap
+            // gate (see clippy::case_sensitive_file_extension_comparisons).
+            let is_batch = std::path::Path::new(&resolved)
+                .extension()
+                .is_some_and(|ext| {
+                    ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat")
+                });
+            if is_batch && !self.args.is_empty() {
+                // `tokio::process::Command::raw_arg` is an inherent method
+                // (since tokio added Windows support) — no `use
+                // CommandExt` needed; see tokio docs.
+                let mut cmd = Command::new("cmd.exe");
+                let mut full_command_line = format!("\"{resolved}\"");
+                for arg in &self.args {
+                    let needs_quote = arg.contains(' ')
+                        || arg.contains(':')
+                        || arg.contains('\\')
+                        || arg.contains('"');
+                    if needs_quote {
+                        let escaped = arg.replace('"', "\\\"");
+                        full_command_line.push_str(" \"");
+                        full_command_line.push_str(&escaped);
+                        full_command_line.push('"');
+                    } else {
+                        full_command_line.push(' ');
+                        full_command_line.push_str(arg);
+                    }
+                }
+                cmd.raw_arg(format!("/C \"{full_command_line}\""));
+                for (k, v) in &self.env {
+                    cmd.env(k, v);
+                }
+                if let Some(c) = &self.cwd {
+                    cmd.current_dir(c);
+                }
+                return cmd;
+            }
+        }
+        let mut cmd = Command::new(resolved);
         for arg in &self.args {
             cmd.arg(arg);
         }
@@ -345,6 +404,67 @@ mod tests {
         assert_eq!(
             cmd.as_std().get_program(),
             std::ffi::OsStr::new("my-mcp-server"),
+        );
+    }
+
+    // ── M08.5.5 Stage B.fix — Windows `.cmd`/`.bat` cmd.exe /C wrapper (ADR-0023) ──
+    // On Windows, `tokio::process::Command` (since Rust 1.77.2 /
+    // CVE-2024-24576) applies BatBadBut-safe escaping for `.cmd` / `.bat`
+    // invocations. When an arg contains drive-letter + backslash (a Windows
+    // path), the escaped form is a cmd.exe-unparseable command line that
+    // fails at the OS layer with "filename, directory name, or volume label
+    // syntax is incorrect" BEFORE the batch file runs. Fix: when args are
+    // non-empty AND the resolved program is `.cmd` / `.bat`, wrap in
+    // `cmd.exe /C "<full command line>"` via `CommandExt::raw_arg`. The
+    // bare-shim case (no args) falls through to the direct-spawn path; the
+    // M06.5 IRL 🟡-2 tests above pin that path verbatim.
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn build_command_wraps_npx_cmd_in_cmd_exe_when_resolved_to_dot_cmd() {
+        let t = StdioTransport::new("npx").with_args(vec![
+            "-y".into(),
+            "@modelcontextprotocol/server-filesystem".into(),
+            r"C:\Users\test\path".into(),
+        ]);
+        let cmd = t.build_command();
+        let program = cmd.as_std().get_program();
+        assert_eq!(
+            program,
+            std::ffi::OsStr::new("cmd.exe"),
+            "on Windows, .cmd shims with args must be wrapped in cmd.exe /C to bypass BatBadBut"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn build_command_does_not_wrap_non_cmd_program_in_cmd_exe() {
+        let t = StdioTransport::new("my-mcp-server.exe").with_args(vec!["arg".into()]);
+        let cmd = t.build_command();
+        let program = cmd.as_std().get_program();
+        assert_eq!(
+            program,
+            std::ffi::OsStr::new("my-mcp-server.exe"),
+            "non-batch programs spawn directly without cmd.exe wrapper"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn build_command_wrap_handles_path_arg_with_drive_letter_and_backslashes() {
+        // The exact IRL-failing arg combination from M08.5 IRL re-verify:
+        //   npx -y @modelcontextprotocol/server-filesystem C:\Users\...\Temp\...
+        let scratch_path = r"C:\Users\kknip\AppData\Local\Temp\m08irl-test";
+        let t = StdioTransport::new("npx").with_args(vec![
+            "-y".into(),
+            "@modelcontextprotocol/server-filesystem".into(),
+            scratch_path.into(),
+        ]);
+        let cmd = t.build_command();
+        assert_eq!(
+            cmd.as_std().get_program(),
+            std::ffi::OsStr::new("cmd.exe"),
+            "drive-letter path args must take the cmd.exe wrapper path",
         );
     }
 }

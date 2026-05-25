@@ -37,6 +37,11 @@ proptest           = { workspace = true }
 wiremock           = { workspace = true }
 tempfile           = { workspace = true }
 rusqlite           = { workspace = true, features = ["bundled"] }
+# Safe env-var mutation for tests under workspace `forbid(unsafe_code)`.
+# Wraps the post-rustc-1.84 `unsafe` `std::env::set_var` / `remove_var`
+# in a callback API and serializes concurrent test calls internally
+# (M08.5.5 Stage A.fix — read_api_key env-var override coverage).
+temp-env           = "0.3"
 runtime-drone      = { workspace = true }
 # Dev-only cycle (runtime-mcp normal-deps runtime-main; Cargo permits
 # dev-dependency cycles). The M07.D2 assembled regression drives the
