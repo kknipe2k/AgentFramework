@@ -131,3 +131,21 @@ fn read_companions(dir: &Path) -> Result<Vec<Companion>, BuilderError> {
 fn is_companion_md(name: &str) -> bool {
     name.ends_with(".skill.md") || name.ends_with(".tool.md") || name.ends_with(".agent.md")
 }
+
+/// Split a `.md` artifact's YAML frontmatter from its markdown body.
+///
+/// Returns `Some((frontmatter, body))` when `text` is a well-formed
+/// `---\n<yaml>\n---\n<body>` document — both delimiters are line-leading
+/// `---\n`. Returns `None` otherwise.
+///
+/// Caller-normalize contract: `text` must use LF line endings; the
+/// caller normalizes CRLF first (the `runtime-core/tests/round_trip.rs`
+/// precedent). Borrowed slices into `text`, no allocation.
+///
+/// Stub (red phase) — Stage B impl replaces this with the real splitter.
+#[must_use]
+#[allow(clippy::missing_const_for_fn)]
+pub fn split_frontmatter(text: &str) -> Option<(&str, &str)> {
+    let _ = text;
+    None
+}
