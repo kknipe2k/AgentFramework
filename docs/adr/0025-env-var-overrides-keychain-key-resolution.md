@@ -1,7 +1,8 @@
 # ADR-0025: Env-var override pattern for `ANTHROPIC_API_KEY` (env-first, keychain-fallback)
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-05-24
+**Accepted:** 2026-05-24 (M08.5.5 Stage A.fix impl commit per CLAUDE.md §11)
 **Deciders:** @kknipe2k
 **Tags:** persistence, ci, dev-experience, security
 

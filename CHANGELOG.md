@@ -6,6 +6,367 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed — M08.5.5 post-cycle hotfix (non-Windows broken intra-doc-link in `build_command`)
+
+- **CI Rust matrix went RED on macOS + ubuntu (1.80 + stable) at
+  `cargo doc --workspace --no-deps` with `RUSTDOCFLAGS: -D missing_docs
+  -D rustdoc::broken_intra_doc_links` after the M08.5.5 cycle push
+  (commit `81c2776`).** The B2.fix red-commit visibility upgrade
+  (`pub(crate) → pub` on `StdioTransport::build_command`) made the
+  docstring externally visible and brought it under the workspace's
+  `-D rustdoc::broken_intra_doc_links` enforcement. The docstring's
+  intra-doc link to `[CommandExt::raw_arg]:
+  std::os::windows::process::CommandExt::raw_arg` resolves on Windows
+  (where `std::os::windows::process` exists) but is unresolvable on
+  Linux/macOS (the `std::os::windows` module is cfg-gated to Windows).
+  The B2.fix red-amend caught the same class of broken link for the
+  private `resolve_program` and resolved it via plain backticks; the
+  `CommandExt::raw_arg` link was missed in the same sweep.
+- **CI-parity violation that caused the miss:** local Windows ran
+  `RUSTDOCFLAGS="-D missing_docs"` only — without the second
+  `-D rustdoc::broken_intra_doc_links` flag that CI uses. The link
+  resolves fine on Windows so the platform-specific failure was
+  invisible to the Windows-local gate run regardless of which flags
+  were used; the Linux/macOS CI runners were the only verifiers of
+  this class. The CLAUDE.md §6 commands now have the full CI-exact
+  `RUSTDOCFLAGS` set for the canonical doc gate (already updated in
+  the same edit as this fix's local validation).
+- **Fix in `crates/runtime-mcp/src/transport/stdio.rs`** —
+  `build_command`'s docstring replaces the `[CommandExt::raw_arg]:
+  std::os::windows::process::CommandExt::raw_arg` intra-doc link
+  with a plain-text mention plus a parenthetical noting that
+  `std::os::windows` is cfg-gated to Windows and an intra-doc link to
+  it would break the Linux/macOS doc gate. Same pattern as the
+  `resolve_program` plain-backticks fix from the B2.fix red-amend.
+  Also rephrased to satisfy clippy's `doc_lazy_continuation` lint
+  (the original reflow accidentally produced markdown that the lint
+  read as an unindented list-item continuation).
+- **Class:** post-cycle hotfix per CLAUDE.md §6 self-correction
+  protocol. Forward-only commit on top of the M08.5.5 cycle's D.fix
+  commit `81c2776`. Does NOT amend B.fix / B2.fix / C.fix / D.fix
+  history (the cycle's commits stay as-is; the hotfix is its own
+  small commit on top). The cycle's PR will land both the cycle's
+  commits + this hotfix together (the PR base ranges
+  `main..claude/m08.5.5-mcp-resilience` post-hotfix-push).
+
+### Changed — M08.5.5 Stage D.fix (re-verification + reconciliation; MCP-Windows path demo-ready)
+
+- **M08.5.5 MCP-Resilience fix cycle closed (MCP-Windows portion).**
+  The cycle scoped two 🔴 from the M08.5 IRL re-verify
+  (`docs/M08-irl-findings.md` § Resolution (M08.5.5 fix cycle)) — 🔴 #6
+  (MCP Add/Test on Windows infinite-loops on `npx` spawn) + M06.5 🔴-1
+  (stray `mcp.sqlite` despite ADR-0012's path resolver). Both are
+  RESOLVED across **five stages** (A.fix harness + B.fix initial
+  cmd.exe wrapper + B2.fix outer-quote follow-on + C.fix stray
+  cleanup + D.fix re-verify); `docs/M08-irl-findings.md` carries the
+  appended `## Resolution (M08.5.5 fix cycle)` section recording the
+  impl commits, the regression test names, and the manual re-run
+  results against the built app on Windows. The cycle's third scoped
+  item — 🔴 #7 (`mcp_servers` schema divergence) — was **dropped at
+  C.fix red-phase** after the build machine caught an inverted
+  legacy↔canonical schema labeling in the phase doc that would have
+  CORRUPTED user `session.sqlite` files if implemented literally;
+  routes to **M08.6 Stage A intake** alongside the state-sync class
+  already there. Per `CLAUDE.md` §20 this work-stage-class cycle
+  (ADR-0008) adds no `docs/gap-analysis.md` entry — the resolution
+  flows into M08.6's gap-analysis Carry-forward.
+- **Cross-stage contract-fidelity pass** (the V-substitute for the
+  no-Stage-V D.fix-class cycle): each surviving 🔴's regression test
+  demonstrably fails on pre-fix `main`, and the strict-TDD v1.8
+  `git diff <red>..<impl>` test-path-EMPTY invariant held for B, B2,
+  and C:
+  - **B** (BatBadBut spawn-layer wrapper):
+    `crates/runtime-mcp/src/transport/stdio.rs` +
+    `crates/runtime-mcp/tests/` — invariant verified by B.fix's
+    retro's diff over the test paths.
+  - **B2** (cmd.exe parse-layer outer-quoting): same paths;
+    invariant verified by the surface-time `git diff
+    677fdf0..51c4de5` showing a single-hunk three-line-context diff
+    with ONLY the format! string change.
+  - **C** (stray DB cleanup):
+    `crates/runtime-main/src/stray_db_cleanup.rs` +
+    `crates/runtime-main/tests/stray_db_cleanup_assembled.rs`.
+
+  The dropped 🔴 #7 has its own structural guard: the C.fix retrospective
+  records the maintainer decision + carry-forward routing, and the
+  D.fix surface honors it.
+- **`CLAUDE.md` §6 reconciled** to add a new "Secret-scan gate"
+  subsection naming the gitleaks CI job (Stage A.fix; ADR-0024) and
+  the `lefthook.yml` pre-commit hook + the per-OS install commands.
+  Per `CLAUDE.md` §18 this is a gate-list update sanctioned by §18,
+  not a protocol change.
+- **Carry-forward routed.** 🔴 #4 (tier UI/backend desync) + 🔴 #5
+  (Builder Canvas state not persisted across restart) + **🔴 #7
+  (`mcp_servers` schema divergence)** + 11 🟡 + 🟢 elevation → **M08.6
+  Stage A intake** per the Option C routing decision in
+  `docs/m08.5-irl-re-verify-handoff.md` § "Decisions finalized
+  (2026-05-23)" + this cycle's correction of 🔴 #7 routing.
+- **`docs/build-prompts/retrospectives/M08.5.5-summary.md`** records
+  the four-stage roll-up + the contract-fidelity pass + the verdict
+  ("Scoped MCP-Windows cluster closed; 🔴 #7 routed forward; pattern
+  held with one notable Severity-4 friction") + the M08.6 protocol-
+  decision candidates (`<phase_doc_claims_verification>` step + the
+  new `<prior_stage_decisions_audit>` step + ~4 §15 gotcha
+  candidates + the carried-forward `<manual_repro_handling>` slot).
+
+### Changed — M08.5.5 Stage B2.fix (outer-quote `/C` wrapper for multi-arg cmd.exe; ADR-0023 amended in place)
+
+- **The MCP Add/Test flow on Windows now spawns past `cmd.exe` to the
+  real `npx` invocation for multi-arg command lines.** Closes the
+  follow-on defect surfaced by the IRL re-verify on 2026-05-24
+  against the post-B.fix build (`94c2bc7`, real Tauri app): the
+  Stage B.fix `cmd.exe /C` wrapper shipped without an OUTER pair of
+  quotes around the inner full command line. cmd.exe's
+  `/?`-documented quote-handling rule 2 (the "old behavior" fallback
+  when rule 1's "exactly two quote characters" condition fails)
+  stripped the FIRST and LAST quote characters of the command line.
+  Applied to B.fix's inner `"npx.cmd" -y @... "C:\path"` (4 quote
+  chars), the result was `npx.cmd" -y @... "C:\path` — first token
+  `npx.cmd"` carries a stray literal `"` that Windows rejects as an
+  invalid filename. cmd.exe exited with status 1 + the SAME error
+  class as pre-B.fix BatBadBut: `The filename, directory name, or
+  volume label syntax is incorrect.` The user-visible symptom was
+  identical to pre-B.fix (infinite UI spinner; rmcp handshake hangs)
+  — even though the cause shifted from spawn-layer to cmd.exe
+  parse-layer.
+- **One-line fix in
+  `crates/runtime-mcp/src/transport/stdio.rs::build_command`:**
+  `cmd.raw_arg(format!("/C {full_command_line}"))` →
+  `cmd.raw_arg(format!("/C \"{full_command_line}\""))`. cmd.exe's
+  rule 2 now strips only the outer pair the wrapper added, leaving
+  the inner program-+-args quoting intact for cmd.exe's next
+  parsing layer to interpret correctly.
+- **Real-Rust assembled regression test** —
+  `crates/runtime-mcp/tests/mcp_npx_cmd_quoting.rs` builds the IRL
+  command line via `StdioTransport::build_command` (now `pub` so the
+  integration test can reach the seam — visibility upgrade was
+  required to satisfy the test mechanics + carries `#[must_use]` per
+  clippy::must_use_candidate). Spawns via
+  `tokio::process::Command::output()` (direct, not through the
+  rmcp handshake — that path inherits stderr and would lose the
+  signature). Captures stderr, asserts NOT contains the OS-level
+  "filename, directory name, or volume label syntax is incorrect"
+  message. **Fails on `94c2bc7`** (exit 1, expected stderr); **passes
+  on the impl commit** (`51c4de5`, ~220ms — npx actually runs).
+- **ADR-0023 amended in place** per CLAUDE.md §11 explicit user
+  override of the immutability rule. The amendment adds a
+  "Multi-arg invocations" sub-section to the Decision section
+  explaining cmd.exe's `/?` rule 1 / rule 2 mechanics + the
+  Microsoft cmd reference. Date line carries the 2026-05-24
+  amendment timestamp; Decision section's code example updated to
+  the outer-quoted form; Status remains **Accepted**.
+- **Strict v1.8 two-commit TDD** — `git diff 677fdf0..51c4de5 --
+  crates/runtime-mcp/src/transport/stdio.rs
+  crates/runtime-mcp/tests/` shows a single-hunk three-line-context
+  diff containing ONLY the format! string change. The new test file
+  + the existing in-source `#[cfg(test)] mod tests` block + the
+  existing integration tests are byte-identical between red and
+  impl. The red commit was amended ONCE
+  (`19eb677 → 677fdf0`) to absorb a doc-link hygiene fix
+  (private-intra-doc-links lint induced by the visibility upgrade
+  on `build_command`); same protocol-drift pattern as B.fix's
+  `d63c500 → ca1db1f` amend, in service of preserving the
+  strict-TDD invariant.
+- **Stage class:** Strict-TDD code stage inserted between B.fix and
+  C.fix in the M08.5.5 cycle's conceptual ordering (cycle shape now
+  A → B → B2 → C → D); landed in git history AFTER C.fix because
+  the defect was discovered only when the user manually
+  IRL-re-verified the post-C.fix binary on 2026-05-24.
+
+### Changed — M08.5.5 Stage C.fix (startup cleanup of pre-ADR-0012 stray `mcp.sqlite`; M06.5 IRL 🔴-1)
+
+- **The `mcp.sqlite` stray from pre-ADR-0012 testing now cleans up
+  on app startup.** Closes M06.5 🔴-1 — the M06.5 fix shipped at Stage
+  A.fix (commit `7fc3277` on `main`, ADR-0012) prevents any future
+  creation of `mcp.sqlite` (`Select-String "mcp.sqlite" src-tauri/src/`
+  + `crates/` returns zero construction sites) but does NOT clean up
+  the historical artifact from pre-ADR-0012 testing. Any user
+  upgrading sees a stray session-DB-shaped file sitting next to the
+  canonical `session.sqlite`, with cross-table FKs that any
+  directory-scanning tool surfaces as a second session DB. The fix is
+  a startup-cleanup module that detects the stray and renames it
+  (timestamped `.bak`) for forensic recoverability.
+- **New module** `crates/runtime-main/src/stray_db_cleanup.rs` — a
+  path-agnostic public surface (the third use of the `CLAUDE.md` §9
+  path-agnostic-persistence + Tauri-shell-resolves-directory
+  archetype, after M05.D `tier::persistence` and M05.E
+  `audit::file_path`). The Tauri `setup()` hook resolves the
+  `app_local_data_dir` path and calls
+  `stray_db_cleanup::clean(&dir)` before opening the canonical
+  `session.sqlite`. `tracing::info!` emits forensic context (path,
+  size, timestamp); the `.bak` rename preserves the bytes for manual
+  inspection.
+- **Real-Rust regression test** —
+  `crates/runtime-main/tests/stray_db_cleanup_assembled.rs` plants a
+  legacy `mcp.sqlite` in a `tempfile::TempDir`-backed app-data
+  directory, runs the cleanup, and asserts: the original is renamed
+  to `.stray-mcp.sqlite.bak.<UTC-timestamp>`; the bytes are preserved
+  byte-identically; the cleanup is idempotent on a second invocation
+  (returns `NotPresent`, no second `.bak` created). Plus 3 unit
+  tests in the module (`NotPresent` when no stray, `Cleaned` shape,
+  timestamp suffix non-empty).
+- **Sub-fix 2 (migration 004 `mcp_servers` schema reconcile) DROPPED
+  at red-phase**. The phase doc § C.1 / C.3.2 / C.3.3 labeled
+  canonical = 5-state and legacy = 4-state, but the actual migration
+  SQL files (`crates/runtime-drone/migrations/000_initial.sql` +
+  `003_mcp_server_status.sql`) prove canonical = 4-state. A literal
+  implementation of migration 004 would have rewritten every shipped
+  user's `session.sqlite::mcp_servers` from the canonical 4-state
+  CHECK to the stray-DB-style 5-state CHECK — corrupting any row whose
+  `status` value was outside the legacy schema's accepted set.
+  Maintainer chose at the red-phase `AskUserQuestion` to drop Sub-fix
+  2 entirely + carry 🔴 #7 to M08.6 alongside the state-sync class
+  already routed there. The C.fix retrospective documents the
+  phase-doc-semantic-inversion class as a new protocol-improvement
+  candidate.
+- **AuditWriter integration deferred to M08.6 / M09**. The phase doc
+  prescribed `AuditWriter::write_jsonl(...)` which is a non-existent
+  API; the actual `AuditWriter::log(&entry).await` requires an
+  `AuditEntryKind::StrayDbCleaned` variant that doesn't exist and
+  would be a schema change + ADR. Maintainer chose to defer; the
+  current implementation uses `tracing::info!` for forensic visibility
+  + the `.bak` file for byte preservation. Tracked as a M08.6 / M09
+  carry-forward.
+- **Strict v1.8 two-commit TDD** — `git diff feea6e3..94c2bc7 --
+  crates/runtime-main/src/stray_db_cleanup.rs
+  crates/runtime-main/tests/stray_db_cleanup_assembled.rs` EMPTY
+  (proven in the D.fix contract-fidelity pass).
+
+### Changed — M08.5.5 Stage B.fix (Windows `.cmd` / `.bat` `cmd.exe /C` wrapper; IRL 🔴 #6, ADR-0023 Accepted)
+
+- **The MCP Add/Test flow on Windows now spawns `npx` (and any other
+  `.cmd` / `.bat` shim) without the BatBadBut OS-level error.** Closes
+  IRL 🔴 #6. On Windows, `tokio::process::Command::new("npx.cmd").arg(...)`
+  passes each `arg(...)` through Rust's BatBadBut-safe quoting routine
+  (per CVE-2024-24576's mitigation in `std::process::Command` since
+  Rust 1.77.2+). When an argument contains a drive-letter path
+  (`C:\...\Temp\m08irl-<n>`), the escaped form is the cmd.exe-level
+  command-line that Windows itself refuses to parse — producing
+  `The filename, directory name, or volume label syntax is incorrect.`
+  before `npx` even starts. The UI showed an infinite spinner; no row
+  was written to either DB.
+- **Fix in `crates/runtime-mcp/src/transport/stdio.rs::build_command`**
+  — detects `.cmd` / `.bat` programs (case-insensitive via
+  `Path::extension().eq_ignore_ascii_case(...)`; Windows is
+  case-insensitive on extension matching) and, when the argument
+  vector is non-empty, wraps the invocation in `cmd.exe /C "<full
+  command line>"` via `tokio::process::Command::raw_arg` to bypass
+  the BatBadBut quoting routine. When the argument vector IS empty,
+  preserves the bare-shim behavior the existing M06.5 IRL 🟡-2 unit
+  tests pin (the conditional design was a red-phase
+  `AskUserQuestion` outcome — maintainer chose conditional wrap to
+  preserve the existing tests + the bare-shim use case).
+- **Assembled real-Rust regression test** —
+  `crates/runtime-mcp/tests/mcp_add_with_path_args.rs` uses the
+  actual `npx -y @modelcontextprotocol/server-filesystem <SCRATCH>`
+  IRL-failing command line; 3 unit tests in the source assert
+  `build_command` produces `cmd.exe` as the program (with `/C` + the
+  quoted command line as `raw_arg`s) for `.cmd` and `.bat` shims, and
+  the original program unchanged for non-batch executables (a
+  Linux/macOS smoke-test invariant). **Discovery during the red-phase**:
+  the assembled integration test did NOT deterministically RED on the
+  current toolchain (Rust 1.95 + Node 2026) for `TempDir`-generated
+  paths; the BatBadBut bug surfaces depending on toolchain + actual
+  arg shape + env. The 2 unit tests carry the empirical right-reason
+  RED; the integration test is defense-in-depth.
+- **ADR-0023 flipped Proposed → Accepted** in this stage's impl
+  commit. Captures the BatBadBut conditional-wrap design + the
+  `tokio::process::Command::raw_arg` inherent-method finding (not
+  the `std::os::windows::process::CommandExt` trait surface).
+- **Strict v1.8 two-commit TDD** — `git diff ca1db1f..230e1c3 --
+  crates/runtime-mcp/src/transport/stdio.rs
+  crates/runtime-mcp/tests/` EMPTY (proven in the D.fix
+  contract-fidelity pass). One red-commit amend
+  (`d63c500` → `ca1db1f`) for clippy::doc_markdown hygiene to
+  preserve the strict-TDD invariant (a borderline protocol drift
+  documented + reviewed in the B.fix retrospective).
+
+### Changed — M08.5.5 Stage A.fix (harness + safety hardening; ADRs 0024 + 0025 Accepted)
+
+- **Harness + safety hardening — 7 sub-deliverables in one
+  infrastructure batch.** Closes the harness/safety gaps surfaced
+  during the M08.5 IRL re-verify + the build-machine `tauri-driver`
+  install on 2026-05-23. Ships **no 🔴 fix** — this stage is the
+  infrastructure foundation for Stages B + C's regression tests to
+  run cleanly on every developer machine, plus a permanent secret-
+  scan gate.
+- **`wdio.conf.ts` workspace-path fix + `.env.local` loader +
+  `onPrepare()` cargo-build hook.** `APP_BIN_PATH` resolved from
+  workspace-root `target/release/agent-runtime.exe` (not the stale
+  `src-tauri/target/release/`); a top-of-file `.env.local` loader
+  seeds `process.env` from the gitignored file (`.gitignore:38`
+  already covers `.env.*`); the `onPrepare()` hook now invokes
+  `npx tauri build --no-bundle` for the Tauri app + `cargo build
+  --release -p runtime-drone -p runtime-sandbox --bins` for the
+  sibling subprocesses, matching CI's two-step build (closes the
+  "missing sibling subprocesses" install-pain gap that crashed the
+  app at startup with `drone IPC unavailable: spawn drone subprocess:
+  ... file not found` when only `cargo build --release` was used —
+  that variant produces a dev-mode binary that loads the renderer
+  from `tauri.conf.json::devUrl` at `http://localhost:1420`,
+  unreachable at e2e-run time).
+- **`crates/runtime-main/src/key_store.rs::read_api_key` checks
+  `ANTHROPIC_API_KEY` env var first, falls back to OS keychain.**
+  ADR-0025 Accepted. Standard env-as-override pattern matching the
+  upstream Anthropic SDK convention. Three new red-phase tests pin
+  the precedence (env-var-overrides-keychain; empty-env-var-falls-back;
+  unset-env-var-falls-back). Tests use `temp-env 0.3` (new dev-only
+  dep; passed `cargo deny check`) because rustc 1.84+ requires
+  `unsafe` for `std::env::set_var` and the workspace lint
+  `forbid(unsafe_code)` is non-overridable. Strict-TDD sub-discipline
+  inside this stage's overall non-strict bundle: red commit
+  `f603524` → impl commit `704c0f4` (only the env-var test diff in
+  red; impl introduces the function body + ADR-0025 flip; the test
+  files byte-identical between red and impl).
+- **`tests/e2e-tauri/builder_drag.e2e.ts` JS event-dispatch
+  mechanism.** Removes the M08.5-era `it.skip(...)` + replaces the
+  W3C WebDriver Actions API multi-step pointer drag (which no longer
+  synthesizes HTML5 `dragstart` on Chromium 148+ — the synthesis
+  threshold tightened) with a JavaScript-level event dispatch via
+  `browser.executeScript` (the `ePages-de/chromedriver-html5-dragdrop`
+  upstream pattern; gotcha #32 quote-verbatim with source + commit
+  SHA in the test header). Bypasses the WebDriver layer's
+  dragstart-synthesis threshold entirely; works across all Chromium
+  versions. The implementation note: pass element selectors as
+  strings into `browser.executeScript` rather than WebdriverIO
+  chainable elements (the chainable args don't deserialize to DOM
+  nodes in the script context — surfaced during impl as
+  `targetElement.getBoundingClientRect is not a function`).
+- **`lefthook.yml` pre-commit `gitleaks` hook +
+  `.github/workflows/ci.yml` `gitleaks` job.** ADR-0024 Accepted.
+  `gitleaks/gitleaks-action@v2` with `fetch-depth: 0` for
+  full-history scanning + `GITHUB_TOKEN` for PR-level commenting.
+  Gated by `detect-cargo.outputs.code_changed == 'true'` so docs-only
+  PRs skip (the lefthook hook is the safety net for the
+  docs-only-PR-with-leaked-secret case). Verified by running
+  gitleaks v8.21.2 over the full git history (324 commits, all
+  branches) + working tree on 2026-05-23 — **0 leaks confirmed**.
+  Verified the gate fires for a deliberate RSA private-key block
+  (not for synthetic / docs-example API key strings — gitleaks is
+  precision-oriented).
+- **`docs/gotchas.md` — 5 new numbered entries** continuing from the
+  prior highest number: `tauri-driver --version` flag absence; Edge
+  auto-update msedgedriver mismatch; `wdio.conf.ts` workspace-path;
+  `npx tauri build` doesn't build sibling subprocesses; WebDriver
+  Actions Edge 148+ dragstart divergence.
+- **ADRs 0024 (Gitleaks required merge gate) + 0025
+  (`ANTHROPIC_API_KEY` env var overrides keychain)** flipped
+  Proposed → Accepted in this stage's impl commit.
+- **`docs/build-machine-tauri-driver-setup.md`** updated: Phase 0.5
+  added (gitleaks install per OS); Phase 3.5 junction workaround
+  removed (the workspace-path fix obviates it); Phase 4 mentions
+  the `ANTHROPIC_API_KEY` env-var as the simplest local-test path
+  (`.env.local` remains the gitignored alternative).
+- **Adjacent-bug finding during the IRL re-verify**: with the env-var
+  override active, smoke #6 (`reload reconstructs the graph from
+  persisted signals`) actually RAN for the first time (it had always
+  been skipped without an API key) — and **failed** with
+  `[data-testid^="agent-node-"] still not displayed after 15000ms`
+  after `browser.reloadSession()`. This is M08-IRL 🔴 #5 (Builder
+  Canvas state not persisted across app restart), already routed to
+  M08.6 Stage A intake. Adjacent-bug triage: confirmed M08.6 routing,
+  no new finding.
+
 ### Changed — M08.5 Stage E.fix (re-verification + reconciliation; M08 demo unblocked)
 
 - **M08.5 IRL fix-cycle closed.** All three 🔴 from

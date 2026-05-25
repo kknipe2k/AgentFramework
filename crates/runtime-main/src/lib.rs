@@ -113,6 +113,14 @@ pub mod sdk;
 /// archetype). Safety primitive: ≥95% per-module coverage (CLAUDE.md
 /// §5).
 pub mod skills_lock;
+/// Stray pre-ADR-0012 `mcp.sqlite` cleanup — M08.5.5 Stage C.fix.
+///
+/// Startup detection + rename (preserves forensic bytes via
+/// `.stray-mcp.sqlite.bak`) for the legacy `mcp.sqlite` file ADR-0012
+/// left on users' machines from pre-fix testing. Path-agnostic per
+/// CLAUDE.md §9 archetype; Tauri shell resolves
+/// `app_local_data_dir()` and passes it in.
+pub mod stray_db_cleanup;
 /// Tier system — spec §8.security L4 (M05 Stage D).
 ///
 /// Two-tier evaluator (Novice + Promoted per §0d) that sits BEFORE the
