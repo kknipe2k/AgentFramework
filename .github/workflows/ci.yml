@@ -257,11 +257,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # The job-level `if:` was removed (PR #104) to fix the matrix-skip
+  # footgun: GitHub branch protection requires checks by their
+  # matrix-EXPANDED names ("Rust ubuntu-latest / 1.80" etc.), but when a
+  # job is skipped at the job level, those expanded names never report
+  # and the required checks sit "Expected — Waiting for status" forever
+  # on docs-only PRs. The fix: the job ALWAYS runs (so each matrix entry
+  # reports its expanded status), but every work step is gated on the
+  # same condition the job-level `if:` used to carry, via the
+  # job-level `env.SHOULD_RUN` flag. Docs-only PRs run the job to
+  # completion with all work steps skipped — status reports green
+  # under each expanded matrix name within seconds.
   rust:
     name: Rust ${{ matrix.os }} / ${{ matrix.toolchain }}
     needs: detect-cargo
-    if: needs.detect-cargo.outputs.has_cargo == 'true' && needs.detect-cargo.outputs.code_changed == 'true'
     runs-on: ${{ matrix.os }}
+    env:
+      SHOULD_RUN: ${{ needs.detect-cargo.outputs.has_cargo == 'true' && needs.detect-cargo.outputs.code_changed == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -271,14 +283,19 @@ jobs:
           - os: ubuntu-latest
             toolchain: '1.80'   # MSRV
     steps:
+      - name: Skip notice (docs-only PR)
+        if: env.SHOULD_RUN != 'true'
+        run: echo "Skipping Rust gate — docs-only PR or no Cargo workspace (detect-cargo.has_cargo=${{ needs.detect-cargo.outputs.has_cargo }}, code_changed=${{ needs.detect-cargo.outputs.code_changed }})."
       - uses: actions/checkout@v4
+        if: env.SHOULD_RUN == 'true'
       - name: Install Rust
+        if: env.SHOULD_RUN == 'true'
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.toolchain }}
           components: rustfmt, clippy
       - name: Install Tauri Linux system dependencies
-        if: matrix.os == 'ubuntu-latest'
+        if: env.SHOULD_RUN == 'true' && matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -294,8 +311,11 @@ jobs:
             file \
             libseccomp-dev
       - uses: Swatinem/rust-cache@v2
+        if: env.SHOULD_RUN == 'true'
       - run: cargo fmt --all -- --check
+        if: env.SHOULD_RUN == 'true'
       - run: cargo clippy --workspace --all-targets -- -D warnings
+        if: env.SHOULD_RUN == 'true'
       # NOTE: deliberately NOT --all-features. The `integration` feature on
       # runtime-main gates `tests/anthropic_smoke.rs` behind a real-API
       # smoke test that requires an Anthropic API key in the OS keychain
@@ -311,10 +331,12 @@ jobs:
       # silently skips them — the gotcha #66 "tests-pass-but-contract-
       # fails" failure mode the M06.C strict-TDD red phase guards against.
       - run: cargo test --workspace --features runtime-mcp/test-helpers
+        if: env.SHOULD_RUN == 'true'
       - name: Type generation drift check
+        if: env.SHOULD_RUN == 'true' && matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
         run: cargo xtask regenerate-types --check
-        if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
       - run: cargo doc --workspace --no-deps
+        if: env.SHOULD_RUN == 'true'
         env:
           RUSTDOCFLAGS: '-D missing_docs -D rustdoc::broken_intra_doc_links'
 
@@ -659,11 +681,17 @@ jobs:
   # (fixed in `wdio.conf.ts`); (2) no Windows msedgedriver setup (fixed by
   # the `msedgedriver-tool` step below).
   # ────────────────────────────────────────────────────────────────────────
+  # See `rust:` above for the matrix-skip footgun rationale (PR #104).
+  # The job runs unconditionally so the matrix-expanded check names
+  # ("E2E (Tauri-driver desktop shell) (ubuntu-latest)" /
+  # "(windows-latest)") always report status; every work step is gated
+  # on `env.SHOULD_RUN`.
   e2e-tauri-driver:
     name: E2E (Tauri-driver desktop shell)
     needs: [detect-cargo, frontend]
-    if: needs.detect-cargo.outputs.has_cargo == 'true' && needs.detect-cargo.outputs.has_npm == 'true' && needs.detect-cargo.outputs.code_changed == 'true'
     runs-on: ${{ matrix.os }}
+    env:
+      SHOULD_RUN: ${{ needs.detect-cargo.outputs.has_cargo == 'true' && needs.detect-cargo.outputs.has_npm == 'true' && needs.detect-cargo.outputs.code_changed == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -672,15 +700,22 @@ jobs:
         # Playwright tests cover macOS via the existing `e2e` job.
         os: [ubuntu-latest, windows-latest]
     steps:
+      - name: Skip notice (docs-only PR)
+        if: env.SHOULD_RUN != 'true'
+        run: echo "Skipping E2E Tauri-driver gate — docs-only PR or missing prerequisites (detect-cargo.has_cargo=${{ needs.detect-cargo.outputs.has_cargo }}, has_npm=${{ needs.detect-cargo.outputs.has_npm }}, code_changed=${{ needs.detect-cargo.outputs.code_changed }})."
       - uses: actions/checkout@v4
+        if: env.SHOULD_RUN == 'true'
       - uses: dtolnay/rust-toolchain@stable
+        if: env.SHOULD_RUN == 'true'
       - uses: actions/setup-node@v4
+        if: env.SHOULD_RUN == 'true'
         with:
           node-version: '20'
           cache: npm
       - uses: Swatinem/rust-cache@v2
+        if: env.SHOULD_RUN == 'true'
       - name: Install Tauri Linux system deps + WebKitGTK driver + Xvfb
-        if: matrix.os == 'ubuntu-latest'
+        if: env.SHOULD_RUN == 'true' && matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -707,19 +742,22 @@ jobs:
       # #32): tauri-apps/tauri-docs @ a9d8348ff518e4a052bcd7435c07e34a9dfe1af1,
       # src/content/docs/develop/Tests/WebDriver/ci.md.
       - name: Install msedgedriver (Windows)
-        if: matrix.os == 'windows-latest'
+        if: env.SHOULD_RUN == 'true' && matrix.os == 'windows-latest'
         run: |
           cargo install --git https://github.com/chippers/msedgedriver-tool
           & "$HOME/.cargo/bin/msedgedriver-tool.exe"
           $PWD.Path >> $env:GITHUB_PATH
       - run: npm ci
+        if: env.SHOULD_RUN == 'true'
       # tauri-driver is the WebDriver bridge for Tauri 2.x apps. The npm
       # package distributes prebuilt binaries; the cargo binary is the older
       # path. Install globally so it lands on PATH for `wdio.conf.ts`'s
       # `spawn('tauri-driver', ...)`.
       - name: Install tauri-driver
+        if: env.SHOULD_RUN == 'true'
         run: cargo install tauri-driver --locked
       - name: Build Tauri app (release mode)
+        if: env.SHOULD_RUN == 'true'
         run: npx tauri build --no-bundle
         env:
           # The smoke test (test 3 in tests/e2e-tauri/smoke.e2e.ts) calls
@@ -744,6 +782,7 @@ jobs:
       # target/release/ (same as the Tauri build), so the binaries land
       # at the path the app expects.
       - name: Build runtime-drone + runtime-sandbox binaries (release)
+        if: env.SHOULD_RUN == 'true'
         run: cargo build --release -p runtime-drone -p runtime-sandbox --bins
       # Windows pre-test smoke-launch — instrumentation added by the M08.5
       # A.fix follow-up #2 after the first CI run on this branch (run
@@ -754,7 +793,7 @@ jobs:
       # to surface any release-mode startup panic before tauri-driver runs.
       # `continue-on-error: true` — this is diagnostic only, NOT a gate.
       - name: Smoke-launch the app (Windows) — diagnostic
-        if: matrix.os == 'windows-latest'
+        if: env.SHOULD_RUN == 'true' && matrix.os == 'windows-latest'
         continue-on-error: true
         run: |
           Write-Host "Smoke-launching agent-runtime.exe for 8 seconds to capture any startup output..."
@@ -781,16 +820,16 @@ jobs:
       # one. Windows uses the real desktop on the runner (msedgedriver +
       # Edge WebView2 are pre-installed on windows-latest).
       - name: Run Tauri-driver E2E (Linux with Xvfb)
-        if: matrix.os == 'ubuntu-latest'
+        if: env.SHOULD_RUN == 'true' && matrix.os == 'ubuntu-latest'
         run: xvfb-run --auto-servernum npm run test:e2e:tauri
       - name: Run Tauri-driver E2E (Windows native)
-        if: matrix.os == 'windows-latest'
+        if: env.SHOULD_RUN == 'true' && matrix.os == 'windows-latest'
         run: npm run test:e2e:tauri
       # Post-failure diagnostic dump (Windows) — capture any Application
       # Error / WER entries logged while tauri-driver was running the app.
       # Pairs with the pre-test smoke-launch above. Diagnostic only.
       - name: Post-test diagnostics (Windows) — Event Log
-        if: failure() && matrix.os == 'windows-latest'
+        if: env.SHOULD_RUN == 'true' && failure() && matrix.os == 'windows-latest'
         continue-on-error: true
         run: |
           Write-Host "=== Windows Application Event Log (last 30 min, agent-runtime / Error Reporting) ==="
@@ -802,7 +841,7 @@ jobs:
             Tee-Object -FilePath wer-events.log
       # Upload all diagnostic artifacts on any failure of this job.
       - name: Upload diagnostics on failure
-        if: failure()
+        if: env.SHOULD_RUN == 'true' && failure()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-tauri-driver-diagnostics-${{ matrix.os }}
