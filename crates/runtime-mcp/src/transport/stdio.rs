@@ -77,7 +77,7 @@ impl StdioTransport {
     /// Build a `tokio::process::Command` from this transport's config,
     /// without spawning. This is the pure-logic seam tested by the
     /// `build_command_*` test family. The program name is run through
-    /// [`resolve_program`] so an npm-shipped CLI resolves to its Windows
+    /// `resolve_program` so an npm-shipped CLI resolves to its Windows
     /// `.cmd` shim (M06.5 IRL 🟡-2). On Windows, `.cmd` / `.bat` shims
     /// with args are wrapped in `cmd.exe /C "<full command line>"` via
     /// [`CommandExt::raw_arg`] to bypass the Rust 1.77.2+ `BatBadBut` /
@@ -88,7 +88,8 @@ impl StdioTransport {
     /// direct-spawn path that the M06.5 IRL 🟡-2 tests pin.
     ///
     /// [`CommandExt::raw_arg`]: std::os::windows::process::CommandExt::raw_arg
-    pub(crate) fn build_command(&self) -> Command {
+    #[must_use]
+    pub fn build_command(&self) -> Command {
         let resolved = resolve_program(&self.command);
         #[cfg(target_os = "windows")]
         {
