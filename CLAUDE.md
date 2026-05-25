@@ -278,9 +278,25 @@ M08.5.B.fix / D.fix precedent — gotcha #82 + ADR-0021).
 # Cross-validated by CI; a Python script in .github/workflows/ci.yml does it
 ```
 
+### Secret-scan gate (active from M08.5.5 Stage A.fix per ADR-0024)
+
+```bash
+gitleaks git --staged --no-banner   # lefthook pre-commit hook (local, blocking)
+# CI: .github/workflows/ci.yml::gitleaks job runs gitleaks/gitleaks-action@v2
+#     with fetch-depth: 0 over full history; gated by detect-cargo so docs-only
+#     PRs skip (the lefthook hook is the safety net for the docs-only-PR case).
+```
+
+Required, merge-blocking CI job. The `lefthook.yml` pre-commit hook
+mirrors the CI invocation so accidental staged secrets are caught
+locally before the commit lands. Per ADR-0024 the default gitleaks
+rule set (≈150 provider patterns: Anthropic, OpenAI, AWS, GCP, GitHub
+PAT, generic API keys) is the gate; project-specific allow-lists are a
+`gitleaks.toml` change + ADR addendum.
+
 ### Pre-commit hook
 
-Install once: `lefthook install` (configured via `lefthook.yml`; chosen for single-binary deployment with no Python dependency — see `docs/build-prompts/M01-foundation.md` Stage A).
+Install once: `lefthook install` (configured via `lefthook.yml`; chosen for single-binary deployment with no Python dependency — see `docs/build-prompts/M01-foundation.md` Stage A). Install gitleaks per `docs/build-machine-tauri-driver-setup.md` Phase 0.5 (`winget install gitleaks.gitleaks` on Windows; `apt install gitleaks` on Linux; `brew install gitleaks` on macOS) for the pre-commit hook above.
 
 The hook runs the fast subset of gates locally on every `git commit`. CI mirrors the hook to prevent `--no-verify` bypass.
 
