@@ -1,7 +1,7 @@
 # ADR-0023: Windows `.cmd` / `.bat` invocation via `cmd.exe /C` wrapper (BatBadBut-safe)
 
 **Status:** Accepted
-**Date:** 2026-05-23 (Proposed); 2026-05-24 (Accepted at M08.5.5 Stage B.fix impl commit)
+**Date:** 2026-05-23 (Proposed); 2026-05-24 (Accepted at M08.5.5 Stage B.fix impl commit); amended 2026-05-24 (M08.5.5 Stage B2.fix impl — outer-quoting requirement for multi-arg invocations)
 **Deciders:** @kknipe2k
 **Tags:** persistence, ipc-adjacent, security, dev-experience
 
@@ -71,7 +71,9 @@ if (resolved.ends_with(".cmd") || resolved.ends_with(".bat"))
     use std::os::windows::process::CommandExt;
     let mut cmd = Command::new("cmd.exe");
     let full_command_line = build_quoted_command_line(&resolved, &self.args);
-    cmd.raw_arg(format!("/C {full_command_line}"));
+    // Outer-quote the inner command line per cmd.exe's `/?` rule 2
+    // (see "Multi-arg invocations" paragraph below).
+    cmd.raw_arg(format!("/C \"{full_command_line}\""));
     // ... env + cwd applied normally ...
     return cmd;
 }
@@ -82,6 +84,77 @@ convention: args containing space, colon, backslash, or quote are
 wrapped in `"..."` with embedded quotes escaped as `\"`. Args without
 those characters pass through unquoted (the simplest cmd.exe-parseable
 form).
+
+### Multi-arg invocations: outer quotes are mandatory (Stage B2.fix amendment)
+
+The initial Stage B.fix impl shipped `format!("/C {full_command_line}")`
+— passing the inner command line to cmd.exe WITHOUT an outer pair of
+quotes. The IRL re-verify on 2026-05-24 (against the post-B.fix build
+`94c2bc7`, real Tauri app, Windows) surfaced that this form fails for
+multi-arg invocations with the SAME error class as pre-B.fix BatBadBut:
+the spawn appears successful at the Rust layer but cmd.exe exits with
+status 1 and `The filename, directory name, or volume label syntax is
+incorrect.` on stderr; the UI sees an infinite spinner because rmcp's
+JSON-RPC handshake waits forever for output the child never produced.
+
+The defect is in cmd.exe's `/?`-documented quote-handling. cmd.exe has
+two rules for processing quotes in the rest of the command line after
+`/C` or `/K`:
+
+1. **Preserve outer quotes** if ALL of the following hold: no `/S`
+   switch; **exactly two quote characters** total on the command line;
+   no special characters (`&<>()@^|`) between the two quotes;
+   whitespace between the two quotes; and the string between them is
+   the name of an executable file.
+2. **Otherwise** (the "old behavior"): if the first character is a
+   quote, **strip the leading quote character and strip the last quote
+   character on the command line**, preserving any text after the last
+   quote.
+
+A multi-arg invocation like `"npx.cmd" -y @... "C:\path"` carries
+four quote characters and so fails rule 1's "exactly two quote
+characters" condition immediately; rule 2 fires. The leading `"` (of
+`"npx.cmd"`) and the trailing `"` (after `C:\path`) are stripped,
+leaving `npx.cmd" -y @... "C:\path` for cmd.exe to execute. The first
+whitespace-delimited token is `npx.cmd"` — a name carrying a literal
+`"` from the stripped second-segment opener. Windows rejects this as
+an invalid filename (the literal `"` is not a valid filename
+character) and emits the OS-level "filename, directory name, or
+volume label syntax is incorrect" error.
+
+The fix is to wrap the inner full command line in an OUTER pair of
+quotes (`/C "<full command line>"`). cmd.exe's rule 2 then strips
+ONLY that outer pair (still no rule 1 — there are now 6 quote chars,
+not 2), leaving the inner `"npx.cmd" -y @... "C:\path"` sequence
+intact for the next parsing layer. `"npx.cmd"` is correctly identified
+as the program (the quotes are stripped during program lookup);
+`@...` is the second arg; `"C:\path"` is the third arg (quotes
+stripped, backslash-bearing path preserved literally).
+
+The outer-quote shape is the documented cmd.exe idiom for "execute
+this exact inner command-line text" and matches the Microsoft cmd
+quote-handling reference (the second `cmd /?` paragraph on "Processing
+quotation marks"). The same rule applies whether the inner command
+line has one quoted segment or many — wrapping in outer quotes is
+the safe-by-default invariant. The non-empty-args guard above plus
+the unconditional outer-quote wrap means single-arg `.cmd` invocations
+also benefit (rule 2's strip-first-and-last is a no-op on a single
+quoted segment, but the outer-quote-then-strip cycle is cleaner than
+relying on rule 1 to kick in for the simple case).
+
+The fix is one-line in `build_command`:
+
+```rust
+// Before (B.fix; bugged for multi-arg):
+cmd.raw_arg(format!("/C {full_command_line}"));
+// After (B2.fix; outer-quoted):
+cmd.raw_arg(format!("/C \"{full_command_line}\""));
+```
+
+The amendment is pinned by the assembled regression test
+`crates/runtime-mcp/tests/mcp_npx_cmd_quoting.rs` (added at Stage
+B2.fix red-phase; fails on `94c2bc7`, passes after the one-line
+format-string change).
 
 On non-Windows platforms, the existing direct-spawn path is unchanged
 (`.cmd` / `.bat` files don't exist; the BatBadBut issue is

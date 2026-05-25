@@ -122,7 +122,7 @@ impl StdioTransport {
                         full_command_line.push_str(arg);
                     }
                 }
-                cmd.raw_arg(format!("/C {full_command_line}"));
+                cmd.raw_arg(format!("/C \"{full_command_line}\""));
                 for (k, v) in &self.env {
                     cmd.env(k, v);
                 }
