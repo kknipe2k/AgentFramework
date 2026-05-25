@@ -80,14 +80,21 @@ impl StdioTransport {
     /// `resolve_program` so an npm-shipped CLI resolves to its Windows
     /// `.cmd` shim (M06.5 IRL 🟡-2). On Windows, `.cmd` / `.bat` shims
     /// with args are wrapped in `cmd.exe /C "<full command line>"` via
-    /// [`CommandExt::raw_arg`] to bypass the Rust 1.77.2+ `BatBadBut` /
-    /// CVE-2024-24576 batch-file escaping that produces cmd.exe-
-    /// unparseable command lines for path args containing `:` + `\`
-    /// (M08.5.5 IRL 🔴 #6; see ADR-0023). The wrap fires only when
-    /// args are non-empty; bare-shim invocations (no args) stay on the
+    /// `CommandExt::raw_arg` (the Windows-only `std::os::windows::
+    /// process::CommandExt` trait, also available as an inherent method
+    /// on `tokio::process::Command`) to bypass the Rust 1.77.2+
+    /// `BatBadBut` / CVE-2024-24576 batch-file escaping. That escaping
+    /// produces cmd.exe-unparseable command lines for path args
+    /// containing a drive letter together with backslashes (M08.5.5
+    /// IRL 🔴 #6; see ADR-0023). The wrap fires only when args are
+    /// non-empty; bare-shim invocations (no args) stay on the
     /// direct-spawn path that the M06.5 IRL 🟡-2 tests pin.
     ///
-    /// [`CommandExt::raw_arg`]: std::os::windows::process::CommandExt::raw_arg
+    /// Note: the `CommandExt` mention above is plain text rather than
+    /// an intra-doc link because `std::os::windows` is cfg-gated to
+    /// Windows; an intra-doc link to it breaks the
+    /// `cargo doc -D rustdoc::broken_intra_doc_links` gate on
+    /// Linux/macOS (the post-M08.5.5 hotfix discovery).
     #[must_use]
     pub fn build_command(&self) -> Command {
         let resolved = resolve_program(&self.command);

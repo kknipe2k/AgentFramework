@@ -6,6 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed — M08.5.5 post-cycle hotfix (non-Windows broken intra-doc-link in `build_command`)
+
+- **CI Rust matrix went RED on macOS + ubuntu (1.80 + stable) at
+  `cargo doc --workspace --no-deps` with `RUSTDOCFLAGS: -D missing_docs
+  -D rustdoc::broken_intra_doc_links` after the M08.5.5 cycle push
+  (commit `81c2776`).** The B2.fix red-commit visibility upgrade
+  (`pub(crate) → pub` on `StdioTransport::build_command`) made the
+  docstring externally visible and brought it under the workspace's
+  `-D rustdoc::broken_intra_doc_links` enforcement. The docstring's
+  intra-doc link to `[CommandExt::raw_arg]:
+  std::os::windows::process::CommandExt::raw_arg` resolves on Windows
+  (where `std::os::windows::process` exists) but is unresolvable on
+  Linux/macOS (the `std::os::windows` module is cfg-gated to Windows).
+  The B2.fix red-amend caught the same class of broken link for the
+  private `resolve_program` and resolved it via plain backticks; the
+  `CommandExt::raw_arg` link was missed in the same sweep.
+- **CI-parity violation that caused the miss:** local Windows ran
+  `RUSTDOCFLAGS="-D missing_docs"` only — without the second
+  `-D rustdoc::broken_intra_doc_links` flag that CI uses. The link
+  resolves fine on Windows so the platform-specific failure was
+  invisible to the Windows-local gate run regardless of which flags
+  were used; the Linux/macOS CI runners were the only verifiers of
+  this class. The CLAUDE.md §6 commands now have the full CI-exact
+  `RUSTDOCFLAGS` set for the canonical doc gate (already updated in
+  the same edit as this fix's local validation).
+- **Fix in `crates/runtime-mcp/src/transport/stdio.rs`** —
+  `build_command`'s docstring replaces the `[CommandExt::raw_arg]:
+  std::os::windows::process::CommandExt::raw_arg` intra-doc link
+  with a plain-text mention plus a parenthetical noting that
+  `std::os::windows` is cfg-gated to Windows and an intra-doc link to
+  it would break the Linux/macOS doc gate. Same pattern as the
+  `resolve_program` plain-backticks fix from the B2.fix red-amend.
+  Also rephrased to satisfy clippy's `doc_lazy_continuation` lint
+  (the original reflow accidentally produced markdown that the lint
+  read as an unindented list-item continuation).
+- **Class:** post-cycle hotfix per CLAUDE.md §6 self-correction
+  protocol. Forward-only commit on top of the M08.5.5 cycle's D.fix
+  commit `81c2776`. Does NOT amend B.fix / B2.fix / C.fix / D.fix
+  history (the cycle's commits stay as-is; the hotfix is its own
+  small commit on top). The cycle's PR will land both the cycle's
+  commits + this hotfix together (the PR base ranges
+  `main..claude/m08.5.5-mcp-resilience` post-hotfix-push).
+
 ### Changed — M08.5.5 Stage D.fix (re-verification + reconciliation; MCP-Windows path demo-ready)
 
 - **M08.5.5 MCP-Resilience fix cycle closed (MCP-Windows portion).**
