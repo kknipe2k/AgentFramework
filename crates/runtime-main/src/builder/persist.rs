@@ -1,4 +1,4 @@
-//! Framework save/load (M08 Stage B; M08.6 Stage B per ADR-0022).
+//! Framework save/load (M08 Stage B; M08.6 Stage B + C per ADR-0022).
 //!
 //! Path-agnostic persistence per CLAUDE.md §9 (the `audit::file_path` /
 //! `skills_lock` archetype): the functions take `dir: &Path`; the Tauri
@@ -6,17 +6,22 @@
 //! and passes it in. No workspace dependency on `dirs`. Tested with
 //! `tempfile`-backed paths.
 //!
-//! [`save_framework`] writes `framework.json` (pretty-printed, stable
-//! field order, trailing newline) plus one companion `.md` per inline
-//! artifact; [`load_framework`] parses `framework.json` AND resolves
-//! every `{id,path}` agents[] reference (plus path-referenced tools /
-//! skills) into the same typify-generated `Framework` type the rest of
-//! the runtime uses (spec §9 — no second loader). Reference resolution
-//! lives **only** here per ADR-0022 — the canvas projection, the
-//! Tester, and the runtime's `spawn_framework_subagents` consume the
-//! resolved inline form.
+//! Per ADR-0022, [`load_framework`] is the single resolution boundary —
+//! it parses `framework.json` AND resolves every `{id,path}` agents[]
+//! reference (plus path-referenced tools / skills) into the same
+//! typify-generated `Framework` the rest of the runtime uses (spec §9 —
+//! no second loader). [`save_framework`] is the **inverse re-split**:
+//! given a resolved (inline) `Framework`, it writes `framework.json`
+//! with `{id,path}` references plus the agent / tool / skill `.md`
+//! files in `agents/` / `tools/` / `skills/` subdirectories, the
+//! canonical archetype layout (Stage C). Load and save are exact
+//! inverses; a save→load→save cycle is byte-stable (MVP §M8 criterion
+//! 8). Reference resolution lives **only** here per ADR-0022 — the
+//! canvas projection, the Tester, and the runtime's
+//! `spawn_framework_subagents` consume the resolved inline form.
 
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Component, Path};
 
 use runtime_core::generated::framework::{Agent, Framework, FrameworkAgentsItem};
 
@@ -29,9 +34,11 @@ use crate::builder::error::BuilderError;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Companion {
     /// File name relative to the framework directory — e.g.
-    /// `summarize.skill.md` (M08-era flat layout) or
-    /// `agents/orchestrator.md` (canonical-modular layout per
-    /// ADR-0022, incl. cross-framework `../aria/tools/aria_verify.md`).
+    /// `summarize.skill.md` (M08-era flat layout, preserved for
+    /// backward compat) or `agents/orchestrator.md` (the canonical-
+    /// modular layout per ADR-0022; the cross-framework
+    /// `../aria/tools/aria_verify.md` form is supported on read but
+    /// not duplicated on save — it lives in its sibling framework dir).
     pub file_name: String,
     /// Full markdown body (frontmatter + content), written verbatim.
     pub body: String,
@@ -56,11 +63,40 @@ pub struct LoadedFramework {
     pub companions: Vec<Companion>,
 }
 
-/// Write `framework.json` + a companion `.md` for every inline artifact.
+/// Write the modular form of a resolved framework — `framework.json`
+/// with `{id,path}` references plus the agent / tool / skill `.md`
+/// files in their canonical subdirectories.
 ///
-/// Writes `dir/framework.json` (pretty-printed, stable field order, one
-/// trailing newline) plus one file per `companions` entry. `dir` is
-/// created if absent.
+/// Per ADR-0022 this is the **inverse re-split** of [`load_framework`]:
+///
+/// 1. Each inline `agents[]` entry is written as `agents/<id>.md`
+///    (YAML frontmatter serialized from the `Agent` definition + the
+///    body from the matching companion, or a minimal frontmatter-only
+///    `.md` if no companion is provided). The `framework.json`
+///    `agents[]` entry is emitted in the `{id,path}` reference form
+///    (the inverse of Stage B's `Object` → `Agent(_)` variant flip).
+/// 2. Each path-referenced `tools[]` / `skills[]` entry has its
+///    matching companion written under the corresponding subdirectory
+///    (`tools/<name>.md`, `skills/<name>.md`); the `framework.json`
+///    entries are passed through unchanged (tools/skills are flat
+///    structs in the schema with no inline `oneOf` — there is no
+///    variant to flip, only a body to write).
+/// 3. Companions whose `file_name` does not match a referenced
+///    artifact are written verbatim (the M08-era flat-companion
+///    backward-compat path).
+/// 4. `framework.json` is written pretty-printed with stable field
+///    order and a single trailing newline — a save → load → save
+///    cycle is byte-stable (MVP §M8 criterion 8).
+///
+/// Cross-framework references (Ralph's `../aria/tools/...`) are
+/// preserved in `framework.json` but NOT duplicated to disk; the
+/// referenced files live in their sibling framework's directory and a
+/// save into a new dir does not relocate them. The save writes only
+/// inside `dir`; companion file names containing a `..` component or
+/// an absolute prefix are skipped (a deliberate boundary the loader's
+/// `..`-aware read mirrors at the read side).
+///
+/// `dir` is created if absent.
 ///
 /// # Errors
 ///
@@ -76,14 +112,140 @@ pub fn save_framework(
         return Err(BuilderError::NotADirectory(dir.display().to_string()));
     }
     std::fs::create_dir_all(dir)?;
-    // Pretty-printed + a single trailing newline gives a deterministic
-    // serialization — a save→load→save cycle is byte-stable.
-    let json = serde_json::to_string_pretty(fw)?;
-    std::fs::write(dir.join("framework.json"), format!("{json}\n"))?;
-    for companion in companions {
-        std::fs::write(dir.join(&companion.file_name), &companion.body)?;
+
+    // Re-split into the on-disk shape. The in-memory `fw` carries
+    // inline agents (per ADR-0022 the loader resolves them); the
+    // on-disk `framework.json` must carry `{id,path}` references —
+    // transform a clone, not the caller's value.
+    let mut on_disk = fw.clone();
+    let mut written: HashSet<String> = HashSet::new();
+
+    for i in 0..on_disk.agents.len() {
+        let entry = on_disk.agents[i].clone();
+        match entry {
+            FrameworkAgentsItem::Agent(agent) => {
+                let path = format!("agents/{}.md", agent.id.as_str());
+                let body = companions
+                    .iter()
+                    .find(|c| c.file_name == path)
+                    .map_or_else(|| synthesize_agent_md(&agent), |c| c.body.clone());
+                write_artifact_md(dir, &path, &body)?;
+                written.insert(path.clone());
+                // The inverse of Stage B's variant flip: emit the
+                // reference form in `framework.json`.
+                on_disk.agents[i] = FrameworkAgentsItem::Object {
+                    id: agent.id.to_string(),
+                    path,
+                };
+            }
+            FrameworkAgentsItem::Object { id: _, path } => {
+                // The framework was constructed with an unresolved
+                // reference — preserve it. Write the `.md` only if the
+                // caller supplied the body via `companions` AND the
+                // path stays inside `dir` (no `..`-escape, no
+                // absolute path).
+                if !is_outside_framework_dir(&path) {
+                    if let Some(c) = companions.iter().find(|c| c.file_name == path) {
+                        write_artifact_md(dir, &path, &c.body)?;
+                        written.insert(path);
+                    }
+                }
+            }
+        }
     }
+
+    for tool in &on_disk.tools {
+        if let Some(path) = tool.path.as_deref() {
+            if !is_outside_framework_dir(path) {
+                if let Some(c) = companions.iter().find(|c| c.file_name == path) {
+                    write_artifact_md(dir, path, &c.body)?;
+                    written.insert(path.to_string());
+                }
+            }
+        }
+    }
+
+    for skill in &on_disk.skills {
+        if let Some(path) = skill.path.as_deref() {
+            if !is_outside_framework_dir(path) {
+                if let Some(c) = companions.iter().find(|c| c.file_name == path) {
+                    write_artifact_md(dir, path, &c.body)?;
+                    written.insert(path.to_string());
+                }
+            }
+        }
+    }
+
+    // M08-era flat companions + any other unreferenced extras — the
+    // backward-compat write. Skip anything already written (idempotent)
+    // and anything that would write outside `dir` (cross-framework
+    // refs live in their sibling framework's dir).
+    for companion in companions {
+        if written.contains(&companion.file_name) || is_outside_framework_dir(&companion.file_name)
+        {
+            continue;
+        }
+        write_artifact_md(dir, &companion.file_name, &companion.body)?;
+    }
+
+    // `framework.json` last. Canonicalize through `serde_json::Value`
+    // FIRST so the byte output is deterministic regardless of the
+    // upstream struct's iteration order — `Framework` has three
+    // `HashMap` fields (`hook_defs`, `mcp_aliases`, `per_mode_overrides`)
+    // whose direct serialization is order-randomized, which would
+    // defeat the save→load→save byte-stable round-trip (MVP §M8
+    // criterion 8). `to_value` materializes every nested object as a
+    // `serde_json::Map` (backed by `BTreeMap` without the
+    // `preserve_order` feature, which this workspace does not enable),
+    // so all object keys serialize alphabetically. Vector / array
+    // ordering (the `agents[]` / `tools[]` / `skills[]` lists) is
+    // preserved by `Vec`, not affected by this canonicalization.
+    let canonical = serde_json::to_value(&on_disk)?;
+    let json = serde_json::to_string_pretty(&canonical)?;
+    std::fs::write(dir.join("framework.json"), format!("{json}\n"))?;
     Ok(())
+}
+
+/// Synthesize an agent `.md` from its inline definition — YAML
+/// frontmatter only, empty body. Used when an inline agent has no
+/// captured `.md` body in `companions` (a Builder-authored agent that
+/// has never been associated with a markdown body).
+///
+/// `serde_yaml::to_string` on a typify-generated `Agent` is infallible
+/// in practice: the struct's `Serialize` is auto-derived and every
+/// field is a YAML-representable primitive or a similarly auto-derived
+/// nested struct. A failure here would indicate a logic bug in serde
+/// or our types, not a runtime error class — the `.expect` documents
+/// the invariant.
+fn synthesize_agent_md(agent: &Agent) -> String {
+    let frontmatter = serde_yaml::to_string(agent)
+        .expect("serde_yaml::to_string on typify-generated Agent is infallible");
+    format!("---\n{frontmatter}---\n")
+}
+
+/// Write a `.md` artifact under `dir/rel`, creating intermediate
+/// directories as needed (e.g. `dir/agents/` for `agents/foo.md`).
+fn write_artifact_md(dir: &Path, rel: &str, body: &str) -> Result<(), BuilderError> {
+    let target = dir.join(rel);
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&target, body)?;
+    Ok(())
+}
+
+/// Whether `file_name` resolves outside the framework directory —
+/// either an absolute path or a relative path containing a `..`
+/// component. Save deliberately writes only inside the framework dir;
+/// cross-framework references (Ralph's `../aria/...`) live in their
+/// sibling framework's directory and are preserved in `framework.json`
+/// without being relocated to disk.
+fn is_outside_framework_dir(file_name: &str) -> bool {
+    let p = Path::new(file_name);
+    if p.is_absolute() {
+        return true;
+    }
+    p.components().any(|c| matches!(c, Component::ParentDir))
 }
 
 /// Read `framework.json`, resolve every `{id,path}` reference, and
