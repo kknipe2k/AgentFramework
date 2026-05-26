@@ -21,6 +21,11 @@ secrecy            = { workspace = true }
 keyring            = { workspace = true }
 serde              = { workspace = true, features = ["derive"] }
 serde_json         = { workspace = true }
+# M08.6 Stage B (ADR-0022) — parse `.md` artifact YAML frontmatter when
+# load_framework resolves agents[]/tools[]/skills[] `{id,path}`
+# references. Already a workspace dep (consumed by runtime-core); wiring,
+# not a new external dependency.
+serde_yaml         = { workspace = true }
 sha2               = { workspace = true }
 base64             = { workspace = true }
 tokio              = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util", "process"] }

@@ -25,6 +25,7 @@ import {
   subscribeAgentEvents,
   unwrapCmdError,
 } from './lib/ipc';
+import { useBuilderStore } from './lib/builderStore';
 import { useGraphStore } from './lib/graphStore';
 import './styles.css';
 
@@ -45,10 +46,19 @@ const LAST_SESSION_KEY = 'lastSessionId';
 declare global {
   interface Window {
     __graphStore?: typeof useGraphStore;
+    // M08.6.D — same expose pattern for the Builder store so
+    // tests/e2e-tauri/builder_load_aria.e2e.ts can drive the
+    // load-applying store action directly (the OS file dialog
+    // Inspector.onLoad opens is non-driveable by tauri-driver, so the
+    // test invokes the underlying load_framework Tauri command + the
+    // applyLoadedFramework action via executeScript — the exact code
+    // path Inspector.onLoad runs minus the dialog click).
+    __builderStore?: typeof useBuilderStore;
   }
 }
 if (typeof window !== 'undefined') {
   window.__graphStore = useGraphStore;
+  window.__builderStore = useBuilderStore;
 }
 
 interface RuntimeLayoutProps {

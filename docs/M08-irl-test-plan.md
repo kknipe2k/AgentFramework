@@ -130,7 +130,7 @@ Note the count. The Tester uses a **throwaway** DB under `%TEMP%`, never `sessio
 **E5. [Window B]** — the M06.5 IRL 🔴-1 re-confirm:
 
 ```powershell
-sqlite3 $REG "SELECT name,transport_type,status FROM mcp_servers;"
+sqlite3 $REG "SELECT name,transport,status FROM mcp_servers;"
 Get-ChildItem "$APPDATA_DIR\mcp.sqlite" -ErrorAction SilentlyContinue
 ```
 

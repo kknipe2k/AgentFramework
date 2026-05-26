@@ -9,7 +9,9 @@ vi.mock('@tauri-apps/api/core', () => ({
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Palette } from '../../../../src/components/builder/Palette';
+import { emptyFramework, useBuilderStore } from '../../../../src/lib/builderStore';
 import type { InstalledArtifact } from '../../../../src/lib/ipc';
+import type { Agent, Framework } from '../../../../src/types/framework';
 
 // M08.C — the five-tab Palette (Tools / Skills / Agents / HITL / Hooks).
 // Tools/Skills/Agents list built-ins + whatever list_installed_artifacts
@@ -82,5 +84,156 @@ describe('Palette', () => {
       'application/x-builder-node',
       JSON.stringify({ kind: 'tool', ref: 'Read' }),
     );
+  });
+});
+
+// M08.6.E — the Palette draws a THIRD source from the loaded framework
+// (builderStore.framework) so a framework's defined agents / tools /
+// skills surface as reusable drag sources in the matching tab. The
+// existing two sources (built-ins + listInstalledArtifacts) remain;
+// the union is de-duplicated by (kind, ref) so an artifact in both an
+// installed lock and the loaded framework appears once. Framework-
+// sourced items carry data-source="framework" so the user can tell
+// where an item comes from; the drag payload is identical to a
+// built-in / installed item — uniform drop contract per phase doc E.3.
+describe('Palette — loaded-framework source (M08.6.E)', () => {
+  /** Build a minimal inline Agent — the resolved shape Stage B's
+   *  loader returns and Stage E surfaces. */
+  function inlineAgent(id: string): Agent {
+    return {
+      id,
+      role: 'role-for-test',
+      model: { provider: 'anthropic', id: 'claude-sonnet-4-6' },
+      allowed_tools: [],
+      allowed_skills: [],
+      spawns: [],
+    } as unknown as Agent;
+  }
+
+  /** A framework with the test's overrides spliced into the cold-start
+   *  empty document. Pre-valid (matches `emptyFramework`'s stance). */
+  function frameworkWith(overrides: Partial<Framework>): Framework {
+    return { ...emptyFramework(), ...overrides };
+  }
+
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue([]);
+    // Reset builderStore — the Palette reads `framework` from the
+    // store; cross-test bleed would mask a missing implementation.
+    useBuilderStore.setState(useBuilderStore.getInitialState(), true);
+  });
+
+  it('loaded_framework_agents_appear_in_the_agents_tab', async () => {
+    useBuilderStore.setState({
+      framework: frameworkWith({
+        agents: [inlineAgent('orchestrator'), inlineAgent('planner')] as Framework['agents'],
+      }),
+    });
+    render(<Palette />);
+    await userEvent.click(screen.getByTestId('palette-tab-agents'));
+    // Pre-E the Agents tab carries only listInstalledArtifacts results
+    // (empty here); the framework-source addition makes ARIA-like
+    // agents surface as drag sources.
+    expect(screen.getByTestId('palette-item-orchestrator')).toBeInTheDocument();
+    expect(screen.getByTestId('palette-item-planner')).toBeInTheDocument();
+  });
+
+  it('loaded_framework_tools_appear_in_the_tools_tab', async () => {
+    useBuilderStore.setState({
+      framework: frameworkWith({
+        tools: [{ name: 'git_checkpoint', source: 'generated', path: 'tools/git_checkpoint.md' }],
+      }),
+    });
+    render(<Palette />);
+    // The default tab is Tools — a framework-sourced (non-built-in)
+    // tool appears alongside Read / Write / Bash.
+    expect(await screen.findByTestId('palette-item-git_checkpoint')).toBeInTheDocument();
+  });
+
+  it('loaded_framework_skills_appear_in_the_skills_tab', async () => {
+    useBuilderStore.setState({
+      framework: frameworkWith({
+        skills: [{ name: 'planning', path: 'skills/planning.md', source: 'local' }],
+      }),
+    });
+    render(<Palette />);
+    await userEvent.click(screen.getByTestId('palette-tab-skills'));
+    expect(screen.getByTestId('palette-item-planning')).toBeInTheDocument();
+  });
+
+  it('palette_de_duplicates_a_kind_ref_present_in_both_installed_and_framework', async () => {
+    // The installed lock declares a tool whose key matches a
+    // framework tool's name; the dedupe key (kind, ref) collapses
+    // the two sources into one Palette item — no duplicates on the
+    // canvas, no duplicate drop on user click.
+    const sharedInstalled: InstalledArtifact = {
+      key: 'shared-tool',
+      kind: 'tool',
+      source: { type: 'url', url: 'https://example.com/shared.json' },
+      installed_at: '2026-05-26T00:00:00Z',
+    };
+    invokeMock.mockResolvedValue([sharedInstalled]);
+    useBuilderStore.setState({
+      framework: frameworkWith({
+        tools: [{ name: 'shared-tool', source: 'external' }],
+      }),
+    });
+    render(<Palette />);
+    // Wait for listInstalledArtifacts to resolve so both sources are
+    // present in the unfiltered list before the dedupe runs.
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('list_installed_artifacts', undefined),
+    );
+    const items = await screen.findAllByTestId('palette-item-shared-tool');
+    expect(items.length).toBe(1);
+    // Dedupe precedence: built-ins → installed → framework. An item
+    // in both `installed` and `framework` keeps the installed entry
+    // (the lock carries version + install timestamp); the surviving
+    // item carries data-source='installed'. The data-source assertion
+    // is the discriminator that fails right-reason on `main` pre-E —
+    // pre-E there is no data-source attribute at all.
+    expect(items[0]).toHaveAttribute('data-source', 'installed');
+  });
+
+  it('framework_sourced_items_carry_data_source_framework_and_drag_identically', async () => {
+    useBuilderStore.setState({
+      framework: frameworkWith({
+        agents: [inlineAgent('orchestrator')] as Framework['agents'],
+      }),
+    });
+    render(<Palette />);
+    await userEvent.click(screen.getByTestId('palette-tab-agents'));
+    const item = await screen.findByTestId('palette-item-orchestrator');
+    // Visible-and-testable distinguisher per phase doc E.3 — a
+    // data-source attribute marks the artifact as framework-sourced.
+    expect(item).toHaveAttribute('data-source', 'framework');
+    // Drag payload contract is uniform — identical to built-ins /
+    // installed items per Key constraints (uniform drop contract).
+    const setData = vi.fn();
+    fireEvent.dragStart(item, { dataTransfer: { setData, effectAllowed: '' } });
+    expect(setData).toHaveBeenCalledWith(
+      'application/x-builder-node',
+      JSON.stringify({ kind: 'agent', ref: 'orchestrator' }),
+    );
+  });
+
+  it('built_in_tools_carry_data_source_builtin', async () => {
+    render(<Palette />);
+    const readItem = await screen.findByTestId('palette-item-Read');
+    expect(readItem).toHaveAttribute('data-source', 'builtin');
+  });
+
+  it('installed_artifacts_carry_data_source_installed', async () => {
+    const installedTool2: InstalledArtifact = {
+      key: 'installed-only-tool',
+      kind: 'tool',
+      source: { type: 'url', url: 'https://example.com/x.json' },
+      installed_at: '2026-05-26T00:00:00Z',
+    };
+    invokeMock.mockResolvedValue([installedTool2]);
+    render(<Palette />);
+    const item = await screen.findByTestId('palette-item-installed-only-tool');
+    expect(item).toHaveAttribute('data-source', 'installed');
   });
 });

@@ -1,7 +1,7 @@
 # ADR-0022: Canonical framework representation — modular multi-file, resolved at the loader boundary
 
-**Status:** Proposed
-**Date:** 2026-05-22
+**Status:** Accepted
+**Date:** 2026-05-22 (Proposed); 2026-05-25 (Accepted at M08.6 Stage B impl)
 **Deciders:** @kknipe2k
 **Tags:** architecture, builder, persistence, framework, loader
 
@@ -75,13 +75,31 @@ Concretely:
 
 - **One resolution boundary — the loader.**
   `runtime_main::builder::load_framework` walks the framework directory,
-  reads each referenced `.md`, parses its frontmatter into an inline
-  `Agent` / tool / skill, and returns a `LoadedFramework` whose
-  `framework` is **fully reference-resolved** — every `agents[]` entry
-  inline. Relative paths, including `../` cross-framework references
-  (Ralph), resolve against the framework directory; the loader resolves
-  paths deliberately (no glob, no symlink-escape) and surfaces a
-  malformed / missing referenced file as a load error.
+  reads each referenced `.md`, and returns a `LoadedFramework` whose
+  `framework` + `companions` together carry the resolved model.
+  Resolution is **asymmetric across the three artifact types**, matching
+  the framework schema:
+    - **Agents — variant flip.** `FrameworkAgentsItem` is a `oneOf` of
+      `{id, path}` and an inline `Agent` (`schemas/framework.v1.json`
+      `agents[]`). The loader parses each path-referenced `.md`'s YAML
+      frontmatter into an `Agent` via `serde_yaml` and replaces the
+      `Object {id, path}` variant with the `Agent(_)` variant in
+      `framework.agents[]`. After the load, every `agents[]` entry is
+      the inline variant — the canvas projection, the Tester, and
+      `spawn_framework_subagents` walk one shape.
+    - **Tools and skills — body in `companions`.** `FrameworkToolsItem`
+      and `FrameworkSkillsItem` are flat structs `{name, path?,
+      registry_id?, source}` with **no inline `oneOf` variant in the
+      framework schema**. The loader reads each path-referenced `.md`
+      and surfaces the body as a `Companion { file_name: <relative
+      path>, body }`; `framework.tools[]` and `framework.skills[]`
+      remain reference-shape unchanged. Downstream (the canvas Palette,
+      Stage C's re-split) reads tool/skill bodies from `companions`,
+      not from a (non-existent) inline framework field.
+  Relative paths, including `../` cross-framework references (Ralph),
+  resolve against the framework directory; the loader resolves paths
+  deliberately (no glob, no symlink-escape) and surfaces a malformed /
+  missing referenced file as a load error.
 
 - **Downstream consumes the resolved model.** The canvas projection
   (`projectCanvasNodes` / `projectCanvasEdges`), the Tester, and the
@@ -125,12 +143,15 @@ Concretely:
 
 ### Negative
 
-- The loader grows real work: a directory walk, `.md` frontmatter
-  parsing for three artifact types, and relative-path (incl. `../`)
-  resolution. The existing gap-tolerant `load_framework` posture
-  (a partially-built framework still loads; gaps surface as validation
-  errors) is preserved, but a malformed referenced file is now a load
-  error.
+- The loader grows real work: a directory walk over the three artifact
+  types, YAML-frontmatter parsing for the agents path (the only artifact
+  type with an inline `oneOf` variant in the framework schema, so the
+  only one whose `.md` frontmatter is parsed into a typed inline value
+  at load), `.md` body reads for tools/skills (surfaced as
+  `Companion`s), and relative-path (incl. `../`) resolution. The
+  existing gap-tolerant `load_framework` posture (a partially-built
+  framework still loads; gaps surface as validation errors) is
+  preserved, but a malformed referenced file is now a load error.
 - `save_framework` must re-split — derive companion files and their
   frontmatter from the inline model — which is more than today's flat
   write.
@@ -201,7 +222,7 @@ single-file format cannot express cross-framework artifact reuse.
 
 ## Notes
 
-Filed `Proposed` alongside the M08.6 phase doc. Flips
-`Proposed → Accepted` in the M08.6 stage that implements the loader
-resolution (the M06.5.A.fix / ADR-0012 precedent — the stage that
-implements an ADR flips it).
+Filed `Proposed` alongside the M08.6 phase doc. Flipped
+`Proposed → Accepted` in this commit — the M08.6 Stage B implementation
+of the loader resolution (the M06.5.A.fix / ADR-0012 precedent: the
+stage that implements an ADR flips it).

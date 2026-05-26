@@ -177,20 +177,23 @@ describe('Inspector', () => {
     expect(saveFrameworkMock).not.toHaveBeenCalled();
   });
 
-  it('clicking_load_picks_a_directory_loads_and_replaces_the_framework', async () => {
+  it('clicking_load_picks_a_directory_loads_and_applies_the_framework', async () => {
     openMock.mockResolvedValue('C:/load-dir');
     loadFrameworkMock.mockResolvedValue({
       framework: namedFramework('loaded-from-disk'),
       companions: [],
     });
-    const replaceFramework = vi.fn();
-    useBuilderStore.setState({ replaceFramework });
+    const applyLoadedFramework = vi.fn();
+    useBuilderStore.setState({ applyLoadedFramework });
     render(<Inspector />);
     screen.getByRole('button', { name: 'Load' }).click();
     await waitFor(() => expect(loadFrameworkMock).toHaveBeenCalledWith('C:/load-dir'));
-    // load → replaceFramework swaps the source of truth; the canvas
-    // re-derives (ADR-0020).
-    expect(replaceFramework).toHaveBeenCalledWith(
+    // M08.6.D — load → applyLoadedFramework swaps the source of truth
+    // AND seeds nodePositions via the dagre auto-layout, so the canvas
+    // reads as a workflow instead of stacking at {0,0}. The seam was
+    // `replaceFramework` pre-D; the rename here is the deliberate
+    // convention change Stage D ships (the M08.6.C reframe precedent).
+    expect(applyLoadedFramework).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'loaded-from-disk' }),
     );
   });

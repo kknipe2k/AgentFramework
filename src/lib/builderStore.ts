@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import type { Agent, Framework } from '../types/framework';
 import { createGraphStore } from './graphStore';
 import { unwrapCmdError, validateFramework, type FrameworkValidationReport } from './ipc';
+import { layoutGraph } from './layout';
 
 // M08.C/D1/D2 — the Builder store (ADR-0020). builderStore holds the
 // in-progress framework.json as the single source of truth; the canvas
@@ -57,8 +58,20 @@ export interface BuilderState {
    *  it; Stage F2's modal renders on it. INERT-but-wired at Stage E. */
   testerOpen: boolean;
 
-  /** Replace the whole document (E's JSON-tab edit; load_framework). */
+  /** Replace the whole document (E's JSON-tab edit). NOT the
+   *  load-from-disk path — Stage M08.6.D split that out to
+   *  `applyLoadedFramework` so a JSON-tab edit preserves the user's
+   *  manual `nodePositions`. */
   replaceFramework: (fw: Framework) => void;
+  /** M08.6.D: swap the document AND seed `nodePositions` via the
+   *  existing `layoutGraph` dagre top-down layout — the canvas
+   *  auto-lays-out on a framework LOAD instead of stacking every node
+   *  at {0,0}. Used by the Inspector's Load button (ADR-0022's loader
+   *  resolution returns inline agents that the canvas projection now
+   *  paints with real positions). Distinct from `replaceFramework` so
+   *  auto-layout fires on LOAD only, not on every framework mutation
+   *  — ADR-0020 keeps `nodePositions` as editor-local view state. */
+  applyLoadedFramework: (fw: Framework) => void;
   /** Record the on-disk snapshot after a save/load (E's diff baseline). */
   setDiskFramework: (fw: Framework | null) => void;
   /** Select / clear the active canvas node. */
@@ -464,6 +477,30 @@ export const useBuilderStore = create<BuilderState>((set, get) => {
     testerOpen: false,
     nodePositions: {},
     replaceFramework: (fw) => set({ framework: fw }),
+    // M08.6.D: swap the document AND seed `nodePositions` with the
+    // dagre top-down layout (`layoutGraph` from src/lib/layout.ts —
+    // the same engine the live `GraphCanvas` uses). The canvas
+    // projection (`projectCanvasNodes`/`projectCanvasEdges`) is the
+    // input to the layout: project once with an empty `nodePositions`
+    // map (the {0,0} fallback), feed dagre, then write the resulting
+    // positions into `nodePositions`. The next `canvasNodes()` read
+    // re-projects against the seeded map and the React Flow canvas
+    // renders the laid-out graph. Auto-layout fires here only —
+    // `replaceFramework` (the JSON-tab edit path) deliberately does
+    // not lay out, so a user's manual drags (the editor-local view
+    // state per ADR-0020) survive a JSON tweak.
+    applyLoadedFramework: (fw) =>
+      set(() => {
+        const nodes = projectCanvasNodes(fw, {});
+        const nodeIds = new Set(nodes.map((node) => node.id));
+        const edges = projectCanvasEdges(fw, nodeIds);
+        const laidOut = layoutGraph(nodes, edges);
+        const nodePositions: Record<string, Position> = {};
+        for (const node of laidOut) {
+          nodePositions[node.id] = node.position;
+        }
+        return { framework: fw, nodePositions };
+      }),
     setDiskFramework: (fw) => set({ diskFramework: fw }),
     selectNode: (id) => set({ selectedNodeId: id }),
     addNode: (kind, ref, position) => {

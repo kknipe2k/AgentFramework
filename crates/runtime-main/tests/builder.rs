@@ -520,25 +520,39 @@ fn save_framework_writes_framework_json_to_dir() {
 
 #[test]
 fn save_framework_writes_one_companion_md_per_inline_artifact() {
+    // ADR-0022 (M08.6 Stage C) — an inline agent re-splits to
+    // `agents/<id>.md` (the archetype subdirectory layout), and the
+    // `framework.json` agents[] entry is the {id,path} reference form.
+    // Supersedes the M08-era flat `<name>.agent.md` companion
+    // convention at the directory top level.
     let dir = tempfile::tempdir().unwrap();
     let fw = framework(valid_framework_value());
-    let companions = vec![
-        Companion {
-            file_name: "summarize.skill.md".to_string(),
-            body: "# Summarize\n".to_string(),
-        },
-        Companion {
-            file_name: "fetch.tool.md".to_string(),
-            body: "# Fetch\n".to_string(),
-        },
-    ];
-    save_framework(dir.path(), &fw, &companions).expect("save succeeds");
-    assert!(dir.path().join("summarize.skill.md").exists());
-    assert!(dir.path().join("fetch.tool.md").exists());
-    assert_eq!(
-        std::fs::read_to_string(dir.path().join("fetch.tool.md")).unwrap(),
-        "# Fetch\n",
-        "the companion body is written verbatim",
+    save_framework(dir.path(), &fw, &[]).expect("save succeeds");
+    // The inline `worker` agent re-splits to `agents/worker.md`.
+    let worker_md = dir.path().join("agents/worker.md");
+    assert!(
+        worker_md.is_file(),
+        "the inline agent re-splits to agents/<id>.md per ADR-0022",
+    );
+    let body = std::fs::read_to_string(&worker_md).expect("agents/worker.md readable");
+    assert!(
+        body.starts_with("---\n"),
+        "the agent .md begins with the YAML frontmatter delimiter: {body}",
+    );
+    assert!(
+        body.contains("id: worker"),
+        "the YAML frontmatter carries the agent id: {body}",
+    );
+    // framework.json's agents[] entry is the {id,path} reference, not
+    // inline — the re-split inverse of Stage B's variant flip.
+    let raw = std::fs::read_to_string(dir.path().join("framework.json")).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let agent = &json["agents"][0];
+    assert_eq!(agent["id"], "worker");
+    assert_eq!(agent["path"], "agents/worker.md");
+    assert!(
+        agent.get("role").is_none(),
+        "the framework.json agents[] entry is the reference form: {agent}",
     );
 }
 
@@ -564,6 +578,12 @@ fn load_framework_round_trips_a_saved_framework() {
 
 #[test]
 fn load_framework_recovers_companion_md_files() {
+    // The M08-era flat-companion convention is preserved alongside the
+    // ADR-0022 canonical-modular subdir layout (the loader's
+    // `read_flat_companions` backward-compat path). The two flat
+    // companions surface under their top-level file names; Stage C's
+    // re-split additionally surfaces `agents/worker.md` for the inline
+    // worker agent (the resolver writes it; the loader recovers it).
     let dir = tempfile::tempdir().unwrap();
     let fw = framework(valid_framework_value());
     let companions = vec![
@@ -578,12 +598,19 @@ fn load_framework_recovers_companion_md_files() {
     ];
     save_framework(dir.path(), &fw, &companions).unwrap();
     let loaded = load_framework(dir.path()).expect("load succeeds");
-    assert_eq!(loaded.companions.len(), 2);
-    // Companions are sorted by file name for a deterministic round-trip.
-    assert_eq!(loaded.companions[0].file_name, "alpha.skill.md");
-    assert_eq!(loaded.companions[0].body, "alpha body");
-    assert_eq!(loaded.companions[1].file_name, "beta.agent.md");
-    assert_eq!(loaded.companions[1].body, "beta body");
+    // Flat top-level companions survive verbatim (backward compat).
+    let alpha = loaded
+        .companions
+        .iter()
+        .find(|c| c.file_name == "alpha.skill.md")
+        .expect("alpha.skill.md surfaces as a flat companion");
+    assert_eq!(alpha.body, "alpha body");
+    let beta = loaded
+        .companions
+        .iter()
+        .find(|c| c.file_name == "beta.agent.md")
+        .expect("beta.agent.md surfaces as a flat companion");
+    assert_eq!(beta.body, "beta body");
 }
 
 #[test]
