@@ -200,14 +200,31 @@ Optional. Inline operational warnings — workflow-time guardrails that apply du
 The distinction matters: a `<gotchas>` entry warns about a code-shape trap the agent might write into a file; an `<execution_warnings>` entry warns about a *command* the agent might run during the stage. Mixing them in `<gotchas>` (the v1.0/v1.1 pattern) loses the action-vs-artifact discriminator.
 ### `<approval_surface>`
 Required. Enumerates what the agent surfaces to the human at stage end and in what order. The order matters — the human reads top-down.
-For work stages, default order: diff stat → gate results → retrospective → draft commit message → "I will not commit until you approve."
+
+**Surface audience (v1.9; M08.6.C remediation).** Surfaces are paste-bridged from the build machine to a separate orchestration session for verification, NOT read by a human for narrative. Each `<item>` must include the **verbatim data** the orchestration session needs to verify the work, not a pre-summarized prose description. Specifically:
+
+- "cross-machine state" item: the actual `git log --oneline main..HEAD` output + the actual `ls docs/build-prompts/retrospectives/M[NN].*-retrospective.md` output, not "A/B/C committed, retros present"
+- "strict-TDD invariant" item: the verbatim diff command + its output (e.g., `$ git diff <red>..<impl> -- 'crates/<x>/tests/**'` followed by `(empty — zero lines)` or the actual diff), not "invariant proven"
+- "closure proof" item: a pre/post evidence table or verbatim before/after artifact dumps, not "the regression now passes"
+- "gate results" item: each gate's command + verbatim result (and any CI-divergent flag cited inline per CLAUDE.md §6), not "all gates green"
+- "retrospective summary" item: the three-axis scoring table with evidence column, not the outcome verdict alone
+- "forward decisions" item: enumerated, numbered, file:line-cited
+
+Anti-pattern: surfacing a paragraph that says "X is proven, Y passes, Z is filed" without the verbatim data behind each claim — defeats the orchestration session's ability to verify and produces a longer back-and-forth as it asks for the data.
+
+The M08.6.B surface is the reference shape: cross-machine SHAs + strict-TDD diff command output + ADR closure table + per-gate verbatim results + retro three-axis table + numbered forward decisions. The M08.6.C surface was the negative case (pre-summarized verdict-only items) and triggered this codification.
+
+For work stages, default item order: cross-machine state → strict-TDD invariant proof (if `<tdd_discipline strict="true">`) → closure proof → gate results → retrospective summary → forward decisions → draft commit message → "I will not push until you approve."
 ```xml
 <approval_surface>
-  <item>diff stat (git diff --stat HEAD)</item>
-  <item>gate results (each gate, pass/fail, key numbers)</item>
-  <item>retrospective (filled-in [END] section)</item>
+  <item>cross-machine state (verbatim git log --oneline main..HEAD + ls docs/build-prompts/retrospectives/M[NN].*-retrospective.md)</item>
+  <item>strict-TDD invariant proof (verbatim diff command + output) — only if &lt;tdd_discipline strict="true"&gt;</item>
+  <item>closure proof (pre/post evidence table; verbatim before/after artifact dumps)</item>
+  <item>gate results (each gate: command + verbatim result; CI-divergent flags cited inline per CLAUDE.md §6)</item>
+  <item>retrospective summary (three-axis table with score + evidence column)</item>
+  <item>forward decisions (numbered; file:line-cited)</item>
   <item>draft commit message (Conventional Commits + DCO + session URL)</item>
-  <item>explicit statement: "I will not commit until you approve."</item>
+  <item>explicit statement: "I will not push until you approve."</item>
 </approval_surface>
 ```
 ## 7. Work-stage-only tags
