@@ -1,5 +1,5 @@
 import dagre from '@dagrejs/dagre';
-import type { GraphEdge, GraphNode } from './graphStore';
+import type { Edge, Node } from '@xyflow/react';
 
 // Node-shape bounds dagre uses to compute the rank-and-rank gap. The
 // dagre coords are CENTER-based; React Flow expects TOP-LEFT, so we
@@ -18,8 +18,17 @@ const NODE_HEIGHT = 60;
  * visualization concern rather than state. Callers thread this from a
  * `useMemo` so the recomputation cost stays bounded by node-count
  * change, not every render.
+ *
+ * Generic over `N extends Node, E extends Edge` so the caller's narrow
+ * node-union flows through unchanged. Both the live-graph store's
+ * `GraphNode` discriminated union and the Builder canvas's narrower
+ * agent / tool / skill / hitl / hook `Node[]` satisfy this — the
+ * function reads only `id` and writes only `position`, both common to
+ * every React Flow node shape. M08.6.D adds the Builder-side caller
+ * (canvas auto-layout on framework load) sharing the same engine the
+ * live `GraphCanvas` uses.
  */
-export function layoutGraph(nodes: GraphNode[], edges: GraphEdge[]): GraphNode[] {
+export function layoutGraph<N extends Node, E extends Edge>(nodes: N[], edges: E[]): N[] {
   if (nodes.length === 0) {
     return nodes;
   }

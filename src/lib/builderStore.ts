@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import type { Agent, Framework } from '../types/framework';
 import { createGraphStore } from './graphStore';
 import { unwrapCmdError, validateFramework, type FrameworkValidationReport } from './ipc';
+import { layoutGraph } from './layout';
 
 // M08.C/D1/D2 — the Builder store (ADR-0020). builderStore holds the
 // in-progress framework.json as the single source of truth; the canvas
@@ -476,13 +477,30 @@ export const useBuilderStore = create<BuilderState>((set, get) => {
     testerOpen: false,
     nodePositions: {},
     replaceFramework: (fw) => set({ framework: fw }),
-    // M08.6.D red-phase stub — green-phase impl seeds `nodePositions`
-    // via layoutGraph. Stubbed-to-compile per the M08.6.B precedent so
-    // the strict-TDD invariant binds the test files only; the
-    // behavioral red-phase failure surfaces at runtime
-    // (`positions['agent:<id>']` is undefined → distinct-position
-    // assertion fails) instead of as a TS / lint break.
-    applyLoadedFramework: (fw) => set({ framework: fw }),
+    // M08.6.D: swap the document AND seed `nodePositions` with the
+    // dagre top-down layout (`layoutGraph` from src/lib/layout.ts —
+    // the same engine the live `GraphCanvas` uses). The canvas
+    // projection (`projectCanvasNodes`/`projectCanvasEdges`) is the
+    // input to the layout: project once with an empty `nodePositions`
+    // map (the {0,0} fallback), feed dagre, then write the resulting
+    // positions into `nodePositions`. The next `canvasNodes()` read
+    // re-projects against the seeded map and the React Flow canvas
+    // renders the laid-out graph. Auto-layout fires here only —
+    // `replaceFramework` (the JSON-tab edit path) deliberately does
+    // not lay out, so a user's manual drags (the editor-local view
+    // state per ADR-0020) survive a JSON tweak.
+    applyLoadedFramework: (fw) =>
+      set(() => {
+        const nodes = projectCanvasNodes(fw, {});
+        const nodeIds = new Set(nodes.map((node) => node.id));
+        const edges = projectCanvasEdges(fw, nodeIds);
+        const laidOut = layoutGraph(nodes, edges);
+        const nodePositions: Record<string, Position> = {};
+        for (const node of laidOut) {
+          nodePositions[node.id] = node.position;
+        }
+        return { framework: fw, nodePositions };
+      }),
     setDiskFramework: (fw) => set({ diskFramework: fw }),
     selectNode: (id) => set({ selectedNodeId: id }),
     addNode: (kind, ref, position) => {
