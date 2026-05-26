@@ -432,6 +432,95 @@ History is immutable (a measurement true for M0X stays true for M0X).
   `cargo llvm-cov` commands, `codecov.yml`, and §A above — were
   **unchanged by M08** and are verified byte-consistent as of M08.H.
   No drift found.
+- **M08.6 (closeout `<coverage_policy_reconciliation>` — Stage F)** —
+  **no threshold and no `--ignore-filename-regex` value changed
+  anywhere in M08.6.** M08.6 grew the existing
+  `crates/runtime-main/src/builder/` module (in the **runtime-main ≥95**
+  package gate since M08) with the ADR-0022 reference-resolution
+  rewrite + the save-side re-split, per stage:
+  - **M08.6.A** — intake stage. No production code beyond the
+    `docs/M08-irl-test-plan.md` typo-fix (a markdown test-plan
+    document outside any test or build path); no Rust diff, no
+    coverage delta. No exclusion or threshold change; no four-mirror
+    change.
+  - **M08.6.B** — `crates/runtime-main/src/builder/persist.rs` grew
+    by ~150 lines (the directory-walk resolver + `split_frontmatter`
+    + the `serde_yaml` parse + the asymmetric agents/tools/skills
+    handling) and `crates/runtime-main/src/builder/error.rs` gained
+    one variant (`BuilderError::ReferenceResolution { reference,
+    cause }`). The module remains pure / seam / `&Path` + `tempfile`-
+    tested with no OS call — the **same M07.B `skills_lock` + M08.B
+    `builder` precedent**: a new module INSIDE the runtime-main ≥95
+    gate, NOT a separate `cargo llvm-cov --package` gate, NOT
+    excluded. `crates/runtime-main/Cargo.toml` gained `serde_yaml =
+    { workspace = true }` (an existing workspace dep already consumed
+    by `runtime-core`; not a new external dependency — no `cargo
+    deny` concern). Per-file `persist.rs` 88.61% line at B's
+    measurement (the M08 baseline 97.67% reflects the smaller M08
+    surface; the M08.6 additions introduced 4–5 error-path branches
+    the strict v1.8 invariant locked out of the impl commit:
+    broken-tool-ref, broken-skill-ref, no-frontmatter-found,
+    YAML-parse-error). Per-package `runtime-main` 95.56% line ≥ 95
+    PASSES at B (the per-package gate, the enforced mirror, holds
+    above 95). No exclusion or threshold change; no four-mirror
+    change.
+  - **M08.6.C** — `save_framework` re-split + `synthesize_agent_md` +
+    `write_artifact_md` + `is_outside_framework_dir` + the
+    canonicalization-through-`serde_json::Value` for byte-stability
+    against `Framework`'s three `HashMap<String, _>` fields
+    (`hook_defs`, `mcp_aliases`, `per_mode_overrides`). Per-file
+    `persist.rs` dropped to 84.73% line / 86.11% regions at C's
+    measurement — ~120 new lines added several error-path branches
+    not enumerated in the C.4 test set (the synthesize-body path
+    with NO matching companion; the `is_outside_framework_dir` true
+    branch; the Object-variant-with-matching-companion path; the
+    Object-variant-with-no-companion silently-skipped path). Per-package
+    `runtime-main` 95.40% line ≥ 95 PASSES (the aggregate gate
+    holds; per-file under-coverage is recorded as M08.6.V 🟡 #2).
+    No exclusion or threshold change; no four-mirror change.
+  - **M08.6.D + .E** — renderer-only stages; no `crates/**` or gated
+    `src-tauri/src/` code touched. The Vitest renderer gate (≥80% on
+    `src/`) held every stage (D: 97.13% line; E: 97.15% line). No
+    Rust coverage gate moved.
+  - **M08.6.V** — verifier stage; no code change. V confirmed the
+    runtime-main aggregate 95.40% ≥ 95 PASSES with `cargo llvm-cov
+    clean --workspace` first (gotcha #81) — the per-package gate is
+    the enforced mirror — and surfaced the per-file 84.73%
+    `persist.rs` divergence as 🟡 #2 (carry-forward to M09.A).
+  The M08.6.F reconciliation appends this §C entry and does **not**
+  append a new §B baseline (the M08-era `runtime-main builder` §B
+  row above stands; the M08.6 per-file numbers are documented in this
+  §C entry as deliberate strict-TDD ceilings carrying forward, not
+  as new baselines that would lock in regression). The four canonical
+  mirrors — CLAUDE.md §5 exclusion-category list, CLAUDE.md §6
+  `cargo llvm-cov` commands, `codecov.yml`, and §A above — were
+  **unchanged by M08.6** and are verified byte-consistent as of
+  M08.6.F. No drift found.
+
+  **Policy note for the per-file divergence (M08.6.V 🟡 #2 surface).**
+  The strict v1.8 two-commit TDD invariant (the test file is
+  byte-identical between red commit and impl commit) creates a
+  structural per-file coverage ceiling: the phase-doc-enumerated
+  test set (B.4 = 7 tests; C.4 = 4 tests) pins what's testable in
+  the impl commit; additional error-path tests would land as a
+  separate labelled follow-up (`test(M08.6.X): error-path coverage`)
+  per phase doc B.6 / C.6 ("net-new additive tests go in a separate
+  labelled follow-up"). The **enforced gate (`--fail-under-lines 95`
+  on the package, the §6 absolute floor) PASSES**; the per-file
+  divergence is the M08.6.V finding routed to M09.A for resolution.
+  Two resolution paths recorded in the M08.6 gap-analysis Carry-forward:
+  (a) targeted error-path tests for the `BuilderError::ReferenceResolution`
+  cause-string branches + the `is_outside_framework_dir` save-side
+  branch + the Object-variant write branch (`persist.rs:141-153`) +
+  the cross-framework save preserve path (~30–45 min; +10pp on
+  persist.rs per-file); (b) explicit policy entry recording that
+  aggregate-passes is the gate intent + per-file divergence is
+  acceptable for this strict-TDD surface. Recommend (a) at M09.A;
+  this entry pre-records (b)-style language in case (a) is declined.
+  The aggregate-vs-per-file asymmetry is the same shape as the
+  existing M07.G `transport/mod.rs` carry-forward (87.50% line below
+  per-file aspiration; runtime-mcp aggregate holds ≥95) — pattern is
+  durable, not novel.
 
 ---
 

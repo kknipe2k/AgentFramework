@@ -592,3 +592,106 @@ The minimap's navigation function works; only the miniature rendering + theming 
 ### Recommended approach (when addressed)
 
 Pass a `nodeColor` / `nodeStrokeColor` callback to React Flow's `<MiniMap>` keyed on node kind, and theme the minimap background to the dark canvas tokens. Small CSS + one prop. Applies to both the live `GraphCanvas` and (if a minimap is added) the Builder canvas; roll into any M09+ canvas touch.
+
+## TD-028 — `walker.rs::agents_item_id` + `capability_map::inline_agents` `FrameworkAgentsItem::Object` branches structurally unreachable on a loaded framework post-ADR-0022
+
+**Date logged:** 2026-05-26
+**Found by:** Stage V verifier run M08.6.V (finding 🟢 #3)
+**Pass that surfaced it:** Wire
+**Category:** structural
+**Resolution status:** open
+
+### Description
+
+`crates/runtime-main/src/framework_loader/walker.rs:169` matches `FrameworkAgentsItem::Object { id, .. }` to extract the agent id; `crates/runtime-main/src/framework_loader/capability_map.rs:324-333` filters `framework.agents.iter()` to `FrameworkAgentsItem::Agent(_)` only and silently drops `FrameworkAgentsItem::Object` variants. Per ADR-0022 (Accepted at M08.6 Stage B), the in-memory `Framework` post-`load_framework` carries only `Agent(_)` variants — the `Object` variant exists only in `framework.json` on disk (re-split at save). The branches are defensive M08-era code that survived the milestone.
+
+### Why it's debt not bug
+
+The functions read structural fields (`id`) and use a defensive filter — they do NOT read `.md` files, parse YAML frontmatter, or perform reference resolution. ADR-0022's single-resolution-boundary invariant is not violated. The grep for `serde_yaml` + frontmatter parsing returns only `crates/runtime-main/src/builder/persist.rs` and its test files. The branches are correct under any input; they just have no production caller for the Object arm post-ADR-0022.
+
+### Recommended approach (when addressed)
+
+Once the renderer surface is confirmed never to produce `Object` variants in `builderStore.framework.agents[]` (it doesn't today — `builderAgent` always emits inline shapes), tighten both branches to `unreachable!("post-ADR-0022 load resolves all agent refs to inline; Object variant should not appear in an in-memory Framework")` with a SAFETY-comment naming the ADR. ~10 minutes; roll in at any M09+ touch of `framework_loader/`.
+
+## TD-029 — No e2e-tauri assertion that Inspector capability summary populates on loaded `examples/aria/`
+
+**Date logged:** 2026-05-26
+**Found by:** Stage V verifier run M08.6.V (finding 🟢 #4)
+**Pass that surfaced it:** Behavior
+**Category:** observability
+
+**Resolution status:** open
+
+### Description
+
+M08.6 Stage A's triage of 🟡 #5 (blank Inspector capability summary on loaded ARIA) predicted Stage B's loader-resolution would incidentally populate it: `framework_capability_summary` (`crates/runtime-main/src/builder/summary.rs:73-74`) reads `capability_map::inline_agents`, which post-ADR-0022 returns all 8 ARIA agents (where pre-B it returned zero because every entry was `FrameworkAgentsItem::Object` and filtered out). The structural fix is sound and Stage V's Wire pass confirmed it. But no test asserts the rendered Inspector capability-summary text is non-empty on a loaded `examples/aria/` — neither vitest (no Inspector-pane capability-summary unit tests exist) nor e2e-tauri (`builder_load_aria.e2e.ts` asserts canvas layout + edges; `builder_palette_aria.e2e.ts` asserts Palette items; neither asserts Inspector content).
+
+### Why it's debt not bug
+
+The structural cause is gone (path-ref agents resolve to inline; `inline_agents` returns them; `framework_capability_summary` aggregates over real `Capabilities` blocks). The IRL acceptance bar — load ARIA → see ARIA's workflow — does not include "Inspector capability summary is non-empty" as a hard checkbox; the panel that wasn't part of M08.6's deliverable will incidentally populate when the maintainer loads ARIA post-merge. The debt is missing automated verification at the rendered-UI layer, not a defect.
+
+### Recommended approach (when addressed)
+
+Add a renderer or e2e-tauri assertion that, after loading `examples/aria/`, the Inspector capability-summary surface contains a non-empty list of declared tools / agents / hosts. Cheap (~15 min) to fold into M09's Stage 0 real-app discovery walk (since 🔴 #4 / 🟡 #6 tier-state work will exercise the Inspector pane anyway) or into any future Inspector touch.
+
+## TD-030 — `split_frontmatter` candidate for extraction to `runtime-core` (M08.6 simplify pass)
+
+**Date logged:** 2026-05-26
+**Found by:** M08.6 Stage F closeout `<simplify_pass>` (RU-M08.6-1)
+**Pass that surfaced it:** N/A (closeout simplify)
+**Category:** extensibility
+**Resolution status:** open
+
+### Description
+
+`split_frontmatter` lives at `crates/runtime-main/src/builder/persist.rs:422-429` as a 7-line `pub fn split_frontmatter(text: &str) -> Option<(&str, &str)>`. A near-identical pattern exists in `crates/runtime-core/tests/round_trip.rs:140` (test-local `text.splitn(3, "---\n")` with CRLF normalization at line 139). Two callers today: one production (M08.6.B's loader resolution), one test (round-trip serde verification).
+
+### Why it's debt not bug
+
+The function is small + correctly contained at the load boundary that needs it; the test-local copy is appropriate for a serde round-trip test (no cross-crate dependency). The split pattern is durable but not yet a reusable utility — extracting now would create a `runtime-core → {test + persist}` dependency that is architecturally sound but currently low-impact (per CLAUDE.md §9 "wait for the fourth" abstraction discipline).
+
+### Recommended approach (when addressed)
+
+Revisit when a fourth independent caller emerges — likely candidates: M09 artifact generators parsing `.md` bodies on write/preview; any v1.0 Share It module reading framework artifacts. At that point, move `split_frontmatter` to `crates/runtime-core/src/lib.rs` as a public utility; re-export from `runtime-main`; delete the test-local copy. ~15 minutes when the fourth call site lands.
+
+## TD-031 — Load/save directory-escape asymmetry could carry an inline rationale comment (M08.6 simplify pass)
+
+**Date logged:** 2026-05-26
+**Found by:** M08.6 Stage F closeout `<simplify_pass>` (EFF-M08.6-1)
+**Pass that surfaced it:** N/A (closeout simplify)
+**Category:** observability (documentation hygiene)
+**Resolution status:** open
+
+### Description
+
+`is_outside_framework_dir` (`crates/runtime-main/src/builder/persist.rs:243-249`) guards `save_framework` writes — three call sites for agents / tools / skills emission, refusing to write outside the framework directory. `read_referenced_md` (`crates/runtime-main/src/builder/persist.rs:374-380`) deliberately does NOT call the guard — Ralph's `../aria/tools/aria_verify.md` cross-framework reads are explicitly permitted by ADR-0022. The asymmetry is intentional (writes are scoped; reads cross frameworks); the rationale lives in ADR-0022 but is not inline at the call sites.
+
+### Why it's debt not bug
+
+The code is correct under ADR-0022. The asymmetry is structurally clear to a maintainer familiar with the ADR (the `format!("agents/{}.md", ...)` write pattern + the `is_outside_framework_dir` guard at writes only). A fresh session would have to read ADR-0022 to understand why reads cross `..` and writes don't.
+
+### Recommended approach (when addressed)
+
+If a fresh session encounters confusion (test-driven clarity per CLAUDE.md §9 "Don't write [comments] unless removing them would confuse a future reader"), add a one-line comment at `read_referenced_md` referencing ADR-0022's cross-framework-read decision and a parallel one-line at `is_outside_framework_dir` referencing the write-scope decision. Pure documentation; zero behavior change. Roll into any future `persist.rs` touch.
+
+## TD-032 — `applyLoadedFramework` layout-seeding inline boilerplate (M08.6 simplify pass)
+
+**Date logged:** 2026-05-26
+**Found by:** M08.6 Stage F closeout `<simplify_pass>` (CQ-M08.6-1)
+**Pass that surfaced it:** N/A (closeout simplify)
+**Category:** structural (premature-abstraction candidate)
+**Resolution status:** open
+
+### Description
+
+`applyLoadedFramework` (`src/lib/builderStore.ts` — the M08.6.D-added load-only seam) projects nodes twice (once with empty `nodePositions` to feed `projectCanvasEdges`, then `layoutGraph(nodes, edges)`, then hand-writes positions back into a `Record<string, Position>`). The pattern is currently inline; a helper `seedPositionsFromLayout(fw: Framework): Record<string, Position>` would compress the 11-line `set()` callback to 3 lines.
+
+### Why it's debt not bug
+
+The current inline form is transparent and makes the ADR-0020 load-only seeding visible at the point of use (Stage D's surface event #1: the seam-choice rationale is what carries the invariant — "auto-layout fires on LOAD only, not on every framework mutation"). Extracting now would bury the layout logic one level deeper without a second caller — same trade-off as the M08 simplify pass's CQ-M08-1 (the `updateNode` ad-hoc regex was a real inconsistency but its fix was best landed at the next builder-store touch, not patched in isolation at closeout).
+
+### Recommended approach (when addressed)
+
+If a second caller emerges (likely candidates: an M09 Tester re-layout button; an "open recent framework" Inspector hook; a "reset layout" canvas affordance), extract `seedPositionsFromLayout` to `src/lib/layout.ts` adjacent to `layoutGraph`, replace both call sites with the helper, ensure the load-only contract stays documented at each call site. ~20 min when the second caller lands.
+
+

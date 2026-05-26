@@ -6,6 +6,182 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed — M08.6 Stage F (closeout — gap-analysis, summary, simplify pass, coverage-policy reconciliation)
+
+- **`docs/build-prompts/retrospectives/M08.6-summary.md`** —
+  parent-milestone summary aggregating M08.6.A–E + Stage V; verdict
+  **Pattern held cleanly. Proceed to M09.** Aggregate axis means:
+  Process 39.8/40; Product 33.5/35 scored (n/a rows excluded);
+  Pattern 30.0/35. Time-box ratio ~0.24–0.34× (the M08.5 / M08.5.5
+  calibration pattern carries forward — M09 estimates should halve
+  M08.5/M08.6-class rule-of-thumb). All six hard gates passed in
+  every stage A–E + V. Coverage-policy reconciliation check ticked
+  (mandatory per CLAUDE.md §6).
+- **`docs/gap-analysis.md`** — immutable M08.6 entry appended
+  (append-only per CLAUDE.md §20). Records: MVP §M8 criterion 8 +
+  ADR-0022 cited; the M08.5 cycle's 3 🔴 RESOLVED in their cycle,
+  M08.5.5's 🔴 #6 (MCP Windows .cmd spawn) RESOLVED via B+B2.fix
+  (ADR-0023 Accepted + amended for outer-quote), M06.5 🔴-1 (stray
+  mcp.sqlite) RESOLVED via M08.5.5.C.fix cleanup module, 🔴 #7
+  (mcp_servers schema divergence) RESOLVED-BY-REFRAMING per M08.5.5
+  (inert .bak vs canonical session.sqlite — no live defect); the
+  framework-representation gap RESOLVED at Stages B/C against the
+  real `examples/aria/` + `examples/ralph/`; 🟡 #4 RESOLVED at Stage
+  D auto-layout; 🟡 #5 (blank Inspector capability summary)
+  structurally RESOLVED at Stage B with TD-029 verification follow-up;
+  the 🔴 #4 (tier UI/backend desync) + 🔴 #5 (Builder Canvas state
+  not persisted across restart) + 13 🟡 + 🟢 elevation triage
+  dispositions from Stage A (M09 routing per file:line evidence);
+  the `system_prompt_template` application gap carried to M09; the
+  10 phase-doc / protocol-uplift notes from M08.5.5 APPLIED to M08.6
+  authoring discipline. Stage V findings: 0🔴 / 2🟡 / 2🟢 — the two
+  🟡 carry to M09.A; the two 🟢 logged as TD-028 + TD-029. Simplify
+  pass: empty approved subset (the M08 precedent); 3 deferrals →
+  TD-030 + TD-031 + TD-032.
+- **`docs/tech-debt.md`** — five new entries: TD-028 (walker.rs +
+  capability_map Object-variant branches structurally unreachable
+  post-ADR-0022 — M08.6.V 🟢 #3); TD-029 (no e2e-tauri assertion for
+  Inspector capability summary populating on loaded ARIA — M08.6.V
+  🟢 #4); TD-030 (split_frontmatter extraction to runtime-core when
+  a fourth caller emerges — simplify RU-M08.6-1); TD-031 (load/save
+  directory-escape asymmetry inline rationale — simplify EFF-M08.6-1);
+  TD-032 (applyLoadedFramework layout-seeding boilerplate extraction
+  when a second caller emerges — simplify CQ-M08.6-1).
+- **`docs/coverage-policy.md` §C M08.6 entry** appended — confirms
+  no threshold or `--ignore-filename-regex` value changed; the four
+  canonical mirrors (CLAUDE.md §5 categories, §6 commands,
+  `codecov.yml`, §A above) verified byte-consistent. Documents the
+  M08.6.V 🟡 #2 per-file `persist.rs` 84.73% line as a deliberate
+  strict-TDD ceiling (the test files are byte-locked between red and
+  impl per the v1.8 invariant; the runtime-main aggregate 95.40% ≥
+  95 PASSES); records resolution paths (a) targeted error-path tests
+  for M09.A or (b) explicit aggregate-passes policy entry. Pattern
+  is durable (the M07.G `transport/mod.rs` 87.50% carry-forward is
+  the same shape).
+- **No new ADR.** ADR-0022 was flipped Proposed → Accepted at the
+  M08.6.B impl commit. The Stage F closeout confirms it.
+
+### Added — M08.6 Stage E (the Palette surfaces a loaded framework's artifacts)
+
+- **`paletteItemsForTab(tab, installed, framework)` extended with the
+  third source** (`src/components/builder/Palette.tsx`) — a loaded
+  framework's resolved agents/tools/skills surface as reusable drag
+  sources in their respective tabs, alongside built-ins + installed
+  artifacts.
+- **`PaletteItemSource = 'builtin' | 'installed' | 'framework'`
+  discriminant + `data-source` HTML attribute per `<li>`** — the
+  testable invariant for the source-origin assertion. A visible
+  `· framework` badge after the label distinguishes
+  framework-sourced items at a glance.
+- **Dedup precedence built-ins → installed → framework via
+  `dedupeByKindRef`** — installed entries (with version pins +
+  install timestamps + L3 reports) win on a `(kind, ref)` collision
+  over a framework document reference; built-ins exist in all
+  sessions and never displace.
+- **Real-app regression at `tests/e2e-tauri/builder_palette_aria.e2e.ts`**
+  drives the running Tauri app: load `examples/aria/` → assert
+  ARIA's `orchestrator` agent appears in the Palette Agents tab
+  with `data-source="framework"`. Closes the IRL "defined agents
+  not shareable" observation.
+
+### Added — M08.6 Stage D (canvas auto-layout on framework load)
+
+- **`applyLoadedFramework(loaded)` store action**
+  (`src/lib/builderStore.ts`) — the load-only seam that runs
+  `layoutGraph` and seeds `nodePositions` from the layout result.
+  `Inspector.onLoad` switches from `replaceFramework` to
+  `applyLoadedFramework`. `replaceFramework` is preserved and does
+  NOT auto-layout — the JSON-tab edit path must not discard manual
+  node positions (ADR-0020's editor-local-view-state invariant).
+- **`src/lib/layout.ts::layoutGraph` generic widening** from narrow
+  `(GraphNode[], GraphEdge[]) => GraphNode[]` to
+  `<N extends Node, E extends Edge>(N[], E[]) => N[]` — the Builder's
+  narrower agent/tool/skill/hitl/hook node types flow through
+  unchanged; both existing callers (`GraphCanvas`, `TesterGraphPane`)
+  continue to pass `GraphNode[]` unchanged.
+- **`window.__builderStore` test seam** (`src/App.tsx`) — parallel
+  to the existing `window.__graphStore`; lets tauri-driver real-app
+  tests drive the production Tauri command + the new
+  `applyLoadedFramework` store action directly via `browser.execute()`
+  (the Inspector's `@tauri-apps/plugin-dialog::open({ directory:
+  true })` is an OS-native dialog tauri-driver cannot drive). No
+  production-only conditional.
+- **Real-app regression at `tests/e2e-tauri/builder_load_aria.e2e.ts`**
+  drives the running Tauri app: load `examples/aria/` → assert ≥2
+  distinct node positions (not the {0,0} pile) AND ≥1
+  `.react-flow__edge` rendered. Pins the construction-reachability
+  closure at the assembled-app boundary (Stage A's
+  `resolve_to_canvas` wire false → true).
+- **Resolves M08-IRL 🟡 #4 (loaded framework stacks at {0,0}).** The
+  load-only invariant is regression-guarded by a third unit test
+  (`replaceFramework_does_not_auto_layout_so_JSON_tab_edits_preserve_manual_positions`).
+
+### Added — M08.6 Stage C (save re-split to the modular form — MVP §M8 criterion 8)
+
+- **`save_framework` re-splits a resolved (inline) `Framework` to the
+  modular subdirectory layout** (`crates/runtime-main/src/builder/persist.rs`)
+  — writes `framework.json` with `{id, path}` references for agents +
+  the agent/tool/skill `.md` files (frontmatter via `serde_yaml::to_string`
+  if no captured companion body exists, otherwise the captured body
+  verbatim) into `agents/`, `tools/`, `skills/` subdirectories. Load
+  and save are exact inverses (the load-bearing ADR-0022 round-trip
+  property).
+- **Byte-stable serialization via `serde_json::to_value` canonicalization**
+  — the typify-generated `Framework` carries three `HashMap<String, _>`
+  fields (`hook_defs`, `mcp_aliases`, `per_mode_overrides`) whose
+  iteration is randomized per process; direct `serde_json::to_string_pretty`
+  produces non-deterministic output. Routing through `Value`
+  canonicalization first (because `serde_json::Map` is backed by
+  `BTreeMap` without the `preserve_order` feature) gives alphabetical
+  field order — the deterministic invariant MVP §M8 criterion 8
+  requires.
+- **The agent `.md` body source-of-truth precedence**: companion-body
+  verbatim if `file_name == "agents/<id>.md"`; otherwise synthesize
+  from `serde_yaml::to_string(&agent)` wrapped in `---\n…---\n`
+  (the Builder-authored / generator-authored case).
+- **Assembled regression at `crates/runtime-main/tests/framework_save_resplit.rs`**:
+  `save_then_load_round_trips_a_modular_framework` (load real
+  `examples/aria/`, save to tempfile, load back, assert byte-equal);
+  `save_writes_the_modular_subdirectory_layout`; `save_load_save_is_byte_stable`
+  (MVP §M8 criterion 8 — fails on pre-fix `main`); `save_round_trips_the_agent_md_body`.
+  The pre-existing `save_load_save_cycle_is_byte_stable` test (`builder.rs:609`)
+  is preserved + now strengthened (it passed `main` only because its
+  empty-HashMap fixture masked the iteration trap).
+- **Behavioral change:** the `framework.json` field order is now
+  alphabetical (was struct-definition order via typify). No existing
+  test asserted struct-order; the deterministic round-trip is the
+  stable order MVP §M8 criterion 8 requires.
+
+### Added — M08.6 Stage B (loader resolution — ADR-0022 Accepted)
+
+- **`runtime_main::builder::load_framework` resolves every `{id,path}`
+  agents[] reference into the inline `FrameworkAgentsItem::Agent`
+  variant** by walking the framework directory, reading each
+  referenced `.md`, splitting its YAML frontmatter (the new
+  `runtime_main::builder::persist::split_frontmatter` helper), and
+  parsing it through `serde_yaml` into an `Agent`. Tools[]/skills[]
+  entries with a `path` field surface as `Companion`s carrying the
+  raw `.md` body (the canvas + Stage C re-split consume these; the
+  framework struct itself has no inline `oneOf` for tools/skills, so
+  resolution lives in `companions`).
+- **Cross-framework `../` references resolve** against the framework
+  directory — Ralph's `../aria/tools/aria_verify.md` loads. The
+  loader reads only the single referenced file (no glob, no symlink
+  walk).
+- **`BuilderError::ReferenceResolution { reference, cause }`** — a
+  broken reference (missing file, unreadable, unparseable
+  frontmatter) is a `BuilderError`, not a silent drop and not a
+  panic. Partial-inline-framework gap-tolerance is preserved for
+  inline-only frameworks.
+- **`serde_yaml` wired into `runtime-main/Cargo.toml`** — already a
+  workspace dep via `runtime-core`; not a new external dependency.
+- **Assembled regression in `crates/runtime-main/tests/framework_load_resolution.rs`**
+  loads the REAL `examples/aria/` + `examples/ralph/` archetypes
+  (gotcha #66 closure — the M08 Builder shipped green because the
+  archetype was never in the test loop).
+- **ADR-0022 (canonical framework representation) flipped
+  Proposed → Accepted.**
+
 ### Fixed — M08.5.5 post-cycle hotfix (non-Windows broken intra-doc-link in `build_command`)
 
 - **CI Rust matrix went RED on macOS + ubuntu (1.80 + stable) at

@@ -42,4 +42,20 @@ pub enum BuilderError {
     /// [`save_framework`]: crate::builder::persist::save_framework
     #[error("save target is not a directory: {0}")]
     NotADirectory(String),
+    /// A `framework.json` `{id,path}` agents[] reference (or a
+    /// path-referenced `tools[]` / `skills[]` entry) could not be
+    /// resolved — the target `.md` is missing, unreadable, or its YAML
+    /// frontmatter does not parse. Per ADR-0022 a broken reference is an
+    /// error (distinct from a partially-built inline framework's
+    /// unfilled-field gap, which `validate_framework` reports as a red
+    /// badge); the Builder surfaces this so the user can fix the
+    /// reference.
+    #[error("could not resolve framework reference {reference}: {cause}")]
+    ReferenceResolution {
+        /// The relative `{id,path}` (or tools[]/skills[] `path`) value
+        /// from `framework.json` that could not be resolved.
+        reference: String,
+        /// Human-readable cause (missing file, IO error, parse error).
+        cause: String,
+    },
 }

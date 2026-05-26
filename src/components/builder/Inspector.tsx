@@ -29,14 +29,16 @@ import { useBuilderStore } from '../../lib/builderStore';
  *
  * Plus Save / Load: the `@tauri-apps/plugin-dialog` directory picker
  * feeds Stage B's `save_framework` / `load_framework` (MVP §M8 criteria
- * 7 + 8). A loaded framework is swapped in via `replaceFramework`; the
- * canvas re-derives (ADR-0020).
+ * 7 + 8). A loaded framework is swapped in via `applyLoadedFramework`
+ * (M08.6.D — wraps `replaceFramework` and seeds `nodePositions` with
+ * the dagre auto-layout so the canvas reads as a workflow, not a pile
+ * at {0,0}); the canvas re-derives (ADR-0020).
  */
 export function Inspector(): JSX.Element {
   const framework = useBuilderStore((s) => s.framework);
   const diskFramework = useBuilderStore((s) => s.diskFramework);
   const validation = useBuilderStore((s) => s.validation);
-  const replaceFramework = useBuilderStore((s) => s.replaceFramework);
+  const applyLoadedFramework = useBuilderStore((s) => s.applyLoadedFramework);
   const setDiskFramework = useBuilderStore((s) => s.setDiskFramework);
   const openTester = useBuilderStore((s) => s.openTester);
   const [report, setReport] = useState<FrameworkValidationReport | null>(null);
@@ -72,7 +74,12 @@ export function Inspector(): JSX.Element {
   }, [framework, setDiskFramework]);
 
   // Open/Load — pick a directory, read it, swap the source-of-truth
-  // document via replaceFramework; the canvas re-derives (ADR-0020).
+  // document via applyLoadedFramework (M08.6.D); the canvas re-derives
+  // (ADR-0020) AND auto-lays-out via the dagre top-down layout so the
+  // graph reads as a workflow, not a pile at {0,0}. Auto-layout fires
+  // on LOAD only — an interactive edit (drag, JSON-tab swap) preserves
+  // the user's manual node positions (the load-only seam pinned by
+  // builderStore.loadLayout.test.ts).
   const onLoad = useCallback(async () => {
     try {
       const dir = await open({ directory: true });
@@ -80,13 +87,13 @@ export function Inspector(): JSX.Element {
         return;
       }
       const loaded = await loadFramework(dir);
-      replaceFramework(loaded.framework);
+      applyLoadedFramework(loaded.framework);
       setDiskFramework(loaded.framework);
       setError(null);
     } catch (e) {
       setError(unwrapCmdError(e));
     }
-  }, [replaceFramework, setDiskFramework]);
+  }, [applyLoadedFramework, setDiskFramework]);
 
   // The capability summary rides on the validate_framework report's
   // capability_summary field (Stage B B.3.4) — prefer the explicit

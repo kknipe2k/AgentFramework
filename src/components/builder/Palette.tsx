@@ -1,15 +1,25 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useBuilderStore, type BuilderNodeKind } from '../../lib/builderStore';
 import { listInstalledArtifacts, type InstalledArtifact } from '../../lib/ipc';
-import type { BuilderNodeKind } from '../../lib/builderStore';
+import type { Framework } from '../../types/framework';
 
 // M08.C — the Builder Palette (spec Phase 9): five tabs (Tools / Skills
 // / Agents / HITL / Hooks), a per-tab name filter, every item a native
 // drag source carrying the application/x-builder-node payload D1's drop
 // handler reads. Tools/Skills/Agents list built-ins + whatever
 // list_installed_artifacts returns (Stage B's skills.lock reader); HITL
-// lists the §6a trigger types; Hooks lists the §4a firing points. M09
-// later adds the "Generate…" buttons — M08 shows installed / built-in
-// artifacts only.
+// lists the §6a trigger types; Hooks lists the §4a firing points.
+//
+// M08.6.E — adds a THIRD item source: the currently-loaded framework
+// (builderStore.framework). A loaded framework's resolved agents /
+// tools / skills (Stage B's loader inlines `{id,path}` agents; Stage D
+// applies the layout) become drag-source Palette items in the matching
+// tab, de-duplicated by (kind, ref) against the built-ins + installed
+// sets. Closes the IRL "defined agents not shareable" observation: a
+// framework's own artifacts are first-class reusable canvas nodes per
+// ADR-0022. Each item carries `data-source` so the user can tell where
+// it came from; the drag payload remains the uniform
+// `application/x-builder-node` contract.
 
 const PALETTE_TABS = ['tools', 'skills', 'agents', 'hitl', 'hooks'] as const;
 type PaletteTab = (typeof PALETTE_TABS)[number];
@@ -50,6 +60,15 @@ const TAB_NOUN: Record<PaletteTab, string> = {
   hooks: 'hook points',
 };
 
+/**
+ * Where a Palette item comes from. Drives the `data-source` attribute
+ * so the user can see at a glance whether an item is a runtime built-in
+ * (always available), an installed artifact from `skills.lock`, or a
+ * resolved artifact in the open framework (M08.6.E). HITL trigger types
+ * + hook firing points are runtime primitives — also `'builtin'`.
+ */
+type PaletteItemSource = 'builtin' | 'installed' | 'framework';
+
 interface PaletteItem {
   /** The builder-node kind D1's addNode instantiates. */
   kind: BuilderNodeKind;
@@ -57,30 +76,126 @@ interface PaletteItem {
    *  payload; also the item's data-testid suffix. */
   ref: string;
   label: string;
+  /** Visible-and-testable origin marker (M08.6.E). */
+  source: PaletteItemSource;
 }
 
-/** Build the (unfiltered) item list for `tab` — built-ins + installed. */
-function paletteItemsForTab(tab: PaletteTab, installed: InstalledArtifact[]): PaletteItem[] {
+/** Pull the loaded framework's resolved artifacts as Palette items for
+ *  one of the artifact tabs. Agents key on `id`; tools / skills key on
+ *  `name`. Stage B's loader inlines `{id,path}` agents — `entry.id`
+ *  works for both shapes (the {id,path} ref form carries `id` too). */
+function frameworkItemsForKind(
+  framework: Framework,
+  kind: 'agent' | 'tool' | 'skill',
+): PaletteItem[] {
+  switch (kind) {
+    case 'agent':
+      return framework.agents.map((entry) => ({
+        kind: 'agent' as const,
+        ref: entry.id,
+        label: entry.id,
+        source: 'framework' as const,
+      }));
+    case 'tool':
+      return framework.tools.map((t) => ({
+        kind: 'tool' as const,
+        ref: t.name,
+        label: t.name,
+        source: 'framework' as const,
+      }));
+    case 'skill':
+      return framework.skills.map((s) => ({
+        kind: 'skill' as const,
+        ref: s.name,
+        label: s.name,
+        source: 'framework' as const,
+      }));
+  }
+}
+
+/** De-duplicate `items` by (kind, ref), keeping the first occurrence.
+ *  Callers order the union so the surviving entry's source is the
+ *  intended winner — for the artifact tabs the precedence is
+ *  built-ins → installed → framework. */
+function dedupeByKindRef(items: PaletteItem[]): PaletteItem[] {
+  const seen = new Set<string>();
+  const out: PaletteItem[] = [];
+  for (const item of items) {
+    const key = `${item.kind}:${item.ref}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+/** Build the (unfiltered) item list for `tab` — built-ins + installed
+ *  + the loaded framework's resolved artifacts (M08.6.E), de-duplicated
+ *  by (kind, ref). */
+function paletteItemsForTab(
+  tab: PaletteTab,
+  installed: InstalledArtifact[],
+  framework: Framework,
+): PaletteItem[] {
   switch (tab) {
     case 'tools':
-      return [
-        ...BUILTIN_TOOLS.map((t) => ({ kind: 'tool' as const, ref: t, label: t })),
+      return dedupeByKindRef([
+        ...BUILTIN_TOOLS.map((t) => ({
+          kind: 'tool' as const,
+          ref: t,
+          label: t,
+          source: 'builtin' as const,
+        })),
         ...installed
           .filter((a) => a.kind === 'tool')
-          .map((a) => ({ kind: 'tool' as const, ref: a.key, label: a.key })),
-      ];
+          .map((a) => ({
+            kind: 'tool' as const,
+            ref: a.key,
+            label: a.key,
+            source: 'installed' as const,
+          })),
+        ...frameworkItemsForKind(framework, 'tool'),
+      ]);
     case 'skills':
-      return installed
-        .filter((a) => a.kind === 'skill')
-        .map((a) => ({ kind: 'skill' as const, ref: a.key, label: a.key }));
+      return dedupeByKindRef([
+        ...installed
+          .filter((a) => a.kind === 'skill')
+          .map((a) => ({
+            kind: 'skill' as const,
+            ref: a.key,
+            label: a.key,
+            source: 'installed' as const,
+          })),
+        ...frameworkItemsForKind(framework, 'skill'),
+      ]);
     case 'agents':
-      return installed
-        .filter((a) => a.kind === 'agent')
-        .map((a) => ({ kind: 'agent' as const, ref: a.key, label: a.key }));
+      return dedupeByKindRef([
+        ...installed
+          .filter((a) => a.kind === 'agent')
+          .map((a) => ({
+            kind: 'agent' as const,
+            ref: a.key,
+            label: a.key,
+            source: 'installed' as const,
+          })),
+        ...frameworkItemsForKind(framework, 'agent'),
+      ]);
     case 'hitl':
-      return HITL_TRIGGERS.map((t) => ({ kind: 'hitl' as const, ref: t, label: t }));
+      return HITL_TRIGGERS.map((t) => ({
+        kind: 'hitl' as const,
+        ref: t,
+        label: t,
+        source: 'builtin' as const,
+      }));
     case 'hooks':
-      return HOOK_POINTS.map((h) => ({ kind: 'hook' as const, ref: h, label: h }));
+      return HOOK_POINTS.map((h) => ({
+        kind: 'hook' as const,
+        ref: h,
+        label: h,
+        source: 'builtin' as const,
+      }));
   }
 }
 
@@ -88,6 +203,13 @@ export function Palette(): JSX.Element {
   const [tab, setTab] = useState<PaletteTab>('tools');
   const [filter, setFilter] = useState('');
   const [installed, setInstalled] = useState<InstalledArtifact[]>([]);
+  // The Palette draws from the loaded framework as a THIRD source
+  // (M08.6.E). `s.framework` is a referentially stable object until
+  // applyLoadedFramework / replaceFramework / addNode / connectEdge /
+  // updateNode swaps it via set(), so a bare selector returns the same
+  // reference across renders — useShallow is for derived arrays per
+  // gotcha #75, not single-object selectors.
+  const framework = useBuilderStore((s) => s.framework);
 
   useEffect(() => {
     // Installed artifacts feed the Tools/Skills/Agents tabs — the same
@@ -99,7 +221,10 @@ export function Palette(): JSX.Element {
       .catch((e) => console.error('list_installed_artifacts error:', e));
   }, []);
 
-  const items = useMemo(() => paletteItemsForTab(tab, installed), [tab, installed]);
+  const items = useMemo(
+    () => paletteItemsForTab(tab, installed, framework),
+    [tab, installed, framework],
+  );
   const needle = filter.trim().toLowerCase();
   const shown =
     needle.length === 0 ? items : items.filter((it) => it.label.toLowerCase().includes(needle));
@@ -137,12 +262,15 @@ export function Palette(): JSX.Element {
           {shown.map((it) => (
             <li
               key={`${it.kind}:${it.ref}`}
-              className="builder-palette__item"
+              className={`builder-palette__item builder-palette__item--${it.source}`}
               data-testid={`palette-item-${it.ref}`}
+              data-source={it.source}
               draggable
               onDragStart={(e) => {
                 // The C->D1 contract — D1's onDrop reads this MIME type
-                // + JSON payload via screenToFlowPosition.
+                // + JSON payload via screenToFlowPosition. Uniform across
+                // all three sources (built-in / installed / framework)
+                // per M08.6.E phase doc E.3.
                 e.dataTransfer.setData(
                   'application/x-builder-node',
                   JSON.stringify({ kind: it.kind, ref: it.ref }),
@@ -151,6 +279,12 @@ export function Palette(): JSX.Element {
               }}
             >
               {it.label}
+              {it.source === 'framework' ? (
+                <span className="builder-palette__source-badge" aria-hidden="true">
+                  {' '}
+                  · framework
+                </span>
+              ) : null}
             </li>
           ))}
         </ul>
