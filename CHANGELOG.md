@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M08.6 Stage B (loader resolution — ADR-0022 Accepted)
+
+- **`runtime_main::builder::load_framework` resolves every `{id,path}`
+  agents[] reference into the inline `FrameworkAgentsItem::Agent`
+  variant** by walking the framework directory, reading each
+  referenced `.md`, splitting its YAML frontmatter (the new
+  `runtime_main::builder::persist::split_frontmatter` helper), and
+  parsing it through `serde_yaml` into an `Agent`. Tools[]/skills[]
+  entries with a `path` field surface as `Companion`s carrying the
+  raw `.md` body (the canvas + Stage C re-split consume these; the
+  framework struct itself has no inline `oneOf` for tools/skills, so
+  resolution lives in `companions`).
+- **Cross-framework `../` references resolve** against the framework
+  directory — Ralph's `../aria/tools/aria_verify.md` loads. The
+  loader reads only the single referenced file (no glob, no symlink
+  walk).
+- **`BuilderError::ReferenceResolution { reference, cause }`** — a
+  broken reference (missing file, unreadable, unparseable
+  frontmatter) is a `BuilderError`, not a silent drop and not a
+  panic. Partial-inline-framework gap-tolerance is preserved for
+  inline-only frameworks.
+- **`serde_yaml` wired into `runtime-main/Cargo.toml`** — already a
+  workspace dep via `runtime-core`; not a new external dependency.
+- **Assembled regression in `crates/runtime-main/tests/framework_load_resolution.rs`**
+  loads the REAL `examples/aria/` + `examples/ralph/` archetypes
+  (gotcha #66 closure — the M08 Builder shipped green because the
+  archetype was never in the test loop).
+- **ADR-0022 (canonical framework representation) flipped
+  Proposed → Accepted.**
+
 ### Fixed — M08.5.5 post-cycle hotfix (non-Windows broken intra-doc-link in `build_command`)
 
 - **CI Rust matrix went RED on macOS + ubuntu (1.80 + stable) at
