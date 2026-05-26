@@ -168,13 +168,11 @@ Always, before acting:
 
 ## 9. Current state (live — rewrite at every handoff)
 
-- **Milestone:** M07 merged (PR #87).
-- **Last completed:** M07.G closeout + merge; `ORCHESTRATOR.md` added.
-- **Next action:** author the M07.5 phase doc.
+- **Milestone:** M08.6 merged (PR #105 — framework-representation; ADR-0022 Accepted at Stage B). Post-M08.6 docs merged (PR #106 — `STAGE-PROMPT-PROTOCOL.md` §6 `<approval_surface>` codification + M9 governance/mentor-scope handoff notes + runtime capabilities roadmap + the CI matrix-skip cascade-layer fix).
+- **Last completed:** M08.6.F closeout + PR #105 / #106 merge.
+- **Next action:** post-M08.6 IRL re-verify (maintainer walk of the running app against the M08.6 acceptance bar — load `examples/aria/` → wired laid-out workflow + populated Palette + byte-stable round-trip; adjacent-bug findings route to M09 Stage A intake per the M08.6 gap-analysis Carry-forward pattern).
 - **Open threads:**
-  - M07.5 fix-cycle (V 🔴 #1 / tier_gate; ADR-0016 waiver) — M06.5 pattern;
-    re-rail the `m07.5-salvage` branch; fold in EnforcerGate (🟡); renumber the
-    salvage design ADR 0016→0017. Must run before M08.
-  - Orchestration playbook adopted (this doc) — first live use is M07.5.
-  - Post-M07 IRL re-confirm of M06.5 🔴-1 / 🔴-2.
-  - `plan_loop` production driver still open.
+  - Claude Design / DESIGN.md / Stage D protocol scaffolding (master plan steps 10–12 — `STAGE-DESIGN-REVIEW-PROMPT-TEMPLATE.md`, `DESIGN-REVIEW-RETROSPECTIVE-TEMPLATE.md`, `docs/design-quality.md` append-only ledger, CLAUDE.md §19 retro extension, STAGE-PROMPT-PROTOCOL `<design_review_stage_prompt>` schema; first Stage D run is retroactive on M08.6).
+  - Starter-kit reconciliation gate (`docs/methodology-delta.md` ↔ `RUNTIME-DELTA.md`) — both delta logs maintained five-minute-weekly; reconciliation reads happen before authoring the M9 phase doc.
+  - M9 (the mentor + 3 generators) intake absorbs: M08.6.V 🟡 #1 multi-call test gaps · M08.6.V 🟡 #2 `persist.rs` per-file coverage (84.73% line; per-package gate passes; strict-TDD-ceiling tech-debt) · 🔴 #4 tier UI/backend desync · 🔴 #5 Builder Canvas state not persisted · `system_prompt_template` runtime application (M08.5 decision 1 carry) · the M08 carries (`TestOutcome.vdr` structurally dead; `plan_loop` driver-absent production caller).
+  - v1.9 STAGE-PROMPT-PROTOCOL bump candidates accumulated across M08.6 stages — Schema/contract reality check expansion (3 angles: M08.6.B schema asymmetry, M08.6.C HashMap canonicalization, M08.6.D wdio dual-generic interop); Stage 0 routing slot in `RETROSPECTIVE-TEMPLATE.md`; e2e-tauri-driver CI-only-locally note in CLAUDE.md §6; additive-source-dedup-tautology gotcha; useShallow-only-for-derived-arrays clarification; phase-doc E.3 "OR vs AND" clarification.
