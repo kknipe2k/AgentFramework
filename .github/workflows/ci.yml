@@ -686,9 +686,15 @@ jobs:
   # ("E2E (Tauri-driver desktop shell) (ubuntu-latest)" /
   # "(windows-latest)") always report status; every work step is gated
   # on `env.SHOULD_RUN`.
+  #
+  # `needs: detect-cargo` only — NOT `[detect-cargo, frontend]` (PR #106
+  # cascade-skip fix). A `needs: frontend` dependency cascade-skips this
+  # job whenever `frontend`'s job-level `if:` returns false (docs-only
+  # PRs), which defeats PR #104's footgun fix at the cascade layer.
+  # The job runs its own `npm ci`; no frontend artifact is consumed.
   e2e-tauri-driver:
     name: E2E (Tauri-driver desktop shell)
-    needs: [detect-cargo, frontend]
+    needs: detect-cargo
     runs-on: ${{ matrix.os }}
     env:
       SHOULD_RUN: ${{ needs.detect-cargo.outputs.has_cargo == 'true' && needs.detect-cargo.outputs.has_npm == 'true' && needs.detect-cargo.outputs.code_changed == 'true' }}
