@@ -71,8 +71,10 @@ Per milestone M[NN]:
 |---|---|---|
 | V finds 🔴, fixing in-milestone | scoped D.fix (real §X.5 prompt + gates, max 2 iter) | ADR-0008 |
 | V finds 🔴, deferring the fix | waiver ADR → X.5 fix-cycle before the next milestone | ADR-0008 / 0009 / 0016 |
-| V finds 🟡 | carry to the next milestone's Stage A | ADR-0008 |
-| V finds 🟢 | docs/tech-debt.md | ADR-0008 |
+| V finds 🟡 | fix-in-cluster, OR open a new cluster THIS phase, OR explicit ADR scope-out — **NEVER "carry to next milestone"** (zero-propagation) | cluster-pattern.md §2 |
+| V finds 🟢 | docs/tech-debt.md (the explicit scope-out ledger — a legal disposition) | ADR-0008 / cluster-pattern.md §2 |
+| A cluster/stage claims "done" | NOT closed until the assembled thing was **run and observed** (IRL for user-observable surfaces); "tests green" is not close | CLAUDE.md §4 rule 11 / cluster-pattern.md §1 |
+| Tempted to route a finding forward | banned — three legal dispositions only: fix-now / new cluster / explicit ADR scope-out | cluster-pattern.md §2 |
 | Post-V regression blocking CI | fix commit in the same milestone (its own bug) | — |
 | Phase-doc code ≠ shipped reality | grandfather: record the defect in the retro; do NOT edit the phase doc mid-flight | CLAUDE.md §8 |
 | A stage is too large | split into N1/N2 | D1/D2 precedent |
@@ -169,10 +171,10 @@ Always, before acting:
 ## 9. Current state (live — rewrite at every handoff)
 
 - **Milestone:** M08.6 merged (PR #105 — framework-representation; ADR-0022 Accepted at Stage B). Post-M08.6 docs merged (PR #106 — `STAGE-PROMPT-PROTOCOL.md` §6 `<approval_surface>` codification + M9 governance/mentor-scope handoff notes + runtime capabilities roadmap + the CI matrix-skip cascade-layer fix).
-- **Last completed:** M08.6.F closeout + PR #105 / #106 merge.
-- **Next action:** post-M08.6 IRL re-verify (maintainer walk of the running app against the M08.6 acceptance bar — load `examples/aria/` → wired laid-out workflow + populated Palette + byte-stable round-trip; adjacent-bug findings route to M09 Stage A intake per the M08.6 gap-analysis Carry-forward pattern).
+- **Last completed:** post-M08.6 IRL walk (`docs/M08.6-irl-findings.md` — 32 findings, 7🔴; load-bearing finding: the runtime *paints* most of what it claims — only provider-streaming + MCP execute; built-in tools / sub-agents / skills / gaps / plans / hooks do not). **Process reset:** CLAUDE.md §4 rule 11 (grounded-claims / no-gaslighting) + `docs/cluster-pattern.md` (cluster-gate close discipline) + zero-propagation in §3 above + `DESIGN.md` rules seed. PRs #106/#107/#108/#109 merged.
+- **Next action:** finish Phase 0a (Stryker build-side install + the `STAGE-PROMPT-PROTOCOL.md` cluster-gate fold-in + the Stage V 5th-pass template), then M8.7a rung 1 (build-side). **Pre-M9 plan (confirmed):** Phase 0 foundations (0a cluster-gate codify — in progress; 0b DESIGN.md visual via Claude Design — user-driven, before the Builder UI track) → **M8.7 Execution Engine** (the eval-first ladder; make the runtime RUN; ends at *ARIA runs* the v0.1 subset) → **M8.6.7 Builder correctness** (the 32 findings as clusters) → **M9 mentor**.
 - **Open threads:**
   - Claude Design / DESIGN.md / Stage D protocol scaffolding (master plan steps 10–12 — `STAGE-DESIGN-REVIEW-PROMPT-TEMPLATE.md`, `DESIGN-REVIEW-RETROSPECTIVE-TEMPLATE.md`, `docs/design-quality.md` append-only ledger, CLAUDE.md §19 retro extension, STAGE-PROMPT-PROTOCOL `<design_review_stage_prompt>` schema; first Stage D run is retroactive on M08.6).
   - Starter-kit reconciliation gate (`docs/methodology-delta.md` ↔ `RUNTIME-DELTA.md`) — both delta logs maintained five-minute-weekly; reconciliation reads happen before authoring the M9 phase doc.
-  - M9 (the mentor + 3 generators) intake absorbs: M08.6.V 🟡 #1 multi-call test gaps · M08.6.V 🟡 #2 `persist.rs` per-file coverage (84.73% line; per-package gate passes; strict-TDD-ceiling tech-debt) · 🔴 #4 tier UI/backend desync · 🔴 #5 Builder Canvas state not persisted · `system_prompt_template` runtime application (M08.5 decision 1 carry) · the M08 carries (`TestOutcome.vdr` structurally dead; `plan_loop` driver-absent production caller).
+  - The post-M08.6 findings are **clusters in M8.7 / M8.6.7, NOT M9 intake** (zero-propagation): execution gaps (built-in tools / sub-agents / skills / gaps / plans / hooks — incl. `plan_loop` rung 7, `TestOutcome.vdr` rung 6) → M8.7; Builder 🔴/🟡 (#12 recovery, #17 template, #19 tier-desync, #22 budget-persist, #23 MCP-spawn, #32 save-companions, validation/UX) → M8.6.7. #31 narrowing = strict-narrowing-fix-ARIA at M8.7 rung N (grant/use split = v1.0 ADR).
   - v1.9 STAGE-PROMPT-PROTOCOL bump candidates accumulated across M08.6 stages — Schema/contract reality check expansion (3 angles: M08.6.B schema asymmetry, M08.6.C HashMap canonicalization, M08.6.D wdio dual-generic interop); Stage 0 routing slot in `RETROSPECTIVE-TEMPLATE.md`; e2e-tauri-driver CI-only-locally note in CLAUDE.md §6; additive-source-dedup-tautology gotcha; useShallow-only-for-derived-arrays clarification; phase-doc E.3 "OR vs AND" clarification.
