@@ -548,6 +548,41 @@ fn builtin_tool_defs_advertises_only_builtins() {
 }
 
 #[test]
+fn builtin_tool_def_shape_is_keyed_per_name_read_vs_write() {
+    // Mutation-kill (builtin_tools.rs:165 `name == WRITE_TOOL`): the prior
+    // `builtin_tool_defs_advertises_only_builtins` test only asserts the SET
+    // of advertised names, so flipping `==`→`!=` (which SWAPS the Read/Write
+    // shapes) leaves both names present and survives. This pins each name to
+    // its OWN def — a single-name call must return exactly the def for THAT
+    // name, with the matching input-schema shape.
+    let read = builtin_tool_defs(&["Read".to_string()]);
+    assert_eq!(read.len(), 1, "one name in → one def out; got {read:?}");
+    assert_eq!(read[0].name, "Read", "Read must advertise the Read def");
+    assert!(
+        !read[0]
+            .input_schema
+            .get("required")
+            .and_then(Value::as_array)
+            .is_some_and(|r| r.iter().any(|v| v.as_str() == Some("content"))),
+        "the Read shape takes only `path`, never `content`; got {:?}",
+        read[0].input_schema
+    );
+
+    let write = builtin_tool_defs(&["Write".to_string()]);
+    assert_eq!(write.len(), 1, "one name in → one def out; got {write:?}");
+    assert_eq!(write[0].name, "Write", "Write must advertise the Write def");
+    assert!(
+        write[0]
+            .input_schema
+            .get("required")
+            .and_then(Value::as_array)
+            .is_some_and(|r| r.iter().any(|v| v.as_str() == Some("content"))),
+        "the Write shape requires `content`; got {:?}",
+        write[0].input_schema
+    );
+}
+
+#[test]
 fn grant_framework_capabilities_loads_file_access_into_enforcer() {
     // Finding B closure: the enforcer is empty (default-deny) until grants
     // load. After loading from file_access, an in-scope read passes the
