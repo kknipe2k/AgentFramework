@@ -272,8 +272,12 @@ pub fn capabilities_to_declarations(caps: &Capabilities) -> Vec<CapabilityDeclar
 /// [`capabilities_to_declarations`] derives from its `Capabilities` block,
 /// keyed by the agent id the dispatch path checks against
 /// (`framework.session_root_agent` and each declared child id).
-pub fn grant_framework_capabilities(_enforcer: &mut CapabilityEnforcer, _framework: &Framework) {
-    // RED skeleton — filled in the impl commit.
+pub fn grant_framework_capabilities(enforcer: &mut CapabilityEnforcer, framework: &Framework) {
+    for agent in inline_agents(framework) {
+        for decl in capabilities_to_declarations(&agent.capabilities) {
+            enforcer.grant(agent.id.as_str(), decl);
+        }
+    }
 }
 
 /// Render a [`CapabilityDeclaration`] to a short string for the wire.

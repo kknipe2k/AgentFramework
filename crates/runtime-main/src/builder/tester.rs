@@ -32,8 +32,10 @@ use tokio::sync::mpsc;
 
 use crate::capability::CapabilityEnforcer;
 use crate::drone_ipc::DroneClient;
+use crate::framework_loader::{grant_framework_capabilities, inline_agents};
 use crate::hitl::HitlSeam;
 use crate::providers::{AgentConfig, ContentBlock, LLMProvider, Message, MessageRole};
+use crate::sdk::builtin_tools::builtin_tool_defs;
 use crate::sdk::{AgentSdk, CapabilityWiring, McpToolDispatch, SessionId};
 use crate::skills_lock::LockError;
 
@@ -253,9 +255,22 @@ fn verify_framework_artifacts(framework: &Framework, db_path: &Path) -> Vec<Agen
 }
 
 /// Build the `AgentConfig` for the test run from the candidate framework
-/// and the user's task. The candidate's tools reach the run through the
-/// injected MCP dispatcher, not `config.tools` (the smoke / D2 archetype).
+/// and the user's task.
+///
+/// MCP / framework tools reach the run through the injected MCP dispatcher
+/// (the smoke / D2 archetype). The **in-process built-ins** (`Read`/
+/// `Write`, M08.7.A) are advertised in `config.tools` so a real model
+/// emits the matching `ToolUse` — the union of every inline agent's
+/// `allowed_tools` filtered to the in-process built-in set, deduplicated
+/// (the Anthropic API rejects duplicate tool names).
 fn test_agent_config(framework: &Framework, task: &str) -> AgentConfig {
+    let mut seen = std::collections::BTreeSet::new();
+    let allowed: Vec<String> = inline_agents(framework)
+        .iter()
+        .flat_map(|a| a.allowed_tools.iter())
+        .filter(|t| seen.insert((*t).clone()))
+        .cloned()
+        .collect();
     AgentConfig {
         model: framework.model.id.as_str().to_string(),
         messages: vec![Message {
@@ -267,7 +282,7 @@ fn test_agent_config(framework: &Framework, task: &str) -> AgentConfig {
         max_tokens: 4096,
         temperature: Some(0.0),
         system_prompt: None,
-        tools: vec![],
+        tools: builtin_tool_defs(&allowed),
     }
 }
 
@@ -319,8 +334,13 @@ pub async fn run_test_session_with<P: LLMProvider + 'static>(
     // optional `with_mcp_dispatch` → `run_agent`). The `HitlSeam` is the
     // test-defaults variant so the run never blocks on user input.
     let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(1024);
+    // Load the candidate framework's declared capabilities into the L1
+    // enforcer (M08.7.A §1.3-B): without this the enforcer is empty
+    // (default-deny `NoDeclarations`) and no built-in tool can execute.
+    let mut enforcer = CapabilityEnforcer::new();
+    grant_framework_capabilities(&mut enforcer, framework);
     let wiring = CapabilityWiring::new(
-        Arc::new(CapabilityEnforcer::new()),
+        Arc::new(enforcer),
         Arc::new(framework.clone()),
         Arc::new(HitlSeam::test_defaults()),
     );

@@ -35,17 +35,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::stream::{Stream, StreamExt};
-use runtime_core::event::{AgentEvent, ToolSource};
+use runtime_core::event::{AgentEvent, CapabilityKindRef, TierRef, ToolSource};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use super::builtin_tools::{self, BuiltinExecError};
 use super::event_pipeline::{EnforcementContext, EventPipeline};
 use super::mcp_dispatch::{
     apply_renderable, mcp_dispatch_error_event, renderable_needs_hitl, McpDispatchOutcome,
     McpToolDispatch, RenderableOutcome,
 };
-use crate::capability::{narrow, CapabilityEnforcer};
+use crate::capability::{narrow, CapabilityEnforcer, CapabilityError, DenyReason};
 use crate::drone_ipc::{DroneClient, DroneIpcError};
 use crate::framework_loader::{
     capabilities_to_declarations, declaration_to_narrowed_from_str, inline_agents,
@@ -56,6 +57,7 @@ use crate::providers::{
     AgentConfig, ContentBlock, LLMProvider, Message, MessageRole, ProviderError, ProviderEvent,
     ToolResultContent,
 };
+use crate::tier::Tier;
 
 /// Default wait for HITL responses on capability / tier violations
 /// surfaced by the L1 wire-up. Long enough that a user can read the
@@ -438,6 +440,27 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
                     }
                 }
             }
+            // M08.7 rung 1: in-process built-in tool execution. A ToolUse
+            // naming an in-process built-in (Read/Write) routes through the
+            // capability-scoped executor BEFORE the emit-only pipeline
+            // path. Only when capability wiring is present — the enforcer
+            // IS the boundary (Hard Rule 8); the un-wired smoke path keeps
+            // the pre-M08.7 emit-only behavior (no enforcer to check
+            // against). Built-in results join `feedback.dispatched` exactly
+            // as MCP results do, so the multi-turn loop re-streams them.
+            if let Some(wiring) = self.capability_wiring.as_ref() {
+                if let ProviderEvent::ToolUse { id, name, input } = &provider_event {
+                    if builtin_tools::is_builtin_tool(name) {
+                        if let Some(d) = self
+                            .dispatch_builtin(wiring, agent_id, id, name, input.clone())
+                            .await?
+                        {
+                            feedback.dispatched.push(d);
+                        }
+                        continue;
+                    }
+                }
+            }
             for agent_event in pipeline.next_event(provider_event) {
                 let needs_hitl = matches!(
                     &agent_event,
@@ -678,6 +701,128 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
         }
     }
 
+    /// Execute one in-process built-in `ToolUse` (`Read`/`Write`) under
+    /// capability scope and emit the agent-correct events. Returns
+    /// `Some(DispatchedTool)` when there is a result to feed back —
+    /// executed OR errored (both continue the multi-turn loop); `None`
+    /// when the capability check blocked the op (no execution;
+    /// `CapabilityViolation`/`TierViolation` emitted + HITL routed —
+    /// mirrors the MCP `Blocked` shape so built-in and MCP converge on one
+    /// feedback contract).
+    async fn dispatch_builtin(
+        &self,
+        wiring: &CapabilityWiring,
+        agent_id: &str,
+        tool_use_id: &str,
+        tool_name: &str,
+        input: serde_json::Value,
+    ) -> Result<Option<DispatchedTool>, SdkError> {
+        match builtin_tools::execute_builtin(&wiring.enforcer, agent_id, tool_name, &input) {
+            Ok(value) => Ok(Some(
+                self.emit_builtin_result(agent_id, tool_use_id, tool_name, input, value)
+                    .await?,
+            )),
+            // The op ran but failed (malformed input / IO). Feed an error
+            // tool_result back so the model can recover — the loop must not
+            // break on a recoverable tool error.
+            Err(BuiltinExecError::Op(msg)) => Ok(Some(
+                self.emit_builtin_result(
+                    agent_id,
+                    tool_use_id,
+                    tool_name,
+                    input,
+                    serde_json::json!({ "error": msg }),
+                )
+                .await?,
+            )),
+            // The capability check blocked the op — it never ran. Emit the
+            // violation, route HITL, feed nothing back.
+            Err(BuiltinExecError::Capability(err)) => {
+                self.emit_builtin_capability_violation(agent_id, tool_name, &err)
+                    .await?;
+                self.await_capability_violation_hitl(&wiring.hitl_seam)
+                    .await;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Emit the `ToolInvoked` + `ToolResult` pair for an executed (or
+    /// recoverably-errored) built-in and build the [`DispatchedTool`] the
+    /// multi-turn loop feeds back.
+    async fn emit_builtin_result(
+        &self,
+        agent_id: &str,
+        tool_use_id: &str,
+        tool_name: &str,
+        input: serde_json::Value,
+        value: serde_json::Value,
+    ) -> Result<DispatchedTool, SdkError> {
+        self.emit(AgentEvent::ToolInvoked {
+            agent_id: agent_id.to_string(),
+            tool_name: tool_name.to_string(),
+            source: ToolSource::Builtin,
+            server: None,
+            input: input.clone(),
+        })
+        .await?;
+        self.emit(AgentEvent::ToolResult {
+            agent_id: agent_id.to_string(),
+            tool_name: tool_name.to_string(),
+            output: value.clone(),
+            duration_ms: 0,
+            tokens_in: None,
+            tokens_out: None,
+        })
+        .await?;
+        Ok(DispatchedTool {
+            id: tool_use_id.to_string(),
+            name: tool_name.to_string(),
+            input,
+            value,
+        })
+    }
+
+    /// Map a built-in's capability `Err` to the agent-correct
+    /// `CapabilityViolation` / `TierViolation` event — mirroring the
+    /// `EventPipeline::translate_tool_use` copy so the renderer handles
+    /// built-in and pipeline denials identically.
+    async fn emit_builtin_capability_violation(
+        &self,
+        agent_id: &str,
+        tool_name: &str,
+        err: &CapabilityError,
+    ) -> Result<(), SdkError> {
+        let event = match err {
+            CapabilityError::Denied {
+                reason,
+                agent_id: denied_id,
+            } => {
+                let declared_scope = match reason {
+                    DenyReason::NoDeclarations => "no capabilities declared",
+                    DenyReason::NoMatchingGrant => "declared grants do not cover this request",
+                };
+                AgentEvent::CapabilityViolation {
+                    agent_id: pick_agent_id(denied_id, agent_id),
+                    capability_kind: builtin_kind_ref(tool_name),
+                    requested_action: format!("invoke built-in tool '{tool_name}'"),
+                    declared_scope: declared_scope.to_string(),
+                }
+            }
+            CapabilityError::TierForbidden {
+                agent_id: tid,
+                tier,
+                capability_kind,
+            } => AgentEvent::TierViolation {
+                agent_id: pick_agent_id(tid, agent_id),
+                tier: tier_to_ref(*tier),
+                capability_kind: kind_to_ref(*capability_kind),
+                attempted_action: format!("invoke built-in tool '{tool_name}' under {tier:?} tier"),
+            },
+        };
+        self.emit(event).await
+    }
+
     async fn emit(&self, event: AgentEvent) -> Result<(), SdkError> {
         // Persist BEFORE the renderer send so a slow/full renderer
         // channel cannot starve the drone signal sink. Additive: the
@@ -775,6 +920,35 @@ const fn kind_to_ref(
         CapabilityKind::Exec => CapabilityKindRef::Exec,
         CapabilityKind::Network => CapabilityKindRef::Network,
         CapabilityKind::ProcessSpawn => CapabilityKindRef::ProcessSpawn,
+    }
+}
+
+/// The `CapabilityKindRef` a built-in file tool's denial reports: `Read`
+/// for `Read`, `Write` for `Write` (the kind the executor's request
+/// declaration carried — distinct from the `Exec` the pre-rung-1
+/// `ToolNotFound` pipeline fallback emits).
+fn builtin_kind_ref(tool_name: &str) -> CapabilityKindRef {
+    if tool_name == builtin_tools::WRITE_TOOL {
+        CapabilityKindRef::Write
+    } else {
+        CapabilityKindRef::Read
+    }
+}
+
+const fn tier_to_ref(t: Tier) -> TierRef {
+    match t {
+        Tier::Novice => TierRef::Novice,
+        Tier::Promoted => TierRef::Promoted,
+    }
+}
+
+/// Prefer the enforcer-carried agent id when present; fall back to the
+/// dispatch agent id (mirrors the `audit_check_result` convention).
+fn pick_agent_id(carried: &str, fallback: &str) -> String {
+    if carried.is_empty() {
+        fallback.to_string()
+    } else {
+        carried.to_string()
     }
 }
 

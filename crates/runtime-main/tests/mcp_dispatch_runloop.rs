@@ -369,19 +369,23 @@ async fn non_mcp_tool_use_falls_through_to_stage_a_l1_path_unchanged() {
     // dispatch_if_mcp returns None → pure fall-through: the event takes
     // the EXISTING Stage A L1 path unchanged (CapabilityGrant +
     // Builtin ToolInvoked), exactly as sdk_capability_integration.rs
-    // pins it. No MCP-shaped events; no regression.
+    // pins it. No MCP-shaped events; no regression. Uses "Echo" (a
+    // non-executor tool) rather than "Read"/"Write" — those are owned by
+    // the M08.7.A in-process executor (sdk/builtin_tools.rs) and no longer
+    // take this painted pipeline path; this test pins the MCP-None
+    // fall-through to the generic pipeline L1 contract.
     let agent_id = "worker";
-    let fw = fw_with_one_agent(agent_id, &["Read"], &[("Read", "builtin")]);
+    let fw = fw_with_one_agent(agent_id, &["Echo"], &[("Echo", "builtin")]);
     let dispatch = Arc::new(ScriptedMcpDispatch::new(vec![None]));
 
     let (sdk, mut rx) = build_sdk_with_mcp(
         fw,
-        vec![(agent_id.to_string(), exec_grant_for_builtin_tool("Read"))],
+        vec![(agent_id.to_string(), exec_grant_for_builtin_tool("Echo"))],
         Tier::Promoted,
         vec![
             ProviderEvent::ToolUse {
                 id: "t1".into(),
-                name: "Read".into(),
+                name: "Echo".into(),
                 input: json!({"path": "src/lib.rs"}),
             },
             ProviderEvent::MessageStop {

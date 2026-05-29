@@ -694,4 +694,26 @@ The current inline form is transparent and makes the ADR-0020 load-only seeding 
 
 If a second caller emerges (likely candidates: an M09 Tester re-layout button; an "open recent framework" Inspector hook; a "reset layout" canvas affordance), extract `seedPositionsFromLayout` to `src/lib/layout.ts` adjacent to `layoutGraph`, replace both call sites with the helper, ensure the load-only contract stays documented at each call site. ~20 min when the second caller lands.
 
+## TD-033 — Built-in tool executor gates on `file_access` scope, not execution-time tool-authorization
+
+**Date logged:** 2026-05-29
+**Found by:** M08.7.A green-phase impl (zero-propagation triage of a finding surfaced while wiring the executor; maintainer-approved disposition)
+**Pass that surfaced it:** N/A (manual review during rung-1 implementation)
+**Category:** other (defense-in-depth / capability-model layering)
+**Resolution status:** open (v1.0 hardening)
+
+### Description
+
+`execute_builtin` (`crates/runtime-main/src/sdk/builtin_tools.rs`) gates an in-process built-in `Read`/`Write` op on the **`file_access`** capability scope only — it builds a `(Read|Write, filesystem, Path, …)` declaration and runs it through `CapabilityEnforcer::check`. It does NOT additionally check an execution-time **tool-invocation authorization** (the `allowed_tools` / `Exec/<toolname>` grant the M06 pipeline path checks for non-built-in tools). An agent that emits a `Read` `ToolUse` for a path inside its `file_access.read` scope executes the read even if `Read` were absent from its `allowed_tools`.
+
+### Why it's debt not bug
+
+In v0.1 the only execution path is the Anthropic provider via the Tester, and `allowed_tools` IS gated at **advertisement**: `test_agent_config` advertises a built-in `ToolDef` only for names in the agent's `allowed_tools` (`builtin_tool_defs`), so a well-behaved model only emits `ToolUse` for tools it was advertised. The model cannot emit a `Read` `ToolUse` for a tool the framework didn't authorize, so the file_access check is the operative boundary and no v0.1 path bypasses authorization. The §1.4 BDD specifies `file_access` as the gate, and rung 1 implements exactly that.
+
+The gap is defense-in-depth for **non-advertisement / non-Anthropic paths**: a future provider that emits un-advertised tool calls, a replay/scripted path that injects a `ToolUse` directly, or a malicious model ignoring the advertised set would reach `execute_builtin` with only the file_access check between it and the filesystem (still scoped, but not authorization-checked).
+
+### Recommended approach (when addressed)
+
+v1.0 hardening: have the built-in branch in `drive_stream` (or `execute_builtin`) additionally verify the tool is in the agent's `allowed_tools` / has the `Exec/<toolname>` grant before running — making built-in execution require BOTH tool-invocation authorization AND file_access scope (the same two-dimension model the spec implies). Land it alongside the v1.0 provider-abstraction work (the first non-Anthropic provider is the trigger) or any execution path that does not route tool advertisement through `builtin_tool_defs`. Small change; touches `crates/runtime-main/src/sdk/agent_sdk.rs` + `builtin_tools.rs`.
+
 
