@@ -230,7 +230,7 @@ For work stages, default item order: cross-machine state → strict-TDD invarian
 ## 7. Work-stage-only tags
 These tags are valid only inside `<work_stage_prompt>`.
 
-v1.3 adds five additive optional tags — `<pre_flight_check>`, `<schema_drift_check>`, `<fan_out_grep>`, `<dependency_audit_check>`, `<runtime_environment>` — informed by M01–M03 friction. v1.4 adds four more — `<architecture_check>`, `<schema_audit>`, `<schema_root_check>`, `<phase_doc_inventory_audit>` — informed by M04 friction. v1.6 adds nine more — `<coverage_gate>`, `<schema_ref_audit>`, `<api_breaking_change_audit>`, `<existing_pattern_audit>`, `<interpretation_declarations>`, `<scope_change>`, `<zustand_selector_audit>`, `<playwright_warmup_recipe>`, `<test_isolation_audit>` — plus extensions to `<phase_doc_inventory_audit>` (method/struct/read-first claims) and `<dependency_audit_check>` (feature-flag interdependencies), informed by M05 friction. v1.7 adds one more — `<tdd_discipline>` — making the strict red-phase/green-phase two-commit pattern a first-class protocol element, informed by M06.A's TDD-discipline lapse (hard-gate G5 failure, maintainer override) + M06.C's empirical validation of the strict pattern + web evidence (Nagappan et al. 2009 industrial TDD 60–90% defect reduction; TDAD arXiv:2603.17973 showing TDD prompting WITHOUT structural enforcement INCREASES regressions 9.94%; Anthropic Claude Code TDD docs explicitly recommending "commit tests before impl"). See sections below.
+v1.3 adds five additive optional tags — `<pre_flight_check>`, `<schema_drift_check>`, `<fan_out_grep>`, `<dependency_audit_check>`, `<runtime_environment>` — informed by M01–M03 friction. v1.4 adds four more — `<architecture_check>`, `<schema_audit>`, `<schema_root_check>`, `<phase_doc_inventory_audit>` — informed by M04 friction. v1.6 adds nine more — `<coverage_gate>`, `<schema_ref_audit>`, `<api_breaking_change_audit>`, `<existing_pattern_audit>`, `<interpretation_declarations>`, `<scope_change>`, `<zustand_selector_audit>`, `<playwright_warmup_recipe>`, `<test_isolation_audit>` — plus extensions to `<phase_doc_inventory_audit>` (method/struct/read-first claims) and `<dependency_audit_check>` (feature-flag interdependencies), informed by M05 friction. v1.7 adds one more — `<tdd_discipline>` — making the strict red-phase/green-phase two-commit pattern a first-class protocol element, informed by M06.A's TDD-discipline lapse (hard-gate G5 failure, maintainer override) + M06.C's empirical validation of the strict pattern + web evidence (Nagappan et al. 2009 industrial TDD 60–90% defect reduction; TDAD arXiv:2603.17973 showing TDD prompting WITHOUT structural enforcement INCREASES regressions 9.94%; Anthropic Claude Code TDD docs explicitly recommending "commit tests before impl"). See sections below. v1.9 adds one more — `<close_gate>` — making the cluster-gate close discipline (assembled-run + IRL observed; `docs/cluster-pattern.md` + CLAUDE.md §4 rule 11) a first-class element, plus three cluster-cycle step names + a fifth verifier pass (`assembled_execution`), informed by the M08.6 escape (shipped "Sound, 0🔴"; the post-M08.6 IRL found 7🔴 — the assembled app was never run).
 ### `<deliverable>`
 Required. What this stage produces. Concrete: files, modules, capabilities. Not aspirational. If you can't enumerate it, the stage isn't ready to start.
 Inline form (use only when no Phase doc section enumerates the deliverable — e.g., a stage with a one-or-two-item produce-list that doesn't warrant a Phase doc section):
@@ -260,7 +260,7 @@ Required. Procedural anchor: the named sequence the agent walks during the stage
   <step name="surface"/>
 </execution_steps>
 ```
-Standard step names (validator warns on unrecognized names): `write_failing_tests`, `implement`, `verify_gates`, `fill_retrospective`, `surface`. v1.7 adds four more recognized names for the strict two-commit TDD shape governed by `<tdd_discipline>`: `red_phase_commit`, `surface_for_red_approval`, `green_phase_commit`, `surface_for_final_approval` (see the `<tdd_discipline>` slot in this section for the canonical two-commit sequence). Stages with non-standard cycles (e.g., a debugging stage where iteration is the deliverable) may add custom steps with explicit `name` attributes; document them in the Phase doc's stage section.
+Standard step names (validator warns on unrecognized names): `write_failing_tests`, `implement`, `verify_gates`, `fill_retrospective`, `surface`. v1.7 adds four more recognized names for the strict two-commit TDD shape governed by `<tdd_discipline>`: `red_phase_commit`, `surface_for_red_approval`, `green_phase_commit`, `surface_for_final_approval` (see the `<tdd_discipline>` slot in this section for the canonical two-commit sequence). v1.9 adds three more for the cluster-gate cycle governed by `<close_gate>`: `ground_at_red`, `mutation_gate`, `assembled_run_irl` (see the `<close_gate>` slot). Stages with non-standard cycles (e.g., a debugging stage where iteration is the deliverable) may add custom steps with explicit `name` attributes; document them in the Phase doc's stage section.
 The `budget` / `budget_iterations` attributes are advisory — if a stage budgets `verify_gates` at 3 iterations and the agent hits 4, the agent surfaces per `BUILD-PLAYBOOK.md` §4.3 escalation rule rather than silently continuing.
 Why this slot exists: in v1.0/v1.1, the procedural sequence lived in inline STEP 1–5 prose inside each prompt. That worked but duplicated playbook content into every prompt and risked drift. The slot replaces the prose with named anchors that resolve to playbook sections.
 ### `<test_plan_required>`
@@ -839,6 +839,27 @@ Example (M06.C final form — the empirical reference implementation):
 ```
 
 The audit-surface invariant is the load-bearing property: any reviewer can run one `git diff` command and confirm the implementation did not tamper with the contract the red phase pinned. This is the structural defense the TDAD research identifies as the difference between TDD-that-works and TDD-prompting-that-backfires. Different from `<execution_steps>` alone (which names the sequence): `<tdd_discipline>` declares the *contract* the sequence must satisfy + the verifiable invariant the green-phase commit must state.
+
+### `<close_gate>` (v1.9)
+
+Optional; the **cluster-gate close discipline** made first-class (parallel to `<tdd_discipline>`). Governs the condition under which a work stage / cluster is **done**: not "tests green" but the **assembled thing run and observed**. Per `docs/cluster-pattern.md` + CLAUDE.md §4 rule 11 (grounded-claims): a stage that ships user-observable behavior closes only when (a) the assembled path (CI e2e / assembled integration test) has RUN and the observable behavior was seen, and (b) for user-facing surfaces, the maintainer IRL-watched it. Mirrors why `<tdd_discipline>` is structural, not exhortation (the TDAD finding): the close-on-run discipline must be a declared contract, not a hope. Bit M08.6 — it shipped "Sound, 0🔴" through the full A–F + Stage V + closeout machinery while the assembled app was never run; the post-M08.6 IRL found 7🔴 (built-in tools emitted `ToolInvoked` but never executed; `save_framework` dropped companion files).
+
+Children: `<assembled_run>` (the assembled test/path that proves the behavior — the dual-role BDD acceptance), `<irl_required>` (`true|false` — true for user-observable surfaces), `<mutation_gate>` (`cargo-mutants` on Rust clusters / Stryker on TS — a surviving mutant on the cluster's logic blocks close or is justified inline), `<triage>` (zero-propagation — new findings from the run are fix-in-cluster / new-cluster / explicit-ADR-scope-out, never routed forward; cluster-pattern.md §2).
+
+The matching `<execution_steps>` shape (v1.9 recognized step names): `ground_at_red` (resolve grounding sub-steps before writing tests) → the strict two-commit steps → `verify_gates` → `mutation_gate` → `assembled_run_irl` (the close gate — run the assembled thing + IRL-watch) → `fill_retrospective`. The `<approval_surface>` carries the **closure proof** (the assembled-run output observed + the IRL result — NOT "tests green").
+
+Validator behavior (v1.9 lean): structural pass-through (same lean treatment as `<tdd_discipline>` + the v1.8 audit slots); the close-gate contract is authoring-discipline governed by `docs/cluster-pattern.md`, not code-enforced at v1.9 — promote to a cross-check once 2+ milestones show clean signal.
+
+Schema: work-stage only.
+
+```xml
+<close_gate>
+  <assembled_run>run_test_session_with against a tempfile fixture; assert the agent quotes the file (observable), not the ToolInvoked event</assembled_run>
+  <irl_required>true</irl_required>
+  <mutation_gate>cargo-mutants on the executor + the drive_stream branch</mutation_gate>
+  <triage>new findings: fix-in-cluster / new cluster / ADR scope-out — zero propagation (cluster-pattern.md §2)</triage>
+</close_gate>
+```
 
 ### `<construction_reachability_check>` (v1.8)
 
@@ -1457,7 +1478,7 @@ Inline form (one-or-two-item scopes — rare for V; V usually covers a whole mil
 
 ### `<verification_passes>`
 
-Required. Wraps the four pass declarations. Each pass is a `<pass>` child with a `name="..."` attribute and inline detail. Passes run in order; later passes may consume findings from earlier passes (e.g., Pass 3 Behavior tests primitives surfaced by Pass 1 Inventory).
+Required. Wraps the five pass declarations. Each pass is a `<pass>` child with a `name="..."` attribute and inline detail. Passes run in order; later passes may consume findings from earlier passes (e.g., Pass 3 Behavior tests primitives surfaced by Pass 1 Inventory).
 
 ```xml
 <verification_passes>
@@ -1479,10 +1500,13 @@ Required. Wraps the four pass declarations. Each pass is a `<pass>` child with a
   <pass name="multi_call_invariants">
     Every public API / IPC method / Tauri command survives "called twice in sequence." Build agent declares the public surface in the Phase doc's V.3 section; verifier asserts a sequential-call test exists OR runs one inline. M04 IRL drone IPC bug (`take_event_stream` single-use) is the canonical case.
   </pass>
+  <pass name="assembled_execution">
+    RUN the assembled app / assembled integration tests and OBSERVE each milestone primitive EXECUTE — not just confirm a test exists or reads green. Static + unit + wire + multi-call green is insufficient: M08.6 shipped "Sound, 0🔴" through full A–F + Stage V + closeout while the assembled app was never run, and IRL found 7🔴 (built-in tools emitted `ToolInvoked` but never executed; `save_framework` dropped companion files). For each user-observable primitive, drive the REAL path (e2e-tauri / assembled integration) and confirm the behavior, not the event. A "Sound" verdict that did not run the assembled path is FORBIDDEN (CLAUDE.md §4 rule 11); the verdict states explicitly what was NOT exercised.
+  </pass>
 </verification_passes>
 ```
 
-Validator behavior (v1.5 lean): structural — error if `<verification_passes>` is missing or empty; error if any `<pass>` child lacks the `name` attribute; error if `name` is not one of the four enum values (`inventory` | `wire` | `behavior` | `multi_call_invariants`).
+Validator behavior (v1.5 lean): structural — error if `<verification_passes>` is missing or empty; error if any `<pass>` child lacks the `name` attribute. The pass-name enum is documented (v1.9: five — `inventory` | `wire` | `behavior` | `multi_call_invariants` | `assembled_execution`) but NOT code-enforced (the validator never carried the four-name enum in code — the fifth pass is additive, no validator change).
 
 ### `<findings_format>`
 
@@ -1559,6 +1583,12 @@ Validation rules change (e.g., a previously-warning becomes an error)
 Substantive changes get clear `docs(stage-prompt-protocol): ...` commit messages and a CHANGELOG entry. The commit history of this file is itself an audit of how stage prompts evolved.
 If this protocol disagrees with `BUILD-PLAYBOOK.md`, the playbook wins. This protocol is the schema; the playbook is the authority on what stages are and how they run.
 ### Changelog
+
+v1.9 — One additive optional tag in `<work_stage_prompt>` (`<close_gate>`) + three new recognized `<execution_steps>` step names (`ground_at_red`, `mutation_gate`, `assembled_run_irl`) + a fifth verifier pass (`assembled_execution`) in `<verification_passes>` + the `STAGE-V-VERIFIER-PROMPT-TEMPLATE.md` five-pass update, enacting the cluster-gate close discipline (`docs/cluster-pattern.md`) + CLAUDE.md §4 rule 11 (grounded-claims / no-gaslighting). The through-line: a stage/cluster is done only when the **assembled thing has run and been observed** — not "tests green." The M08.6 escape (shipped "Sound, 0🔴" through full A–F + Stage V + closeout; the post-M08.6 IRL found 7🔴 because the assembled app was never run) is exactly what the `<close_gate>` slot + the fifth pass exist to prevent. Lean-validator pattern continued from v1.3–v1.8 (the new tag passes through without allowlisting; the fifth pass name is additive — the validator never enforced the pass-name enum in code; cross-checks deferred):
+1. **`<close_gate>` (work-stage, optional, lean).** Declares the assembled-run + IRL close condition + mutation gate + zero-propagation triage; governed by `docs/cluster-pattern.md`. Parallel to v1.7 `<tdd_discipline>` — a structural contract, not exhortation (the TDAD finding: structural enforcement, not hope, is what makes the discipline hold for LLM agents).
+2. **Three recognized `<execution_steps>` step names** for the cluster-gate cycle: `ground_at_red`, `mutation_gate`, `assembled_run_irl`. The cluster cycle: `ground_at_red → write_failing_tests → red_phase_commit → surface_for_red_approval → implement → verify_gates → mutation_gate → green_phase_commit → assembled_run_irl → surface_for_final_approval → fill_retrospective`.
+3. **Fifth verifier pass `assembled_execution`** — V RUNS the assembled app + observes each primitive execute; a "Sound" without running is forbidden (rule 11). The verdict states what was NOT exercised.
+4. **Validator extension: none (lean continued).** `<close_gate>` passes through the regex parser without allowlisting (identical to the v1.3–v1.8 optional slots + v1.7 `<tdd_discipline>`); the fifth pass name is additive (the pass-name enum was documented-only, never code-enforced). A documentation comment records the v1.9 pass-through; no enforcement logic added.
 
 v1.8 — Three additive optional tags in `<work_stage_prompt>` (`<construction_reachability_check>`, `<wire_signature_audit>`, `<wire_trace_vs_adr_reconcile>`) + a `shape=` extension to `<phase_doc_inventory_audit>` + two `STAGE-V-VERIFIER-PROMPT-TEMPLATE.md` codifications + a CLAUDE.md §6 assembled-app-regression mandate, enacting the 5 M06 graduated mechanisms the M06 gap-analysis routed here (`docs/gap-analysis.md` lines 1897/1901; the other 3 of 8 graduations landed mid-M06 via PR #76 + CLAUDE.md §6 — not re-landed) plus the M06.5-summary "To Cycle 2 (M06.6)" recorded input. The through-line: `<phase_doc_inventory_audit verified="true">` proves a symbol *exists*, not that it is *reachable / correctly-shaped / ADR-current / exercised in the assembled app*. Lean-validator pattern continued from v1.3/v1.4/v1.5/v1.6/v1.7 (structural-only; the three optional tags + the `shape=` extension pass through without allowlisting; cross-checks deferred to v1.9+):
 
