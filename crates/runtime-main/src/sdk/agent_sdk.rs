@@ -824,6 +824,12 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
     }
 
     async fn emit(&self, event: AgentEvent) -> Result<(), SdkError> {
+        // Minimal observability unblock (M08.7.A): surface each agent
+        // event's salient payload at debug so a `RUST_LOG=debug` run is
+        // watchable in the log. This is the IRL-only unblock — the full
+        // in-app agent-output view (live-graph execution surface) is
+        // M08.7b, not this. Off by default; never on the user's screen.
+        log_event_debug(&event);
         // Persist BEFORE the renderer send so a slow/full renderer
         // channel cannot starve the drone signal sink. Additive: the
         // unchanged `event_tx.send` below is the in-mem-bus / renderer
@@ -886,6 +892,30 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
         {
             tracing::warn!(error = %e, "write_signal failed; continuing agent run");
         }
+    }
+}
+
+/// Log one `AgentEvent`'s salient payload at `debug` (M08.7.A IRL-only
+/// observability unblock; off by default, surfaced by `RUST_LOG=debug`).
+///
+/// Tool events log the tool name + the result that flows back to the model
+/// (file content or error); agent text events log the reply text. This is
+/// the minimal "watch a run in the log" affordance — the in-app agent-output
+/// view is M08.7b. Other event types are not logged here (lifecycle /
+/// capability events already surface through their own `tracing` warns).
+fn log_event_debug(event: &AgentEvent) {
+    match event {
+        AgentEvent::ToolInvoked {
+            tool_name, input, ..
+        } => tracing::debug!(tool = %tool_name, input = %input, "tool invoked"),
+        AgentEvent::ToolResult {
+            tool_name, output, ..
+        } => tracing::debug!(tool = %tool_name, output = %output, "tool result"),
+        AgentEvent::StreamText { text, .. } => tracing::debug!(text = %text, "agent stream text"),
+        AgentEvent::AgentComplete { result, .. } => {
+            tracing::debug!(result = %result, "agent complete");
+        }
+        _ => {}
     }
 }
 
