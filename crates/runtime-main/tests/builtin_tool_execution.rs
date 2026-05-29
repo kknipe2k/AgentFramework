@@ -562,3 +562,105 @@ fn grant_framework_capabilities_loads_file_access_into_enforcer() {
         "an out-of-scope read is not granted"
     );
 }
+
+// ── Op-error path (M08.7.A follow-up: cover the post-check failure arms) ─
+
+#[test]
+fn execute_write_missing_content_is_an_op_error() {
+    let dir = TempDir::new().expect("tempdir");
+    let path_arg = format!("{}/out.txt", fwd(dir.path()));
+    let glob = format!("{}/**", fwd(dir.path()));
+    let enforcer = enforcer_for(&[], &[&glob], Tier::Promoted);
+    let err = execute_builtin(&enforcer, "worker", "Write", &json!({ "path": path_arg }))
+        .expect_err("Write without 'content' is a malformed-input op error");
+    assert!(matches!(err, BuiltinExecError::Op(_)), "got {err:?}");
+}
+
+#[test]
+fn execute_empty_path_is_an_op_error() {
+    // An empty `path` string passes the `get("path")` presence check but
+    // fails PathPattern construction (min length 1) — the file_decl Op arm.
+    let enforcer = enforcer_for(&["**"], &[], Tier::Novice);
+    let err = execute_builtin(&enforcer, "worker", "Read", &json!({ "path": "" }))
+        .expect_err("an empty path is an op error, not a panic");
+    assert!(matches!(err, BuiltinExecError::Op(_)), "got {err:?}");
+}
+
+#[test]
+fn execute_non_builtin_tool_name_is_an_op_error() {
+    // execute_builtin is public; a direct call with a non-in-process name
+    // (the run loop gates on is_builtin_tool, but the executor defends
+    // itself) returns the "not an in-process built-in" op error.
+    let enforcer = enforcer_for(&["**"], &[], Tier::Novice);
+    let err = execute_builtin(&enforcer, "worker", "Bash", &json!({ "path": "x" }))
+        .expect_err("Bash is not an in-process built-in");
+    assert!(matches!(err, BuiltinExecError::Op(_)), "got {err:?}");
+}
+
+/// A read of a MISSING file inside scope: the capability check passes, the
+/// filesystem read fails, and the executor feeds an error `tool_result`
+/// back so the multi-turn loop survives (the model can recover) rather
+/// than breaking. Covers the `dispatch_builtin` Op arm end-to-end through
+/// the real run loop.
+#[tokio::test]
+async fn read_of_a_missing_file_in_scope_feeds_an_error_result_back() {
+    let dir = TempDir::new().expect("tempdir");
+    let dir_glob = format!("{}/**", fwd(dir.path()));
+    // The path is inside the read scope, but no such file exists on disk.
+    let path_arg = format!("{}/ghost.txt", fwd(dir.path()));
+
+    let fw = one_agent_fw(&[&dir_glob], &[], &["Read"]);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let provider = ScriptedToolStub::new("Read", json!({ "path": path_arg }), Arc::clone(&seen));
+
+    let db_path = dir.path().join("runtime-tester.sqlite");
+    let outcome = run_test_session_with(
+        &fw,
+        "read the missing file",
+        &db_path,
+        provider,
+        Arc::new(DroneClient::noop()),
+        None,
+        SessionId::new(),
+    )
+    .await
+    .expect("the assembled run completes");
+
+    // The op was attempted (ToolInvoked emitted) — the capability check
+    // passed; only the filesystem read failed.
+    assert!(
+        outcome.trace.iter().any(|e| matches!(
+            e,
+            AgentEvent::ToolInvoked { tool_name, source: ToolSource::Builtin, .. }
+                if tool_name == "Read"
+        )),
+        "an in-scope read attempt emits a built-in ToolInvoked; trace={:?}",
+        outcome.trace
+    );
+    // It was NOT a capability denial.
+    assert!(
+        !outcome
+            .trace
+            .iter()
+            .any(|e| matches!(e, AgentEvent::CapabilityViolation { .. })),
+        "an in-scope read is not a capability violation; trace={:?}",
+        outcome.trace
+    );
+    // An error tool_result was emitted and fed back (the loop re-streamed).
+    let error_result = outcome.trace.iter().any(|e| {
+        matches!(
+            e,
+            AgentEvent::ToolResult { output, .. } if output.get("error").is_some()
+        )
+    });
+    assert!(
+        error_result,
+        "a failed read feeds an error tool_result back; trace={:?}",
+        outcome.trace
+    );
+    let configs = seen.lock().expect("seen lock").len();
+    assert!(
+        configs >= 2,
+        "the loop survives a tool error and re-streams a 2nd turn; got {configs} turn(s)"
+    );
+}
