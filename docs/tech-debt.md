@@ -716,4 +716,30 @@ The gap is defense-in-depth for **non-advertisement / non-Anthropic paths**: a f
 
 v1.0 hardening: have the built-in branch in `drive_stream` (or `execute_builtin`) additionally verify the tool is in the agent's `allowed_tools` / has the `Exec/<toolname>` grant before running — making built-in execution require BOTH tool-invocation authorization AND file_access scope (the same two-dimension model the spec implies). Land it alongside the v1.0 provider-abstraction work (the first non-Anthropic provider is the trigger) or any execution path that does not route tool advertisement through `builtin_tool_defs`. Small change; touches `crates/runtime-main/src/sdk/agent_sdk.rs` + `builtin_tools.rs`.
 
+## TD-034 — No agent output is visible in the running app (IRL observability gap)
+
+**Date logged:** 2026-05-29
+**Found by:** M08.7.A rung-1 close (the IRL is unobservable — a real run cannot be watched in the assembled app)
+**Pass that surfaced it:** N/A (rung-1 IRL prep)
+**Category:** observability
+**Resolution status:** open (mitigated by debug-log; full fix routed to M08.7b)
+
+### Description
+
+A rung-1 built-in-tool run produces no agent output a human can observe in the running app. Agent events (`StreamText`, `ToolInvoked`/`ToolResult`, `AgentComplete`) reach only (a) the renderer graph and (b) the throwaway Tester SQLite DB — neither surfaces the agent's text or tool results to the user:
+
+- The Tester graph nodes are not clickable, so a `ToolInvoked(Read)` / `ToolResult` node exposes no payload.
+- The live / main canvas streams no agent text — `StreamText` does not render as visible output.
+- The Tester DB is created in a tempdir and discarded after the run, so the persisted signals are not inspectable post-hoc.
+
+This blocks IRL observability: the maintainer cannot confirm by watching the app that the agent actually read the file and fed the contents back.
+
+### Why it's debt not bug
+
+The execution path is correct and proven by the assembled regression tests (`tests/builtin_tool_execution.rs`: the agent reads the file, the contents feed back as a `tool_result`, the final text quotes them). The gap is purely **surfacing** — the events are produced and emitted; nothing in v0.1's UI renders them in a watchable form. No behavior is wrong; the observable-evidence channel for a live run is missing.
+
+### Recommended approach (when addressed)
+
+Minimal mitigation (landed at M08.7.A): `log_event_debug` in `crates/runtime-main/src/sdk/agent_sdk.rs::emit` logs each event's salient payload at `debug`, so `RUST_LOG=debug` makes a run watchable in the log. Full fix (M08.7b): surface agent output in the live-graph execution view — render `StreamText` as visible agent text and make tool nodes expose their input/result payload — so a run is observable in-app without a debug log.
+
 
