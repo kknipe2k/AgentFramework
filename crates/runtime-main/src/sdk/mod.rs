@@ -13,6 +13,12 @@
 //! - `replay` — replay a saved signal log to the renderer event channel.
 
 mod agent_sdk;
+/// In-process, capability-scoped built-in tool executor — M08.7 rung 1.
+///
+/// Runs the runtime file built-ins (`Read`/`Write`) in-process behind
+/// [`crate::capability::CapabilityEnforcer::check`] and feeds the result
+/// back through the multi-turn loop's MCP-shared feedback contract.
+pub mod builtin_tools;
 mod event_pipeline;
 /// MCP tool-dispatch seam — M06.D, ADR-0010 (dependency inversion).
 ///
