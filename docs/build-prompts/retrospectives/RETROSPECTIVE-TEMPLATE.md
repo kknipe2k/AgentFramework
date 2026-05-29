@@ -106,6 +106,15 @@ If none, write **"None observed"** below the table header.
 
 ---
 
+## [LIVE] Stage 0 real-app discovery routing
+
+For any stage touching the real app (a `tests/e2e-tauri/` surface), record how the Stage-0 real-app discovery walk was handled: **run** (walked the flow on the build machine; log adjacent findings here) / **deferred to Stage V** (the assembled regression + V's assembled-execution pass cover it — name the regression) / **replaced by an assembled test** (the mechanical regression IS the discovery). The cluster-gate close still requires the assembled run + IRL observation regardless (`docs/cluster-pattern.md` §1 step 4). Backend-only stage with no real-app surface → write **"n/a — no real-app surface."**
+
+| Stage-0 disposition | Evidence / regression file | Adjacent findings (triaged in-place — zero propagation) |
+|---|---|---|
+
+---
+
 ## [END] Three-axis scoring
 
 Filled in at session end. 1–5 per row per `PROCESS-VALIDATION.md` scoring rubric.

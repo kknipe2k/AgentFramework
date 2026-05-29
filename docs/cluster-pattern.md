@@ -137,10 +137,19 @@ gate breaks the production code and confirms a test fails.
 - **Rust:** `cargo-mutants` (already wired nightly, CLAUDE.md §5) — run
   on the cluster diff; a surviving mutant on the cluster's logic blocks
   close (or is justified inline).
-- **TypeScript/renderer:** **Stryker** — *build-side setup required*
-  (not yet installed; flagged as a Phase-0a build task). Until it lands,
-  renderer clusters lean on the BDD assembled test + the IRL gate, and
-  the gap is recorded, not silently ignored (rule 11).
+- **TypeScript/renderer:** **Stryker** (`@stryker-mutator/core` + the
+  vitest runner). **Phase-0a setup task (build-side — install + verify is
+  the build machine's; authoring the config blind risks gotcha #32, so it
+  lands WITH a verify-against-upstream check):** add the dev-deps; a
+  `stryker.conf.json` targeting `src/` with the vitest test runner + a
+  `mutate` glob scoped to the cluster's touched files; an `npm run mutate`
+  script; a CI job (or a documented manual run) gated like the other
+  frontend jobs. Verify with one smoke run on a small module — confirm a
+  deliberately-broken mutant is caught. Until it lands, renderer clusters
+  lean on the BDD assembled test + the IRL gate, and the cluster surface
+  states "TS mutation gate: Stryker not yet installed — BDD+IRL only"
+  (the gap is recorded, not silently ignored — rule 11). Once installed,
+  the mutation gate is REQUIRED for a renderer cluster's close.
 
 ---
 

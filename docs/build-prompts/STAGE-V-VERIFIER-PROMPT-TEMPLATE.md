@@ -43,14 +43,15 @@ This is the load-bearing discipline. The build agent + per-stage retro agent + c
     Run with empty session memory — you have NOT seen the work-stage retros,
     the milestone summary, or any prior gap-analysis entries. Your job is to
     ask whether the code does what the spec said, when actually exercised.
-    Four passes in order: Inventory → Wire → Behavior → Multi-call invariants.
+    Five passes in order: Inventory → Wire → Behavior → Multi-call invariants → Assembled-execution.
     Findings are tagged 🔴 (block merge), 🟡 (carry forward), 🟢 (tech debt).
     Maximum 2 D.fix iterations before maintainer escalation.
   </context>
 
   <read_first>
-    <file>STAGE-PROMPT-PROTOCOL.md §14 (the verifier schema you are running under)</file>
-    <file>docs/adr/0008-milestone-stage-v-verifier.md (design rationale + the four passes + the bias guard)</file>
+    <file>STAGE-PROMPT-PROTOCOL.md §14 (the verifier schema you are running under — v1.9: five passes)</file>
+    <file>docs/adr/0008-milestone-stage-v-verifier.md (design rationale + the original four passes + the bias guard)</file>
+    <file>docs/cluster-pattern.md (the cluster-gate close discipline — basis of the v1.9 fifth pass, assembled_execution) + CLAUDE.md §4 rule 11 (grounded-claims: a "Sound" verdict that did NOT run the assembled path is forbidden)</file>
     <file>docs/build-prompts/{{MNN}}-{{milestone-short-title}}.md (the phase doc — Background, every X.1 problem statement, every X.2 files-to-change table, every X.3 detailed changes, every X.4 tests, section V (this stage's parameters), AND every per-stage `<scope_change>` block in the embedded `<work_stage_prompt>` XML — `<descope>` and `<expand>` children declare authorized in-stage carry-forwards visible to V's bias-guarded read but not to the per-stage retros V is forbidden to read; treat them as source-of-truth for "what V should NOT flag as missing")</file>
     <file>agent-runtime-spec.md ({{spec-sections}})</file>
     <file>docs/MVP-v0.1.md §{{MNN}} (the milestone's scope + acceptance criteria)</file>
@@ -135,6 +136,22 @@ This is the load-bearing discipline. The build agent + per-stage retro agent + c
       (`take_event_stream` single-use) is the canonical case. Verify the
       test PROVES the second call works — not just "the code is shaped
       such that it should work."
+    </pass>
+    <pass name="assembled_execution">
+      RUN the assembled app / assembled integration tests and OBSERVE each
+      {{MNN}} user-observable primitive EXECUTE — not just confirm a test
+      exists or reads green. Static + unit + wire + multi-call green is
+      INSUFFICIENT: M08.6 shipped "Sound, 0🔴" through full A–F + Stage V +
+      closeout while the assembled app was never run, and the post-M08.6
+      IRL found 7🔴 (built-in tools emitted `ToolInvoked` but never
+      executed; `save_framework` dropped companion files). For each
+      primitive, drive the REAL path ({{assembled-harness}} — e2e-tauri /
+      assembled Rust integration) and confirm the BEHAVIOR, not the event.
+      If the assembled harness is genuinely unrunnable on the V
+      environment, that is a 🟡 finding naming what blocked it — NOT a
+      silent skip, and NOT grounds for a "Sound" verdict. Per CLAUDE.md §4
+      rule 11: a "Sound" that did not run the assembled path is forbidden;
+      the verdict states explicitly what was NOT exercised.
     </pass>
   </verification_passes>
 
