@@ -29,8 +29,8 @@ elevation: {}
 > renderer build *to* this file. It evolves through **Stage D** design
 > reviews at each UI-bearing milestone closeout.
 >
-> **When it's load-bearing.** Not for M8.7a (backend, no UI). First real
-> need: M8.7b/c (the live-graph execution view) and the M8.6.7 Builder
+> **When it's load-bearing.** Not for M08.7a (backend, no UI). First real
+> need: M08.7b/c (the live-graph execution view) and the M08.6.7 Builder
 > track. Run the Claude Design pass before the Builder UI work.
 
 ---

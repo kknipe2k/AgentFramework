@@ -1,7 +1,7 @@
 # Cluster-gate process — the canonical work cycle (CLAUDE.md §4 rule 11's enforcement)
 
 > **What this is.** The single canonical description of how every unit of
-> work closes, from M8.7 onward. It does **not** replace the major-phase
+> work closes, from M08.7 onward. It does **not** replace the major-phase
 > structure (staged build → Stage V → closeout → gap-analysis); it
 > **folds a close-gate discipline into it** so the assembled thing is run
 > before anything is called done. It is the operational enforcement of
@@ -22,7 +22,7 @@
 A **cluster** is the unit of work — a small, related group of behaviors
 (3–7 findings, or one engine function, or one feature surface) under
 **one user-observable acceptance contract**. A major-milestone *stage*
-is a cluster. An M8.7 ladder *rung* is a cluster. An X.5 *fix* is a
+is a cluster. An M08.7 ladder *rung* is a cluster. An X.5 *fix* is a
 cluster. Same shape, one machine — there is no separate "fix-only" track.
 
 Every cluster closes through the same five steps, in order:
@@ -82,7 +82,7 @@ The major-phase structure is **kept** — clusters are how its stages
 close:
 
 ```
-MAJOR MILESTONE (e.g. M8.7)
+MAJOR MILESTONE (e.g. M08.7)
   = a sequence of clusters (its stages / rungs)
       each closes per §1 (acceptance-first → build → gates → RUN → triage)
   → STAGE V (fresh-context verifier)
@@ -144,7 +144,7 @@ gate breaks the production code and confirms a test fails.
 
 ---
 
-## 6. What changed vs the pre-M8.7 process
+## 6. What changed vs the pre-M08.7 process
 
 | | Before (shipped 7🔴) | Now (cluster-gate) |
 |---|---|---|
