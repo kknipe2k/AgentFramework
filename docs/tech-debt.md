@@ -742,4 +742,24 @@ The execution path is correct and proven by the assembled regression tests (`tes
 
 Minimal mitigation (landed at M08.7.A): `log_event_debug` in `crates/runtime-main/src/sdk/agent_sdk.rs::emit` logs each event's salient payload at `debug`, so `RUST_LOG=debug` makes a run watchable in the log. Full fix (M08.7b): surface agent output in the live-graph execution view — render `StreamText` as visible agent text and make tool nodes expose their input/result payload — so a run is observable in-app without a debug log.
 
+## TD-035 — Relative file paths resolve against the app CWD (≠ repo root), undefined for later rungs
+
+**Date logged:** 2026-05-29
+**Found by:** M08.7.A rung-1 IRL watch (RUST_LOG=debug, real Anthropic model)
+**Pass that surfaced it:** N/A (IRL observation)
+**Category:** other (path-resolution semantics)
+**Resolution status:** open (forward-looking — no rung-1 defect)
+
+### Description
+
+During the rung-1 IRL, the built-in `Read` executor resolved a **relative** path against the **app's working directory**, which is NOT the repo root. Observed evidence: a relative `test-read.txt` came back **not-found** while `Cargo.toml` was **found** — confirming the app CWD is somewhere other than the project root a user would assume. Relative paths therefore resolve against an app-determined directory, not the project tree.
+
+### Why it's debt not bug
+
+Rung 1 is correct as-is: `execute_builtin` is path-string-parameterised and capability-checked (`crates/runtime-main/src/sdk/builtin_tools.rs`). Whatever path string the model emits is what `std::fs::read_to_string` resolves and what the `Path`-scoped `file_access` check evaluates — `globset` matches on the same string, so scope enforcement and the read agree. No path is read outside scope; nothing silently escapes the capability boundary. The IRL confirmed the happy path with `Cargo.toml`. The finding is purely that **relative-path resolution semantics are undefined/implicit** — fine while every IRL path is absolute or CWD-relative-by-luck, latent the moment a rung introduces a user-facing relative-path convention.
+
+### Recommended approach (when addressed)
+
+For any later rung that accepts **relative** paths from the user or model (a workspace-root convention, an in-app file picker, a "read this project file" affordance): define explicitly what relative paths resolve against — most likely a framework/workspace root the Tauri shell resolves (the CLAUDE.md §9 "Tauri-shell-resolves-directory" archetype) and passes into the executor — rather than inheriting the process CWD. Resolve relative paths against that root (and scope-check against it) so a user's `./data/x.txt` means the same thing regardless of where the app was launched. Decide alongside the rung that first surfaces relative paths; until then, absolute paths are unambiguous and rung 1 needs no change.
+
 
