@@ -722,7 +722,7 @@ v1.0 hardening: have the built-in branch in `drive_stream` (or `execute_builtin`
 **Found by:** M08.7.A rung-1 close (the IRL is unobservable — a real run cannot be watched in the assembled app)
 **Pass that surfaced it:** N/A (rung-1 IRL prep)
 **Category:** observability
-**Resolution status:** open (mitigated by debug-log; full fix routed to M08.7b)
+**Resolution status:** open, **MAINTAINER-CONFIRMED 2026-05-31** (rung-1 IRL, running app) — the Tester panel shows the run **completed** but renders **NO agent reply**; the agent's output (tool invocation, tool result, streamed text quoting `[package]`, completion) was visible **only via `RUST_LOG`**, never in-app. Mitigated by debug-log; full fix routed to M08.7b.
 
 ### Description
 
