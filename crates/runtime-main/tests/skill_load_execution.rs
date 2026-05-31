@@ -139,7 +139,7 @@ struct SkillScriptStub {
 }
 
 impl SkillScriptStub {
-    fn new(tool_calls: Vec<(String, Value)>, seen: Arc<Mutex<Vec<AgentConfig>>>) -> Self {
+    const fn new(tool_calls: Vec<(String, Value)>, seen: Arc<Mutex<Vec<AgentConfig>>>) -> Self {
         Self {
             tool_calls,
             seen,
