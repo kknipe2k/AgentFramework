@@ -791,4 +791,68 @@ Rung 2's consequence: the Promoted-tier `file_access`-scope Write denial is only
 
 Wire the tracked/persisted user tier into the run-loop enforcer at the live-session / tier-wiring rung: have the Tauri shell read `CurrentTierState` (or `tier.json`) and pass the tier into `run_test_session_with_tier` (already plumbed) and an analogous `run_smoke_session_with` tier param, calling `enforcer.set_tier(tier)` before the first dispatch — and re-apply on a tier transition mid-session (the `tier::transition` path already documents routing through `set_tier`). That makes runtime execution actually gate on the user's tier, and lets the maintainer observe the Promoted scope-gate `CapabilityViolation(Write)` in the running app (pairs with [[TD-034]]'s in-app agent-output surfacing — both are needed for a real-app IRL of the scope gate). Touches `src-tauri/src/commands.rs` (the `test_framework` + `run_smoke_session` commands) + `tester.rs` (already has the tier seam). ADR-0019 amendment if the Tester's tier model (always-Novice-sandbox vs user-tier) is a product decision.
 
+## TD-037 — Real-app Builder-Tester cannot thread skill bodies (v0.1 canvas authors no companions); skill-load real-app IRL deferred
+
+**Date logged:** 2026-05-31
+**Found by:** M08.7.C rung-3 close — construction_reachability_check on the production `companions → resolved_skills` join (maintainer-directed: "wire it, or STOP and surface if walled deeper than expected — we'll re-tier")
+**Pass that surfaced it:** N/A (rung-3 production-wire reachability check)
+**Category:** other (painted-not-wired — renderer↔main + canvas state; cf. [[TD-034]], [[TD-036]])
+**Resolution status:** open (re-tiered — the real-app Builder-Tester skill IRL is deferred to the canvas-skill-body rung; rung 3's behavior close rests on the live eval instead)
+
+### Description
+
+Rung 3's `LoadSkill` handler reads the resolved skill body from a
+`resolved_skills` map threaded onto `CapabilityWiring`. The assembled
+test (`skill_load_execution.rs`) and the live eval (`skill_load_live.rs`)
+pass that map directly. The **production** path — the Tauri
+`test_framework` command building the map from the loaded framework's
+companions and passing it to `run_test_session_with_skills` — is **NOT
+wired**, because the companions are not reachable there:
+
+- `test_framework(framework_doc: Framework, task)` (`src-tauri/src/commands.rs:1630`)
+  receives only a bare `Framework` straight from the canvas (spec Phase 9
+  "does NOT need to save first") — **not** a `LoadedFramework`. No
+  companions.
+- The renderer holds a `companions` array (it passes it to
+  `save_framework`), but `testFramework` (`src/lib/ipc.ts:618`) sends only
+  `{ frameworkDoc, task }`.
+- Decisively: in v0.1 the canvas **authors no skill bodies at all** —
+  `src/lib/ipc.ts:504-505`: "`companions` defaults to `[]` — the v0.1
+  canvas authors no inline markdown bodies (M09's Generators will)." So
+  there is no skill-body companion in renderer state to thread, even with
+  an IPC change.
+
+Wiring only the backend join would be a **dead path** the v0.1 renderer
+can never feed (always `[]`) — the exact paint-not-execute anti-pattern
+M08.7 exists to stop (rule 11). It was therefore NOT built; the finding
+was surfaced and re-tiered per the maintainer's standing instruction.
+
+### Why it's debt not bug
+
+Rung 3 is correct and proven: the `LoadSkill` handler + the `drive_stream`
+branch + the injection-into-context are exercised by the assembled test
+(CI, structural) and the `#[ignore]`d live eval (real Anthropic,
+behavior-change — the encoded IRL). The gap is purely the **production
+renderer→shell threading** of an already-resolved skill body, which v0.1
+cannot feed because the canvas has no skill bodies (by design — M09
+Generators author them). No behavior is wrong; the in-app Builder-Tester
+"load a skill, watch it change behavior" affordance is **absent**, not
+mis-wired.
+
+### Recommended approach (when addressed)
+
+At the rung that gives the canvas skill bodies (M09 Generators, or a
+canvas skill-body editor), complete the chain together: (1) the canvas
+holds/authors skill-body companions; (2) `testFramework` +
+`test_framework` accept `companions: Vec<Companion>` (the IPC contract
+change); (3) `test_framework` joins `framework.skills[].path ↔
+companions[].file_name` into a `resolved_skills` map and calls
+`run_test_session_with_skills` (the seam is already plumbed); (4) an
+`e2e-tauri/` regression drives the real app (per ADR-0021). Until then,
+the skill-load behavior close is the live eval (`skill_load_live.rs`),
+run with `ANTHROPIC_API_KEY` set — a real-model observation through the
+real `run_test_session_with_skills → run_agent → drive_stream` path,
+just not through the Builder UI. Pairs with [[TD-034]] (no in-app agent
+output) — both are needed for an in-Builder skill IRL.
+
 
