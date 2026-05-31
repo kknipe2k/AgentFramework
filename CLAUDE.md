@@ -154,9 +154,12 @@ The **exact `cargo llvm-cov` commands + the current `--ignore-filename-regex` ex
 - **Both are needed.** Heavy on behavior tests at integration boundaries (M3+ Playwright; M5 capability enforcement; M9 generators); heavy on implementation tests for pure-logic crates (`runtime-core` types, capability evaluator, plan state machine).
 - **A test suite that is 90% implementation tests is a smell.** Means you're testing the code you wrote, not the contract the code was supposed to satisfy. Add behavior tests until the suite catches a class of bug that pure unit tests would miss.
 
-### Mutation testing (advisory)
+### Mutation testing (two-tier: advisory on `main`; blocking at cluster-close on execution/critical modules)
 
-`cargo-mutants` runs nightly on `main` and surfaces "code mutations the test suite didn't catch." Treat its findings as test-quality issues to address, not failures to fix immediately. A mutation that survives means there's an assertion your tests aren't making.
+`cargo-mutants` runs nightly on `main` and surfaces "code mutations the test suite didn't catch." A mutation that survives means there's an assertion your tests aren't making. The posture is two-tier:
+
+- **Default (advisory).** For ordinary code, nightly-`main` findings are test-quality issues to address, not failures to fix immediately.
+- **Blocking at cluster-close (execution-wiring + critical modules).** For a cluster whose diff touches **execution wiring** (the built-in/MCP tool executors + the `drive_stream`/dispatch branches that decide whether a tool, sub-agent, skill, gap, plan, or hook actually *runs*) or a **critical module** (the §6 ≥95% safety-primitive crates: `runtime-drone`, the `runtime-main` provider/SSE + capability enforcer + plan FSM + snapshot/recovery + `sandbox_ipc/`, `runtime-sandbox`, `runtime-mcp`), a surviving mutant on the cluster's logic **blocks close** (or is justified inline). A surviving mutant on an executor/dispatch branch *is* the paints-not-executes bug in test form (cf. TD-008). The stage declares this via the `<close_gate><mutation_gate>` element; the gate is enforced at the cluster close, not merely surfaced nightly. Scoped per `docs/cluster-pattern.md` §5. Standing forward from M08.7.B.
 
 ---
 

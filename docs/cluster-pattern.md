@@ -134,9 +134,14 @@ built-in-tools-don't-execute gap.
 A test suite that passes is not evidence the tests *bite*. The mutation
 gate breaks the production code and confirms a test fails.
 
-- **Rust:** `cargo-mutants` (already wired nightly, CLAUDE.md §5) — run
-  on the cluster diff; a surviving mutant on the cluster's logic blocks
-  close (or is justified inline).
+- **Rust:** `cargo-mutants` (nightly on `main`, CLAUDE.md §5) — run on
+  the cluster diff. **Blocking is scoped** (CLAUDE.md §5): for a cluster
+  touching **execution wiring or a critical module** (the §6 ≥95%
+  safety-primitive crates + the executor/dispatch branches), a surviving
+  mutant on the cluster's logic blocks close (or is justified inline);
+  for ordinary clusters the nightly run is advisory. A surviving mutant
+  on an executor/dispatch branch *is* the paints-not-executes bug in test
+  form (cf. TD-008).
 - **TypeScript/renderer:** **Stryker** (`@stryker-mutator/core` + the
   vitest runner). **Phase-0a setup task (build-side — install + verify is
   the build machine's; authoring the config blind risks gotcha #32, so it
@@ -180,6 +185,89 @@ writing discipline alone.
 - [ ] **Assembled thing run and observed** (IRL for user-observable surfaces) — the close gate.
 - [ ] New findings triaged in-place (fix-now / new cluster / ADR scope-out). Zero propagation.
 - [ ] Surface states what was run AND what was not (rule 11). No "done" without observed evidence at its granularity.
+
+---
+
+## 8. Design-before-UI (standing — every UI-bearing milestone)
+
+**A UI-bearing milestone does not author interface code before its
+design contract exists.** This is a standing entry-condition on any
+cluster that ships a new or changed user-visible surface — the analog,
+for visual work, of "acceptance written first" (§1 step 1) for behavioral
+work.
+
+The **design contract** is two layers (`DESIGN.md`):
+
+1. **Rules layer** — the interaction principles + component-behavior
+   rules (feedback on every action, visible state, recoverability, plain
+   language, truthful labels, contrast). Orchestration-authored; already
+   seeded from the M08.6 IRL findings.
+2. **Visual layer** — tokens + type scale + spacing + component specs /
+   mockups, **authored by Claude Design** (the browser product) and
+   committed over `DESIGN.md`'s placeholders. Plus the **Stage-D**
+   design-review pass at the milestone closeout that checks the shipped
+   UI against `DESIGN.md` and evolves it (the analog of retros updating
+   `CLAUDE.md`).
+
+**Dependency (honest — rule 11).** The visual layer is **user-driven**:
+the maintainer runs Claude Design externally; the build agent **cannot
+self-author it** and must not claim a coherent visual system exists until
+that pass lands (`DESIGN.md` frontmatter: `visual-pending`). A UI-bearing
+milestone therefore carries a **hard upstream dependency** on the
+maintainer running the Claude Design pass *before* the milestone's UI
+clusters are authored — the milestone waits on the contract; it does not
+proceed against an absent one. The orchestrator surfaces this dependency
+and sequences around it; it does not assume the pass is done.
+
+**Why.** M08.6's Builder UI shipped against no design contract and the
+IRL walk surfaced an entire class of avoidable defects — the no-feedback
+cluster (#1/#14/#21), opaque validation errors (#5/#15), no recovery path
+(#11/#12/#13), truncated/mislabeled controls (#20/#24). A design contract
+authored first turns those from post-hoc 🔴 into pre-stated rules every
+surface obeys.
+
+**Scope (standing, forward, non-expiring).** Applies to **every
+UI-bearing milestone authored from M08.7.B forward** — M08.6.7, M09, M10,
+M11, through v0.1 ship — with the same grandfather-forward semantics as a
+protocol version bump (it does not expire after the next milestone).
+**Backend-only milestones / rungs are exempt** until they add a UI
+surface — e.g. M08.7a is backend (no UI), so it does not gate on the
+visual layer; M08.7b/c (the live-graph execution view) and M08.6.7 (the
+Builder track) do. Closed milestones are grandfathered — never
+retroactively gated.
+
+---
+
+## 9. Cumulative regression on close (standing — append-on-close)
+
+**A close is not done until (a) the cluster's own behavior is observed
+running in the assembled app (§1 step 4) AND (b) all PRIOR-CLOSED
+behavior still runs** — not just the current unit. A green close that
+silently broke a previously-closed primitive is not a close.
+
+**Append-on-close (the mechanism — how this coexists with a moving
+surface).** A behavior enters the cumulative regression eval **only once
+its own cluster closes**. It therefore never tests an in-flight surface:
+while M08.7 reshapes the execution surface rung-by-rung, rung *k*'s close
+runs rungs *1..k*, never the unbuilt *k+1..N*. This refines the
+`docs/protocol-revisions-irl-fail-rate.md` Revision-3 timing decision
+("build the full-workflow gate AFTER the workflow stabilizes"): the
+cumulative gate is built **incrementally as each cluster closes**, not
+once after stabilization — and because entry is gated on close, the
+Revision-3 concern (thrashing a moving surface) does not arise.
+
+**The M08.7 instance.** The named cumulative eval is the
+execution-regression suite behind `docs/execution-status.md`: each ladder
+rung's close **appends** its primitive to the suite (and flips the ledger
+row to `executes — observed, eval E-NN`), and every subsequent rung's
+close re-runs the accumulated suite. A regression that breaks a
+prior-closed primitive re-opens its ledger row.
+
+**Scope (standing, forward, non-expiring).** Applies to **every milestone
+close from M08.7.B forward** — M08.6.7, M09, M10, M11, through v0.1 ship.
+Declared per stage via the `<close_gate><cumulative_regression>` element
+(`STAGE-PROMPT-PROTOCOL.md`). The ENFORCEMENT wiring (the actual appended
+eval / CI job) is each milestone's close-gate work, not authored here.
 
 ---
 
