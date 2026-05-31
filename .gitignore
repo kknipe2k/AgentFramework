@@ -52,3 +52,12 @@ Thumbs.db
 # M06.A/B/C pre-flights; never a build artifact. Ignored at M06.C
 # per the recurring pre-flight residue (CLAUDE.md §16 clean-tree gate).
 ci-failures.txt
+
+# cargo-mutants run artifacts + M08.7 ladder mutation/IRL scratch.
+# `cargo mutants --in-place` (gotcha #92) writes mutants.out*/ and a
+# scratch diff; the IRL watch of a built-in tool writes a test-read
+# fixture and a per-rung scratch dir. Never build artifacts.
+mutants.out*/
+mutants.diff
+test-read.txt
+rung1/

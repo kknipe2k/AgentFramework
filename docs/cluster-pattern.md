@@ -142,6 +142,15 @@ gate breaks the production code and confirms a test fails.
   for ordinary clusters the nightly run is advisory. A surviving mutant
   on an executor/dispatch branch *is* the paints-not-executes bug in test
   form (cf. TD-008).
+  - **Local availability (Windows).** `cargo-mutants` installs fine, but
+    its default sandboxed scratch-copy build trips `os error 1314`
+    (`SeCreateSymbolicLinkPrivilege`) on a non-admin shell — it reads
+    like an install failure but the binary is fine. Run `cargo mutants
+    --in-place` (mutates the working tree directly — use a clean tree and
+    restore after) or launch from an elevated / Developer-Mode shell. The
+    automated gate **is** runnable via `--in-place`; the manual spot-check
+    is the disclosed fallback only if install genuinely fails, not the
+    default. (gotcha #92; M08.7.A rung-1 build.)
 - **TypeScript/renderer:** **Stryker** (`@stryker-mutator/core` + the
   vitest runner). **Phase-0a setup task (build-side — install + verify is
   the build machine's; authoring the config blind risks gotcha #32, so it
