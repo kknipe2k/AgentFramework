@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M08.7.B (rung 2 — capability enforcement gates a live tool)
+
+- **`crates/runtime-main/src/builder/tester.rs`** — `run_test_session_with_tier`,
+  a tier-aware variant of the Tester seam: identical to
+  `run_test_session_with` except it sets the session enforcer's tier
+  before any dispatch. `run_test_session_with` now delegates at the v0.1
+  default `Tier::Novice` (signature + behavior unchanged — zero caller
+  churn). The seam lets the assembled loop run at `Tier::Promoted` so a
+  built-in `Write` reaches the L1 `file_access`-scope gate instead of
+  being tier-denied at L4 first — proving the scope-gate denial through
+  the real `run_agent` loop (rung 1's blocked-Write test denies at the
+  Novice tier gate, leaving the scope gate on Write unproven).
+- **`crates/runtime-main/tests/capability_live_tool.rs`** (new) — three
+  assembled regressions driving the REAL `run_test_session_with_tier →
+  drive_stream → dispatch_builtin → execute_builtin` path (only the
+  provider stubbed): a Promoted out-of-scope `Write` emits
+  `CapabilityViolation { kind: Write }` (not `TierViolation`) and creates
+  NO file on disk; an in-scope `Write` writes the file with its content
+  (read back); the violation folds into `TestOutcome.capability_failures`
+  and the run completes unattended (HITL triage outcome b — the Tester is
+  HITL-less by design, ADR-0019). Assertions on the file-on-disk side
+  effect, not the event alone (rule 11 / gotcha #66).
+- **`docs/tech-debt.md` TD-036** — production never wires the user's tier
+  into the run-loop enforcer (Tester + smoke always run at Novice;
+  painted-not-wired, cf. TD-034). Routed to the live-session / tier-wiring
+  rung; the rung-2 scope-gate proof is therefore a test-path affordance,
+  with the real-app scope-watch explicitly deferred.
+
 ### Changed — M08.6 Stage F (closeout — gap-analysis, summary, simplify pass, coverage-policy reconciliation)
 
 - **`docs/build-prompts/retrospectives/M08.6-summary.md`** —

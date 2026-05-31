@@ -38,6 +38,7 @@ use crate::providers::{AgentConfig, ContentBlock, LLMProvider, Message, MessageR
 use crate::sdk::builtin_tools::builtin_tool_defs;
 use crate::sdk::{AgentSdk, CapabilityWiring, McpToolDispatch, SessionId};
 use crate::skills_lock::LockError;
+use crate::tier::Tier;
 
 /// The result of one Tester run. Crosses the Tauri wire to F2 (the modal
 /// renders every field).
@@ -296,11 +297,10 @@ fn test_agent_config(framework: &Framework, task: &str) -> AgentConfig {
 /// resolution of any relative imported-artifact path the integrity
 /// pre-flight walks.
 ///
-/// Reuses the smoke-session construction
-/// (`AgentSdk::with_capability_wiring` → optional `with_mcp_dispatch` →
-/// `run_agent`); it does not rebuild a session engine. The `HitlSeam`
-/// woven into the session is the test-defaults variant so the run never
-/// blocks on user input (spec Phase 9).
+/// Delegates to [`run_test_session_with_tier`] at the v0.1 default
+/// [`Tier::Novice`] — the tier every production Tester run uses today (no
+/// production path wires the user's persisted tier into the run-loop
+/// enforcer; see [`run_test_session_with_tier`]).
 ///
 /// # Errors
 ///
@@ -315,6 +315,60 @@ pub async fn run_test_session_with<P: LLMProvider + 'static>(
     drone: Arc<DroneClient>,
     mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
     session_id: SessionId,
+) -> Result<TestOutcome, TesterError> {
+    run_test_session_with_tier(
+        framework,
+        task,
+        db_path,
+        provider,
+        drone,
+        mcp_dispatch,
+        session_id,
+        Tier::Novice,
+    )
+    .await
+}
+
+/// Test-seam variant that runs the isolated test session at an explicit
+/// [`Tier`].
+///
+/// Identical to [`run_test_session_with`] except the session enforcer's
+/// tier is set to `tier` before any dispatch. The default-Novice
+/// [`run_test_session_with`] forbids every Write at the L4 tier gate
+/// BEFORE the `file_access` scope is consulted (`enforcer.rs` checks tier
+/// first); [`Tier::Promoted`] makes the L4 gate a pass-through so a
+/// built-in Write REACHES the L1 scope check — the path M08.7.B rung 2
+/// exercises to prove the scope-gate denial through the assembled loop.
+///
+/// This is a TEST-PATH affordance. No production caller wires the user's
+/// persisted tier into the run-loop enforcer yet (the Tester + smoke
+/// session both run at Novice); production tier-wiring is tracked
+/// separately (TD — painted, not wired) and is out of rung 2's scope
+/// (Hard Rule 8 / ADR-0019).
+///
+/// Reuses the smoke-session construction
+/// (`AgentSdk::with_capability_wiring` → optional `with_mcp_dispatch` →
+/// `run_agent`); it does not rebuild a session engine. The `HitlSeam`
+/// woven into the session is the test-defaults variant so the run never
+/// blocks on user input (spec Phase 9).
+///
+/// # Errors
+///
+/// [`TesterError`] for infrastructure failure only. A capability
+/// violation / a hash mismatch produces `Ok(TestOutcome { passed:
+/// false, .. })`, NOT an `Err`.
+// A wide collaborator-injection seam (the `*_with` archetype) — one arg
+// past the lint threshold; bundling into a struct buys nothing here.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_test_session_with_tier<P: LLMProvider + 'static>(
+    framework: &Framework,
+    task: &str,
+    db_path: &Path,
+    provider: P,
+    drone: Arc<DroneClient>,
+    mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
+    session_id: SessionId,
+    tier: Tier,
 ) -> Result<TestOutcome, TesterError> {
     let started = Instant::now();
 
@@ -339,6 +393,9 @@ pub async fn run_test_session_with<P: LLMProvider + 'static>(
     // (default-deny `NoDeclarations`) and no built-in tool can execute.
     let mut enforcer = CapabilityEnforcer::new();
     grant_framework_capabilities(&mut enforcer, framework);
+    // M08.7.B rung 2: set the session tier so a Write can reach the L1
+    // scope gate. Default-Novice tier-denies every Write at L4 first.
+    enforcer.set_tier(tier);
     let wiring = CapabilityWiring::new(
         Arc::new(enforcer),
         Arc::new(framework.clone()),

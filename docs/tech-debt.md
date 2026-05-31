@@ -762,4 +762,33 @@ Rung 1 is correct as-is: `execute_builtin` is path-string-parameterised and capa
 
 For any later rung that accepts **relative** paths from the user or model (a workspace-root convention, an in-app file picker, a "read this project file" affordance): define explicitly what relative paths resolve against — most likely a framework/workspace root the Tauri shell resolves (the CLAUDE.md §9 "Tauri-shell-resolves-directory" archetype) and passes into the executor — rather than inheriting the process CWD. Resolve relative paths against that root (and scope-check against it) so a user's `./data/x.txt` means the same thing regardless of where the app was launched. Decide alongside the rung that first surfaces relative paths; until then, absolute paths are unambiguous and rung 1 needs no change.
 
+## TD-036 — Production never wires the user's tier into the run-loop enforcer (Tester + smoke always run at Novice)
+
+**Date logged:** 2026-05-31
+**Found by:** M08.7.B rung-2 ground-at-red (grep for `set_tier` callers; maintainer-approved disposition — Option 1, test-seam + log TD)
+**Pass that surfaced it:** N/A (ground-at-red investigation during rung-2 implementation)
+**Category:** other (painted-not-wired — capability/tier enforcement; cf. [[TD-034]])
+**Resolution status:** open (routed to the live-session / tier-wiring rung)
+
+### Description
+
+No production code path calls `CapabilityEnforcer::set_tier` anywhere — grep confirms the only callers are `enforcer.rs`'s own unit tests. Both run-loop entry points build a fresh `CapabilityEnforcer::new()` and never set its tier:
+
+- `run_test_session_with` (`crates/runtime-main/src/builder/tester.rs`) — the Builder Tester.
+- `run_smoke_session_with` (`src-tauri/src/commands.rs`) — the live smoke session.
+
+`CapabilityEnforcer::new()` defaults to `Tier::Novice` (`enforcer.rs:64`), so **every** production agent run executes at Novice regardless of the user's actual tier. The app *tracks* the user's tier (`CurrentTierState` / the `get_current_tier` command), but that value is never pushed into the enforcer that gates execution. The enforcer's own doc-comment (`enforcer.rs:65-66`) describes the intended wire ("the Tauri layer loads the persisted tier at app startup and calls `set_tier` before any dispatch runs") — that wire was never built.
+
+### Why it's debt not bug
+
+In v0.1 the observable consequence is *conservative*, not unsafe: Novice is the most restrictive tier (it forbids Write and most non-Read kinds at L4), so a run-loop stuck at Novice can only **under**-grant, never over-grant — it cannot let an agent do something the user's actual tier forbids. The capability boundary is intact; it is just pinned to the safe end. A Promoted user simply cannot exercise Promoted-tier execution (e.g. a built-in Write) through the assembled app yet — the feature is absent, not mis-enforced.
+
+This is the same "painted, never wired" class as the M08.7 thesis ([[TD-034]]): the tier primitive (`Tier`, `TierEvaluator`, `set_tier`, the L4 gate) is fully built and unit-tested; only the production wire from the persisted/tracked tier into the run-loop enforcer is missing.
+
+Rung 2's consequence: the Promoted-tier `file_access`-scope Write denial is only expressible through the **test-path** seam `run_test_session_with_tier` (the assembled integration test sets `Tier::Promoted`). The real-app Tester runs at Novice, so a real-app out-of-scope Write is **tier**-denied (`TierViolation`) before the scope gate is reached — the scope-gate `CapabilityViolation(Write)` is NOT observable in the running app today. Rung 2 deliberately did NOT wire production tier (Hard Rule 8 / ADR-0019 — out of the in-process-Read/Write scope lock).
+
+### Recommended approach (when addressed)
+
+Wire the tracked/persisted user tier into the run-loop enforcer at the live-session / tier-wiring rung: have the Tauri shell read `CurrentTierState` (or `tier.json`) and pass the tier into `run_test_session_with_tier` (already plumbed) and an analogous `run_smoke_session_with` tier param, calling `enforcer.set_tier(tier)` before the first dispatch — and re-apply on a tier transition mid-session (the `tier::transition` path already documents routing through `set_tier`). That makes runtime execution actually gate on the user's tier, and lets the maintainer observe the Promoted scope-gate `CapabilityViolation(Write)` in the running app (pairs with [[TD-034]]'s in-app agent-output surfacing — both are needed for a real-app IRL of the scope gate). Touches `src-tauri/src/commands.rs` (the `test_framework` + `run_smoke_session` commands) + `tester.rs` (already has the tier seam). ADR-0019 amendment if the Tester's tier model (always-Novice-sandbox vs user-tier) is a product decision.
+
 
