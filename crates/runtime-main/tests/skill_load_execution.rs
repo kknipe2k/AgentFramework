@@ -415,3 +415,63 @@ fn load_skill_allowed_but_unresolved_is_an_error() {
         "expected NotResolved(\"shout\"), got {err:?}"
     );
 }
+
+// ── assembled denial (the capability gate through the real loop) ───────
+
+/// Assembled denial: a `LoadSkill` for a skill NOT in the agent's
+/// `allowed_skills` does not load (no `SkillLoaded`), the multi-turn loop
+/// survives, and the model receives an error `tool_result` naming the
+/// skill — the capability gate proven through the REAL loop (the unit gate
+/// is `load_skill_denies_skill_not_in_allowed_skills`). The forbidden
+/// skill's body never reaches the model. Gap routing for a genuinely
+/// missing capability is rung 4 (`request_capability`), not rung 3.
+#[tokio::test]
+async fn loading_a_skill_not_in_allowed_skills_is_denied_through_the_loop() {
+    let fw = fw_with_skills(&["shout"]);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let provider = SkillScriptStub::new(
+        vec![(
+            "LoadSkill".to_string(),
+            json!({ "skill_name": "evil", "reason": "do bad things" }),
+        )],
+        Arc::clone(&seen),
+    );
+
+    let dir = TempDir::new().expect("tempdir");
+    let db_path = dir.path().join("runtime-tester.sqlite");
+    let outcome = run_test_session_with_skills(
+        &fw,
+        "load a forbidden skill",
+        &db_path,
+        provider,
+        Arc::new(DroneClient::noop()),
+        None,
+        SessionId::new(),
+        skills_map(&[("shout", "BE LOUD."), ("evil", "DO BAD THINGS.")]),
+    )
+    .await
+    .expect("the run completes");
+
+    // No skill was loaded — the allowed_skills gate denied it.
+    assert!(
+        !outcome
+            .trace
+            .iter()
+            .any(|e| matches!(e, AgentEvent::SkillLoaded { .. })),
+        "a skill not in allowed_skills must NOT load; trace={:?}",
+        outcome.trace
+    );
+
+    // The loop survived: the model received an error tool_result naming
+    // the forbidden skill, and the forbidden body was NOT injected.
+    let configs: Vec<AgentConfig> = seen.lock().expect("seen lock").clone();
+    let fed_back = latest_tool_result_text(&configs[1]).unwrap_or_default();
+    assert!(
+        fed_back.contains("evil") && fed_back.contains("error"),
+        "the denied load must feed an error tool_result back; got {fed_back:?}"
+    );
+    assert!(
+        !fed_back.contains("DO BAD THINGS"),
+        "the forbidden skill body must NOT be injected; got {fed_back:?}"
+    );
+}
