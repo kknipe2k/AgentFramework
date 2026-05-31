@@ -42,6 +42,7 @@ use uuid::Uuid;
 
 use super::builtin_tools::{self, BuiltinExecError};
 use super::event_pipeline::{EnforcementContext, EventPipeline};
+use super::load_skill;
 use super::mcp_dispatch::{
     apply_renderable, mcp_dispatch_error_event, renderable_needs_hitl, McpDispatchOutcome,
     McpToolDispatch, RenderableOutcome,
@@ -149,11 +150,17 @@ pub struct CapabilityWiring {
     /// HITL seam the SDK loop awaits on for `capability_violation` /
     /// `tier_violation` routing per M04.E `on_capability_violation`.
     pub hitl_seam: Arc<HitlSeam>,
+    /// M08.7 rung 3 (ADR-0027): resolved skill bodies, keyed by skill
+    /// name. The `LoadSkill` handler reads from here — the bodies are
+    /// resolved once at load (ADR-0022 companions) and threaded in, never
+    /// re-resolved. Empty for sessions with no skills.
+    pub resolved_skills: BTreeMap<String, String>,
 }
 
 impl CapabilityWiring {
     /// Construct from the three Arc references the Tauri shell layer
-    /// already holds at session start.
+    /// already holds at session start. `resolved_skills` defaults empty —
+    /// attach it via [`Self::with_resolved_skills`].
     #[must_use]
     pub const fn new(
         enforcer: Arc<CapabilityEnforcer>,
@@ -164,7 +171,18 @@ impl CapabilityWiring {
             enforcer,
             framework,
             hitl_seam,
+            resolved_skills: BTreeMap::new(),
         }
+    }
+
+    /// Attach resolved skill bodies (name → body) for the `LoadSkill`
+    /// handler (M08.7 rung 3; ADR-0027). Additive over [`Self::new`] so
+    /// every existing constructor call site stays byte-stable; the
+    /// Tester's skill seam sets it.
+    #[must_use]
+    pub fn with_resolved_skills(mut self, resolved_skills: BTreeMap<String, String>) -> Self {
+        self.resolved_skills = resolved_skills;
+        self
     }
 }
 
@@ -461,6 +479,26 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
                     }
                 }
             }
+            // M08.7 rung 3 (ADR-0027): LoadSkill — read the agent's
+            // already-resolved skill body under the `allowed_skills` gate
+            // and inject it. Routes BEFORE the emit-only pipeline path,
+            // only when capability wiring is present (the resolved skills +
+            // the agent's `allowed_skills` live there). The body rides
+            // back as a `tool_result` so it persists in the message
+            // history across turns (the rung-1 feedback contract).
+            if let Some(wiring) = self.capability_wiring.as_ref() {
+                if let ProviderEvent::ToolUse { id, name, input } = &provider_event {
+                    if name == load_skill::LOAD_SKILL_TOOL {
+                        if let Some(d) = self
+                            .dispatch_load_skill(wiring, agent_id, id, input.clone())
+                            .await?
+                        {
+                            feedback.dispatched.push(d);
+                        }
+                        continue;
+                    }
+                }
+            }
             for agent_event in pipeline.next_event(provider_event) {
                 let needs_hitl = matches!(
                     &agent_event,
@@ -747,6 +785,56 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
         }
     }
 
+    /// Handle one `LoadSkill` `ToolUse` (M08.7 rung 3; ADR-0027). Reads
+    /// the agent's already-resolved skill body under the `allowed_skills`
+    /// gate, emits `SkillLoaded` + the `ToolInvoked`/`ToolResult` pair, and
+    /// returns a [`DispatchedTool`] so the body rides back as a
+    /// `tool_result` (persisting in the message history across turns — the
+    /// rung-1 feedback contract). A skill not in `allowed_skills` (or with
+    /// no resolved body) feeds an error `tool_result` back so the loop
+    /// survives; gap-event routing for a genuinely missing capability is
+    /// rung 4 (`request_capability`), not rung 3.
+    async fn dispatch_load_skill(
+        &self,
+        wiring: &CapabilityWiring,
+        agent_id: &str,
+        tool_use_id: &str,
+        input: serde_json::Value,
+    ) -> Result<Option<DispatchedTool>, SdkError> {
+        let skill_name = input
+            .get("skill_name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let allowed = agent_allowed_skills(&wiring.framework, agent_id);
+        let value = match load_skill::load_skill(skill_name, &allowed, &wiring.resolved_skills) {
+            Ok(loaded) => {
+                self.emit(AgentEvent::SkillLoaded {
+                    agent_id: agent_id.to_string(),
+                    skill_name: loaded.name.clone(),
+                    mode: None,
+                })
+                .await?;
+                serde_json::json!({ "skill": loaded.name, "body": loaded.body })
+            }
+            Err(load_skill::LoadSkillError::NotAllowed(s)) => {
+                serde_json::json!({ "error": format!("skill '{s}' is not in this agent's allowed_skills") })
+            }
+            Err(load_skill::LoadSkillError::NotResolved(s)) => {
+                serde_json::json!({ "error": format!("skill '{s}' has no resolved body") })
+            }
+        };
+        Ok(Some(
+            self.emit_builtin_result(
+                agent_id,
+                tool_use_id,
+                load_skill::LOAD_SKILL_TOOL,
+                input,
+                value,
+            )
+            .await?,
+        ))
+    }
+
     /// Emit the `ToolInvoked` + `ToolResult` pair for an executed (or
     /// recoverably-errored) built-in and build the [`DispatchedTool`] the
     /// multi-turn loop feeds back.
@@ -970,6 +1058,17 @@ const fn tier_to_ref(t: Tier) -> TierRef {
         Tier::Novice => TierRef::Novice,
         Tier::Promoted => TierRef::Promoted,
     }
+}
+
+/// The `allowed_skills` declared by the framework agent matching
+/// `agent_id` — the `LoadSkill` capability gate (M08.7 rung 3). Empty when
+/// the agent is not found or declares none.
+fn agent_allowed_skills(framework: &FrameworkRef, agent_id: &str) -> Vec<String> {
+    inline_agents(framework)
+        .into_iter()
+        .find(|a| a.id.as_str() == agent_id)
+        .map(|a| a.allowed_skills.clone())
+        .unwrap_or_default()
 }
 
 /// Prefer the enforcer-carried agent id when present; fall back to the

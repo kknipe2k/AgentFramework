@@ -22,6 +22,7 @@
 //! byte-loads an imported skill/tool for execution, it recomputes the SRI
 //! hash and HARD-BLOCKS on drift (integrity > availability; ADR-0014).
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -36,6 +37,7 @@ use crate::framework_loader::{grant_framework_capabilities, inline_agents};
 use crate::hitl::HitlSeam;
 use crate::providers::{AgentConfig, ContentBlock, LLMProvider, Message, MessageRole};
 use crate::sdk::builtin_tools::builtin_tool_defs;
+use crate::sdk::load_skill::load_skill_tool_def;
 use crate::sdk::{AgentSdk, CapabilityWiring, McpToolDispatch, SessionId};
 use crate::skills_lock::LockError;
 use crate::tier::Tier;
@@ -272,6 +274,16 @@ fn test_agent_config(framework: &Framework, task: &str) -> AgentConfig {
         .filter(|t| seen.insert((*t).clone()))
         .cloned()
         .collect();
+    let mut tools = builtin_tool_defs(&allowed);
+    // M08.7 rung 3 (spec §0b): advertise the runtime-injected LoadSkill
+    // tool when any inline agent has skills to load, so a real model can
+    // emit the matching ToolUse.
+    if inline_agents(framework)
+        .iter()
+        .any(|a| !a.allowed_skills.is_empty())
+    {
+        tools.push(load_skill_tool_def());
+    }
     AgentConfig {
         model: framework.model.id.as_str().to_string(),
         messages: vec![Message {
@@ -283,7 +295,7 @@ fn test_agent_config(framework: &Framework, task: &str) -> AgentConfig {
         max_tokens: 4096,
         temperature: Some(0.0),
         system_prompt: None,
-        tools: builtin_tool_defs(&allowed),
+        tools,
     }
 }
 
@@ -368,6 +380,74 @@ pub async fn run_test_session_with_tier<P: LLMProvider + 'static>(
     session_id: SessionId,
     tier: Tier,
 ) -> Result<TestOutcome, TesterError> {
+    run_test_session_inner(
+        framework,
+        task,
+        db_path,
+        provider,
+        drone,
+        mcp_dispatch,
+        session_id,
+        tier,
+        BTreeMap::new(),
+    )
+    .await
+}
+
+/// Test-seam variant that threads resolved skill bodies (name → body)
+/// into the run loop's `LoadSkill` handler (M08.7 rung 3; ADR-0027).
+///
+/// Runs at the v0.1 default [`Tier::Novice`] — `LoadSkill` is gated by the
+/// agent's `allowed_skills` (a membership check in the handler), not by
+/// the L4 tier, so a skill load needs no tier elevation. The bodies are
+/// resolved once at framework load (ADR-0022 companions); this seam
+/// threads them in — it does NOT re-read skill files. The Tauri shell's
+/// Tester wrapper builds the map by joining `framework.skills[]` to the
+/// loader's resolved companions; the assembled test passes it directly.
+///
+/// # Errors
+///
+/// [`TesterError`] for infrastructure failure only (same contract as
+/// [`run_test_session_with`]).
+#[allow(clippy::too_many_arguments)] // reason: mirrors run_test_session_with's 7-arg seam + the resolved-skills map
+pub async fn run_test_session_with_skills<P: LLMProvider + 'static>(
+    framework: &Framework,
+    task: &str,
+    db_path: &Path,
+    provider: P,
+    drone: Arc<DroneClient>,
+    mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
+    session_id: SessionId,
+    resolved_skills: BTreeMap<String, String>,
+) -> Result<TestOutcome, TesterError> {
+    run_test_session_inner(
+        framework,
+        task,
+        db_path,
+        provider,
+        drone,
+        mcp_dispatch,
+        session_id,
+        Tier::Novice,
+        resolved_skills,
+    )
+    .await
+}
+
+/// Shared core for the Tester seams: runs the isolated test session at
+/// `tier` with `resolved_skills` threaded into the `LoadSkill` handler.
+#[allow(clippy::too_many_arguments)] // reason: the full Tester collaborator set + tier + skills; arg-struct refactor deferred
+async fn run_test_session_inner<P: LLMProvider + 'static>(
+    framework: &Framework,
+    task: &str,
+    db_path: &Path,
+    provider: P,
+    drone: Arc<DroneClient>,
+    mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
+    session_id: SessionId,
+    tier: Tier,
+    resolved_skills: BTreeMap<String, String>,
+) -> Result<TestOutcome, TesterError> {
     let started = Instant::now();
 
     // Artifact-integrity pre-flight (M07.V 🟡 #2): verify every imported
@@ -398,7 +478,8 @@ pub async fn run_test_session_with_tier<P: LLMProvider + 'static>(
         Arc::new(enforcer),
         Arc::new(framework.clone()),
         Arc::new(HitlSeam::test_defaults()),
-    );
+    )
+    .with_resolved_skills(resolved_skills);
     let mut sdk =
         AgentSdk::with_capability_wiring(Arc::new(provider), event_tx, drone, session_id, wiring);
     if let Some(dispatch) = mcp_dispatch {

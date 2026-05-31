@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M08.7.C (rung 3 — skill load: `LoadSkill` injects a skill into context)
+
+- **`crates/runtime-main/src/sdk/load_skill.rs`** (new) — the pure,
+  capability-gated `LoadSkill` handler. `load_skill(skill_name,
+  allowed_skills, resolved_skills)` checks the skill is in the agent's
+  `allowed_skills` (the capability gate, `NotAllowed` otherwise) and
+  returns the already-resolved body (`NotResolved` if absent). The body
+  was resolved once at framework load (ADR-0022 companions); this reads
+  it, never re-resolves. `load_skill_tool_def()` advertises the
+  runtime-injected `LoadSkill` tool (spec §0b input `{skill_name,
+  reason}`).
+- **`crates/runtime-main/src/sdk/agent_sdk.rs`** — a `LoadSkill` branch in
+  `drive_stream` (analogous to the rung-1 built-in branch): a `LoadSkill`
+  `ToolUse` routes through `load_skill`, emits `SkillLoaded`, and feeds
+  the body back as the tool's `tool_result` so it persists in
+  `config.messages` across subsequent turns (ADR-0027 — the rung-1
+  feedback contract; the body never vanishes). `CapabilityWiring` gains a
+  `resolved_skills` map (set via an additive `with_resolved_skills`
+  builder — existing constructors byte-stable).
+- **`crates/runtime-main/src/builder/tester.rs`** —
+  `run_test_session_with_skills`, a seam that threads resolved skill
+  bodies into the run loop's `LoadSkill` handler (Novice tier — skill load
+  is gated by `allowed_skills`, not L4). `test_agent_config` advertises
+  `LoadSkill` when any inline agent has skills to load (spec §0b
+  auto-inject). Both `run_test_session_with` / `_with_tier` delegate to a
+  shared private core with an empty map (zero caller churn).
+- **`crates/runtime-main/tests/skill_load_execution.rs`** (new) — assembled
+  regressions driving the REAL `run_test_session_with_skills → run_agent →
+  drive_stream` loop (only the provider stubbed): `SkillLoaded(shout)`
+  emitted; `LoadSkill` advertised in `config.tools`; the skill body is
+  present in the turn-2 `AgentConfig` the loop re-sent (structural
+  injection-into-context — the behavioral all-caps reply is the IRL gate,
+  rule 11 / gotcha #66); two `LoadSkill` calls compose additively; plus
+  the pure-handler unit contract.
+- **`docs/adr/0027-skill-into-context-injection.md`** (new, Proposed →
+  Accepted in the M08.7 PR) — the skill-into-context injection model:
+  tool-result injection persisted via message history (spec §0b), the
+  resolved-body threading (ADR-0022), additive composition, and the
+  three-tier system-prompt assembly as the recorded forward path. The
+  spec-vs-phase-doc injection-model contradiction was surfaced at
+  `ground_at_red` (CLAUDE.md §2) and resolved to the tool-result model.
+
 ### Added — M08.7.B (rung 2 — capability enforcement gates a live tool)
 
 - **`crates/runtime-main/src/builder/tester.rs`** — `run_test_session_with_tier`,

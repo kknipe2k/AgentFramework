@@ -20,6 +20,13 @@ mod agent_sdk;
 /// back through the multi-turn loop's MCP-shared feedback contract.
 pub mod builtin_tools;
 mod event_pipeline;
+/// `LoadSkill` handler — spec §0b (M08.7 rung 3; ADR-0027).
+///
+/// The capability-gated handler that reads an already-resolved skill body
+/// (ADR-0022 — no re-resolution) for injection into the agent's context.
+/// The run loop emits [`runtime_core::event::AgentEvent::SkillLoaded`] and
+/// feeds the body back as the `LoadSkill` `tool_result` (ADR-0027).
+pub mod load_skill;
 /// MCP tool-dispatch seam — M06.D, ADR-0010 (dependency inversion).
 ///
 /// Defines the [`mcp_dispatch::McpToolDispatch`] trait + the
