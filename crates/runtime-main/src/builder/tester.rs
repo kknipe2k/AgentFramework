@@ -357,9 +357,7 @@ pub async fn run_test_session_with<P: LLMProvider + 'static>(
 /// [`TesterError`] for infrastructure failure only. A capability
 /// violation / a hash mismatch produces `Ok(TestOutcome { passed:
 /// false, .. })`, NOT an `Err`.
-// A wide collaborator-injection seam (the `*_with` archetype) — one arg
-// past the lint threshold; bundling into a struct buys nothing here.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // reason: mirrors run_test_session_with's 7-arg seam + tier; arg-struct refactor deferred
 pub async fn run_test_session_with_tier<P: LLMProvider + 'static>(
     framework: &Framework,
     task: &str,

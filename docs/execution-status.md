@@ -63,14 +63,15 @@ duplicate build-plan detail here — link the rung.
 
 **Eval numbering.** `E-NN` is assigned as each rung lands its assembled
 regression test; the cite is the test's file + name (the permanent
-encoded eval, so the behavior can never silently regress). No eval has
-landed yet — every row is seeded `paints`.
+encoded eval, so the behavior can never silently regress). Landed:
+**E-01** (rung 1) + **E-02** (rung 2) — row 1 (built-in tools) flipped to
+`executes — observed (assembled)`; the remaining rows stay `paints`.
 
 ### The six paints-not-executes primitives (the M08.6-IRL seed)
 
 | # | Primitive | v0.1 target behavior | Status | Built by (rung) | Grounding at seed (code cite — NOT an execution claim) |
 |---|---|---|---|---|---|
-| 1 | **Built-in tools** (`Read`/`Write`/`Bash`/`Glob`/`Grep`/`WebFetch`) | An allowed built-in runs and feeds its result back into the agent's next turn | `paints` — eval E-?? pending rung 1/2 close | rung 1 (in-process `Read`/`Write`) + rung 2 (gate on live exec); `Bash`/OS-spawn = separate ADR-class rung | No executor exists; a built-in `ToolUse` emits `ToolInvoked` and is never run; the multi-turn loop only feeds back MCP, so `feedback.dispatched` stays empty and the loop breaks (`M08.7-execution-engine.md` §Background; `agent_sdk.rs:412`) |
+| 1 | **Built-in tools** (`Read`/`Write`; `Bash`/`Glob`/`Grep`/`WebFetch` deferred) | An allowed built-in runs and feeds its result back into the agent's next turn; a blocked one does not run (no side effect) | `executes — observed (assembled integration test), eval E-01 + E-02` ⚠️ **real-app/UI IRL pending (TD-034) — assembled-observed, NOT real-app-closed** | rung 1 (in-process `Read`/`Write` execute) + rung 2 (capability gate on live exec); `Bash`/OS-spawn = separate ADR-class rung | **E-01** `crates/runtime-main/tests/builtin_tool_execution.rs` (rung 1 — an allowed `Read` runs, the file contents feed back as a `tool_result` + the agent quotes them; rung 1 additionally real-app-watched a live Anthropic model quote `Cargo.toml` under `RUST_LOG=debug`, but the run is UI-unobservable — TD-034). **E-02** `crates/runtime-main/tests/capability_live_tool.rs` (rung 2 — a Promoted out-of-scope `Write` emits `CapabilityViolation{Write}` + leaves **no file on disk**; an in-scope `Write` writes the file with its content). Assertions on the file side effect, not the event (rule 11 / §4). Scope-gate `CapabilityViolation` is assembled-observed only — the real-app Tester runs at Novice (TD-036), so the real-app scope-watch is deferred to the tier-wire + UI rung. |
 | 2 | **Sub-agents** | Root spawns a child with narrowed grants; the child runs its own loop and returns a summary | `paints` — eval E-?? pending rung 6 close | rung 6 (sequential spawn ⭐) | `spawn_framework_subagents` emits `AgentSpawned` and stops; no child execution context is created (`agent_sdk.rs:467`) |
 | 3 | **Skills** (`LoadSkill`) | Loading a skill injects its markdown into context and changes agent behavior | `paints` — eval E-?? pending rung 3 close | rung 3 (`LoadSkill` handler) | No `LoadSkill` handler exists (grep); skills are never injected into context (`M08.7-execution-engine.md` §Background) |
 | 4 | **Gaps** (`request_capability`) | An unheld capability raises a gap event and suspends the session cleanly + recoverably | `paints` — eval E-?? pending rung 4 close | rung 4 (wire into the run loop) | `handle_request_capability` exists but is **not wired into the run loop** — called only from its own tests; a real `request_capability` falls through to `pipeline.next_event` (`request_capability.rs:88`) |
