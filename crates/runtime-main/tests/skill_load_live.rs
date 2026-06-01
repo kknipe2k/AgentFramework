@@ -135,6 +135,9 @@ async fn loaded_skill_makes_a_real_model_reply_in_all_caps() {
     // non-letters (spaces/punctuation/digits); every ALPHABETIC char must
     // be uppercase, and there must be some alphabetic reply text.
     let reply = final_text(&outcome.trace);
+    // Surface the reply under `--ignored --nocapture` so the maintainer can
+    // read the exact text the all-caps assertion checks.
+    eprintln!("\n=== LIVE MODEL REPLY ===\n{reply}\n========================\n");
     let letters: String = reply.chars().filter(|c| c.is_alphabetic()).collect();
     assert!(
         !letters.is_empty(),
