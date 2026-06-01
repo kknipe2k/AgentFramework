@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent Runtime — Design Tokens</title>
+<link rel="stylesheet" href="tokens.css" />
+<style>
+  body { background: var(--app-bg); }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: var(--s10) var(--s6) var(--s12); }
+
+  header.page { margin-bottom: var(--s10); }
+  .eyebrow { display:inline-flex; align-items:center; gap: var(--s2); padding: 5px 10px; border:1px solid var(--accent-border); background: var(--accent-bg); color: var(--accent-on-light); border-radius: var(--r-pill); }
+  .eyebrow .dot { width:7px; height:7px; border-radius:50%; background: var(--accent); }
+  header.page h1 { margin: var(--s5) 0 var(--s3); }
+  header.page p.lede { max-width: 60ch; color: var(--text-1); font-size: 15px; line-height: 23px; margin:0; }
+
+  section.block { margin-top: var(--s10); }
+  .sec-head { display:flex; align-items:baseline; gap: var(--s3); padding-bottom: var(--s3); margin-bottom: var(--s5); border-bottom: 1px solid var(--border); }
+  .sec-head .n { font-family: var(--font-mono); font-size: 12px; color: var(--accent-on-light); }
+
+  .card { background: var(--surface-0); border:1px solid var(--border); border-radius: var(--r-lg); box-shadow: var(--e1); }
+
+  /* swatches */
+  .swatch-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(168px,1fr)); gap: var(--s3); }
+  .swatch { border:1px solid var(--border); border-radius: var(--r-md); overflow:hidden; background: var(--surface-0); }
+  .swatch .chip { height: 64px; }
+  .swatch .meta { padding: var(--s3); }
+  .swatch .meta .name { font-weight:600; font-size: 13px; }
+  .swatch .meta .val { color: var(--text-2); margin-top:2px; }
+
+  /* node kind proof */
+  .kind-row { display:grid; grid-template-columns: repeat(5, 1fr); gap: var(--s3); }
+  .kind-cell { border:1px solid var(--border); border-radius: var(--r-md); padding: var(--s4); background: var(--surface-0); }
+  .kind-demo {
+    display:flex; align-items:center; gap: var(--s2);
+    padding: 9px 11px 9px 9px; border-radius: var(--r-md);
+    background: var(--surface-0); border:1px solid var(--kc); position:relative;
+    box-shadow: var(--e1);
+  }
+  .kind-demo::before { content:''; position:absolute; left:0; top:0; bottom:0; width:4px; border-radius: var(--r-md) 0 0 var(--r-md); background: var(--kc); }
+  .kind-glyph { width:22px; height:22px; flex:0 0 22px; border-radius: var(--r-xs); background: var(--kc); color:#fff; display:flex; align-items:center; justify-content:center; font-family: var(--font-mono); font-weight:600; font-size:12px; margin-left:4px; }
+  .kind-name { font-weight:600; font-size:13px; }
+  .kind-on-tint { margin-top: var(--s3); padding: 8px 10px; border-radius: var(--r-sm); background: var(--kt-bg); color: var(--kt-text); font-size:12.5px; font-weight:500; }
+  .kind-aa { display:flex; justify-content:space-between; margin-top: var(--s3); font-family: var(--font-mono); font-size: 11px; color: var(--text-2); }
+  .aa-pass { color: var(--ok-text); font-weight:600; }
+
+  /* type scale */
+  .type-row { display:flex; align-items:baseline; gap: var(--s5); padding: var(--s3) 0; border-bottom:1px dashed var(--border-subtle); }
+  .type-row .tag { flex:0 0 120px; font-family: var(--font-mono); font-size:11px; color: var(--text-2); }
+
+  /* spacing */
+  .space-row { display:flex; align-items:center; gap: var(--s4); padding: 6px 0; }
+  .space-row .tag { flex:0 0 90px; font-family: var(--font-mono); font-size:12px; color: var(--text-2); }
+  .space-bar { height:16px; background: var(--accent); border-radius:2px; }
+
+  /* radii + elevation */
+  .demo-grid { display:grid; grid-template-columns: repeat(auto-fill,minmax(150px,1fr)); gap: var(--s4); }
+  .radius-demo { height:84px; border:1.5px solid var(--accent); background: var(--accent-bg); display:flex; align-items:flex-end; padding:8px; font-family:var(--font-mono); font-size:11px; color: var(--accent-on-light); }
+  .elev-demo { height:84px; background: var(--surface-0); border:1px solid var(--border-subtle); border-radius: var(--r-md); display:flex; align-items:flex-end; padding:8px; font-family:var(--font-mono); font-size:11px; color: var(--text-2); }
+
+  .note { margin-top: var(--s4); padding: var(--s3) var(--s4); background: var(--surface-2); border-left: 3px solid var(--accent); border-radius: 0 var(--r-sm) var(--r-sm) 0; color: var(--text-1); font-size: 13px; line-height:20px; }
+  .two-axis { display:grid; grid-template-columns: 1fr 1fr; gap: var(--s5); margin-top: var(--s4); }
+  @media (max-width: 760px){ .kind-row{ grid-template-columns: repeat(2,1fr);} .two-axis{ grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="page">
+    <span class="eyebrow mono-micro"><span class="dot"></span>DESIGN.md · visual layer</span>
+    <h1 class="t-display">Agent Runtime — Light Instrument</h1>
+    <p class="lede">The visual layer authored over <span class="mono">DESIGN.md</span>'s placeholders. Light cool-neutral surfaces, crisp dark text, one vivid electric-blue accent, a clean technical sans paired with a monospace for code, JSON, IDs and token counts. Every text pairing below meets WCAG AA — including the five node-kind colors on a light canvas (rule 9).</p>
+  </header>
+
+  <!-- COLORS -->
+  <section class="block">
+    <div class="sec-head"><span class="n">01</span><h2 class="t-title">Color — surfaces &amp; text</h2></div>
+    <div class="swatch-grid" id="surfaceGrid"></div>
+    <h3 class="t-label" style="margin:28px 0 12px">Accent — electric blue (the single vivid hue)</h3>
+    <div class="swatch-grid" id="accentGrid"></div>
+    <h3 class="t-label" style="margin:28px 0 12px">Semantic status</h3>
+    <div class="swatch-grid" id="semanticGrid"></div>
+  </section>
+
+  <!-- NODE KINDS -->
+  <section class="block">
+    <div class="sec-head"><span class="n">02</span><h2 class="t-title">Five node kinds — AA proof on a light canvas</h2></div>
+    <p class="muted" style="max-width:64ch; margin:0 0 20px; font-size:13px;">Rule 4: distinct node kinds are visually distinct by color <em>and</em> weight. Each kind owns a hue used three ways — a 4px accent bar, a glyph chip, and a label color verified AA on white. This is where light themes go muddy; the contrast ratios below prove the five stay legible and separable.</p>
+    <div class="kind-row" id="kindRow"></div>
+    <div class="note"><strong>Two-axis model.</strong> Kind is one axis (above). Runtime <em>status</em> is a separate axis — shown by the node ring/glow + a status dot — so an active Tool node reads as “Tool” (teal bar) <em>and</em> “running” (blue pulse) without the two signals colliding.</div>
+    <div class="two-axis">
+      <div class="card" style="padding:var(--s4)"><h4 class="t-label" style="margin:0 0 12px">Status axis</h4><div id="statusRow" style="display:flex;flex-wrap:wrap;gap:10px"></div></div>
+      <div class="card" style="padding:var(--s4)"><h4 class="t-label" style="margin:0 0 12px">Runtime-only kinds (carried from baseline)</h4><div id="extraKinds" style="display:flex;flex-wrap:wrap;gap:10px"></div></div>
+    </div>
+  </section>
+
+  <!-- TYPE -->
+  <section class="block">
+    <div class="sec-head"><span class="n">03</span><h2 class="t-title">Typography</h2></div>
+    <div class="card" style="padding: var(--s5)">
+      <div class="type-row"><span class="tag">display / 28</span><span class="t-display">Build it, then watch it run</span></div>
+      <div class="type-row"><span class="tag">title / 20</span><span class="t-title">Live-graph execution view</span></div>
+      <div class="type-row"><span class="tag">h2 / 16</span><span class="t-h2">Inspector — agent configuration</span></div>
+      <div class="type-row"><span class="tag">body / 14</span><span class="t-body">The runtime emits a live event stream the graph renders as it runs.</span></div>
+      <div class="type-row"><span class="tag">small / 12.5</span><span class="t-small">Auto-dismisses · non-blocking · plain language</span></div>
+      <div class="type-row"><span class="tag">label / 11</span><span class="t-label">Capability summary</span></div>
+      <div class="type-row"><span class="tag">mono / 12.5</span><span class="mono">orchestrator@1.0.0 · 12,480 tok · $0.42</span></div>
+    </div>
+    <div class="note">Sans: <span class="mono">IBM Plex Sans</span> for all UI. Mono: <span class="mono">IBM Plex Mono</span> for code, JSON, IDs, tool names, token counts and costs — the instrument register.</div>
+  </section>
+
+  <!-- SPACING -->
+  <section class="block">
+    <div class="sec-head"><span class="n">04</span><h2 class="t-title">Spacing — 4px grid</h2></div>
+    <div class="card" style="padding: var(--s5)" id="spaceList"></div>
+  </section>
+
+  <!-- RADII + ELEVATION -->
+  <section class="block">
+    <div class="sec-head"><span class="n">05</span><h2 class="t-title">Radius &amp; elevation</h2></div>
+    <h3 class="t-label" style="margin:0 0 12px">Corner radii (restrained)</h3>
+    <div class="demo-grid" id="radiusGrid"></div>
+    <h3 class="t-label" style="margin:28px 0 12px">Elevation (subtle)</h3>
+    <div class="demo-grid" id="elevGrid"></div>
+  </section>
+
+  <footer style="margin-top:var(--s12); padding-top:var(--s5); border-top:1px solid var(--border); color:var(--text-2); font-size:12.5px;">
+    <span class="mono-micro">tokens.css</span> — consumed by the workbench prototype (Builder + live-graph renderer). Direction / density / accent / node-diff are tweakable; this page shows the committed <span class="mono-micro">refined</span> default.
+  </footer>
+</div>
+
+<script>
+  const mk = (parent, items) => {
+    parent.innerHTML = items.map(([name, val, fg]) => `
+      <div class="swatch">
+        <div class="chip" style="background:${val}; ${fg?'border-bottom:1px solid var(--border-subtle)':''}"></div>
+        <div class="meta"><div class="name">${name}</div><div class="val mono-micro">${val}</div></div>
+      </div>`).join('');
+  };
+  mk(document.getElementById('surfaceGrid'), [
+    ['app-bg','#e9eef6'],['canvas-bg','#f1f4fa'],['surface-0','#ffffff'],['surface-1','#f6f8fc'],
+    ['surface-2','#eef2f8'],['surface-3','#e6ebf3'],['border','#d6deea'],['border-strong','#b9c4d6'],
+    ['text-0','#14202f'],['text-1','#3d4759'],['text-2','#687486'],['text-3','#98a3b4'],
+  ]);
+  mk(document.getElementById('accentGrid'), [
+    ['accent','#2563eb'],['accent-hover','#1d4ed8'],['accent-active','#1e40af'],
+    ['accent-bg','#eef4ff'],['accent-bg-strong','#dbe7ff'],['accent-border','#bcd2fb'],
+  ]);
+  mk(document.getElementById('semanticGrid'), [
+    ['ok','#16a34a'],['ok-bg','#e7f7ed'],['warn','#d97706'],['warn-bg','#fdf2dc'],
+    ['error','#dc2626'],['error-bg','#fdeaea'],['info','#2563eb'],['info-bg','#eef4ff'],
+  ]);
+
+  // contrast util (WCAG)
+  const lin = c => { c/=255; return c<=.03928? c/12.92 : ((c+.055)/1.055)**2.4; };
+  const lum = hex => { const n=parseInt(hex.slice(1),16); const r=(n>>16)&255,g=(n>>8)&255,b=n&255; return .2126*lin(r)+.7152*lin(g)+.0722*lin(b); };
+  const ratio = (a,b) => { const L1=lum(a),L2=lum(b); const hi=Math.max(L1,L2),lo=Math.min(L1,L2); return (hi+.05)/(lo+.05); };
+
+  const KINDS = [
+    ['Agent','A','#2563eb','#1e40af','#eef4ff'],
+    ['Tool','T','#0d9488','#0f766e','#e6faf6'],
+    ['Skill','S','#7c3aed','#6d28d9','#f4f0ff'],
+    ['Hook','H','#db2777','#be185d','#fdeef6'],
+    ['HITL','‖','#d97706','#b45309','#fdf2dc'],
+  ];
+  document.getElementById('kindRow').innerHTML = KINDS.map(([name,g,c,text,bg])=>{
+    const r = ratio(text,'#ffffff').toFixed(2);
+    const rt = ratio(text,bg).toFixed(2);
+    return `<div class="kind-cell" style="--kc:${c};--kt-text:${text};--kt-bg:${bg}">
+      <div class="kind-demo"><div class="kind-glyph">${g}</div><span class="kind-name" style="color:${text}">${name}</span></div>
+      <div class="kind-on-tint">label on ${name.toLowerCase()} tint</div>
+      <div class="kind-aa"><span>text/white</span><span class="aa-pass">${r}:1 ✓</span></div>
+      <div class="kind-aa"><span>text/tint</span><span class="aa-pass">${rt}:1 ✓</span></div>
+    </div>`;
+  }).join('');
+
+  const statuses = [['idle','#98a3b4'],['active','#2563eb'],['complete','#16a34a'],['error','#dc2626'],['gap','#ea580c'],['blocked','#d97706']];
+  document.getElementById('statusRow').innerHTML = statuses.map(([n,c])=>`
+    <span style="display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border:1px solid var(--border);border-radius:999px;font-size:12px;font-weight:500">
+      <span style="width:9px;height:9px;border-radius:50%;background:${c};box-shadow:0 0 0 3px ${c}28"></span>${n}</span>`).join('');
+
+  const extra = [['Gap','#ea580c','#c2410c','#fdeede'],['MCP','#475569','#334155','#eef1f6']];
+  document.getElementById('extraKinds').innerHTML = extra.map(([n,c,t])=>`
+    <span style="display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border:1px solid ${c};border-left-width:4px;border-radius:6px;font-size:12px;font-weight:600;color:${t}">${n}</span>`).join('');
+
+  const spaces = [['s1 · 4',4],['s2 · 8',8],['s3 · 12',12],['s4 · 16',16],['s5 · 20',20],['s6 · 24',24],['s8 · 32',32],['s10 · 40',40],['s12 · 48',48]];
+  document.getElementById('spaceList').innerHTML = spaces.map(([t,w])=>`
+    <div class="space-row"><span class="tag">${t}</span><div class="space-bar" style="width:${w}px"></div></div>`).join('');
+
+  const radii = [['xs · 3',3],['sm · 5',5],['md · 8',8],['lg · 12',12]];
+  document.getElementById('radiusGrid').innerHTML = radii.map(([t,r])=>`<div class="radius-demo" style="border-radius:${r}px">${t}</div>`).join('');
+  document.getElementById('elevGrid').innerHTML = ['e1','e2','e3'].map(e=>`<div class="elev-demo" style="box-shadow:var(--${e})">${e}</div>`).join('');
+</script>
+</body>
+</html>

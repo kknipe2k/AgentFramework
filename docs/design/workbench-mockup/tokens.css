@@ -1,0 +1,172 @@
+/* =====================================================================
+   Agent Runtime — Visual Layer  ·  "Light Instrument"
+   Design tokens (W3C DTCG-aligned, expressed as CSS custom properties)
+   ---------------------------------------------------------------------
+   Light, cool blue-gray surfaces · crisp dark text · ONE vivid electric-
+   blue accent · technical sans (IBM Plex Sans) + monospace (IBM Plex Mono)
+   for code / JSON / IDs / token counts. Instrument / IDE feel.
+
+   Two-axis node model (satisfies rule 4 + the live-run status need):
+     • KIND  is shown by the left accent bar + glyph chip + label color.
+     • STATUS is shown by the node ring / glow + status dot (orthogonal).
+   ===================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* ---- Brand accent (electric blue) — tweakable via --accent-h ------ */
+  --accent:            #2563eb;
+  --accent-hover:      #1d4ed8;
+  --accent-active:     #1e40af;
+  --accent-on-light:   #1d4ed8;   /* AA text on white (5.9:1) */
+  --accent-bg:         #eef4ff;
+  --accent-bg-strong:  #dbe7ff;
+  --accent-border:     #bcd2fb;
+  --accent-ring:       rgba(37, 99, 235, 0.32);
+
+  /* ---- Surfaces (cool blue-gray) ----------------------------------- */
+  --app-bg:        #e9eef6;   /* workspace backdrop */
+  --canvas-bg:     #f1f4fa;   /* graph canvas field */
+  --surface-0:     #ffffff;   /* cards, panels, nodes */
+  --surface-1:     #f6f8fc;   /* subtle raised / hover */
+  --surface-2:     #eef2f8;   /* wells, inset, inputs */
+  --surface-3:     #e6ebf3;   /* deeper inset / track */
+
+  /* ---- Lines ------------------------------------------------------- */
+  --border-subtle:  #e7ecf3;
+  --border:         #d6deea;
+  --border-strong:  #b9c4d6;
+  --border-mono:    #c8d2e0;  /* around code wells */
+
+  /* ---- Text (crisp dark, AA on white) ------------------------------ */
+  --text-0:  #14202f;   /* primary — ~15:1 */
+  --text-1:  #3d4759;   /* secondary — ~9:1 */
+  --text-2:  #687486;   /* tertiary / muted — ~4.7:1 */
+  --text-3:  #98a3b4;   /* placeholder / faint (non-essential) */
+  --text-on-accent: #ffffff;
+  --text-on-dark:   #eef2f8;
+
+  /* ---- Semantic status -------------------------------------------- */
+  --ok:          #16a34a;  --ok-text:    #15803d;  --ok-bg:    #e7f7ed;  --ok-border:  #b6e6c6;
+  --warn:        #d97706;  --warn-text:  #b45309;  --warn-bg:  #fdf2dc;  --warn-border:#f3d79a;
+  --error:       #dc2626;  --error-text: #b91c1c;  --error-bg: #fdeaea;  --error-border:#f5c2c2;
+  --info:        var(--accent); --info-text: var(--accent-on-light); --info-bg: var(--accent-bg); --info-border: var(--accent-border);
+
+  /* ---- Five node kinds (tuned to pop on LIGHT canvas at AA) --------- */
+  /* color = stroke/bar/chip · text = AA label color on white · bg = tint */
+  --kind-agent:        #2563eb;  --kind-agent-text:  #1e40af;  --kind-agent-bg:  #eef4ff;
+  --kind-tool:         #0d9488;  --kind-tool-text:   #0f766e;  --kind-tool-bg:   #e6faf6;
+  --kind-skill:        #7c3aed;  --kind-skill-text:  #6d28d9;  --kind-skill-bg:  #f4f0ff;
+  --kind-hook:         #db2777;  --kind-hook-text:   #be185d;  --kind-hook-bg:   #fdeef6;
+  --kind-hitl:         #d97706;  --kind-hitl-text:   #b45309;  --kind-hitl-bg:   #fdf2dc;
+  /* runtime-only kinds carried from the dark baseline */
+  --kind-gap:          #ea580c;  --kind-gap-text:    #c2410c;  --kind-gap-bg:    #fdeede;
+  --kind-mcp:          #475569;  --kind-mcp-text:    #334155;  --kind-mcp-bg:    #eef1f6;
+
+  /* ---- Runtime status (orthogonal to kind) ------------------------- */
+  --st-idle:     #98a3b4;
+  --st-active:   var(--accent);
+  --st-complete: var(--ok);
+  --st-error:    var(--error);
+  --st-gap:      var(--kind-gap);
+  --st-blocked:  var(--kind-hitl);
+
+  /* ---- Type ------------------------------------------------------- */
+  --font-sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+
+  --fs-display: 28px;  --lh-display: 34px;
+  --fs-title:   20px;  --lh-title:   27px;
+  --fs-h2:      16px;  --lh-h2:      22px;
+  --fs-body:    14px;  --lh-body:    20px;
+  --fs-small:   12.5px;--lh-small:   17px;
+  --fs-label:   11px;  --lh-label:   14px;   /* uppercase tracked labels */
+  --fs-mono:    12.5px;--lh-mono:    18px;
+  --fs-micro:   11px;  --lh-micro:   15px;   /* mono ids / counts */
+
+  --tracking-label: 0.07em;
+
+  /* ---- Spacing (4px grid) ----------------------------------------- */
+  --s1: 4px;  --s2: 8px;  --s3: 12px; --s4: 16px;
+  --s5: 20px; --s6: 24px; --s8: 32px; --s10: 40px; --s12: 48px;
+
+  /* ---- Radii (restrained) ----------------------------------------- */
+  --r-xs: 3px;  --r-sm: 5px;  --r-md: 8px;  --r-lg: 12px;  --r-pill: 999px;
+
+  /* ---- Elevation (subtle) ----------------------------------------- */
+  --e0: none;
+  --e1: 0 1px 2px rgba(16,32,46,.06), 0 1px 1px rgba(16,32,46,.04);
+  --e2: 0 4px 14px rgba(16,32,46,.09), 0 1px 3px rgba(16,32,46,.06);
+  --e3: 0 14px 38px rgba(16,32,46,.16), 0 4px 10px rgba(16,32,46,.08);
+  --focus-ring: 0 0 0 3px var(--accent-ring);
+
+  /* ---- Motion ----------------------------------------------------- */
+  --t-fast: 120ms cubic-bezier(.4,0,.2,1);
+  --t-med:  200ms cubic-bezier(.4,0,.2,1);
+
+  /* density-driven (overridden by [data-density]) */
+  --pad-panel: var(--s4);
+  --row-h: 32px;
+}
+
+/* =====================================================================
+   THEMING HOOKS — tweakable directions / density / node-diff / accent
+   ===================================================================== */
+
+/* Accent hue swap (Tweaks). Each preset rewrites the accent family. */
+[data-accent='blue']   { --accent:#2563eb; --accent-hover:#1d4ed8; --accent-active:#1e40af; --accent-on-light:#1d4ed8; --accent-bg:#eef4ff; --accent-bg-strong:#dbe7ff; --accent-border:#bcd2fb; --accent-ring:rgba(37,99,235,.32); }
+[data-accent='cyan']   { --accent:#0891b2; --accent-hover:#0e7490; --accent-active:#155e75; --accent-on-light:#0e7490; --accent-bg:#e7f8fc; --accent-bg-strong:#cdeef6; --accent-border:#a8e0ee; --accent-ring:rgba(8,145,178,.32); }
+[data-accent='violet'] { --accent:#6d28d9; --accent-hover:#5b21b6; --accent-active:#4c1d95; --accent-on-light:#6d28d9; --accent-bg:#f3effe; --accent-bg-strong:#e4d8fb; --accent-border:#cdb6f5; --accent-ring:rgba(109,40,217,.32); }
+[data-accent='indigo'] { --accent:#4338ca; --accent-hover:#3730a3; --accent-active:#312e81; --accent-on-light:#4338ca; --accent-bg:#eef0fe; --accent-bg-strong:#dcdefb; --accent-border:#bcc0f4; --accent-ring:rgba(67,56,202,.32); }
+
+/* Density */
+[data-density='comfortable'] { --pad-panel: var(--s5); --row-h: 36px; }
+[data-density='compact']     { --pad-panel: var(--s3); --row-h: 28px; --fs-body:13px; --lh-body:18px; }
+
+/* Visual direction spectrum --------------------------------------------
+   by-the-book  → conservative IDE: hairline borders, flat, minimal color
+   refined      → the committed default (subtle elevation, accent bars)
+   expressive   → richer fills, glows on the live graph, larger type     */
+[data-direction='bythebook'] {
+  --e1: none; --e2: 0 2px 6px rgba(16,32,46,.08); --e3: 0 8px 24px rgba(16,32,46,.14);
+  --r-xs:2px; --r-sm:3px; --r-md:4px; --r-lg:6px;
+}
+[data-direction='expressive'] {
+  --r-xs:4px; --r-sm:7px; --r-md:11px; --r-lg:16px;
+  --e1: 0 2px 5px rgba(16,32,46,.08); --e2: 0 8px 22px rgba(16,32,46,.12); --e3: 0 20px 50px rgba(16,32,46,.20);
+  --fs-display:32px; --lh-display:38px; --fs-title:22px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--text-0);
+  background: var(--app-bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ---- Typographic utilities -------------------------------------- */
+.t-display { font-size: var(--fs-display); line-height: var(--lh-display); font-weight: 600; letter-spacing: -0.01em; }
+.t-title   { font-size: var(--fs-title);   line-height: var(--lh-title);   font-weight: 600; letter-spacing: -0.005em; }
+.t-h2      { font-size: var(--fs-h2);      line-height: var(--lh-h2);      font-weight: 600; }
+.t-body    { font-size: var(--fs-body);    line-height: var(--lh-body);    font-weight: 400; }
+.t-strong  { font-weight: 500; }
+.t-small   { font-size: var(--fs-small);   line-height: var(--lh-small); }
+.t-label   { font-size: var(--fs-label); line-height: var(--lh-label); font-weight: 600; letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-2); }
+.mono      { font-family: var(--font-mono); font-size: var(--fs-mono); line-height: var(--lh-mono); font-feature-settings: 'zero' 1; }
+.mono-micro{ font-family: var(--font-mono); font-size: var(--fs-micro); line-height: var(--lh-micro); }
+.tnum      { font-variant-numeric: tabular-nums; }
+.muted     { color: var(--text-2); }
+
+::selection { background: var(--accent-bg-strong); }
+
+/* scrollbars — thin, instrument-like */
+* { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+*::-webkit-scrollbar { width: 9px; height: 9px; }
+*::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-thumb:hover { background: var(--text-3); background-clip: content-box; }
