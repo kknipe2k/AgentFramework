@@ -19,6 +19,11 @@ export default tseslint.config(
       'playwright-report/**',
       'test-results/**',
       'coverage/**',
+      // Design-pass reference mockups (DESIGN.md visual layer, PR #117) —
+      // throwaway .jsx/.js sketches, not authored build sources and not in
+      // any tsconfig project (so the type-aware project service rejects them).
+      // Same reference-artifact exclusion as .prettierignore.
+      'docs/design/workbench-mockup/**',
       // Node tooling scripts — not part of the typed TS project.
       'bin/**',
       // Generated TypeScript bindings — owned by `cargo xtask regenerate-types`.
