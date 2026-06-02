@@ -855,4 +855,53 @@ real `run_test_session_with_skills → run_agent → drive_stream` path,
 just not through the Builder UI. Pairs with [[TD-034]] (no in-app agent
 output) — both are needed for an in-Builder skill IRL.
 
+## TD-038 — Budget threshold has no OS desktop notifier (v0.1 = in-app event/toast only)
+
+**Date logged:** 2026-06-01
+**Found by:** M08.7.E rung-5 ground-at-entry — the ThresholdAction→event dispatch mapping (phase doc E.3.2 names "budget_warn event + a notifier dispatch (the NotifierDispatched path)")
+**Pass that surfaced it:** N/A (rung-5 dispatch-mapping scope decision, surfaced before red)
+**Category:** other (scoped-out side effect — OS integration; cf. the desktop-notifier seam)
+**Resolution status:** open (scoped out of rung 5 — the in-app budget events cover v0.1; the OS desktop notification is the deferred bit)
+
+### Description
+
+Rung 5 wires the four budget `ThresholdAction`s to their existing
+`AgentEvent` variants — `Warn → BudgetWarn`, `Downshift →
+BudgetDownshift`, `Suspend → BudgetSuspended`, `HardStop →
+BudgetExceeded` (all pre-existing in `schemas/event.v1.json` +
+`crates/runtime-core/src/event.rs` — no schema change). The renderer's
+budget toast / header-bar amber shift is **event-driven** by `BudgetWarn`
+(the schema doc for the warn threshold: "surfaces a toast notification +
+shifts the BudgetHeaderBar color toward amber").
+
+The phase doc E.3.2 also names "a notifier dispatch (the
+`NotifierDispatched` path)" for the Warn action. That was **deliberately
+NOT wired** in rung 5: `AgentEvent::NotifierDispatched`
+(`event.rs:596`) is structurally bound to a `HitlTriggerRef` (it reports
+"a notifier successfully fired **for a HITL request**") — emitting it for
+a non-HITL budget warning would mean fabricating a trigger that does not
+fit the budget-warn semantics. The in-app toast (driven by `BudgetWarn`)
+is the v0.1 user-visible signal; the **OS desktop notification** (the
+`terminal_bell` / `desktop` / `sound` notifier types `NotifierDispatched`
+carries) is the deferred surface.
+
+### Why it's debt not bug
+
+No behavior is wrong: the budget warning IS surfaced to the user (the
+`BudgetWarn` event → renderer toast/header bar). The gap is purely the
+OS-level desktop notification — a nicety on top of the in-app signal, not
+a missing enforcement. The load-bearing rung-5 safety primitive
+(`HardStop` halts the run; `BudgetExceeded` + no further provider turns)
+is unaffected.
+
+### Recommended approach (when addressed)
+
+When the desktop-notifier seam is generalized beyond HITL (the same seam
+M04.E's `on_budget_threshold` HITL notifier uses), route the budget
+`Warn` / `Suspend` actions through it. That likely wants either a
+budget-flavored `NotifierDispatched` trigger variant (a §11 schema
+change — ADR + version bump) or a separate budget-notifier event. Pairs
+with the budget-`Suspend` resume work folded into the gap resolve-and-resume
+rung ([[ADR-0029]], generalized to budget).
+
 
