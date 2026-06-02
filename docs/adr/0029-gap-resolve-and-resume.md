@@ -9,10 +9,10 @@
 
 The gap flow (`request_capability` → suspend) is the project's signature §0a
 primitive: "gap detection that suspends the session cleanly when an agent
-needs something it doesn't have." Rung 4 (ADR-0028) built the **suspend half**
-— suspend-and-record (loop-break: halt + snapshot the run, recoverable per
-§1b). ADR-0028 deferred the **resume half** (human resolves the gap → the
-session continues) to M09.
+needs something it doesn't have." Rung 4 built and shipped the **suspend
+half** — suspend-and-record (loop-break: halt + snapshot the run, recoverable
+per §1b), documented as step 1 of this ADR. The **resume half** (human
+resolves the gap → the session continues) was originally deferred to M09.
 
 **Maintainer direction (2026-06-01):** a runtime where a gap suspends and then
 dead-ends is not a runtime. v0.1 must work **front-to-back, human-operable, no
@@ -55,7 +55,7 @@ the substrate this project already has:
 v0.1 ships the **full gap loop, human-operable, no AI**, reusing the existing
 substrate (drone snapshot §1b + `narrow()` + `HitlSeam` + the gap events):
 
-1. **Suspend** (rung 4 / ADR-0028): `request_capability` → `ToolMissing` gap →
+1. **Suspend** (rung 4, shipped): `request_capability` → `ToolMissing` gap →
    loop-break + the run is snapshotted (the checkpoint).
 2. **Resolve** (human, non-AI): the app surfaces the suspended gap (the
    live-graph node flips to `gap` + a resolution panel) with three **governed**
@@ -105,14 +105,13 @@ ORCHESTRATOR §9):
 - M09 (mentor) is re-cast as the **AI-assist layer on top of** the
   human-operable loop; **deprioritized** behind shipping the front-to-back
   runtime.
-- **Supersedes ADR-0028's "resolve-and-resume deferred to M09."** ADR-0028
-  remains the suspend-half decision; this ADR is the resume half + the full-loop
-  architecture. (ADR-0028 lives on the M08.7 build branch and merges at the
-  M08.7a PR; reconcile the cross-reference then.)
+- **Supersedes the original "resolve-and-resume deferred to M09" framing**
+  (rung 4 shipped suspend-only). There is **no separate suspend ADR** — the
+  rung-4 suspend is step 1 of this single gap-loop ADR.
 
 ## Alternatives Considered
 
-### Suspend-only for v0.1; resolve-and-resume at M09 (ADR-0028's original)
+### Suspend-only for v0.1; resolve-and-resume at M09 (the original framing)
 **Rejected:** a gap that cannot be resolved dead-ends the runtime — not a
 shippable product. The maintainer's front-to-back requirement.
 
@@ -123,7 +122,7 @@ mentor is a later assist layer, not a dependency of the core loop.
 
 ## Related
 
-- ADR-0028 (gap-suspend, rung 4 — the suspend half this completes; on the M08.7 build branch)
+- Rung 4 (M08.7.D) shipped the suspend half (step 1 here) — no separate suspend ADR
 - ADR-0019 (Tester isolated session — HITL/tier model the resume must respect)
 - ADR-0022 (canonical framework representation — companions, relevant to Install)
 - spec §1b (recovery rebuilds from snapshot, does not re-execute), §4 (gap flow), §8.security (`narrow()`)
