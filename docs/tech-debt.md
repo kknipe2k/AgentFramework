@@ -976,4 +976,67 @@ snapshot-rebuild → resolved `tool_result` → continue; that test subsumes
 this leg. Until then, optionally add a `gap_detection_execution.rs`
 assertion that the suspended gap is present in the persisted snapshot chain.
 
+---
+
+## TD-041 — `ToolUse` JSON input-field extraction repeats across dispatch handlers
+
+**Date logged:** 2026-06-02
+**Found by:** M08.7 closeout simplify-pass (RU-M08.7-1)
+**Pass that surfaced it:** Simplify-pass (reuse)
+**Category:** reuse
+**Resolution status:** open
+
+### Description
+
+`dispatch_load_skill` and `dispatch_request_capability` in
+`crates/runtime-main/src/sdk/agent_sdk.rs` both extract a string field from
+the `ToolUse` `input` JSON with the same shape
+(`input.get(key).and_then(Value::as_str).unwrap_or_default().to_string()`).
+`builtin_tools.rs` uses a narrower single-field variant. A shared
+`tool_input_str(input, key)` helper would compress the two-to-three sites.
+
+### Why it's debt not bug
+
+Both sites are small, correct, and clear in place. Per CLAUDE.md §9
+("wait for the fourth") the pattern is below the extraction bar today — two
+production sites + one near-variant. No behavior concern; this is a reuse
+opportunity that only pays off once a fourth caller lands.
+
+### Recommended approach (when addressed)
+
+When a fourth `ToolUse`-input-parsing handler emerges (M08.9 sub-agent /
+plan dispatch, or v1.0 generators), extract `tool_input_str` to a shared
+helper at the dispatch boundary that needs it.
+
+---
+
+## TD-042 — `dispatch_budget_actions` carries `current_model` mutation across the action loop
+
+**Date logged:** 2026-06-02
+**Found by:** M08.7 closeout simplify-pass (EFF-M08.7-1)
+**Pass that surfaced it:** Simplify-pass (efficiency/clarity)
+**Category:** other (clarity-on-future-extension)
+**Resolution status:** open
+
+### Description
+
+`dispatch_budget_actions` (`crates/runtime-main/src/sdk/agent_sdk.rs`)
+seeds `current_model` from the turn's model and mutates it in place on a
+`Downshift` action so a subsequent action in the same `actions` vec sees the
+updated model. The logic is correct for today's action set (`Warn` /
+`Downshift` / `Suspend`), but the cross-iteration mutable state would become
+subtle if a future rung adds a third model-aware action or allows an action
+to repeat.
+
+### Why it's debt not bug
+
+The current form is correct and necessary for the warn→downshift ordering;
+the simplify-pass explicitly recommended no refactor now. This is a
+clarity flag for future extension, not a defect.
+
+### Recommended approach (when addressed)
+
+If a second model-aware budget action lands (or the action set grows),
+revisit whether the per-action model should be derived rather than carried
+as mutable loop state.
 

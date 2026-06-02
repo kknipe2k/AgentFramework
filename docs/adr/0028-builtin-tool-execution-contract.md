@@ -1,6 +1,6 @@
 # ADR-0028: Built-in tool execution contract
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-02
 **Deciders:** @kknipe2k
 **Tags:** capability, security, scope, architecture
@@ -8,9 +8,10 @@
 ## Context
 
 M08.7 (the execution engine) turned the runtime's painted primitives into
-running ones. Stage A (rung 1) shipped the first executor — the built-in tools
-`Read`/`Write`/`Glob`/`Grep`/`WebFetch` — and Stage B (rung 2) put the
-capability gate in front of live execution. The shape Stage A froze is the
+running ones. Stage A (rung 1) shipped the first executor — the in-process
+built-in tools `Read`/`Write` (`execute_builtin` dispatches exactly these two;
+`crates/runtime-main/src/sdk/builtin_tools.rs:90`) — and Stage B (rung 2) put
+the capability gate in front of live execution. The shape Stage A froze is the
 archetype **every** later rung mirrors (skill load, gap, budget, MCP dispatch):
 a tool's `ToolUse` is executed and its result is fed back into the agent's next
 turn. That contract was authored in code and exercised by the rung-1/2 assembled
@@ -50,12 +51,20 @@ every M08.7 rung mirrors.
    written). The declared capability scope, not a separate per-call
    authorization step, is the enforcement point.
 
-3. **In-process vs sandbox split; `Bash` deferred.** `Read`/`Write`/`Glob`/
-   `Grep`/`WebFetch` run **in-process** in the main runtime: they are bounded by
-   the capability + path scope above and need no separate OS sandbox. `Bash` (and
-   any OS-process-spawning built-in) is **deferred to a separate ADR-class rung**
-   — it crosses the sandbox boundary (`runtime-sandbox`; CLAUDE.md §10 / spec
-   §8.security) and is not part of the v0.1 in-process set.
+3. **In-process vs sandbox split; only `Read`/`Write` implemented; `Bash`
+   deferred.** A built-in falls into one of three classes:
+   - **Implemented in-process (rung 1):** `Read`/`Write` run in the main runtime
+     today — bounded by the capability + path scope above, needing no separate OS
+     sandbox. These are the only built-ins `execute_builtin` dispatches at M08.7a
+     (`builtin_tools.rs:90`); the `execution-status.md` row-1 status reflects this.
+   - **In-process class, not yet implemented:** `Glob`/`Grep`/`WebFetch` belong to
+     the same in-process, capability+path-bounded class (no OS sandbox needed) but
+     are **not yet wired** — they are a future in-process rung, not part of the
+     M08.7a shipped set.
+   - **Sandbox-class, deferred:** `Bash` (and any OS-process-spawning built-in) is
+     **deferred to a separate ADR-class rung** — it crosses the sandbox boundary
+     (`runtime-sandbox`; CLAUDE.md §10 / spec §8.security) and is not part of the
+     v0.1 in-process set.
 
 ## Consequences
 

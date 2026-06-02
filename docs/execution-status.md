@@ -70,7 +70,12 @@ flipped to `executes — observed` (CI structural injection + a real-model
 behavior eval + maintainer IRL); **E-04** (rung 4) — row 4 (gaps) flipped
 to `executes — observed (suspend-and-record)` (CI assembled wire + suspend
 + a real-model gap eval + maintainer IRL 2026-06-01: `request_capability`
-→ `tool_missing(deploy)` → clean suspend); the remaining rows (2 sub-agents,
+→ `tool_missing(deploy)` → clean suspend); **E-05** (rung 5) — the **Budget**
+row (Adjacent / out-of-ladder) flipped to `executes — observed at the
+assembled run loop (engine)` — **engine-tested only**: the CI assembled wire
+observes warn/downshift/hard-stop/idempotent, but the live real-model eval is
+`#[ignore]d` and there was **no maintainer real-app IRL this rung**; the in-app
+budget surface is deferred to M08.8. The remaining rows (2 sub-agents,
 5 plans, 6 hooks/rails) stay `paints`.
 
 ### The six paints-not-executes primitives (the M08.6-IRL seed)
@@ -110,7 +115,7 @@ to `executes — observed (suspend-and-record)` (CI assembled wire + suspend
 
 | Primitive | Status | Note |
 |---|---|---|
-| **Budget** (warn / downshift / hard-stop) | hypothesis — not read at seed; **ground at rung 5 entry** | §4 rule 11 forbids speccing it from assumption; rung 5 grounds whether budget is tracked-but-painted or tracked-and-enforced before the eval is authored (`M08.7-execution-engine.md` §Rung 5) |
+| **Budget** (warn / downshift / hard-stop) | `executes — observed at the assembled run loop (engine), eval E-05` ⚠️ **engine-tested only — the live real-model eval is `#[ignore]d`; NO maintainer real-app IRL this rung; the in-app budget surface (Settings cap + cross-restart persistence, M08.6-IRL #22) is deferred to M08.8 (app-workbench)** | rung 5 (M08.7.E — per-turn budget at the run loop) | **E-05** `crates/runtime-main/tests/budget_runloop_execution.rs` (CI assembled — `record_spend` accumulates across turns; the threshold halts the run + issues **no further turn**; `Downshift` swaps the model for subsequent turns; `Warn` emits `BudgetWarn` and does **not** stop; idempotent across turns — assertions on the counted-turns halt + the emitted action, not a painted event) + `crates/runtime-main/tests/budget_live.rs` (`#[ignore]`d — a real Anthropic run under a tiny cap hard-stops with no runaway; E-05 live, **not** CI-run, no maintainer IRL watch this rung). Grounded-by-execution at the **assembled-stub** granularity (V ran it); the real-model halt + the in-app cap surface are the M08.8 app-observe. Rung 5 grounded budget as tracked-but-not-enforced-at-the-loop at entry (rule 11), then wired enforcement. |
 | **Modes** (router) | out of v0.1 scope | STANDARD hardcoded (§0d, gotcha #3); no router until v1.0 |
 
 ---

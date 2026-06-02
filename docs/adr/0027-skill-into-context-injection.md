@@ -1,6 +1,6 @@
 # ADR-0027: Skill-into-context injection model — tool-result, persisted via message history
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-05-31
 **Deciders:** @kknipe2k
 **Tags:** capability, skill, system-prompt, scope, runtime
@@ -178,7 +178,7 @@ schema text. Noted as a forward option, not adopted.
   mode hardcoded for v0.1)
 - Prior ADRs: ADR-0022 (canonical framework representation — the loader
   resolves skill companions to bodies into `LoadedFramework.companions`,
-  the single-resolution-boundary rung 3 reads from); ADR-0026 (the
+  the single-resolution-boundary rung 3 reads from); ADR-0028 (the
   built-in tool execution contract — the feedback contract this mirrors);
   ADR-0019 (the Tester isolated-session model the assembled test runs in)
 - Proposals: `docs/proposals/harness-review-takeaways.md` Item 2

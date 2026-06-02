@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed — M08.7 Closeout (summary, immutable gap-analysis, simplify pass, coverage reconciliation, ADR flips)
+
+- **`docs/adr/0028-builtin-tool-execution-contract.md`** — filed at this
+  closeout per M08.7.V 🟡 #1 (the milestone deliverable ADR was never
+  filed; the intended number 0026 was consumed by
+  `plan-loop-vdr-carry-forward-routing`), and flipped **Proposed →
+  Accepted**. §Context + §3 corrected to state only `Read`/`Write` are
+  implemented in-process (`builtin_tools.rs:90`); `Glob`/`Grep`/`WebFetch`
+  are in-process-class-but-not-yet-wired; `Bash`/OS-spawn deferred to a
+  separate ADR-class rung — to match shipped reality (rule 11), not
+  overclaim, before the Accepted (immutable) flip.
+- **`docs/adr/0027-skill-into-context-injection.md`** — flipped **Proposed
+  → Accepted**; the dangling "ADR-0026 (the built-in tool execution
+  contract)" Related reference (the propagation V's 🟡 #1 flagged) repointed
+  to **ADR-0028**.
+- **`docs/build-prompts/retrospectives/M08.7-summary.md`** —
+  parent-milestone summary aggregating M08.7.X/A–E + Stage V; verdict
+  **Pattern held across M08.7. Confidence: high.** Aggregate means:
+  Process 39.6/40; Product 38.2/40; Pattern 31.0/35. All five rungs Sound;
+  V Sound (0🔴, axes 15/15). Time-box landed **within range** on every
+  stage — a marked improvement over the M08.6 ~0.24–0.34× under-run.
+- **`docs/gap-analysis.md`** — immutable M08.7 entry appended (append-only
+  per CLAUDE.md §20). Records every rung's execute-is-real claim cited
+  against shipped code + its eval (E-01..E-05); the **M08.6-IRL 7🔴 with
+  OBSERVED dispositions — 0 closed by M08.7a** (out of execution scope), 5
+  → M08.8 (app-workbench), 2 → M08.9; the "scaffolding-never-wired-to-the-
+  loop" pattern recurring all five rungs; coverage held with no gate change.
+- **`docs/execution-status.md`** — the Budget row flipped to
+  `executes — observed at the assembled run loop (engine), eval E-05` ⚠️
+  **engine-tested only** (live eval `#[ignore]d`; no maintainer real-app
+  IRL this rung; the in-app budget surface deferred to M08.8); the
+  eval-numbering note records E-05.
+- **`docs/tech-debt.md`** — **TD-041** (`ToolUse` JSON input-field
+  extraction reuse — wait-for-fourth) + **TD-042** (`dispatch_budget_actions`
+  model-chaining clarity) from the closeout simplify-pass (proposal pass;
+  **empty apply-now subset** — the diff is structurally sound; the two CQ
+  findings reviewed and the current form affirmed, no TD).
+- **Coverage-policy reconciliation:** **no gate change.** `runtime-main`
+  96.23% line ≥ 95; workspace 92.12% ≥ 80; the four new modules
+  (`builtin_tools.rs` 98.04%, `load_skill.rs` 100%, `request_capability.rs`
+  98.54%, `mcp_dispatch.rs` 98.46%) all above gate with no new
+  `--ignore-filename-regex` entry. The four mirrors are byte-consistent
+  as-is; no `docs/coverage-policy.md` §C entry required.
+
 ### Added — M08.7.E (rung 5 — budget enforcement at the run loop)
 
 - **`crates/runtime-main/src/sdk/agent_sdk.rs`** — wired the
