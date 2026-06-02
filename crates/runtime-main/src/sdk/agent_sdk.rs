@@ -51,6 +51,9 @@ use super::request_capability::{
     self, handle_request_capability, parse_capability_kind, RequestCapabilityInvocation,
     RequestCapabilityResult,
 };
+use crate::budget::{
+    BudgetEnforcer, BudgetScopeCap, DefaultLadder, DownshiftHook, RemainingBudget, ThresholdAction,
+};
 use crate::capability::{narrow, CapabilityEnforcer, CapabilityError, DenyReason};
 use crate::drone_ipc::{DroneClient, DroneIpcError};
 use crate::framework_loader::{
@@ -59,10 +62,11 @@ use crate::framework_loader::{
 };
 use crate::hitl::HitlSeam;
 use crate::providers::{
-    AgentConfig, ContentBlock, LLMProvider, Message, MessageRole, ProviderError, ProviderEvent,
-    ToolResultContent,
+    AgentConfig, ContentBlock, CostBreakdown, LLMProvider, Message, MessageRole, ProviderError,
+    ProviderEvent, ToolResultContent,
 };
 use crate::tier::Tier;
+use runtime_core::generated::framework::Framework;
 
 /// Default wait for HITL responses on capability / tier violations
 /// surfaced by the L1 wire-up. Long enough that a user can read the
@@ -106,6 +110,24 @@ struct TurnFeedback {
     /// — rather than feeding results back, so the session halts cleanly at
     /// the gap (recoverable from the snapshot per §1b).
     gap_suspended: bool,
+    /// Set when a budget `HardStop` fired this turn (M08.7 rung 5). The
+    /// multi-turn driver STOPS — issues no further provider turn — so the
+    /// run halts at the cap. The load-bearing safety primitive: a
+    /// `budget_exceeded` event firing licenses "the event fired", NOT "the
+    /// run halted" (gotcha #66) — this break is the run-halt.
+    budget_stopped: bool,
+    /// Set when a budget `Suspend` (HITL at the suspend threshold) fired
+    /// this turn (M08.7 rung 5). v0.1 records the suspend and halts
+    /// (suspend-and-record) — the HITL **resume** half is NOT a dead-end:
+    /// it is the same resolve-and-resume pattern as the rung-4 gap (suspend
+    /// → human approves the budget → resume), folded into ADR-0029
+    /// generalized to budget. Rung 5 records the suspend; the resume joins
+    /// that rung.
+    budget_suspended: bool,
+    /// Set when a budget `Downshift` swapped the model via the ladder
+    /// (M08.7 rung 5). The driver applies it to the next turn's
+    /// [`AgentConfig::model`] so subsequent turns use the cheaper model.
+    new_model: Option<String>,
 }
 
 /// Outcome of dispatching one `request_capability` `ToolUse` (M08.7 rung 4).
@@ -326,16 +348,41 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
     /// otherwise propagates errors from the prelude / stream drive.
     pub async fn run_agent(&self, mut config: AgentConfig) -> Result<(), SdkError> {
         let (agent_id, mut pipeline) = self.session_prelude().await?;
+        // M08.7 rung 5: the session budget enforcer, built ONCE from the
+        // framework's budget caps (when capability wiring carries a
+        // framework with a `budget` block). It accumulates spend across
+        // turns. `None` when no cap is configured — budget-less frameworks
+        // and the un-wired smoke path stay byte-stable (no enforcement).
+        let mut session_budget = self
+            .capability_wiring
+            .as_ref()
+            .and_then(|w| build_session_budget(&w.framework));
         for _turn in 0..MAX_AGENT_TURNS {
             let stream = self.provider.stream(config.clone()).await?;
-            let feedback = self.drive_stream(stream, &mut pipeline, &agent_id).await?;
-            if feedback.gap_suspended {
-                // M08.7 rung 4: a request_capability gap suspended the
-                // session — halt the turn loop (issue no further provider
-                // turn), EVEN if this turn also dispatched a tool. The gap
-                // event is persisted (recoverable §1b); resolution
-                // (grant/install/decline) is the HITL surface, not v0.1
-                // (scope: suspend-and-record).
+            let feedback = self
+                .drive_stream(
+                    stream,
+                    &mut pipeline,
+                    &agent_id,
+                    session_budget.as_mut(),
+                    &config.model,
+                )
+                .await?;
+            // M08.7 rung 5: a budget Downshift swapped the model — apply it
+            // so the NEXT provider.stream uses the cheaper model (the swap
+            // the next turn actually uses; gotcha — observe it on the config,
+            // not just the hook return).
+            if let Some(model) = feedback.new_model {
+                config.model = model;
+            }
+            if feedback.gap_suspended || feedback.budget_stopped || feedback.budget_suspended {
+                // Halt the turn loop — issue no further provider turn. A
+                // request_capability gap suspends (M08.7 rung 4); a budget
+                // HardStop / Suspend stops at the cap (rung 5), EVEN if this
+                // turn also dispatched a tool. The triggering event (gap /
+                // budget_exceeded / budget_suspended) is persisted
+                // (recoverable §1b); resolution (grant / approve-budget) is
+                // the HITL resume surface (suspend-and-record — ADR-0029).
                 break;
             }
             if feedback.dispatched.is_empty() {
@@ -394,7 +441,11 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
         S: Stream<Item = ProviderEvent> + Unpin,
     {
         let (agent_id, mut pipeline) = self.session_prelude().await?;
-        let _feedback = self.drive_stream(stream, &mut pipeline, &agent_id).await?;
+        // The single-turn seam carries no budget (no multi-turn spend
+        // accumulation, no config to swap a model on — M08.7 rung 5).
+        let _feedback = self
+            .drive_stream(stream, &mut pipeline, &agent_id, None, "")
+            .await?;
         for agent_event in pipeline.flush() {
             self.emit(agent_event).await?;
         }
@@ -494,12 +545,29 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
         mut stream: S,
         pipeline: &mut EventPipeline,
         agent_id: &str,
+        session_budget: Option<&mut BudgetEnforcer>,
+        model: &str,
     ) -> Result<TurnFeedback, SdkError>
     where
         S: Stream<Item = ProviderEvent> + Unpin,
     {
         let mut feedback = TurnFeedback::default();
+        // M08.7 rung 5: accumulate this turn's token usage for budget
+        // accounting. The Usage event is PEEKED (not consumed) — it still
+        // flows to `pipeline.next_event` below (→ `TokenUsage`); the spend
+        // is recorded at the turn boundary after the stream completes.
+        let mut turn_input: u64 = 0;
+        let mut turn_output: u64 = 0;
         while let Some(provider_event) = stream.next().await {
+            if let ProviderEvent::Usage {
+                input_tokens,
+                output_tokens,
+                ..
+            } = &provider_event
+            {
+                turn_input += *input_tokens;
+                turn_output += *output_tokens;
+            }
             // M06.F (ADR-0010 + ADR-0011): when an MCP-dispatch seam is
             // injected, a `ProviderEvent::ToolUse` is offered to it
             // FIRST. `dispatch_if_mcp` returning `None` (not an MCP
@@ -601,7 +669,98 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
                 }
             }
         }
+        // M08.7 rung 5: the per-turn budget boundary. The turn's stream has
+        // completed; build the CostBreakdown from the peeked Usage tokens,
+        // price it via the provider's `estimate_cost` (the same pricing the
+        // real Anthropic wrapper applies), and feed the USD to the session
+        // enforcer's `record_spend`. The returned ThresholdActions dispatch
+        // to events + the model swap + the session stop.
+        if let Some(budget) = session_budget {
+            let breakdown = CostBreakdown::simple(turn_input, turn_output);
+            let cost = self.provider.estimate_cost(&breakdown, model);
+            self.dispatch_budget_actions(budget.record_spend(cost), model, &mut feedback)
+                .await?;
+        }
         Ok(feedback)
+    }
+
+    /// Dispatch the [`ThresholdAction`]s a turn's `record_spend` returned
+    /// (M08.7 rung 5). Each maps to its existing `Budget*` `AgentEvent`
+    /// (no schema change — all four pre-exist in `event.v1.json`) plus a
+    /// side effect:
+    /// - `Warn` → emit `BudgetWarn` (the renderer toast is event-driven;
+    ///   the OS desktop notifier is TD-038, out of v0.1 scope).
+    /// - `Downshift` → run the `opus → sonnet → haiku` ladder; on a swap
+    ///   emit `BudgetDownshift` and set `feedback.new_model` so the NEXT
+    ///   turn uses the cheaper model. When the ladder returns `None`
+    ///   (already at the cheapest tier), there is no model change to
+    ///   report, so no event fires.
+    /// - `Suspend` → emit `BudgetSuspended` + set `budget_suspended`
+    ///   (suspend-and-record; the HITL resume is ADR-0029 generalized to
+    ///   budget).
+    /// - `HardStop` → emit `BudgetExceeded` + set `budget_stopped` (the run
+    ///   halts at the cap — the load-bearing safety primitive; gotcha #66).
+    async fn dispatch_budget_actions(
+        &self,
+        actions: Vec<ThresholdAction>,
+        model: &str,
+        feedback: &mut TurnFeedback,
+    ) -> Result<(), SdkError> {
+        let mut current_model = model.to_string();
+        for action in actions {
+            match action {
+                ThresholdAction::Warn {
+                    spent_usd,
+                    cap_usd,
+                    percent,
+                    ..
+                } => {
+                    self.emit(AgentEvent::BudgetWarn {
+                        spent_usd,
+                        cap_usd,
+                        percent,
+                    })
+                    .await?;
+                }
+                ThresholdAction::Downshift {
+                    spent_usd,
+                    cap_usd,
+                    percent,
+                    ..
+                } => {
+                    let remaining = RemainingBudget {
+                        spent_usd,
+                        cap_usd,
+                        avg_task_cost_usd: None,
+                    };
+                    if let Some(next) = DefaultLadder::new().next_model(&current_model, remaining) {
+                        self.emit(AgentEvent::BudgetDownshift {
+                            from_model: current_model.clone(),
+                            to_model: next.clone(),
+                            reason: format!("budget downshift at {percent}% of ${cap_usd:.4} cap"),
+                        })
+                        .await?;
+                        current_model = next.clone();
+                        feedback.new_model = Some(next);
+                    }
+                }
+                ThresholdAction::Suspend {
+                    spent_usd, cap_usd, ..
+                } => {
+                    self.emit(AgentEvent::BudgetSuspended { spent_usd, cap_usd })
+                        .await?;
+                    feedback.budget_suspended = true;
+                }
+                ThresholdAction::HardStop {
+                    spent_usd, cap_usd, ..
+                } => {
+                    self.emit(AgentEvent::BudgetExceeded { spent_usd, cap_usd })
+                        .await?;
+                    feedback.budget_stopped = true;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Walk every inline sub-agent declared in the framework (sessions
@@ -1227,6 +1386,44 @@ fn agent_allowed_skills(framework: &FrameworkRef, agent_id: &str) -> Vec<String>
         .find(|a| a.id.as_str() == agent_id)
         .map(|a| a.allowed_skills.clone())
         .unwrap_or_default()
+}
+
+/// Build the session [`BudgetEnforcer`] from a framework's `budget` block
+/// (M08.7 rung 5). Maps `session_usd_cap` / `framework_usd_cap` to scope
+/// caps and the four percent thresholds (`NonZeroU64`) to the enforcer's
+/// args. Returns `None` when the framework configures no cap — a
+/// budget-less framework runs with no enforcement (byte-stable with the
+/// pre-rung-5 loop). REUSES the built enforcer (CLAUDE.md scope lock); the
+/// budget model is not rebuilt here.
+fn build_session_budget(framework: &Framework) -> Option<BudgetEnforcer> {
+    let budget = framework.budget.as_ref()?;
+    let mut caps = Vec::new();
+    if let Some(cap) = budget.session_usd_cap {
+        caps.push(BudgetScopeCap::session(cap));
+    }
+    if let Some(cap) = budget.framework_usd_cap {
+        caps.push(BudgetScopeCap::framework(cap));
+    }
+    if caps.is_empty() {
+        return None;
+    }
+    let (warn, downshift, suspend, hard_stop) =
+        budget
+            .actions
+            .as_ref()
+            .map_or((None, None, None, None), |a| {
+                (
+                    a.warn_at_percent.and_then(|n| u32::try_from(n.get()).ok()),
+                    a.downshift_at_percent
+                        .and_then(|n| u32::try_from(n.get()).ok()),
+                    a.hitl_at_percent.and_then(|n| u32::try_from(n.get()).ok()),
+                    a.hard_stop_at_percent
+                        .and_then(|n| u32::try_from(n.get()).ok()),
+                )
+            });
+    Some(BudgetEnforcer::new(
+        caps, warn, downshift, suspend, hard_stop,
+    ))
 }
 
 /// Prefer the enforcer-carried agent id when present; fall back to the

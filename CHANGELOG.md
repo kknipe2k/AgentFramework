@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M08.7.E (rung 5 — budget enforcement at the run loop)
+
+- **`crates/runtime-main/src/sdk/agent_sdk.rs`** — wired the
+  fully-built-but-uncalled budget primitive (`budget/enforcer.rs` +
+  `hook.rs`, unit-tested since M04 but with **no caller on the live loop**)
+  into the multi-turn run loop. `run_agent` builds the session
+  `BudgetEnforcer` once from the framework's `budget` block (new pure helper
+  `build_session_budget` — maps `session_usd_cap` / `framework_usd_cap` +
+  the four `NonZeroU64` percent thresholds); `drive_stream` peeks each
+  turn's `ProviderEvent::Usage` tokens, prices them via the provider's
+  `estimate_cost` at the per-turn boundary, and feeds the USD to
+  `record_spend`. The returned `ThresholdAction`s dispatch to their
+  **existing** `Budget*` events (no schema change): `Warn → budget_warn`;
+  `Downshift →` the `opus→sonnet→haiku` ladder swap (`feedback.new_model` →
+  the next turn's `config.model`) `+ budget_downshift`; `Suspend →
+  budget_suspended + halt`; `HardStop → budget_exceeded + halt`. The
+  load-bearing safety primitive: `run_agent` breaks the turn loop on
+  `budget_stopped` / `budget_suspended` — **no further provider turn is
+  issued** (gotcha #66 — the run-halt, not the event alone). Budget-less
+  frameworks + the un-wired smoke path stay byte-stable (`None` enforcer, no
+  enforcement). REUSES the enforcer + ladder + events; the budget model is
+  not rebuilt. `Suspend`'s HITL **resume** half is the gap resolve-and-resume
+  rung (**ADR-0029** generalized to budget), not a v0.1 dead-end.
+- **`crates/runtime-main/tests/budget_runloop_execution.rs`** (new) — the
+  assembled regression driving the REAL `run_test_session_with → run_agent →
+  drive_stream` loop (only the provider stubbed): tiny `session_usd_cap` →
+  the run HALTS (`budget_exceeded` + no further turn, counted); per-turn
+  spend accumulation; downshift swaps the model the next turn uses
+  (opus→sonnet, observed on the captured config); warn emits + does not
+  halt; threshold idempotence; and the isolated `Suspend`-halts-the-run
+  case. The behavioral close (a real Anthropic run halting at a tiny cap) is
+  the maintainer IRL gate.
+- **`docs/tech-debt.md`** — **TD-038**: the budget OS desktop notifier
+  (`NotifierDispatched`, HITL-trigger-bound) is scoped out of v0.1; the
+  in-app `budget_warn` toast covers the v0.1 user-visible signal.
+- Budget enforcement does **not** touch the budget-cap *persistence* surface
+  (M08.6-IRL #22 — cap survives restart), which is an M08.6.7 cluster
+  (zero-propagation).
+
 ### Added — M08.7.D (rung 4 — gap detection: `request_capability` suspends cleanly)
 
 - **`crates/runtime-main/src/sdk/request_capability.rs`** — wired the
