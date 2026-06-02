@@ -461,3 +461,27 @@ async fn suspend_threshold_emits_budget_suspended_and_halts_the_run() {
         configs.len()
     );
 }
+
+/// Additive (mutation-gate kill) — OUTPUT tokens contribute to the per-turn
+/// spend. The other tests drive cost via input tokens (`usage(N, 0)`), so a
+/// mutant corrupting the `turn_output` accumulation (`+= → *=`, which on a
+/// zero output is a no-op) survives. A turn of 0 input + 600 OUTPUT tokens
+/// ($0.60) must cross the 50% warn on its own: with the output half dropped
+/// (`turn_output` stuck at 0), cost is $0.00 → no warn → this test fails,
+/// killing the mutant and pinning that output tokens count toward the cap.
+#[tokio::test]
+async fn output_tokens_contribute_to_budget_spend() {
+    let fw = fw_with_budget("claude-haiku-4-5", 1.00);
+    let (trace, _configs) = run_budget_session(
+        &fw,
+        vec![
+            vec![usage(0, 600)], // 0 input, 600 output ⇒ $0.60 ⇒ crosses warn (50%)
+        ],
+    )
+    .await;
+
+    assert!(
+        count_budget_warns(&trace) >= 1,
+        "output tokens alone must drive spend across the 50% warn; trace={trace:?}"
+    );
+}
