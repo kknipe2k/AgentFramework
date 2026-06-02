@@ -411,3 +411,53 @@ async fn threshold_is_idempotent_across_turns() {
         configs.len()
     );
 }
+
+// ── additive coverage (v1.8 follow-up — net-new, separate from the
+//    red→impl pair) — the isolated Suspend threshold ──────────────────────
+
+/// Additive (maintainer-requested before the mutation gate) — the `Suspend`
+/// (HITL) threshold in ISOLATION halts the run. The E.4.1 tiny-cap close
+/// fires all four actions at once, so its halt could be attributed to
+/// `HardStop`; this pins that `Suspend` ALONE stops the loop. A $0.95 turn
+/// under a $1.00 cap crosses warn (50%) + downshift (75%) + suspend (90%)
+/// but NOT hard-stop (100%): `budget_suspended` is emitted, the run halts
+/// (exactly one turn — the suspend break wins over the co-dispatched echo
+/// that would otherwise drive turn 1), and NO `budget_exceeded` fires. A
+/// mutant that drops the `Suspend` arm's `budget_suspended` break (so the
+/// echo feeds back and a 2nd turn runs) fails here.
+#[tokio::test]
+async fn suspend_threshold_emits_budget_suspended_and_halts_the_run() {
+    let fw = fw_with_budget("claude-haiku-4-5", 1.00);
+    let (trace, configs) = run_budget_session(
+        &fw,
+        vec![
+            // Turn 0: $0.95 — crosses suspend (90%) but not hard-stop (100%).
+            vec![echo_tooluse("tu-0"), usage(950, 0)],
+            // Turn 1: scripted but must NEVER run — the suspend halts the loop.
+            vec![echo_tooluse("tu-1"), usage(100, 0)],
+        ],
+    )
+    .await;
+
+    assert!(
+        trace
+            .iter()
+            .any(|e| matches!(e, AgentEvent::BudgetSuspended { .. })),
+        "crossing the 90% suspend threshold must emit budget_suspended; trace={trace:?}"
+    );
+    // It is a SUSPEND, not a hard-stop: no budget_exceeded fired.
+    assert!(
+        !trace
+            .iter()
+            .any(|e| matches!(e, AgentEvent::BudgetExceeded { .. })),
+        "a suspend (90%) must NOT emit budget_exceeded (100%); trace={trace:?}"
+    );
+    // LOAD-BEARING: the suspend ALONE halted the run — exactly one provider
+    // turn, despite turn 0 having dispatched an echo that would feed back.
+    assert_eq!(
+        configs.len(),
+        1,
+        "the suspend must halt the run — no further provider turn; got {} turn(s)",
+        configs.len()
+    );
+}
