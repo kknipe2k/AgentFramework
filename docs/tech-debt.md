@@ -904,4 +904,76 @@ change — ADR + version bump) or a separate budget-notifier event. Pairs
 with the budget-`Suspend` resume work folded into the gap resolve-and-resume
 rung ([[ADR-0029]], generalized to budget).
 
+---
+
+## TD-039 — Rung 1 has no explicit "two reads in one session both feed back" multi-call test
+
+**Date logged:** 2026-06-02
+**Found by:** M08.7.V multi_call pass (🟢 #2)
+**Pass that surfaced it:** Multi-call invariants
+**Category:** other (test-completeness)
+**Resolution status:** open
+
+### Description
+
+The built-in-tool multi-call invariant — *two `Read`s in one session both
+feed their results back* — has no dedicated assertion in
+`runtime-main/tests/builtin_tool_execution.rs`. The mechanism is proven
+**indirectly**: the single-read→quote path (rung 1) exercises one
+dispatch→feedback cycle, and rungs 3/5 exercise repeated dispatch across
+turns. There is no explicit two-reads-both-feed-back assertion for the
+built-in surface specifically.
+
+### Why it's debt not bug
+
+Rung 1 is correct and proven (17/17 assembled tests; the agent quotes the
+file it Read). The multi-turn loop demonstrably re-streams until a turn
+dispatches no tool, so the feedback cycle repeats by construction. The gap
+is a missing explicit multi-call test for the built-in surface, not a
+behavior defect — M08.7.V graded it 🟢, not a blocker.
+
+### Recommended approach (when addressed)
+
+Add a `builtin_tool_execution.rs` case where the agent issues two `Read`s
+across two turns and assert each result appears in its respective next-turn
+`AgentConfig`. Low effort; fold into any rung-1 touch.
+
+---
+
+## TD-040 — Rung 4 "recoverable" BDD leg proven indirectly (no assembled snapshot-rebuild assertion)
+
+**Date logged:** 2026-06-02
+**Found by:** M08.7.V behavior pass (🟢 #3)
+**Pass that surfaced it:** Behavior
+**Category:** other (test-completeness)
+**Resolution status:** open
+
+### Description
+
+The rung-4 gap BDD has a "recoverable" leg (the suspended gap is persisted
+per §1b so the session can later resume). `gap_detection_execution.rs`
+proves the gap event is persisted (via `self.emit` → the signals sink) and
+the session suspends cleanly (exactly one provider turn; no `ToolInvoked`
+for `request_capability`), but it does **not** assert an assembled
+snapshot-**rebuild** (reload from the snapshot chain → the suspended state
+reconstructs). The load-bearing "suspend cleanly" half is grounded; the
+"recoverable" half is inferred from the persistence call, not observed by a
+rebuild.
+
+### Why it's debt not bug
+
+Rung 4's headline behavior — `request_capability` suspends the session
+cleanly — is grounded by execution (6/6 assembled tests). Recovery rebuild
+is a §1b mechanism already exercised elsewhere (`recovery_lifecycle`
+tests). The gap is a missing rung-4-specific rebuild assertion. The gap
+**resume** path is itself M08.9.F (ADR-0029) — this TD is about the test
+assertion, not the unbuilt resume.
+
+### Recommended approach (when addressed)
+
+When M08.9.F (gap resolve-and-resume) lands, its assembled test asserts the
+snapshot-rebuild → resolved `tool_result` → continue; that test subsumes
+this leg. Until then, optionally add a `gap_detection_execution.rs`
+assertion that the suspended gap is present in the persisted snapshot chain.
+
 
