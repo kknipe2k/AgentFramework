@@ -29,14 +29,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   feed an error `tool_result` back and continue (no suspend). Scope: v0.1 is
   **suspend-and-record** (ADR-0019), not the grant/install/decline
   resolution UI (resolve-and-resume is the scheduled v0.1 gap-resume rung
-  per **ADR-0029** — pulled forward, NOT M09-deferred — and is not wired this
-  rung). `crates/runtime-main/tests/gap_detection_live.rs` (new, `#[ignore]`d)
+  per **ADR-0029** (`docs/adr/0029-gap-resolve-and-resume.md` — the canonical
+  full-gap-loop ADR: suspend + resolve + resume; arrives via `main`) — pulled
+  forward, NOT M09-deferred — and is not wired this rung).
+  `crates/runtime-main/tests/gap_detection_live.rs` (new, `#[ignore]`d)
   encodes the rung-4 live IRL (eval E-04): a real Anthropic model lacking a
   capability calls `request_capability` → clean suspend.
-- **`docs/adr/0029-resolve-and-resume-pulled-forward-v0.1.md`** (new,
-  Proposed) — pulls resolve-and-resume forward into v0.1 as a scheduled
-  gap-resume rung (§0d scope update); supersedes the M08.7.D "partly
-  M08.6.7 / M09" framing for milestone ownership.
 - **`crates/runtime-main/src/builder/tester.rs`** — `test_agent_config`
   auto-advertises `request_capability` in every agent's tool list (spec §4b).
 - **`crates/runtime-main/tests/gap_detection_execution.rs`** (new) — the
