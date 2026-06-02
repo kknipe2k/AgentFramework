@@ -41,6 +41,8 @@ use runtime_core::generated::framework::{
 };
 use thiserror::Error;
 
+use crate::capability::CapabilityEnforcer;
+
 /// Failure modes raised by [`capabilities_for_tool`].
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum CapabilityLookupError {
@@ -258,6 +260,24 @@ pub fn capabilities_to_declarations(caps: &Capabilities) -> Vec<CapabilityDeclar
     }
 
     out
+}
+
+/// Load every inline agent's translated capability grants into `enforcer`.
+///
+/// Closes the M08.7.A §1.3-B gap: before this, NO production path fed a
+/// framework's `file_access` / tool / network capabilities into the L1
+/// enforcer — every production construction was `CapabilityEnforcer::new()`
+/// (empty, default-deny `NoDeclarations`), so no built-in tool could ever
+/// execute. Each inline agent is granted the declarations
+/// [`capabilities_to_declarations`] derives from its `Capabilities` block,
+/// keyed by the agent id the dispatch path checks against
+/// (`framework.session_root_agent` and each declared child id).
+pub fn grant_framework_capabilities(enforcer: &mut CapabilityEnforcer, framework: &Framework) {
+    for agent in inline_agents(framework) {
+        for decl in capabilities_to_declarations(&agent.capabilities) {
+            enforcer.grant(agent.id.as_str(), decl);
+        }
+    }
 }
 
 /// Render a [`CapabilityDeclaration`] to a short string for the wire.

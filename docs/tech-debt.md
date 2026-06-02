@@ -694,4 +694,349 @@ The current inline form is transparent and makes the ADR-0020 load-only seeding 
 
 If a second caller emerges (likely candidates: an M09 Tester re-layout button; an "open recent framework" Inspector hook; a "reset layout" canvas affordance), extract `seedPositionsFromLayout` to `src/lib/layout.ts` adjacent to `layoutGraph`, replace both call sites with the helper, ensure the load-only contract stays documented at each call site. ~20 min when the second caller lands.
 
+## TD-033 — Built-in tool executor gates on `file_access` scope, not execution-time tool-authorization
+
+**Date logged:** 2026-05-29
+**Found by:** M08.7.A green-phase impl (zero-propagation triage of a finding surfaced while wiring the executor; maintainer-approved disposition)
+**Pass that surfaced it:** N/A (manual review during rung-1 implementation)
+**Category:** other (defense-in-depth / capability-model layering)
+**Resolution status:** open (v1.0 hardening)
+
+### Description
+
+`execute_builtin` (`crates/runtime-main/src/sdk/builtin_tools.rs`) gates an in-process built-in `Read`/`Write` op on the **`file_access`** capability scope only — it builds a `(Read|Write, filesystem, Path, …)` declaration and runs it through `CapabilityEnforcer::check`. It does NOT additionally check an execution-time **tool-invocation authorization** (the `allowed_tools` / `Exec/<toolname>` grant the M06 pipeline path checks for non-built-in tools). An agent that emits a `Read` `ToolUse` for a path inside its `file_access.read` scope executes the read even if `Read` were absent from its `allowed_tools`.
+
+### Why it's debt not bug
+
+In v0.1 the only execution path is the Anthropic provider via the Tester, and `allowed_tools` IS gated at **advertisement**: `test_agent_config` advertises a built-in `ToolDef` only for names in the agent's `allowed_tools` (`builtin_tool_defs`), so a well-behaved model only emits `ToolUse` for tools it was advertised. The model cannot emit a `Read` `ToolUse` for a tool the framework didn't authorize, so the file_access check is the operative boundary and no v0.1 path bypasses authorization. The §1.4 BDD specifies `file_access` as the gate, and rung 1 implements exactly that.
+
+The gap is defense-in-depth for **non-advertisement / non-Anthropic paths**: a future provider that emits un-advertised tool calls, a replay/scripted path that injects a `ToolUse` directly, or a malicious model ignoring the advertised set would reach `execute_builtin` with only the file_access check between it and the filesystem (still scoped, but not authorization-checked).
+
+### Recommended approach (when addressed)
+
+v1.0 hardening: have the built-in branch in `drive_stream` (or `execute_builtin`) additionally verify the tool is in the agent's `allowed_tools` / has the `Exec/<toolname>` grant before running — making built-in execution require BOTH tool-invocation authorization AND file_access scope (the same two-dimension model the spec implies). Land it alongside the v1.0 provider-abstraction work (the first non-Anthropic provider is the trigger) or any execution path that does not route tool advertisement through `builtin_tool_defs`. Small change; touches `crates/runtime-main/src/sdk/agent_sdk.rs` + `builtin_tools.rs`.
+
+## TD-034 — No agent output is visible in the running app (IRL observability gap)
+
+**Date logged:** 2026-05-29
+**Found by:** M08.7.A rung-1 close (the IRL is unobservable — a real run cannot be watched in the assembled app)
+**Pass that surfaced it:** N/A (rung-1 IRL prep)
+**Category:** observability
+**Resolution status:** open, **MAINTAINER-CONFIRMED 2026-05-31** (rung-1 IRL, running app) — the Tester panel shows the run **completed** but renders **NO agent reply**; the agent's output (tool invocation, tool result, streamed text quoting `[package]`, completion) was visible **only via `RUST_LOG`**, never in-app. Mitigated by debug-log; full fix routed to M08.7b.
+
+### Description
+
+A rung-1 built-in-tool run produces no agent output a human can observe in the running app. Agent events (`StreamText`, `ToolInvoked`/`ToolResult`, `AgentComplete`) reach only (a) the renderer graph and (b) the throwaway Tester SQLite DB — neither surfaces the agent's text or tool results to the user:
+
+- The Tester graph nodes are not clickable, so a `ToolInvoked(Read)` / `ToolResult` node exposes no payload.
+- The live / main canvas streams no agent text — `StreamText` does not render as visible output.
+- The Tester DB is created in a tempdir and discarded after the run, so the persisted signals are not inspectable post-hoc.
+
+This blocks IRL observability: the maintainer cannot confirm by watching the app that the agent actually read the file and fed the contents back.
+
+### Why it's debt not bug
+
+The execution path is correct and proven by the assembled regression tests (`tests/builtin_tool_execution.rs`: the agent reads the file, the contents feed back as a `tool_result`, the final text quotes them). The gap is purely **surfacing** — the events are produced and emitted; nothing in v0.1's UI renders them in a watchable form. No behavior is wrong; the observable-evidence channel for a live run is missing.
+
+### Recommended approach (when addressed)
+
+Minimal mitigation (landed at M08.7.A): `log_event_debug` in `crates/runtime-main/src/sdk/agent_sdk.rs::emit` logs each event's salient payload at `debug`, so `RUST_LOG=debug` makes a run watchable in the log. Full fix (M08.7b): surface agent output in the live-graph execution view — render `StreamText` as visible agent text and make tool nodes expose their input/result payload — so a run is observable in-app without a debug log.
+
+## TD-035 — Relative file paths resolve against the app CWD (≠ repo root), undefined for later rungs
+
+**Date logged:** 2026-05-29
+**Found by:** M08.7.A rung-1 IRL watch (RUST_LOG=debug, real Anthropic model)
+**Pass that surfaced it:** N/A (IRL observation)
+**Category:** other (path-resolution semantics)
+**Resolution status:** open (forward-looking — no rung-1 defect)
+
+### Description
+
+During the rung-1 IRL, the built-in `Read` executor resolved a **relative** path against the **app's working directory**, which is NOT the repo root. Observed evidence: a relative `test-read.txt` came back **not-found** while `Cargo.toml` was **found** — confirming the app CWD is somewhere other than the project root a user would assume. Relative paths therefore resolve against an app-determined directory, not the project tree.
+
+### Why it's debt not bug
+
+Rung 1 is correct as-is: `execute_builtin` is path-string-parameterised and capability-checked (`crates/runtime-main/src/sdk/builtin_tools.rs`). Whatever path string the model emits is what `std::fs::read_to_string` resolves and what the `Path`-scoped `file_access` check evaluates — `globset` matches on the same string, so scope enforcement and the read agree. No path is read outside scope; nothing silently escapes the capability boundary. The IRL confirmed the happy path with `Cargo.toml`. The finding is purely that **relative-path resolution semantics are undefined/implicit** — fine while every IRL path is absolute or CWD-relative-by-luck, latent the moment a rung introduces a user-facing relative-path convention.
+
+### Recommended approach (when addressed)
+
+For any later rung that accepts **relative** paths from the user or model (a workspace-root convention, an in-app file picker, a "read this project file" affordance): define explicitly what relative paths resolve against — most likely a framework/workspace root the Tauri shell resolves (the CLAUDE.md §9 "Tauri-shell-resolves-directory" archetype) and passes into the executor — rather than inheriting the process CWD. Resolve relative paths against that root (and scope-check against it) so a user's `./data/x.txt` means the same thing regardless of where the app was launched. Decide alongside the rung that first surfaces relative paths; until then, absolute paths are unambiguous and rung 1 needs no change.
+
+## TD-036 — Production never wires the user's tier into the run-loop enforcer (Tester + smoke always run at Novice)
+
+**Date logged:** 2026-05-31
+**Found by:** M08.7.B rung-2 ground-at-red (grep for `set_tier` callers; maintainer-approved disposition — Option 1, test-seam + log TD)
+**Pass that surfaced it:** N/A (ground-at-red investigation during rung-2 implementation)
+**Category:** other (painted-not-wired — capability/tier enforcement; cf. [[TD-034]])
+**Resolution status:** open (routed to the live-session / tier-wiring rung)
+
+### Description
+
+No production code path calls `CapabilityEnforcer::set_tier` anywhere — grep confirms the only callers are `enforcer.rs`'s own unit tests. Both run-loop entry points build a fresh `CapabilityEnforcer::new()` and never set its tier:
+
+- `run_test_session_with` (`crates/runtime-main/src/builder/tester.rs`) — the Builder Tester.
+- `run_smoke_session_with` (`src-tauri/src/commands.rs`) — the live smoke session.
+
+`CapabilityEnforcer::new()` defaults to `Tier::Novice` (`enforcer.rs:64`), so **every** production agent run executes at Novice regardless of the user's actual tier. The app *tracks* the user's tier (`CurrentTierState` / the `get_current_tier` command), but that value is never pushed into the enforcer that gates execution. The enforcer's own doc-comment (`enforcer.rs:65-66`) describes the intended wire ("the Tauri layer loads the persisted tier at app startup and calls `set_tier` before any dispatch runs") — that wire was never built.
+
+### Why it's debt not bug
+
+In v0.1 the observable consequence is *conservative*, not unsafe: Novice is the most restrictive tier (it forbids Write and most non-Read kinds at L4), so a run-loop stuck at Novice can only **under**-grant, never over-grant — it cannot let an agent do something the user's actual tier forbids. The capability boundary is intact; it is just pinned to the safe end. A Promoted user simply cannot exercise Promoted-tier execution (e.g. a built-in Write) through the assembled app yet — the feature is absent, not mis-enforced.
+
+This is the same "painted, never wired" class as the M08.7 thesis ([[TD-034]]): the tier primitive (`Tier`, `TierEvaluator`, `set_tier`, the L4 gate) is fully built and unit-tested; only the production wire from the persisted/tracked tier into the run-loop enforcer is missing.
+
+Rung 2's consequence: the Promoted-tier `file_access`-scope Write denial is only expressible through the **test-path** seam `run_test_session_with_tier` (the assembled integration test sets `Tier::Promoted`). The real-app Tester runs at Novice, so a real-app out-of-scope Write is **tier**-denied (`TierViolation`) before the scope gate is reached — the scope-gate `CapabilityViolation(Write)` is NOT observable in the running app today. Rung 2 deliberately did NOT wire production tier (Hard Rule 8 / ADR-0019 — out of the in-process-Read/Write scope lock).
+
+### Recommended approach (when addressed)
+
+Wire the tracked/persisted user tier into the run-loop enforcer at the live-session / tier-wiring rung: have the Tauri shell read `CurrentTierState` (or `tier.json`) and pass the tier into `run_test_session_with_tier` (already plumbed) and an analogous `run_smoke_session_with` tier param, calling `enforcer.set_tier(tier)` before the first dispatch — and re-apply on a tier transition mid-session (the `tier::transition` path already documents routing through `set_tier`). That makes runtime execution actually gate on the user's tier, and lets the maintainer observe the Promoted scope-gate `CapabilityViolation(Write)` in the running app (pairs with [[TD-034]]'s in-app agent-output surfacing — both are needed for a real-app IRL of the scope gate). Touches `src-tauri/src/commands.rs` (the `test_framework` + `run_smoke_session` commands) + `tester.rs` (already has the tier seam). ADR-0019 amendment if the Tester's tier model (always-Novice-sandbox vs user-tier) is a product decision.
+
+## TD-037 — Real-app Builder-Tester cannot thread skill bodies (v0.1 canvas authors no companions); skill-load real-app IRL deferred
+
+**Date logged:** 2026-05-31
+**Found by:** M08.7.C rung-3 close — construction_reachability_check on the production `companions → resolved_skills` join (maintainer-directed: "wire it, or STOP and surface if walled deeper than expected — we'll re-tier")
+**Pass that surfaced it:** N/A (rung-3 production-wire reachability check)
+**Category:** other (painted-not-wired — renderer↔main + canvas state; cf. [[TD-034]], [[TD-036]])
+**Resolution status:** open (re-tiered — the real-app Builder-Tester skill IRL is deferred to the canvas-skill-body rung; rung 3's behavior close rests on the live eval instead)
+
+### Description
+
+Rung 3's `LoadSkill` handler reads the resolved skill body from a
+`resolved_skills` map threaded onto `CapabilityWiring`. The assembled
+test (`skill_load_execution.rs`) and the live eval (`skill_load_live.rs`)
+pass that map directly. The **production** path — the Tauri
+`test_framework` command building the map from the loaded framework's
+companions and passing it to `run_test_session_with_skills` — is **NOT
+wired**, because the companions are not reachable there:
+
+- `test_framework(framework_doc: Framework, task)` (`src-tauri/src/commands.rs:1630`)
+  receives only a bare `Framework` straight from the canvas (spec Phase 9
+  "does NOT need to save first") — **not** a `LoadedFramework`. No
+  companions.
+- The renderer holds a `companions` array (it passes it to
+  `save_framework`), but `testFramework` (`src/lib/ipc.ts:618`) sends only
+  `{ frameworkDoc, task }`.
+- Decisively: in v0.1 the canvas **authors no skill bodies at all** —
+  `src/lib/ipc.ts:504-505`: "`companions` defaults to `[]` — the v0.1
+  canvas authors no inline markdown bodies (M09's Generators will)." So
+  there is no skill-body companion in renderer state to thread, even with
+  an IPC change.
+
+Wiring only the backend join would be a **dead path** the v0.1 renderer
+can never feed (always `[]`) — the exact paint-not-execute anti-pattern
+M08.7 exists to stop (rule 11). It was therefore NOT built; the finding
+was surfaced and re-tiered per the maintainer's standing instruction.
+
+### Why it's debt not bug
+
+Rung 3 is correct and proven: the `LoadSkill` handler + the `drive_stream`
+branch + the injection-into-context are exercised by the assembled test
+(CI, structural) and the `#[ignore]`d live eval (real Anthropic,
+behavior-change — the encoded IRL). The gap is purely the **production
+renderer→shell threading** of an already-resolved skill body, which v0.1
+cannot feed because the canvas has no skill bodies (by design — M09
+Generators author them). No behavior is wrong; the in-app Builder-Tester
+"load a skill, watch it change behavior" affordance is **absent**, not
+mis-wired.
+
+### Recommended approach (when addressed)
+
+At the rung that gives the canvas skill bodies (M09 Generators, or a
+canvas skill-body editor), complete the chain together: (1) the canvas
+holds/authors skill-body companions; (2) `testFramework` +
+`test_framework` accept `companions: Vec<Companion>` (the IPC contract
+change); (3) `test_framework` joins `framework.skills[].path ↔
+companions[].file_name` into a `resolved_skills` map and calls
+`run_test_session_with_skills` (the seam is already plumbed); (4) an
+`e2e-tauri/` regression drives the real app (per ADR-0021). Until then,
+the skill-load behavior close is the live eval (`skill_load_live.rs`),
+run with `ANTHROPIC_API_KEY` set — a real-model observation through the
+real `run_test_session_with_skills → run_agent → drive_stream` path,
+just not through the Builder UI. Pairs with [[TD-034]] (no in-app agent
+output) — both are needed for an in-Builder skill IRL.
+
+## TD-038 — Budget threshold has no OS desktop notifier (v0.1 = in-app event/toast only)
+
+**Date logged:** 2026-06-01
+**Found by:** M08.7.E rung-5 ground-at-entry — the ThresholdAction→event dispatch mapping (phase doc E.3.2 names "budget_warn event + a notifier dispatch (the NotifierDispatched path)")
+**Pass that surfaced it:** N/A (rung-5 dispatch-mapping scope decision, surfaced before red)
+**Category:** other (scoped-out side effect — OS integration; cf. the desktop-notifier seam)
+**Resolution status:** open (scoped out of rung 5 — the in-app budget events cover v0.1; the OS desktop notification is the deferred bit)
+
+### Description
+
+Rung 5 wires the four budget `ThresholdAction`s to their existing
+`AgentEvent` variants — `Warn → BudgetWarn`, `Downshift →
+BudgetDownshift`, `Suspend → BudgetSuspended`, `HardStop →
+BudgetExceeded` (all pre-existing in `schemas/event.v1.json` +
+`crates/runtime-core/src/event.rs` — no schema change). The renderer's
+budget toast / header-bar amber shift is **event-driven** by `BudgetWarn`
+(the schema doc for the warn threshold: "surfaces a toast notification +
+shifts the BudgetHeaderBar color toward amber").
+
+The phase doc E.3.2 also names "a notifier dispatch (the
+`NotifierDispatched` path)" for the Warn action. That was **deliberately
+NOT wired** in rung 5: `AgentEvent::NotifierDispatched`
+(`event.rs:596`) is structurally bound to a `HitlTriggerRef` (it reports
+"a notifier successfully fired **for a HITL request**") — emitting it for
+a non-HITL budget warning would mean fabricating a trigger that does not
+fit the budget-warn semantics. The in-app toast (driven by `BudgetWarn`)
+is the v0.1 user-visible signal; the **OS desktop notification** (the
+`terminal_bell` / `desktop` / `sound` notifier types `NotifierDispatched`
+carries) is the deferred surface.
+
+### Why it's debt not bug
+
+No behavior is wrong: the budget warning IS surfaced to the user (the
+`BudgetWarn` event → renderer toast/header bar). The gap is purely the
+OS-level desktop notification — a nicety on top of the in-app signal, not
+a missing enforcement. The load-bearing rung-5 safety primitive
+(`HardStop` halts the run; `BudgetExceeded` + no further provider turns)
+is unaffected.
+
+### Recommended approach (when addressed)
+
+When the desktop-notifier seam is generalized beyond HITL (the same seam
+M04.E's `on_budget_threshold` HITL notifier uses), route the budget
+`Warn` / `Suspend` actions through it. That likely wants either a
+budget-flavored `NotifierDispatched` trigger variant (a §11 schema
+change — ADR + version bump) or a separate budget-notifier event. Pairs
+with the budget-`Suspend` resume work folded into the gap resolve-and-resume
+rung ([[ADR-0029]], generalized to budget).
+
+---
+
+## TD-039 — Rung 1 has no explicit "two reads in one session both feed back" multi-call test
+
+**Date logged:** 2026-06-02
+**Found by:** M08.7.V multi_call pass (🟢 #2)
+**Pass that surfaced it:** Multi-call invariants
+**Category:** other (test-completeness)
+**Resolution status:** open
+
+### Description
+
+The built-in-tool multi-call invariant — *two `Read`s in one session both
+feed their results back* — has no dedicated assertion in
+`runtime-main/tests/builtin_tool_execution.rs`. The mechanism is proven
+**indirectly**: the single-read→quote path (rung 1) exercises one
+dispatch→feedback cycle, and rungs 3/5 exercise repeated dispatch across
+turns. There is no explicit two-reads-both-feed-back assertion for the
+built-in surface specifically.
+
+### Why it's debt not bug
+
+Rung 1 is correct and proven (17/17 assembled tests; the agent quotes the
+file it Read). The multi-turn loop demonstrably re-streams until a turn
+dispatches no tool, so the feedback cycle repeats by construction. The gap
+is a missing explicit multi-call test for the built-in surface, not a
+behavior defect — M08.7.V graded it 🟢, not a blocker.
+
+### Recommended approach (when addressed)
+
+Add a `builtin_tool_execution.rs` case where the agent issues two `Read`s
+across two turns and assert each result appears in its respective next-turn
+`AgentConfig`. Low effort; fold into any rung-1 touch.
+
+---
+
+## TD-040 — Rung 4 "recoverable" BDD leg proven indirectly (no assembled snapshot-rebuild assertion)
+
+**Date logged:** 2026-06-02
+**Found by:** M08.7.V behavior pass (🟢 #3)
+**Pass that surfaced it:** Behavior
+**Category:** other (test-completeness)
+**Resolution status:** open
+
+### Description
+
+The rung-4 gap BDD has a "recoverable" leg (the suspended gap is persisted
+per §1b so the session can later resume). `gap_detection_execution.rs`
+proves the gap event is persisted (via `self.emit` → the signals sink) and
+the session suspends cleanly (exactly one provider turn; no `ToolInvoked`
+for `request_capability`), but it does **not** assert an assembled
+snapshot-**rebuild** (reload from the snapshot chain → the suspended state
+reconstructs). The load-bearing "suspend cleanly" half is grounded; the
+"recoverable" half is inferred from the persistence call, not observed by a
+rebuild.
+
+### Why it's debt not bug
+
+Rung 4's headline behavior — `request_capability` suspends the session
+cleanly — is grounded by execution (6/6 assembled tests). Recovery rebuild
+is a §1b mechanism already exercised elsewhere (`recovery_lifecycle`
+tests). The gap is a missing rung-4-specific rebuild assertion. The gap
+**resume** path is itself M08.9.F (ADR-0029) — this TD is about the test
+assertion, not the unbuilt resume.
+
+### Recommended approach (when addressed)
+
+When M08.9.F (gap resolve-and-resume) lands, its assembled test asserts the
+snapshot-rebuild → resolved `tool_result` → continue; that test subsumes
+this leg. Until then, optionally add a `gap_detection_execution.rs`
+assertion that the suspended gap is present in the persisted snapshot chain.
+
+---
+
+## TD-041 — `ToolUse` JSON input-field extraction repeats across dispatch handlers
+
+**Date logged:** 2026-06-02
+**Found by:** M08.7 closeout simplify-pass (RU-M08.7-1)
+**Pass that surfaced it:** Simplify-pass (reuse)
+**Category:** reuse
+**Resolution status:** open
+
+### Description
+
+`dispatch_load_skill` and `dispatch_request_capability` in
+`crates/runtime-main/src/sdk/agent_sdk.rs` both extract a string field from
+the `ToolUse` `input` JSON with the same shape
+(`input.get(key).and_then(Value::as_str).unwrap_or_default().to_string()`).
+`builtin_tools.rs` uses a narrower single-field variant. A shared
+`tool_input_str(input, key)` helper would compress the two-to-three sites.
+
+### Why it's debt not bug
+
+Both sites are small, correct, and clear in place. Per CLAUDE.md §9
+("wait for the fourth") the pattern is below the extraction bar today — two
+production sites + one near-variant. No behavior concern; this is a reuse
+opportunity that only pays off once a fourth caller lands.
+
+### Recommended approach (when addressed)
+
+When a fourth `ToolUse`-input-parsing handler emerges (M08.9 sub-agent /
+plan dispatch, or v1.0 generators), extract `tool_input_str` to a shared
+helper at the dispatch boundary that needs it.
+
+---
+
+## TD-042 — `dispatch_budget_actions` carries `current_model` mutation across the action loop
+
+**Date logged:** 2026-06-02
+**Found by:** M08.7 closeout simplify-pass (EFF-M08.7-1)
+**Pass that surfaced it:** Simplify-pass (efficiency/clarity)
+**Category:** other (clarity-on-future-extension)
+**Resolution status:** open
+
+### Description
+
+`dispatch_budget_actions` (`crates/runtime-main/src/sdk/agent_sdk.rs`)
+seeds `current_model` from the turn's model and mutates it in place on a
+`Downshift` action so a subsequent action in the same `actions` vec sees the
+updated model. The logic is correct for today's action set (`Warn` /
+`Downshift` / `Suspend`), but the cross-iteration mutable state would become
+subtle if a future rung adds a third model-aware action or allows an action
+to repeat.
+
+### Why it's debt not bug
+
+The current form is correct and necessary for the warn→downshift ordering;
+the simplify-pass explicitly recommended no refactor now. This is a
+clarity flag for future extension, not a defect.
+
+### Recommended approach (when addressed)
+
+If a second model-aware budget action lands (or the action set grows),
+revisit whether the per-action model should be derived rather than carried
+as mutable loop state.
 

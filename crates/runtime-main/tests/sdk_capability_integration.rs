@@ -215,20 +215,23 @@ fn build_sdk(
 
 #[tokio::test]
 async fn tool_dispatch_with_valid_grant_emits_capability_grant_and_tool_invoked() {
-    // Wire-up trace #2 happy path: Read tool dispatched + agent has
-    // matching Exec grant → CapabilityGrant + ToolInvoked emit, in
-    // that order.
+    // Wire-up trace #2 happy path: a framework tool dispatched + agent
+    // has matching Exec grant → CapabilityGrant + ToolInvoked emit, in
+    // that order. Uses "Echo" (a non-executor tool) rather than the
+    // built-in "Read"/"Write" — those are owned by the M08.7.A in-process
+    // executor (sdk/builtin_tools.rs) and no longer take this painted
+    // pipeline path. This test pins the generic pipeline L1 contract.
     let agent_id = "worker";
-    let fw = fw_with_one_agent(agent_id, &["Read"], &[("Read", "builtin")]);
+    let fw = fw_with_one_agent(agent_id, &["Echo"], &[("Echo", "builtin")]);
 
     let (sdk, mut rx) = build_sdk(
         fw,
-        vec![(agent_id.to_string(), exec_grant_for_builtin_tool("Read"))],
+        vec![(agent_id.to_string(), exec_grant_for_builtin_tool("Echo"))],
         Tier::Promoted,
         vec![
             ProviderEvent::ToolUse {
                 id: "tool_1".into(),
-                name: "Read".into(),
+                name: "Echo".into(),
                 input: json!({"path": "src/lib.rs"}),
             },
             ProviderEvent::MessageStop {
@@ -265,11 +268,13 @@ async fn tool_dispatch_with_valid_grant_emits_capability_grant_and_tool_invoked(
 
 #[tokio::test]
 async fn tool_dispatch_missing_grant_emits_capability_violation_and_no_tool_invoked() {
-    // Wire-up trace #2 unhappy path: Read tool dispatched + agent has
-    // NO Exec grant on Read → CapabilityViolation emit, ToolInvoked
-    // absent. Asserts BOTH directions per gotcha #66.
+    // Wire-up trace #2 unhappy path: a framework tool dispatched + agent
+    // has NO Exec grant on it → CapabilityViolation emit, ToolInvoked
+    // absent. Asserts BOTH directions per gotcha #66. Uses "Echo" (a
+    // non-executor tool) so it exercises the pipeline L1 denial, not the
+    // M08.7.A built-in executor's file_access denial.
     let agent_id = "worker";
-    let fw = fw_with_one_agent(agent_id, &["Read"], &[("Read", "builtin")]);
+    let fw = fw_with_one_agent(agent_id, &["Echo"], &[("Echo", "builtin")]);
 
     let (sdk, mut rx) = build_sdk(
         fw,
@@ -279,7 +284,7 @@ async fn tool_dispatch_missing_grant_emits_capability_violation_and_no_tool_invo
         vec![
             ProviderEvent::ToolUse {
                 id: "tool_1".into(),
-                name: "Read".into(),
+                name: "Echo".into(),
                 input: json!({"path": "src/lib.rs"}),
             },
             ProviderEvent::MessageStop {
@@ -358,21 +363,21 @@ async fn tool_dispatch_twice_in_sequence_both_succeed_and_emit_separately() {
     // their own CapabilityGrant + ToolInvoked. First-call mutation
     // must not affect the second.
     let agent_id = "worker";
-    let fw = fw_with_one_agent(agent_id, &["Read"], &[("Read", "builtin")]);
+    let fw = fw_with_one_agent(agent_id, &["Echo"], &[("Echo", "builtin")]);
 
     let (sdk, mut rx) = build_sdk(
         fw,
-        vec![(agent_id.to_string(), exec_grant_for_builtin_tool("Read"))],
+        vec![(agent_id.to_string(), exec_grant_for_builtin_tool("Echo"))],
         Tier::Promoted,
         vec![
             ProviderEvent::ToolUse {
                 id: "tool_1".into(),
-                name: "Read".into(),
+                name: "Echo".into(),
                 input: json!({"call": 1}),
             },
             ProviderEvent::ToolUse {
                 id: "tool_2".into(),
-                name: "Read".into(),
+                name: "Echo".into(),
                 input: json!({"call": 2}),
             },
             ProviderEvent::MessageStop {

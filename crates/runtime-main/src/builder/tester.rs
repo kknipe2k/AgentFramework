@@ -22,6 +22,7 @@
 //! byte-loads an imported skill/tool for execution, it recomputes the SRI
 //! hash and HARD-BLOCKS on drift (integrity > availability; ADR-0014).
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -32,10 +33,15 @@ use tokio::sync::mpsc;
 
 use crate::capability::CapabilityEnforcer;
 use crate::drone_ipc::DroneClient;
+use crate::framework_loader::{grant_framework_capabilities, inline_agents};
 use crate::hitl::HitlSeam;
 use crate::providers::{AgentConfig, ContentBlock, LLMProvider, Message, MessageRole};
+use crate::sdk::builtin_tools::builtin_tool_defs;
+use crate::sdk::load_skill::load_skill_tool_def;
+use crate::sdk::request_capability::request_capability_tool_def;
 use crate::sdk::{AgentSdk, CapabilityWiring, McpToolDispatch, SessionId};
 use crate::skills_lock::LockError;
+use crate::tier::Tier;
 
 /// The result of one Tester run. Crosses the Tauri wire to F2 (the modal
 /// renders every field).
@@ -253,9 +259,36 @@ fn verify_framework_artifacts(framework: &Framework, db_path: &Path) -> Vec<Agen
 }
 
 /// Build the `AgentConfig` for the test run from the candidate framework
-/// and the user's task. The candidate's tools reach the run through the
-/// injected MCP dispatcher, not `config.tools` (the smoke / D2 archetype).
+/// and the user's task.
+///
+/// MCP / framework tools reach the run through the injected MCP dispatcher
+/// (the smoke / D2 archetype). The **in-process built-ins** (`Read`/
+/// `Write`, M08.7.A) are advertised in `config.tools` so a real model
+/// emits the matching `ToolUse` — the union of every inline agent's
+/// `allowed_tools` filtered to the in-process built-in set, deduplicated
+/// (the Anthropic API rejects duplicate tool names).
 fn test_agent_config(framework: &Framework, task: &str) -> AgentConfig {
+    let mut seen = std::collections::BTreeSet::new();
+    let allowed: Vec<String> = inline_agents(framework)
+        .iter()
+        .flat_map(|a| a.allowed_tools.iter())
+        .filter(|t| seen.insert((*t).clone()))
+        .cloned()
+        .collect();
+    let mut tools = builtin_tool_defs(&allowed);
+    // M08.7 rung 3 (spec §0b): advertise the runtime-injected LoadSkill
+    // tool when any inline agent has skills to load, so a real model can
+    // emit the matching ToolUse.
+    if inline_agents(framework)
+        .iter()
+        .any(|a| !a.allowed_skills.is_empty())
+    {
+        tools.push(load_skill_tool_def());
+    }
+    // M08.7 rung 4 (spec §4b): the runtime auto-injects request_capability
+    // into every agent's tool list so a model can signal a missing
+    // capability mid-task (the run loop intercepts the matching ToolUse).
+    tools.push(request_capability_tool_def());
     AgentConfig {
         model: framework.model.id.as_str().to_string(),
         messages: vec![Message {
@@ -267,7 +300,7 @@ fn test_agent_config(framework: &Framework, task: &str) -> AgentConfig {
         max_tokens: 4096,
         temperature: Some(0.0),
         system_prompt: None,
-        tools: vec![],
+        tools,
     }
 }
 
@@ -281,11 +314,10 @@ fn test_agent_config(framework: &Framework, task: &str) -> AgentConfig {
 /// resolution of any relative imported-artifact path the integrity
 /// pre-flight walks.
 ///
-/// Reuses the smoke-session construction
-/// (`AgentSdk::with_capability_wiring` → optional `with_mcp_dispatch` →
-/// `run_agent`); it does not rebuild a session engine. The `HitlSeam`
-/// woven into the session is the test-defaults variant so the run never
-/// blocks on user input (spec Phase 9).
+/// Delegates to [`run_test_session_with_tier`] at the v0.1 default
+/// [`Tier::Novice`] — the tier every production Tester run uses today (no
+/// production path wires the user's persisted tier into the run-loop
+/// enforcer; see [`run_test_session_with_tier`]).
 ///
 /// # Errors
 ///
@@ -300,6 +332,126 @@ pub async fn run_test_session_with<P: LLMProvider + 'static>(
     drone: Arc<DroneClient>,
     mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
     session_id: SessionId,
+) -> Result<TestOutcome, TesterError> {
+    run_test_session_with_tier(
+        framework,
+        task,
+        db_path,
+        provider,
+        drone,
+        mcp_dispatch,
+        session_id,
+        Tier::Novice,
+    )
+    .await
+}
+
+/// Test-seam variant that runs the isolated test session at an explicit
+/// [`Tier`].
+///
+/// Identical to [`run_test_session_with`] except the session enforcer's
+/// tier is set to `tier` before any dispatch. The default-Novice
+/// [`run_test_session_with`] forbids every Write at the L4 tier gate
+/// BEFORE the `file_access` scope is consulted (`enforcer.rs` checks tier
+/// first); [`Tier::Promoted`] makes the L4 gate a pass-through so a
+/// built-in Write REACHES the L1 scope check — the path M08.7.B rung 2
+/// exercises to prove the scope-gate denial through the assembled loop.
+///
+/// This is a TEST-PATH affordance. No production caller wires the user's
+/// persisted tier into the run-loop enforcer yet (the Tester + smoke
+/// session both run at Novice); production tier-wiring is tracked
+/// separately (TD — painted, not wired) and is out of rung 2's scope
+/// (Hard Rule 8 / ADR-0019).
+///
+/// Reuses the smoke-session construction
+/// (`AgentSdk::with_capability_wiring` → optional `with_mcp_dispatch` →
+/// `run_agent`); it does not rebuild a session engine. The `HitlSeam`
+/// woven into the session is the test-defaults variant so the run never
+/// blocks on user input (spec Phase 9).
+///
+/// # Errors
+///
+/// [`TesterError`] for infrastructure failure only. A capability
+/// violation / a hash mismatch produces `Ok(TestOutcome { passed:
+/// false, .. })`, NOT an `Err`.
+#[allow(clippy::too_many_arguments)] // reason: mirrors run_test_session_with's 7-arg seam + tier; arg-struct refactor deferred
+pub async fn run_test_session_with_tier<P: LLMProvider + 'static>(
+    framework: &Framework,
+    task: &str,
+    db_path: &Path,
+    provider: P,
+    drone: Arc<DroneClient>,
+    mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
+    session_id: SessionId,
+    tier: Tier,
+) -> Result<TestOutcome, TesterError> {
+    run_test_session_inner(
+        framework,
+        task,
+        db_path,
+        provider,
+        drone,
+        mcp_dispatch,
+        session_id,
+        tier,
+        BTreeMap::new(),
+    )
+    .await
+}
+
+/// Test-seam variant that threads resolved skill bodies (name → body)
+/// into the run loop's `LoadSkill` handler (M08.7 rung 3; ADR-0027).
+///
+/// Runs at the v0.1 default [`Tier::Novice`] — `LoadSkill` is gated by the
+/// agent's `allowed_skills` (a membership check in the handler), not by
+/// the L4 tier, so a skill load needs no tier elevation. The bodies are
+/// resolved once at framework load (ADR-0022 companions); this seam
+/// threads them in — it does NOT re-read skill files. The Tauri shell's
+/// Tester wrapper builds the map by joining `framework.skills[]` to the
+/// loader's resolved companions; the assembled test passes it directly.
+///
+/// # Errors
+///
+/// [`TesterError`] for infrastructure failure only (same contract as
+/// [`run_test_session_with`]).
+#[allow(clippy::too_many_arguments)] // reason: mirrors run_test_session_with's 7-arg seam + the resolved-skills map
+pub async fn run_test_session_with_skills<P: LLMProvider + 'static>(
+    framework: &Framework,
+    task: &str,
+    db_path: &Path,
+    provider: P,
+    drone: Arc<DroneClient>,
+    mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
+    session_id: SessionId,
+    resolved_skills: BTreeMap<String, String>,
+) -> Result<TestOutcome, TesterError> {
+    run_test_session_inner(
+        framework,
+        task,
+        db_path,
+        provider,
+        drone,
+        mcp_dispatch,
+        session_id,
+        Tier::Novice,
+        resolved_skills,
+    )
+    .await
+}
+
+/// Shared core for the Tester seams: runs the isolated test session at
+/// `tier` with `resolved_skills` threaded into the `LoadSkill` handler.
+#[allow(clippy::too_many_arguments)] // reason: the full Tester collaborator set + tier + skills; arg-struct refactor deferred
+async fn run_test_session_inner<P: LLMProvider + 'static>(
+    framework: &Framework,
+    task: &str,
+    db_path: &Path,
+    provider: P,
+    drone: Arc<DroneClient>,
+    mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
+    session_id: SessionId,
+    tier: Tier,
+    resolved_skills: BTreeMap<String, String>,
 ) -> Result<TestOutcome, TesterError> {
     let started = Instant::now();
 
@@ -319,11 +471,20 @@ pub async fn run_test_session_with<P: LLMProvider + 'static>(
     // optional `with_mcp_dispatch` → `run_agent`). The `HitlSeam` is the
     // test-defaults variant so the run never blocks on user input.
     let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(1024);
+    // Load the candidate framework's declared capabilities into the L1
+    // enforcer (M08.7.A §1.3-B): without this the enforcer is empty
+    // (default-deny `NoDeclarations`) and no built-in tool can execute.
+    let mut enforcer = CapabilityEnforcer::new();
+    grant_framework_capabilities(&mut enforcer, framework);
+    // M08.7.B rung 2: set the session tier so a Write can reach the L1
+    // scope gate. Default-Novice tier-denies every Write at L4 first.
+    enforcer.set_tier(tier);
     let wiring = CapabilityWiring::new(
-        Arc::new(CapabilityEnforcer::new()),
+        Arc::new(enforcer),
         Arc::new(framework.clone()),
         Arc::new(HitlSeam::test_defaults()),
-    );
+    )
+    .with_resolved_skills(resolved_skills);
     let mut sdk =
         AgentSdk::with_capability_wiring(Arc::new(provider), event_tx, drone, session_id, wiring);
     if let Some(dispatch) = mcp_dispatch {

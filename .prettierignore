@@ -33,3 +33,9 @@ src/types/mcp.ts
 src/types/framework.ts
 *.yml
 *.yaml
+
+# Design-pass reference mockups (DESIGN.md visual layer, PR #117). These are
+# throwaway .jsx/.js/.css/.html sketches — reference artifacts, not authored
+# build sources (the real frontend is src/). Not prettier-gated, same as the
+# examples/ archetype content above.
+docs/design/workbench-mockup

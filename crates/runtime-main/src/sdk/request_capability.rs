@@ -16,9 +16,19 @@
 //! retrospective for maintainer decision (analogous to M04.V Decision 2).
 
 use runtime_core::event::{AgentEvent, GapSeverityRef, GapSourceRef};
+use serde_json::json;
 use thiserror::Error;
 
 use crate::framework_loader::Emitter;
+use crate::providers::ToolDef;
+
+/// The runtime-auto-injected `request_capability` meta-tool name.
+///
+/// Spec §4b: "The runtime auto-injects `request_capability` into every
+/// agent's tool list." The run loop intercepts a `ToolUse` of this name
+/// BEFORE the emit-only pipeline path and routes it to
+/// [`handle_request_capability`].
+pub const REQUEST_CAPABILITY_TOOL: &str = "request_capability";
 
 /// One of the four primitive kinds an agent can request mid-session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,6 +150,58 @@ pub async fn handle_request_capability(
     };
     emitter.emit(event).await;
     Ok(RequestCapabilityResult::Pending)
+}
+
+/// Parse the meta-tool's `capability_kind` wire string (spec §4b enum
+/// `tool | skill | mcp | agent`) into a [`CapabilityKind`].
+///
+/// An unrecognized or malformed value defaults to [`CapabilityKind::Tool`]
+/// — the conservative choice, because a `tool` gap **suspends** the session
+/// (spec §4b severity matrix), so a garbled request fails safe (halt) rather
+/// than silently continuing past an unresolved gap.
+#[must_use]
+pub fn parse_capability_kind(kind: &str) -> CapabilityKind {
+    match kind {
+        "skill" => CapabilityKind::Skill,
+        "mcp" => CapabilityKind::Mcp,
+        "agent" => CapabilityKind::Agent,
+        _ => CapabilityKind::Tool,
+    }
+}
+
+/// The `ToolDef` advertised to the model for `request_capability`.
+///
+/// Spec §4b input shape `{capability_name, capability_kind, reason}`,
+/// auto-injected into every agent's tool list so a model can signal a
+/// missing capability mid-task.
+#[must_use]
+pub fn request_capability_tool_def() -> ToolDef {
+    ToolDef {
+        name: REQUEST_CAPABILITY_TOOL.to_string(),
+        description:
+            "Request a capability (tool, skill, MCP server, or sub-agent) you need but don't \
+             have. Call this instead of improvising when a required capability is missing."
+                .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "capability_name": {
+                    "type": "string",
+                    "description": "Best-effort name of the missing capability."
+                },
+                "capability_kind": {
+                    "type": "string",
+                    "enum": ["tool", "skill", "mcp", "agent"],
+                    "description": "tool = callable, skill = instructional context, mcp = MCP server, agent = sub-agent."
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why you need this capability now."
+                }
+            },
+            "required": ["capability_name", "capability_kind", "reason"]
+        }),
+    }
 }
 
 #[cfg(test)]

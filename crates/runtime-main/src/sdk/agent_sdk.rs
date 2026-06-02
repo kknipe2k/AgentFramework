@@ -35,17 +35,26 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::stream::{Stream, StreamExt};
-use runtime_core::event::{AgentEvent, ToolSource};
+use runtime_core::event::{AgentEvent, CapabilityKindRef, TierRef, ToolSource};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use super::builtin_tools::{self, BuiltinExecError};
 use super::event_pipeline::{EnforcementContext, EventPipeline};
+use super::load_skill;
 use super::mcp_dispatch::{
     apply_renderable, mcp_dispatch_error_event, renderable_needs_hitl, McpDispatchOutcome,
     McpToolDispatch, RenderableOutcome,
 };
-use crate::capability::{narrow, CapabilityEnforcer};
+use super::request_capability::{
+    self, handle_request_capability, parse_capability_kind, RequestCapabilityInvocation,
+    RequestCapabilityResult,
+};
+use crate::budget::{
+    BudgetEnforcer, BudgetScopeCap, DefaultLadder, DownshiftHook, RemainingBudget, ThresholdAction,
+};
+use crate::capability::{narrow, CapabilityEnforcer, CapabilityError, DenyReason};
 use crate::drone_ipc::{DroneClient, DroneIpcError};
 use crate::framework_loader::{
     capabilities_to_declarations, declaration_to_narrowed_from_str, inline_agents,
@@ -53,9 +62,11 @@ use crate::framework_loader::{
 };
 use crate::hitl::HitlSeam;
 use crate::providers::{
-    AgentConfig, ContentBlock, LLMProvider, Message, MessageRole, ProviderError, ProviderEvent,
-    ToolResultContent,
+    AgentConfig, ContentBlock, CostBreakdown, LLMProvider, Message, MessageRole, ProviderError,
+    ProviderEvent, ToolResultContent,
 };
+use crate::tier::Tier;
+use runtime_core::generated::framework::Framework;
 
 /// Default wait for HITL responses on capability / tier violations
 /// surfaced by the L1 wire-up. Long enough that a user can read the
@@ -94,6 +105,71 @@ struct DispatchedTool {
 #[derive(Default)]
 struct TurnFeedback {
     dispatched: Vec<DispatchedTool>,
+    /// Set when a `request_capability` gap was raised this turn (M08.7 rung
+    /// 4). The multi-turn driver SUSPENDS — issues no further provider turn
+    /// — rather than feeding results back, so the session halts cleanly at
+    /// the gap (recoverable from the snapshot per §1b).
+    gap_suspended: bool,
+    /// Set when a budget `HardStop` fired this turn (M08.7 rung 5). The
+    /// multi-turn driver STOPS — issues no further provider turn — so the
+    /// run halts at the cap. The load-bearing safety primitive: a
+    /// `budget_exceeded` event firing licenses "the event fired", NOT "the
+    /// run halted" (gotcha #66) — this break is the run-halt.
+    budget_stopped: bool,
+    /// Set when a budget `Suspend` (HITL at the suspend threshold) fired
+    /// this turn (M08.7 rung 5). v0.1 records the suspend and halts
+    /// (suspend-and-record) — the HITL **resume** half is NOT a dead-end:
+    /// it is the same resolve-and-resume pattern as the rung-4 gap (suspend
+    /// → human approves the budget → resume), folded into ADR-0029
+    /// generalized to budget. Rung 5 records the suspend; the resume joins
+    /// that rung.
+    budget_suspended: bool,
+    /// Set when a budget `Downshift` swapped the model via the ladder
+    /// (M08.7 rung 5). The driver applies it to the next turn's
+    /// [`AgentConfig::model`] so subsequent turns use the cheaper model.
+    new_model: Option<String>,
+}
+
+/// Outcome of dispatching one `request_capability` `ToolUse` (M08.7 rung 4).
+enum RequestCapabilityDisposition {
+    /// The handler emitted a `*Missing` gap — the turn loop must suspend.
+    Suspended,
+    /// The invocation was malformed (empty name / justification); feed this
+    /// error `tool_result` back and continue (NOT a suspend — the session
+    /// is still healthy and the model can fix its call).
+    Continue(DispatchedTool),
+}
+
+/// Collects the gap event(s) [`handle_request_capability`] emits so the run
+/// loop can forward them through [`AgentSdk::emit`] — the same persist +
+/// debug-log + renderer path every other event takes (so the gap is
+/// recoverable per §1b). Reuses the built handler without reimplementing
+/// its `match kind` arm.
+#[derive(Default)]
+struct GapEventCollector {
+    events: std::sync::Mutex<Vec<AgentEvent>>,
+}
+
+impl GapEventCollector {
+    /// Drain the collected events.
+    fn take(&self) -> Vec<AgentEvent> {
+        std::mem::take(
+            &mut self
+                .events
+                .lock()
+                .expect("gap collector mutex not poisoned"),
+        )
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::framework_loader::Emitter for GapEventCollector {
+    async fn emit(&self, event: AgentEvent) {
+        self.events
+            .lock()
+            .expect("gap collector mutex not poisoned")
+            .push(event);
+    }
 }
 
 /// Newtype wrapping a session UUID. Cheap to clone; serializes as a
@@ -147,11 +223,17 @@ pub struct CapabilityWiring {
     /// HITL seam the SDK loop awaits on for `capability_violation` /
     /// `tier_violation` routing per M04.E `on_capability_violation`.
     pub hitl_seam: Arc<HitlSeam>,
+    /// M08.7 rung 3 (ADR-0027): resolved skill bodies, keyed by skill
+    /// name. The `LoadSkill` handler reads from here — the bodies are
+    /// resolved once at load (ADR-0022 companions) and threaded in, never
+    /// re-resolved. Empty for sessions with no skills.
+    pub resolved_skills: BTreeMap<String, String>,
 }
 
 impl CapabilityWiring {
     /// Construct from the three Arc references the Tauri shell layer
-    /// already holds at session start.
+    /// already holds at session start. `resolved_skills` defaults empty —
+    /// attach it via [`Self::with_resolved_skills`].
     #[must_use]
     pub const fn new(
         enforcer: Arc<CapabilityEnforcer>,
@@ -162,7 +244,18 @@ impl CapabilityWiring {
             enforcer,
             framework,
             hitl_seam,
+            resolved_skills: BTreeMap::new(),
         }
+    }
+
+    /// Attach resolved skill bodies (name → body) for the `LoadSkill`
+    /// handler (M08.7 rung 3; ADR-0027). Additive over [`Self::new`] so
+    /// every existing constructor call site stays byte-stable; the
+    /// Tester's skill seam sets it.
+    #[must_use]
+    pub fn with_resolved_skills(mut self, resolved_skills: BTreeMap<String, String>) -> Self {
+        self.resolved_skills = resolved_skills;
+        self
     }
 }
 
@@ -255,9 +348,43 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
     /// otherwise propagates errors from the prelude / stream drive.
     pub async fn run_agent(&self, mut config: AgentConfig) -> Result<(), SdkError> {
         let (agent_id, mut pipeline) = self.session_prelude().await?;
+        // M08.7 rung 5: the session budget enforcer, built ONCE from the
+        // framework's budget caps (when capability wiring carries a
+        // framework with a `budget` block). It accumulates spend across
+        // turns. `None` when no cap is configured — budget-less frameworks
+        // and the un-wired smoke path stay byte-stable (no enforcement).
+        let mut session_budget = self
+            .capability_wiring
+            .as_ref()
+            .and_then(|w| build_session_budget(&w.framework));
         for _turn in 0..MAX_AGENT_TURNS {
             let stream = self.provider.stream(config.clone()).await?;
-            let feedback = self.drive_stream(stream, &mut pipeline, &agent_id).await?;
+            let feedback = self
+                .drive_stream(
+                    stream,
+                    &mut pipeline,
+                    &agent_id,
+                    session_budget.as_mut(),
+                    &config.model,
+                )
+                .await?;
+            // M08.7 rung 5: a budget Downshift swapped the model — apply it
+            // so the NEXT provider.stream uses the cheaper model (the swap
+            // the next turn actually uses; gotcha — observe it on the config,
+            // not just the hook return).
+            if let Some(model) = feedback.new_model {
+                config.model = model;
+            }
+            if feedback.gap_suspended || feedback.budget_stopped || feedback.budget_suspended {
+                // Halt the turn loop — issue no further provider turn. A
+                // request_capability gap suspends (M08.7 rung 4); a budget
+                // HardStop / Suspend stops at the cap (rung 5), EVEN if this
+                // turn also dispatched a tool. The triggering event (gap /
+                // budget_exceeded / budget_suspended) is persisted
+                // (recoverable §1b); resolution (grant / approve-budget) is
+                // the HITL resume surface (suspend-and-record — ADR-0029).
+                break;
+            }
             if feedback.dispatched.is_empty() {
                 // Model requested no tool this turn → it has stopped.
                 break;
@@ -314,7 +441,11 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
         S: Stream<Item = ProviderEvent> + Unpin,
     {
         let (agent_id, mut pipeline) = self.session_prelude().await?;
-        let _feedback = self.drive_stream(stream, &mut pipeline, &agent_id).await?;
+        // The single-turn seam carries no budget (no multi-turn spend
+        // accumulation, no config to swap a model on — M08.7 rung 5).
+        let _feedback = self
+            .drive_stream(stream, &mut pipeline, &agent_id, None, "")
+            .await?;
         for agent_event in pipeline.flush() {
             self.emit(agent_event).await?;
         }
@@ -414,12 +545,29 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
         mut stream: S,
         pipeline: &mut EventPipeline,
         agent_id: &str,
+        session_budget: Option<&mut BudgetEnforcer>,
+        model: &str,
     ) -> Result<TurnFeedback, SdkError>
     where
         S: Stream<Item = ProviderEvent> + Unpin,
     {
         let mut feedback = TurnFeedback::default();
+        // M08.7 rung 5: accumulate this turn's token usage for budget
+        // accounting. The Usage event is PEEKED (not consumed) — it still
+        // flows to `pipeline.next_event` below (→ `TokenUsage`); the spend
+        // is recorded at the turn boundary after the stream completes.
+        let mut turn_input: u64 = 0;
+        let mut turn_output: u64 = 0;
         while let Some(provider_event) = stream.next().await {
+            if let ProviderEvent::Usage {
+                input_tokens,
+                output_tokens,
+                ..
+            } = &provider_event
+            {
+                turn_input += *input_tokens;
+                turn_output += *output_tokens;
+            }
             // M06.F (ADR-0010 + ADR-0011): when an MCP-dispatch seam is
             // injected, a `ProviderEvent::ToolUse` is offered to it
             // FIRST. `dispatch_if_mcp` returning `None` (not an MCP
@@ -433,6 +581,75 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
                     {
                         if let Some(d) = dispatched {
                             feedback.dispatched.push(d);
+                        }
+                        continue;
+                    }
+                }
+            }
+            // M08.7 rung 1: in-process built-in tool execution. A ToolUse
+            // naming an in-process built-in (Read/Write) routes through the
+            // capability-scoped executor BEFORE the emit-only pipeline
+            // path. Only when capability wiring is present — the enforcer
+            // IS the boundary (Hard Rule 8); the un-wired smoke path keeps
+            // the pre-M08.7 emit-only behavior (no enforcer to check
+            // against). Built-in results join `feedback.dispatched` exactly
+            // as MCP results do, so the multi-turn loop re-streams them.
+            if let Some(wiring) = self.capability_wiring.as_ref() {
+                if let ProviderEvent::ToolUse { id, name, input } = &provider_event {
+                    if builtin_tools::is_builtin_tool(name) {
+                        if let Some(d) = self
+                            .dispatch_builtin(wiring, agent_id, id, name, input.clone())
+                            .await?
+                        {
+                            feedback.dispatched.push(d);
+                        }
+                        continue;
+                    }
+                }
+            }
+            // M08.7 rung 3 (ADR-0027): LoadSkill — read the agent's
+            // already-resolved skill body under the `allowed_skills` gate
+            // and inject it. Routes BEFORE the emit-only pipeline path,
+            // only when capability wiring is present (the resolved skills +
+            // the agent's `allowed_skills` live there). The body rides
+            // back as a `tool_result` so it persists in the message
+            // history across turns (the rung-1 feedback contract).
+            if let Some(wiring) = self.capability_wiring.as_ref() {
+                if let ProviderEvent::ToolUse { id, name, input } = &provider_event {
+                    if name == load_skill::LOAD_SKILL_TOOL {
+                        if let Some(d) = self
+                            .dispatch_load_skill(wiring, agent_id, id, input.clone())
+                            .await?
+                        {
+                            feedback.dispatched.push(d);
+                        }
+                        continue;
+                    }
+                }
+            }
+            // M08.7 rung 4 (spec §4b Layer 2): request_capability — the
+            // auto-injected meta-tool an agent calls when it needs a
+            // capability it lacks. Intercept it BEFORE pipeline.next_event
+            // (which treats the undeclared meta-tool as a CapabilityViolation):
+            // route it to the built handle_request_capability (emits the
+            // *Missing gap with requested_via=request_capability) and SUSPEND
+            // — the multi-turn loop issues no further provider turn
+            // (suspend-and-record; recoverable §1b). Only with capability
+            // wiring (a framework run — the agent_id is the requesting agent,
+            // gotcha #68).
+            if self.capability_wiring.is_some() {
+                if let ProviderEvent::ToolUse { id, name, input } = &provider_event {
+                    if name == request_capability::REQUEST_CAPABILITY_TOOL {
+                        match self
+                            .dispatch_request_capability(agent_id, id, input.clone())
+                            .await?
+                        {
+                            RequestCapabilityDisposition::Suspended => {
+                                feedback.gap_suspended = true;
+                            }
+                            RequestCapabilityDisposition::Continue(d) => {
+                                feedback.dispatched.push(d);
+                            }
                         }
                         continue;
                     }
@@ -452,7 +669,98 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
                 }
             }
         }
+        // M08.7 rung 5: the per-turn budget boundary. The turn's stream has
+        // completed; build the CostBreakdown from the peeked Usage tokens,
+        // price it via the provider's `estimate_cost` (the same pricing the
+        // real Anthropic wrapper applies), and feed the USD to the session
+        // enforcer's `record_spend`. The returned ThresholdActions dispatch
+        // to events + the model swap + the session stop.
+        if let Some(budget) = session_budget {
+            let breakdown = CostBreakdown::simple(turn_input, turn_output);
+            let cost = self.provider.estimate_cost(&breakdown, model);
+            self.dispatch_budget_actions(budget.record_spend(cost), model, &mut feedback)
+                .await?;
+        }
         Ok(feedback)
+    }
+
+    /// Dispatch the [`ThresholdAction`]s a turn's `record_spend` returned
+    /// (M08.7 rung 5). Each maps to its existing `Budget*` `AgentEvent`
+    /// (no schema change — all four pre-exist in `event.v1.json`) plus a
+    /// side effect:
+    /// - `Warn` → emit `BudgetWarn` (the renderer toast is event-driven;
+    ///   the OS desktop notifier is TD-038, out of v0.1 scope).
+    /// - `Downshift` → run the `opus → sonnet → haiku` ladder; on a swap
+    ///   emit `BudgetDownshift` and set `feedback.new_model` so the NEXT
+    ///   turn uses the cheaper model. When the ladder returns `None`
+    ///   (already at the cheapest tier), there is no model change to
+    ///   report, so no event fires.
+    /// - `Suspend` → emit `BudgetSuspended` + set `budget_suspended`
+    ///   (suspend-and-record; the HITL resume is ADR-0029 generalized to
+    ///   budget).
+    /// - `HardStop` → emit `BudgetExceeded` + set `budget_stopped` (the run
+    ///   halts at the cap — the load-bearing safety primitive; gotcha #66).
+    async fn dispatch_budget_actions(
+        &self,
+        actions: Vec<ThresholdAction>,
+        model: &str,
+        feedback: &mut TurnFeedback,
+    ) -> Result<(), SdkError> {
+        let mut current_model = model.to_string();
+        for action in actions {
+            match action {
+                ThresholdAction::Warn {
+                    spent_usd,
+                    cap_usd,
+                    percent,
+                    ..
+                } => {
+                    self.emit(AgentEvent::BudgetWarn {
+                        spent_usd,
+                        cap_usd,
+                        percent,
+                    })
+                    .await?;
+                }
+                ThresholdAction::Downshift {
+                    spent_usd,
+                    cap_usd,
+                    percent,
+                    ..
+                } => {
+                    let remaining = RemainingBudget {
+                        spent_usd,
+                        cap_usd,
+                        avg_task_cost_usd: None,
+                    };
+                    if let Some(next) = DefaultLadder::new().next_model(&current_model, remaining) {
+                        self.emit(AgentEvent::BudgetDownshift {
+                            from_model: current_model.clone(),
+                            to_model: next.clone(),
+                            reason: format!("budget downshift at {percent}% of ${cap_usd:.4} cap"),
+                        })
+                        .await?;
+                        current_model = next.clone();
+                        feedback.new_model = Some(next);
+                    }
+                }
+                ThresholdAction::Suspend {
+                    spent_usd, cap_usd, ..
+                } => {
+                    self.emit(AgentEvent::BudgetSuspended { spent_usd, cap_usd })
+                        .await?;
+                    feedback.budget_suspended = true;
+                }
+                ThresholdAction::HardStop {
+                    spent_usd, cap_usd, ..
+                } => {
+                    self.emit(AgentEvent::BudgetExceeded { spent_usd, cap_usd })
+                        .await?;
+                    feedback.budget_stopped = true;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Walk every inline sub-agent declared in the framework (sessions
@@ -678,7 +986,255 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
         }
     }
 
+    /// Execute one in-process built-in `ToolUse` (`Read`/`Write`) under
+    /// capability scope and emit the agent-correct events. Returns
+    /// `Some(DispatchedTool)` when there is a result to feed back —
+    /// executed OR errored (both continue the multi-turn loop); `None`
+    /// when the capability check blocked the op (no execution;
+    /// `CapabilityViolation`/`TierViolation` emitted + HITL routed —
+    /// mirrors the MCP `Blocked` shape so built-in and MCP converge on one
+    /// feedback contract).
+    async fn dispatch_builtin(
+        &self,
+        wiring: &CapabilityWiring,
+        agent_id: &str,
+        tool_use_id: &str,
+        tool_name: &str,
+        input: serde_json::Value,
+    ) -> Result<Option<DispatchedTool>, SdkError> {
+        match builtin_tools::execute_builtin(&wiring.enforcer, agent_id, tool_name, &input) {
+            Ok(value) => Ok(Some(
+                self.emit_builtin_result(agent_id, tool_use_id, tool_name, input, value)
+                    .await?,
+            )),
+            // The op ran but failed (malformed input / IO). Feed an error
+            // tool_result back so the model can recover — the loop must not
+            // break on a recoverable tool error.
+            Err(BuiltinExecError::Op(msg)) => Ok(Some(
+                self.emit_builtin_result(
+                    agent_id,
+                    tool_use_id,
+                    tool_name,
+                    input,
+                    serde_json::json!({ "error": msg }),
+                )
+                .await?,
+            )),
+            // The capability check blocked the op — it never ran. Emit the
+            // violation, route HITL, feed nothing back.
+            Err(BuiltinExecError::Capability(err)) => {
+                self.emit_builtin_capability_violation(agent_id, tool_name, &err)
+                    .await?;
+                self.await_capability_violation_hitl(&wiring.hitl_seam)
+                    .await;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Handle one `LoadSkill` `ToolUse` (M08.7 rung 3; ADR-0027). Reads
+    /// the agent's already-resolved skill body under the `allowed_skills`
+    /// gate, emits `SkillLoaded` + the `ToolInvoked`/`ToolResult` pair, and
+    /// returns a [`DispatchedTool`] so the body rides back as a
+    /// `tool_result` (persisting in the message history across turns — the
+    /// rung-1 feedback contract). A skill not in `allowed_skills` (or with
+    /// no resolved body) feeds an error `tool_result` back so the loop
+    /// survives; gap-event routing for a genuinely missing capability is
+    /// rung 4 (`request_capability`), not rung 3.
+    async fn dispatch_load_skill(
+        &self,
+        wiring: &CapabilityWiring,
+        agent_id: &str,
+        tool_use_id: &str,
+        input: serde_json::Value,
+    ) -> Result<Option<DispatchedTool>, SdkError> {
+        let skill_name = input
+            .get("skill_name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let allowed = agent_allowed_skills(&wiring.framework, agent_id);
+        let value = match load_skill::load_skill(skill_name, &allowed, &wiring.resolved_skills) {
+            Ok(loaded) => {
+                self.emit(AgentEvent::SkillLoaded {
+                    agent_id: agent_id.to_string(),
+                    skill_name: loaded.name.clone(),
+                    mode: None,
+                })
+                .await?;
+                serde_json::json!({ "skill": loaded.name, "body": loaded.body })
+            }
+            Err(load_skill::LoadSkillError::NotAllowed(s)) => {
+                serde_json::json!({ "error": format!("skill '{s}' is not in this agent's allowed_skills") })
+            }
+            Err(load_skill::LoadSkillError::NotResolved(s)) => {
+                serde_json::json!({ "error": format!("skill '{s}' has no resolved body") })
+            }
+        };
+        Ok(Some(
+            self.emit_builtin_result(
+                agent_id,
+                tool_use_id,
+                load_skill::LOAD_SKILL_TOOL,
+                input,
+                value,
+            )
+            .await?,
+        ))
+    }
+
+    /// Handle one `request_capability` `ToolUse` (M08.7 rung 4; spec §4b
+    /// Layer 2). Parses the meta-tool input
+    /// (`{capability_name, capability_kind, reason}`) into a
+    /// [`RequestCapabilityInvocation`] — the requesting `agent_id` is the
+    /// dispatch context's id (gotcha #68: the requesting agent, not a
+    /// hardcoded one) — routes it to the built
+    /// [`handle_request_capability`] (REUSED, not reimplemented), and
+    /// re-emits the resulting `*Missing` gap event through [`Self::emit`]
+    /// so it persists in the drone signal chain (recoverable per §1b).
+    ///
+    /// Returns [`RequestCapabilityDisposition::Suspended`] when the handler
+    /// emitted a gap (the turn loop must suspend), or
+    /// [`RequestCapabilityDisposition::Continue`] carrying an error
+    /// `tool_result` when the invocation was malformed (empty name /
+    /// justification) so the model can recover without suspending.
+    async fn dispatch_request_capability(
+        &self,
+        agent_id: &str,
+        tool_use_id: &str,
+        input: serde_json::Value,
+    ) -> Result<RequestCapabilityDisposition, SdkError> {
+        let name = input
+            .get("capability_name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let kind = parse_capability_kind(
+            input
+                .get("capability_kind")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default(),
+        );
+        let justification = input
+            .get("reason")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let invocation = RequestCapabilityInvocation {
+            agent_id: agent_id.to_string(),
+            kind,
+            name,
+            justification,
+        };
+        let collector = GapEventCollector::default();
+        match handle_request_capability(invocation, &collector).await {
+            Ok(RequestCapabilityResult::Pending) => {
+                for event in collector.take() {
+                    self.emit(event).await?;
+                }
+                Ok(RequestCapabilityDisposition::Suspended)
+            }
+            // Malformed request: the handler refuses to emit an
+            // unconstructable gap. Feed an error tool_result back so the
+            // model can fix its call — NOT a suspend (the session is healthy).
+            Err(err) => {
+                let value = serde_json::json!({ "error": err.to_string() });
+                let dispatched = self
+                    .emit_builtin_result(
+                        agent_id,
+                        tool_use_id,
+                        request_capability::REQUEST_CAPABILITY_TOOL,
+                        input,
+                        value,
+                    )
+                    .await?;
+                Ok(RequestCapabilityDisposition::Continue(dispatched))
+            }
+        }
+    }
+
+    /// Emit the `ToolInvoked` + `ToolResult` pair for an executed (or
+    /// recoverably-errored) built-in and build the [`DispatchedTool`] the
+    /// multi-turn loop feeds back.
+    async fn emit_builtin_result(
+        &self,
+        agent_id: &str,
+        tool_use_id: &str,
+        tool_name: &str,
+        input: serde_json::Value,
+        value: serde_json::Value,
+    ) -> Result<DispatchedTool, SdkError> {
+        self.emit(AgentEvent::ToolInvoked {
+            agent_id: agent_id.to_string(),
+            tool_name: tool_name.to_string(),
+            source: ToolSource::Builtin,
+            server: None,
+            input: input.clone(),
+        })
+        .await?;
+        self.emit(AgentEvent::ToolResult {
+            agent_id: agent_id.to_string(),
+            tool_name: tool_name.to_string(),
+            output: value.clone(),
+            duration_ms: 0,
+            tokens_in: None,
+            tokens_out: None,
+        })
+        .await?;
+        Ok(DispatchedTool {
+            id: tool_use_id.to_string(),
+            name: tool_name.to_string(),
+            input,
+            value,
+        })
+    }
+
+    /// Map a built-in's capability `Err` to the agent-correct
+    /// `CapabilityViolation` / `TierViolation` event — mirroring the
+    /// `EventPipeline::translate_tool_use` copy so the renderer handles
+    /// built-in and pipeline denials identically.
+    async fn emit_builtin_capability_violation(
+        &self,
+        agent_id: &str,
+        tool_name: &str,
+        err: &CapabilityError,
+    ) -> Result<(), SdkError> {
+        let event = match err {
+            CapabilityError::Denied {
+                reason,
+                agent_id: denied_id,
+            } => {
+                let declared_scope = match reason {
+                    DenyReason::NoDeclarations => "no capabilities declared",
+                    DenyReason::NoMatchingGrant => "declared grants do not cover this request",
+                };
+                AgentEvent::CapabilityViolation {
+                    agent_id: pick_agent_id(denied_id, agent_id),
+                    capability_kind: builtin_kind_ref(tool_name),
+                    requested_action: format!("invoke built-in tool '{tool_name}'"),
+                    declared_scope: declared_scope.to_string(),
+                }
+            }
+            CapabilityError::TierForbidden {
+                agent_id: tid,
+                tier,
+                capability_kind,
+            } => AgentEvent::TierViolation {
+                agent_id: pick_agent_id(tid, agent_id),
+                tier: tier_to_ref(*tier),
+                capability_kind: kind_to_ref(*capability_kind),
+                attempted_action: format!("invoke built-in tool '{tool_name}' under {tier:?} tier"),
+            },
+        };
+        self.emit(event).await
+    }
+
     async fn emit(&self, event: AgentEvent) -> Result<(), SdkError> {
+        // Minimal observability unblock (M08.7.A): surface each agent
+        // event's salient payload at debug so a `RUST_LOG=debug` run is
+        // watchable in the log. This is the IRL-only unblock — the full
+        // in-app agent-output view (live-graph execution surface) is
+        // M08.7b, not this. Off by default; never on the user's screen.
+        log_event_debug(&event);
         // Persist BEFORE the renderer send so a slow/full renderer
         // channel cannot starve the drone signal sink. Additive: the
         // unchanged `event_tx.send` below is the in-mem-bus / renderer
@@ -744,6 +1300,30 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
     }
 }
 
+/// Log one `AgentEvent`'s salient payload at `debug` (M08.7.A IRL-only
+/// observability unblock; off by default, surfaced by `RUST_LOG=debug`).
+///
+/// Tool events log the tool name + the result that flows back to the model
+/// (file content or error); agent text events log the reply text. This is
+/// the minimal "watch a run in the log" affordance — the in-app agent-output
+/// view is M08.7b. Other event types are not logged here (lifecycle /
+/// capability events already surface through their own `tracing` warns).
+fn log_event_debug(event: &AgentEvent) {
+    match event {
+        AgentEvent::ToolInvoked {
+            tool_name, input, ..
+        } => tracing::debug!(tool = %tool_name, input = %input, "tool invoked"),
+        AgentEvent::ToolResult {
+            tool_name, output, ..
+        } => tracing::debug!(tool = %tool_name, output = %output, "tool result"),
+        AgentEvent::StreamText { text, .. } => tracing::debug!(text = %text, "agent stream text"),
+        AgentEvent::AgentComplete { result, .. } => {
+            tracing::debug!(result = %result, "agent complete");
+        }
+        _ => {}
+    }
+}
+
 /// Coarse `signals.type` category for an `AgentEvent`'s serde tag.
 ///
 /// Mirrors the kinds the established `write_signal` call sites use
@@ -775,6 +1355,84 @@ const fn kind_to_ref(
         CapabilityKind::Exec => CapabilityKindRef::Exec,
         CapabilityKind::Network => CapabilityKindRef::Network,
         CapabilityKind::ProcessSpawn => CapabilityKindRef::ProcessSpawn,
+    }
+}
+
+/// The `CapabilityKindRef` a built-in file tool's denial reports: `Read`
+/// for `Read`, `Write` for `Write` (the kind the executor's request
+/// declaration carried — distinct from the `Exec` the pre-rung-1
+/// `ToolNotFound` pipeline fallback emits).
+fn builtin_kind_ref(tool_name: &str) -> CapabilityKindRef {
+    if tool_name == builtin_tools::WRITE_TOOL {
+        CapabilityKindRef::Write
+    } else {
+        CapabilityKindRef::Read
+    }
+}
+
+const fn tier_to_ref(t: Tier) -> TierRef {
+    match t {
+        Tier::Novice => TierRef::Novice,
+        Tier::Promoted => TierRef::Promoted,
+    }
+}
+
+/// The `allowed_skills` declared by the framework agent matching
+/// `agent_id` — the `LoadSkill` capability gate (M08.7 rung 3). Empty when
+/// the agent is not found or declares none.
+fn agent_allowed_skills(framework: &FrameworkRef, agent_id: &str) -> Vec<String> {
+    inline_agents(framework)
+        .into_iter()
+        .find(|a| a.id.as_str() == agent_id)
+        .map(|a| a.allowed_skills.clone())
+        .unwrap_or_default()
+}
+
+/// Build the session [`BudgetEnforcer`] from a framework's `budget` block
+/// (M08.7 rung 5). Maps `session_usd_cap` / `framework_usd_cap` to scope
+/// caps and the four percent thresholds (`NonZeroU64`) to the enforcer's
+/// args. Returns `None` when the framework configures no cap — a
+/// budget-less framework runs with no enforcement (byte-stable with the
+/// pre-rung-5 loop). REUSES the built enforcer (CLAUDE.md scope lock); the
+/// budget model is not rebuilt here.
+fn build_session_budget(framework: &Framework) -> Option<BudgetEnforcer> {
+    let budget = framework.budget.as_ref()?;
+    let mut caps = Vec::new();
+    if let Some(cap) = budget.session_usd_cap {
+        caps.push(BudgetScopeCap::session(cap));
+    }
+    if let Some(cap) = budget.framework_usd_cap {
+        caps.push(BudgetScopeCap::framework(cap));
+    }
+    if caps.is_empty() {
+        return None;
+    }
+    let (warn, downshift, suspend, hard_stop) =
+        budget
+            .actions
+            .as_ref()
+            .map_or((None, None, None, None), |a| {
+                (
+                    a.warn_at_percent.and_then(|n| u32::try_from(n.get()).ok()),
+                    a.downshift_at_percent
+                        .and_then(|n| u32::try_from(n.get()).ok()),
+                    a.hitl_at_percent.and_then(|n| u32::try_from(n.get()).ok()),
+                    a.hard_stop_at_percent
+                        .and_then(|n| u32::try_from(n.get()).ok()),
+                )
+            });
+    Some(BudgetEnforcer::new(
+        caps, warn, downshift, suspend, hard_stop,
+    ))
+}
+
+/// Prefer the enforcer-carried agent id when present; fall back to the
+/// dispatch agent id (mirrors the `audit_check_result` convention).
+fn pick_agent_id(carried: &str, fallback: &str) -> String {
+    if carried.is_empty() {
+        fallback.to_string()
+    } else {
+        carried.to_string()
     }
 }
 

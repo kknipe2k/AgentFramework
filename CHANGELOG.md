@@ -6,6 +6,198 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed — M08.7 Closeout (summary, immutable gap-analysis, simplify pass, coverage reconciliation, ADR flips)
+
+- **`docs/adr/0028-builtin-tool-execution-contract.md`** — filed at this
+  closeout per M08.7.V 🟡 #1 (the milestone deliverable ADR was never
+  filed; the intended number 0026 was consumed by
+  `plan-loop-vdr-carry-forward-routing`), and flipped **Proposed →
+  Accepted**. §Context + §3 corrected to state only `Read`/`Write` are
+  implemented in-process (`builtin_tools.rs:90`); `Glob`/`Grep`/`WebFetch`
+  are in-process-class-but-not-yet-wired; `Bash`/OS-spawn deferred to a
+  separate ADR-class rung — to match shipped reality (rule 11), not
+  overclaim, before the Accepted (immutable) flip.
+- **`docs/adr/0027-skill-into-context-injection.md`** — flipped **Proposed
+  → Accepted**; the dangling "ADR-0026 (the built-in tool execution
+  contract)" Related reference (the propagation V's 🟡 #1 flagged) repointed
+  to **ADR-0028**.
+- **`docs/build-prompts/retrospectives/M08.7-summary.md`** —
+  parent-milestone summary aggregating M08.7.X/A–E + Stage V; verdict
+  **Pattern held across M08.7. Confidence: high.** Aggregate means:
+  Process 39.6/40; Product 38.2/40; Pattern 31.0/35. All five rungs Sound;
+  V Sound (0🔴, axes 15/15). Time-box landed **within range** on every
+  stage — a marked improvement over the M08.6 ~0.24–0.34× under-run.
+- **`docs/gap-analysis.md`** — immutable M08.7 entry appended (append-only
+  per CLAUDE.md §20). Records every rung's execute-is-real claim cited
+  against shipped code + its eval (E-01..E-05); the **M08.6-IRL 7🔴 with
+  OBSERVED dispositions — 0 closed by M08.7a** (out of execution scope), 5
+  → M08.8 (app-workbench), 2 → M08.9; the "scaffolding-never-wired-to-the-
+  loop" pattern recurring all five rungs; coverage held with no gate change.
+- **`docs/execution-status.md`** — the Budget row flipped to
+  `executes — observed at the assembled run loop (engine), eval E-05` ⚠️
+  **engine-tested only** (live eval `#[ignore]d`; no maintainer real-app
+  IRL this rung; the in-app budget surface deferred to M08.8); the
+  eval-numbering note records E-05.
+- **`docs/tech-debt.md`** — **TD-041** (`ToolUse` JSON input-field
+  extraction reuse — wait-for-fourth) + **TD-042** (`dispatch_budget_actions`
+  model-chaining clarity) from the closeout simplify-pass (proposal pass;
+  **empty apply-now subset** — the diff is structurally sound; the two CQ
+  findings reviewed and the current form affirmed, no TD).
+- **Coverage-policy reconciliation:** **no gate change.** `runtime-main`
+  96.23% line ≥ 95; workspace 92.12% ≥ 80; the four new modules
+  (`builtin_tools.rs` 98.04%, `load_skill.rs` 100%, `request_capability.rs`
+  98.54%, `mcp_dispatch.rs` 98.46%) all above gate with no new
+  `--ignore-filename-regex` entry. The four mirrors are byte-consistent
+  as-is; no `docs/coverage-policy.md` §C entry required.
+
+### Added — M08.7.E (rung 5 — budget enforcement at the run loop)
+
+- **`crates/runtime-main/src/sdk/agent_sdk.rs`** — wired the
+  fully-built-but-uncalled budget primitive (`budget/enforcer.rs` +
+  `hook.rs`, unit-tested since M04 but with **no caller on the live loop**)
+  into the multi-turn run loop. `run_agent` builds the session
+  `BudgetEnforcer` once from the framework's `budget` block (new pure helper
+  `build_session_budget` — maps `session_usd_cap` / `framework_usd_cap` +
+  the four `NonZeroU64` percent thresholds); `drive_stream` peeks each
+  turn's `ProviderEvent::Usage` tokens, prices them via the provider's
+  `estimate_cost` at the per-turn boundary, and feeds the USD to
+  `record_spend`. The returned `ThresholdAction`s dispatch to their
+  **existing** `Budget*` events (no schema change): `Warn → budget_warn`;
+  `Downshift →` the `opus→sonnet→haiku` ladder swap (`feedback.new_model` →
+  the next turn's `config.model`) `+ budget_downshift`; `Suspend →
+  budget_suspended + halt`; `HardStop → budget_exceeded + halt`. The
+  load-bearing safety primitive: `run_agent` breaks the turn loop on
+  `budget_stopped` / `budget_suspended` — **no further provider turn is
+  issued** (gotcha #66 — the run-halt, not the event alone). Budget-less
+  frameworks + the un-wired smoke path stay byte-stable (`None` enforcer, no
+  enforcement). REUSES the enforcer + ladder + events; the budget model is
+  not rebuilt. `Suspend`'s HITL **resume** half is the gap resolve-and-resume
+  rung (**ADR-0029** generalized to budget), not a v0.1 dead-end.
+- **`crates/runtime-main/tests/budget_runloop_execution.rs`** (new) — the
+  assembled regression driving the REAL `run_test_session_with → run_agent →
+  drive_stream` loop (only the provider stubbed): tiny `session_usd_cap` →
+  the run HALTS (`budget_exceeded` + no further turn, counted); per-turn
+  spend accumulation; downshift swaps the model the next turn uses
+  (opus→sonnet, observed on the captured config); warn emits + does not
+  halt; threshold idempotence; and the isolated `Suspend`-halts-the-run
+  case. The behavioral close (a real Anthropic run halting at a tiny cap) is
+  the maintainer IRL gate.
+- **`docs/tech-debt.md`** — **TD-038**: the budget OS desktop notifier
+  (`NotifierDispatched`, HITL-trigger-bound) is scoped out of v0.1; the
+  in-app `budget_warn` toast covers the v0.1 user-visible signal.
+- Budget enforcement does **not** touch the budget-cap *persistence* surface
+  (M08.6-IRL #22 — cap survives restart), which is an M08.6.7 cluster
+  (zero-propagation).
+
+### Added — M08.7.D (rung 4 — gap detection: `request_capability` suspends cleanly)
+
+- **`crates/runtime-main/src/sdk/request_capability.rs`** — wired the
+  fully-built-but-uncalled `handle_request_capability` handler into the run
+  loop (it had unit tests but **no production caller** since M05.A).
+  Added `REQUEST_CAPABILITY_TOOL`, `request_capability_tool_def()` (spec §4b
+  input `{capability_name, capability_kind, reason}`), and
+  `parse_capability_kind()` (maps the wire enum `tool | skill | mcp | agent`;
+  unknown defaults to `tool`, the conservative suspend-causing kind).
+- **`crates/runtime-main/src/sdk/agent_sdk.rs`** — the `drive_stream`
+  interception branch: a `request_capability` `ToolUse` is intercepted by
+  name BEFORE `pipeline.next_event` (which previously treated the undeclared
+  meta-tool as a `CapabilityViolation`), parsed into a
+  `RequestCapabilityInvocation` (the requesting `agent_id` from the dispatch
+  context — gotcha #68), and routed to the reused handler (which emits the
+  `*Missing` gap with `requested_via: request_capability`). The gap event is
+  re-emitted through `self.emit` so it persists in the drone signal chain
+  (recoverable per §1b). The suspend wire: `TurnFeedback.gap_suspended` →
+  `run_agent` breaks the turn loop (no further provider turn) EVEN when the
+  same turn dispatched a tool. Malformed requests (empty name/justification)
+  feed an error `tool_result` back and continue (no suspend). Scope: v0.1 is
+  **suspend-and-record** (ADR-0019), not the grant/install/decline
+  resolution UI (resolve-and-resume is the scheduled v0.1 gap-resume rung
+  per **ADR-0029** (`docs/adr/0029-gap-resolve-and-resume.md` — the canonical
+  full-gap-loop ADR: suspend + resolve + resume; arrives via `main`) — pulled
+  forward, NOT M09-deferred — and is not wired this rung).
+  `crates/runtime-main/tests/gap_detection_live.rs` (new, `#[ignore]`d)
+  encodes the rung-4 live IRL (eval E-04): a real Anthropic model lacking a
+  capability calls `request_capability` → clean suspend.
+- **`crates/runtime-main/src/builder/tester.rs`** — `test_agent_config`
+  auto-advertises `request_capability` in every agent's tool list (spec §4b).
+- **`crates/runtime-main/tests/gap_detection_execution.rs`** (new) — the
+  assembled cluster-gate close contract: a `request_capability` for an unheld
+  tool raises a `ToolMissing` gap + the session **suspends** (one provider
+  turn, clean `Ok`, the meta-tool not treated as an ordinary tool) +
+  suspends even when the turn also dispatched a tool (the load-bearing break)
+  + skill-kind routes to `SkillMissing`. Drives the real
+  `run_test_session_with → run_agent` loop (provider-only stub).
+
+### Added — M08.7.C (rung 3 — skill load: `LoadSkill` injects a skill into context)
+
+- **`crates/runtime-main/src/sdk/load_skill.rs`** (new) — the pure,
+  capability-gated `LoadSkill` handler. `load_skill(skill_name,
+  allowed_skills, resolved_skills)` checks the skill is in the agent's
+  `allowed_skills` (the capability gate, `NotAllowed` otherwise) and
+  returns the already-resolved body (`NotResolved` if absent). The body
+  was resolved once at framework load (ADR-0022 companions); this reads
+  it, never re-resolves. `load_skill_tool_def()` advertises the
+  runtime-injected `LoadSkill` tool (spec §0b input `{skill_name,
+  reason}`).
+- **`crates/runtime-main/src/sdk/agent_sdk.rs`** — a `LoadSkill` branch in
+  `drive_stream` (analogous to the rung-1 built-in branch): a `LoadSkill`
+  `ToolUse` routes through `load_skill`, emits `SkillLoaded`, and feeds
+  the body back as the tool's `tool_result` so it persists in
+  `config.messages` across subsequent turns (ADR-0027 — the rung-1
+  feedback contract; the body never vanishes). `CapabilityWiring` gains a
+  `resolved_skills` map (set via an additive `with_resolved_skills`
+  builder — existing constructors byte-stable).
+- **`crates/runtime-main/src/builder/tester.rs`** —
+  `run_test_session_with_skills`, a seam that threads resolved skill
+  bodies into the run loop's `LoadSkill` handler (Novice tier — skill load
+  is gated by `allowed_skills`, not L4). `test_agent_config` advertises
+  `LoadSkill` when any inline agent has skills to load (spec §0b
+  auto-inject). Both `run_test_session_with` / `_with_tier` delegate to a
+  shared private core with an empty map (zero caller churn).
+- **`crates/runtime-main/tests/skill_load_execution.rs`** (new) — assembled
+  regressions driving the REAL `run_test_session_with_skills → run_agent →
+  drive_stream` loop (only the provider stubbed): `SkillLoaded(shout)`
+  emitted; `LoadSkill` advertised in `config.tools`; the skill body is
+  present in the turn-2 `AgentConfig` the loop re-sent (structural
+  injection-into-context — the behavioral all-caps reply is the IRL gate,
+  rule 11 / gotcha #66); two `LoadSkill` calls compose additively; plus
+  the pure-handler unit contract.
+- **`docs/adr/0027-skill-into-context-injection.md`** (new, Proposed →
+  Accepted in the M08.7 PR) — the skill-into-context injection model:
+  tool-result injection persisted via message history (spec §0b), the
+  resolved-body threading (ADR-0022), additive composition, and the
+  three-tier system-prompt assembly as the recorded forward path. The
+  spec-vs-phase-doc injection-model contradiction was surfaced at
+  `ground_at_red` (CLAUDE.md §2) and resolved to the tool-result model.
+
+### Added — M08.7.B (rung 2 — capability enforcement gates a live tool)
+
+- **`crates/runtime-main/src/builder/tester.rs`** — `run_test_session_with_tier`,
+  a tier-aware variant of the Tester seam: identical to
+  `run_test_session_with` except it sets the session enforcer's tier
+  before any dispatch. `run_test_session_with` now delegates at the v0.1
+  default `Tier::Novice` (signature + behavior unchanged — zero caller
+  churn). The seam lets the assembled loop run at `Tier::Promoted` so a
+  built-in `Write` reaches the L1 `file_access`-scope gate instead of
+  being tier-denied at L4 first — proving the scope-gate denial through
+  the real `run_agent` loop (rung 1's blocked-Write test denies at the
+  Novice tier gate, leaving the scope gate on Write unproven).
+- **`crates/runtime-main/tests/capability_live_tool.rs`** (new) — three
+  assembled regressions driving the REAL `run_test_session_with_tier →
+  drive_stream → dispatch_builtin → execute_builtin` path (only the
+  provider stubbed): a Promoted out-of-scope `Write` emits
+  `CapabilityViolation { kind: Write }` (not `TierViolation`) and creates
+  NO file on disk; an in-scope `Write` writes the file with its content
+  (read back); the violation folds into `TestOutcome.capability_failures`
+  and the run completes unattended (HITL triage outcome b — the Tester is
+  HITL-less by design, ADR-0019). Assertions on the file-on-disk side
+  effect, not the event alone (rule 11 / gotcha #66).
+- **`docs/tech-debt.md` TD-036** — production never wires the user's tier
+  into the run-loop enforcer (Tester + smoke always run at Novice;
+  painted-not-wired, cf. TD-034). Routed to the live-session / tier-wiring
+  rung; the rung-2 scope-gate proof is therefore a test-path affordance,
+  with the real-app scope-watch explicitly deferred.
+
 ### Changed — M08.6 Stage F (closeout — gap-analysis, summary, simplify pass, coverage-policy reconciliation)
 
 - **`docs/build-prompts/retrospectives/M08.6-summary.md`** —

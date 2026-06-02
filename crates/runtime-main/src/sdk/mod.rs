@@ -13,7 +13,20 @@
 //! - `replay` — replay a saved signal log to the renderer event channel.
 
 mod agent_sdk;
+/// In-process, capability-scoped built-in tool executor — M08.7 rung 1.
+///
+/// Runs the runtime file built-ins (`Read`/`Write`) in-process behind
+/// [`crate::capability::CapabilityEnforcer::check`] and feeds the result
+/// back through the multi-turn loop's MCP-shared feedback contract.
+pub mod builtin_tools;
 mod event_pipeline;
+/// `LoadSkill` handler — spec §0b (M08.7 rung 3; ADR-0027).
+///
+/// The capability-gated handler that reads an already-resolved skill body
+/// (ADR-0022 — no re-resolution) for injection into the agent's context.
+/// The run loop emits [`runtime_core::event::AgentEvent::SkillLoaded`] and
+/// feeds the body back as the `LoadSkill` `tool_result` (ADR-0027).
+pub mod load_skill;
 /// MCP tool-dispatch seam — M06.D, ADR-0010 (dependency inversion).
 ///
 /// Defines the [`mcp_dispatch::McpToolDispatch`] trait + the
@@ -46,7 +59,8 @@ pub use mcp_dispatch::{
 };
 pub use replay::replay_signals_to_events;
 pub use request_capability::{
-    handle_request_capability, CapabilityKind, RequestCapabilityError, RequestCapabilityInvocation,
-    RequestCapabilityResult,
+    handle_request_capability, parse_capability_kind, request_capability_tool_def, CapabilityKind,
+    RequestCapabilityError, RequestCapabilityInvocation, RequestCapabilityResult,
+    REQUEST_CAPABILITY_TOOL,
 };
 pub use structured_emitter::{parse_structured, EmitterError, EmitterOutput};
