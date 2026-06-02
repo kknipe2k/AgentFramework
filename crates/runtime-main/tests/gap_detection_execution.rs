@@ -35,8 +35,8 @@ use runtime_core::generated::framework::Framework;
 use runtime_main::builder::run_test_session_with;
 use runtime_main::drone_ipc::DroneClient;
 use runtime_main::providers::{
-    AgentConfig, CostBreakdown, LLMProvider, Message, ModelInfo, ProviderError, ProviderEvent,
-    ProviderSupport,
+    AgentConfig, ContentBlock, CostBreakdown, LLMProvider, Message, ModelInfo, ProviderError,
+    ProviderEvent, ProviderSupport, ToolResultContent,
 };
 use runtime_main::sdk::{McpDispatchError, McpDispatchOutcome, McpToolDispatch, SessionId};
 
@@ -403,5 +403,178 @@ async fn skill_kind_request_capability_emits_skill_missing() {
         )),
         "a skill-kind request_capability must emit SkillMissing(rag), not ToolMissing; trace={:?}",
         outcome.trace
+    );
+}
+
+// ── additive coverage (v1.8 follow-up — net-new tests, separate from the
+//    red→impl pair) — the remaining capability_kind arms + the malformed
+//    (no-suspend) path ──────────────────────────────────────────────────
+
+/// Additive — the `mcp` kind arm of `parse_capability_kind` + the handler's
+/// `match kind`: routes to `McpMissing`. Without this, deleting the `"mcp"`
+/// arm (→ falling to the `tool` default) survives, since no other test
+/// sends `mcp`.
+#[tokio::test]
+async fn mcp_kind_request_capability_emits_mcp_missing() {
+    let fw = fw_one_agent();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let provider = GapScriptStub::new(
+        vec![vec![request_capability_tooluse(
+            "tu-1",
+            "mcp",
+            "pdf-mcp",
+            "I need to parse a PDF",
+        )]],
+        Arc::clone(&seen),
+    );
+
+    let dir = TempDir::new().expect("tempdir");
+    let db_path = dir.path().join("runtime-tester.sqlite");
+    let outcome = run_test_session_with(
+        &fw,
+        "parse a pdf",
+        &db_path,
+        provider,
+        Arc::new(DroneClient::noop()),
+        None,
+        SessionId::new(),
+    )
+    .await
+    .expect("the assembled run completes");
+
+    assert!(
+        outcome.trace.iter().any(|e| matches!(
+            e,
+            AgentEvent::McpMissing { server_name, requested_via, .. }
+                if server_name == "pdf-mcp" && *requested_via == GapSourceRef::RequestCapability
+        )),
+        "an mcp-kind request_capability must emit McpMissing(pdf-mcp); trace={:?}",
+        outcome.trace
+    );
+}
+
+/// Additive — the `agent` kind arm: routes to `AgentMissing`. Pins the
+/// fourth `match kind` arm (the mutation-gate completion for the kind set).
+#[tokio::test]
+async fn agent_kind_request_capability_emits_agent_missing() {
+    let fw = fw_one_agent();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let provider = GapScriptStub::new(
+        vec![vec![request_capability_tooluse(
+            "tu-1",
+            "agent",
+            "report-writer",
+            "I need a sub-agent to draft the report",
+        )]],
+        Arc::clone(&seen),
+    );
+
+    let dir = TempDir::new().expect("tempdir");
+    let db_path = dir.path().join("runtime-tester.sqlite");
+    let outcome = run_test_session_with(
+        &fw,
+        "draft a report",
+        &db_path,
+        provider,
+        Arc::new(DroneClient::noop()),
+        None,
+        SessionId::new(),
+    )
+    .await
+    .expect("the assembled run completes");
+
+    assert!(
+        outcome.trace.iter().any(|e| matches!(
+            e,
+            AgentEvent::AgentMissing { missing_agent_id, requested_via, .. }
+                if missing_agent_id == "report-writer"
+                    && *requested_via == GapSourceRef::RequestCapability
+        )),
+        "an agent-kind request_capability must emit AgentMissing(report-writer); trace={:?}",
+        outcome.trace
+    );
+}
+
+/// Additive — the malformed path: a `request_capability` with an EMPTY
+/// `capability_name` is refused by the handler (it cannot construct a gap),
+/// so the wire feeds an error `tool_result` back and the session does NOT
+/// suspend — the model can recover and the loop continues to a 2nd turn.
+/// Pins the `Continue` disposition (a mutant that suspends on the Err arm,
+/// or drops the error feed-back, fails here).
+#[tokio::test]
+async fn malformed_request_capability_feeds_error_and_does_not_suspend() {
+    let fw = fw_one_agent();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let provider = GapScriptStub::new(
+        vec![
+            // Turn 0: a malformed request_capability (empty capability_name).
+            vec![request_capability_tooluse(
+                "tu-1",
+                "tool",
+                "",
+                "missing the name",
+            )],
+            // Turn 1: the model, having received the error, stops cleanly.
+            vec![ProviderEvent::MessageStop {
+                stop_reason: "end_turn".to_string(),
+                total_tokens: None,
+            }],
+        ],
+        Arc::clone(&seen),
+    );
+
+    let dir = TempDir::new().expect("tempdir");
+    let db_path = dir.path().join("runtime-tester.sqlite");
+    let outcome = run_test_session_with(
+        &fw,
+        "request a capability badly",
+        &db_path,
+        provider,
+        Arc::new(DroneClient::noop()),
+        None,
+        SessionId::new(),
+    )
+    .await
+    .expect("the assembled run completes");
+
+    // No gap was emitted — an unconstructable request is not a gap.
+    assert!(
+        !outcome.trace.iter().any(|e| matches!(
+            e,
+            AgentEvent::ToolMissing { .. }
+                | AgentEvent::SkillMissing { .. }
+                | AgentEvent::McpMissing { .. }
+                | AgentEvent::AgentMissing { .. }
+        )),
+        "a malformed request_capability must NOT emit a gap; trace={:?}",
+        outcome.trace
+    );
+
+    // The session did NOT suspend — the loop continued to a 2nd turn (the
+    // error tool_result was fed back so the model can recover).
+    let configs: Vec<AgentConfig> = seen.lock().expect("seen lock").clone();
+    assert_eq!(
+        configs.len(),
+        2,
+        "a malformed request must NOT suspend — the loop continues; got {} turn(s)",
+        configs.len()
+    );
+
+    // Turn 2 carries an error tool_result for the request_capability call.
+    let fed_back = configs[1]
+        .messages
+        .iter()
+        .flat_map(|m| m.content.iter())
+        .find_map(|b| match b {
+            ContentBlock::ToolResult {
+                content: ToolResultContent::Text(t),
+                ..
+            } => Some(t.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    assert!(
+        fed_back.contains("error"),
+        "the malformed request must feed an error tool_result back; got {fed_back:?}"
     );
 }
