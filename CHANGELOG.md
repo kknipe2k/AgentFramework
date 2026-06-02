@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M08.7.D (rung 4 — gap detection: `request_capability` suspends cleanly)
+
+- **`crates/runtime-main/src/sdk/request_capability.rs`** — wired the
+  fully-built-but-uncalled `handle_request_capability` handler into the run
+  loop (it had unit tests but **no production caller** since M05.A).
+  Added `REQUEST_CAPABILITY_TOOL`, `request_capability_tool_def()` (spec §4b
+  input `{capability_name, capability_kind, reason}`), and
+  `parse_capability_kind()` (maps the wire enum `tool | skill | mcp | agent`;
+  unknown defaults to `tool`, the conservative suspend-causing kind).
+- **`crates/runtime-main/src/sdk/agent_sdk.rs`** — the `drive_stream`
+  interception branch: a `request_capability` `ToolUse` is intercepted by
+  name BEFORE `pipeline.next_event` (which previously treated the undeclared
+  meta-tool as a `CapabilityViolation`), parsed into a
+  `RequestCapabilityInvocation` (the requesting `agent_id` from the dispatch
+  context — gotcha #68), and routed to the reused handler (which emits the
+  `*Missing` gap with `requested_via: request_capability`). The gap event is
+  re-emitted through `self.emit` so it persists in the drone signal chain
+  (recoverable per §1b). The suspend wire: `TurnFeedback.gap_suspended` →
+  `run_agent` breaks the turn loop (no further provider turn) EVEN when the
+  same turn dispatched a tool. Malformed requests (empty name/justification)
+  feed an error `tool_result` back and continue (no suspend). Scope: v0.1 is
+  **suspend-and-record** (ADR-0019), not the grant/install/decline
+  resolution UI (M08.6.7/M09 — resolve-and-resume not wired).
+- **`crates/runtime-main/src/builder/tester.rs`** — `test_agent_config`
+  auto-advertises `request_capability` in every agent's tool list (spec §4b).
+- **`crates/runtime-main/tests/gap_detection_execution.rs`** (new) — the
+  assembled cluster-gate close contract: a `request_capability` for an unheld
+  tool raises a `ToolMissing` gap + the session **suspends** (one provider
+  turn, clean `Ok`, the meta-tool not treated as an ordinary tool) +
+  suspends even when the turn also dispatched a tool (the load-bearing break)
+  + skill-kind routes to `SkillMissing`. Drives the real
+  `run_test_session_with → run_agent` loop (provider-only stub).
+
 ### Added — M08.7.C (rung 3 — skill load: `LoadSkill` injects a skill into context)
 
 - **`crates/runtime-main/src/sdk/load_skill.rs`** (new) — the pure,

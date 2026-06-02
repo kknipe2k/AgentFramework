@@ -47,6 +47,10 @@ use super::mcp_dispatch::{
     apply_renderable, mcp_dispatch_error_event, renderable_needs_hitl, McpDispatchOutcome,
     McpToolDispatch, RenderableOutcome,
 };
+use super::request_capability::{
+    self, handle_request_capability, parse_capability_kind, RequestCapabilityInvocation,
+    RequestCapabilityResult,
+};
 use crate::capability::{narrow, CapabilityEnforcer, CapabilityError, DenyReason};
 use crate::drone_ipc::{DroneClient, DroneIpcError};
 use crate::framework_loader::{
@@ -97,6 +101,53 @@ struct DispatchedTool {
 #[derive(Default)]
 struct TurnFeedback {
     dispatched: Vec<DispatchedTool>,
+    /// Set when a `request_capability` gap was raised this turn (M08.7 rung
+    /// 4). The multi-turn driver SUSPENDS — issues no further provider turn
+    /// — rather than feeding results back, so the session halts cleanly at
+    /// the gap (recoverable from the snapshot per §1b).
+    gap_suspended: bool,
+}
+
+/// Outcome of dispatching one `request_capability` `ToolUse` (M08.7 rung 4).
+enum RequestCapabilityDisposition {
+    /// The handler emitted a `*Missing` gap — the turn loop must suspend.
+    Suspended,
+    /// The invocation was malformed (empty name / justification); feed this
+    /// error `tool_result` back and continue (NOT a suspend — the session
+    /// is still healthy and the model can fix its call).
+    Continue(DispatchedTool),
+}
+
+/// Collects the gap event(s) [`handle_request_capability`] emits so the run
+/// loop can forward them through [`AgentSdk::emit`] — the same persist +
+/// debug-log + renderer path every other event takes (so the gap is
+/// recoverable per §1b). Reuses the built handler without reimplementing
+/// its `match kind` arm.
+#[derive(Default)]
+struct GapEventCollector {
+    events: std::sync::Mutex<Vec<AgentEvent>>,
+}
+
+impl GapEventCollector {
+    /// Drain the collected events.
+    fn take(&self) -> Vec<AgentEvent> {
+        std::mem::take(
+            &mut self
+                .events
+                .lock()
+                .expect("gap collector mutex not poisoned"),
+        )
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::framework_loader::Emitter for GapEventCollector {
+    async fn emit(&self, event: AgentEvent) {
+        self.events
+            .lock()
+            .expect("gap collector mutex not poisoned")
+            .push(event);
+    }
 }
 
 /// Newtype wrapping a session UUID. Cheap to clone; serializes as a
@@ -278,6 +329,15 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
         for _turn in 0..MAX_AGENT_TURNS {
             let stream = self.provider.stream(config.clone()).await?;
             let feedback = self.drive_stream(stream, &mut pipeline, &agent_id).await?;
+            if feedback.gap_suspended {
+                // M08.7 rung 4: a request_capability gap suspended the
+                // session — halt the turn loop (issue no further provider
+                // turn), EVEN if this turn also dispatched a tool. The gap
+                // event is persisted (recoverable §1b); resolution
+                // (grant/install/decline) is the HITL surface, not v0.1
+                // (scope: suspend-and-record).
+                break;
+            }
             if feedback.dispatched.is_empty() {
                 // Model requested no tool this turn → it has stopped.
                 break;
@@ -494,6 +554,34 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
                             .await?
                         {
                             feedback.dispatched.push(d);
+                        }
+                        continue;
+                    }
+                }
+            }
+            // M08.7 rung 4 (spec §4b Layer 2): request_capability — the
+            // auto-injected meta-tool an agent calls when it needs a
+            // capability it lacks. Intercept it BEFORE pipeline.next_event
+            // (which treats the undeclared meta-tool as a CapabilityViolation):
+            // route it to the built handle_request_capability (emits the
+            // *Missing gap with requested_via=request_capability) and SUSPEND
+            // — the multi-turn loop issues no further provider turn
+            // (suspend-and-record; recoverable §1b). Only with capability
+            // wiring (a framework run — the agent_id is the requesting agent,
+            // gotcha #68).
+            if self.capability_wiring.is_some() {
+                if let ProviderEvent::ToolUse { id, name, input } = &provider_event {
+                    if name == request_capability::REQUEST_CAPABILITY_TOOL {
+                        match self
+                            .dispatch_request_capability(agent_id, id, input.clone())
+                            .await?
+                        {
+                            RequestCapabilityDisposition::Suspended => {
+                                feedback.gap_suspended = true;
+                            }
+                            RequestCapabilityDisposition::Continue(d) => {
+                                feedback.dispatched.push(d);
+                            }
                         }
                         continue;
                     }
@@ -833,6 +921,76 @@ impl<P: LLMProvider + 'static> AgentSdk<P> {
             )
             .await?,
         ))
+    }
+
+    /// Handle one `request_capability` `ToolUse` (M08.7 rung 4; spec §4b
+    /// Layer 2). Parses the meta-tool input
+    /// (`{capability_name, capability_kind, reason}`) into a
+    /// [`RequestCapabilityInvocation`] — the requesting `agent_id` is the
+    /// dispatch context's id (gotcha #68: the requesting agent, not a
+    /// hardcoded one) — routes it to the built
+    /// [`handle_request_capability`] (REUSED, not reimplemented), and
+    /// re-emits the resulting `*Missing` gap event through [`Self::emit`]
+    /// so it persists in the drone signal chain (recoverable per §1b).
+    ///
+    /// Returns [`RequestCapabilityDisposition::Suspended`] when the handler
+    /// emitted a gap (the turn loop must suspend), or
+    /// [`RequestCapabilityDisposition::Continue`] carrying an error
+    /// `tool_result` when the invocation was malformed (empty name /
+    /// justification) so the model can recover without suspending.
+    async fn dispatch_request_capability(
+        &self,
+        agent_id: &str,
+        tool_use_id: &str,
+        input: serde_json::Value,
+    ) -> Result<RequestCapabilityDisposition, SdkError> {
+        let name = input
+            .get("capability_name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let kind = parse_capability_kind(
+            input
+                .get("capability_kind")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default(),
+        );
+        let justification = input
+            .get("reason")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let invocation = RequestCapabilityInvocation {
+            agent_id: agent_id.to_string(),
+            kind,
+            name,
+            justification,
+        };
+        let collector = GapEventCollector::default();
+        match handle_request_capability(invocation, &collector).await {
+            Ok(RequestCapabilityResult::Pending) => {
+                for event in collector.take() {
+                    self.emit(event).await?;
+                }
+                Ok(RequestCapabilityDisposition::Suspended)
+            }
+            // Malformed request: the handler refuses to emit an
+            // unconstructable gap. Feed an error tool_result back so the
+            // model can fix its call — NOT a suspend (the session is healthy).
+            Err(err) => {
+                let value = serde_json::json!({ "error": err.to_string() });
+                let dispatched = self
+                    .emit_builtin_result(
+                        agent_id,
+                        tool_use_id,
+                        request_capability::REQUEST_CAPABILITY_TOOL,
+                        input,
+                        value,
+                    )
+                    .await?;
+                Ok(RequestCapabilityDisposition::Continue(dispatched))
+            }
+        }
     }
 
     /// Emit the `ToolInvoked` + `ToolResult` pair for an executed (or

@@ -38,6 +38,7 @@ use crate::hitl::HitlSeam;
 use crate::providers::{AgentConfig, ContentBlock, LLMProvider, Message, MessageRole};
 use crate::sdk::builtin_tools::builtin_tool_defs;
 use crate::sdk::load_skill::load_skill_tool_def;
+use crate::sdk::request_capability::request_capability_tool_def;
 use crate::sdk::{AgentSdk, CapabilityWiring, McpToolDispatch, SessionId};
 use crate::skills_lock::LockError;
 use crate::tier::Tier;
@@ -284,6 +285,10 @@ fn test_agent_config(framework: &Framework, task: &str) -> AgentConfig {
     {
         tools.push(load_skill_tool_def());
     }
+    // M08.7 rung 4 (spec §4b): the runtime auto-injects request_capability
+    // into every agent's tool list so a model can signal a missing
+    // capability mid-task (the run loop intercepts the matching ToolUse).
+    tools.push(request_capability_tool_def());
     AgentConfig {
         model: framework.model.id.as_str().to_string(),
         messages: vec![Message {

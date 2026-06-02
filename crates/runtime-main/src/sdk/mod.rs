@@ -59,7 +59,8 @@ pub use mcp_dispatch::{
 };
 pub use replay::replay_signals_to_events;
 pub use request_capability::{
-    handle_request_capability, CapabilityKind, RequestCapabilityError, RequestCapabilityInvocation,
-    RequestCapabilityResult,
+    handle_request_capability, parse_capability_kind, request_capability_tool_def, CapabilityKind,
+    RequestCapabilityError, RequestCapabilityInvocation, RequestCapabilityResult,
+    REQUEST_CAPABILITY_TOOL,
 };
 pub use structured_emitter::{parse_structured, EmitterError, EmitterOutput};
