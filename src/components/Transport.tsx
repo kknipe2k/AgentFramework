@@ -44,8 +44,16 @@ export function Transport({ replayAvailable, onReplay }: TransportProps): JSX.El
           <div className="transport__head" />
         </div>
       </div>
+      {/* Elapsed clock — mono tabular so the digits don't jitter (the
+          instrument register). Presentational placeholder in B/B.fix; a
+          live elapsed wires with the scrub-to-seek backend later. */}
+      <span className="transport__clock" aria-hidden="true">
+        00:00
+      </span>
       <div className="transport__speed" aria-hidden="true">
-        <span>1×</span>
+        <button type="button" className="transport__speed-opt transport__speed-opt--on">
+          1×
+        </button>
       </div>
     </div>
   );
