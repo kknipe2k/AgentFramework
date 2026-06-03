@@ -1088,7 +1088,7 @@ Ref B.3.4.
 **Found by:** M08.8.B.fix (first full `test:e2e:tauri` run to completion)
 **Pass that surfaced it:** real-app `tauri-driver` suite (design-conformance close)
 **Category:** test-infra (real-app spec flake / environment dependency)
-**Resolution status:** open — pre-existing; NOT a B.fix exposure (deferred, do not chase in B.fix)
+**Resolution status:** open — **owned by Stage D (M08.8.D)**. Pre-existing, NOT a B.fix exposure. Routed to D, not deferred-to-nowhere: D's gap resume reuses the same `recovery::resume` / §1b rebuild this spec proves at the real-app level, so reload-reconstruct is a D **close precondition** (phase doc D.1/D.4 + the D.7 scope-lock).
 
 ### Description
 
@@ -1114,9 +1114,14 @@ restyle.
 
 ### Recommended approach (when addressed)
 
-Separate triage (not B.fix): (1) confirm whether the post-reload rebuild
-genuinely fails or merely races (add a `waitUntil` on the reconstructed graph,
-mirroring the TD-044-sibling `builder_load_aria` deflake), and (2) decide the
-key-present vs CI-keyless contract for this leg — gate the real-run+reload
-assertion behind a key-present guard so the spec is deterministic in both
-environments.
+**Home: Stage D (M08.8.D)** — D's `gap→resume→complete` IRL stands on the same
+rebuild substrate, so D cannot close on a masked-red reload-reconstruct. D
+resolves it: green it via real replay-on-mount wiring, **or** prove it a
+`reloadSession` harness artifact (WebdriverIO reattaches a fresh window that
+may not carry `lastSessionId`/localStorage — a true-restart limitation) +
+prove the rebuild via `recovery_lifecycle.rs`. The diagnosis D runs:
+(1) confirm whether the post-reload rebuild genuinely fails or merely races
+(add a `waitUntil` on the reconstructed graph, mirroring the sibling
+`builder_load_aria` deflake), and (2) decide the key-present vs CI-keyless
+contract for this leg — gate the real-run+reload assertion behind a key-present
+guard so the spec is deterministic in both environments.
