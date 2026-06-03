@@ -74,14 +74,23 @@ describe('Light Instrument restyle conformance — M08.8.B.fix (real-app)', () =
     expect(family.toLowerCase()).to.include('plex mono');
   });
 
-  it('paints_panels_with_hairline_borders_not_heavy_M03_fills', async () => {
-    const canvas = $('[data-testid="graph-canvas"]');
-    await canvas.waitForDisplayed({ timeout: 5_000 });
-    // a node card is a 1px hairline (border-strong #b9c4d6), not the M03 2px.
+  it('paints_chrome_with_hairline_borders_not_heavy_M03_fills', async () => {
+    // The topbar bottom rule is the unscaled hairline structure. (Nodes
+    // carry a tokenScale transform that shrinks their computed border, so
+    // the chrome is the reliable hairline probe.)
+    const topbar = $('[data-testid="topbar"]');
+    await topbar.waitForDisplayed({ timeout: 5_000 });
+    // WebView2 display-scaling reports a 1px CSS border as ~0.8px (and the
+    // M03 2px border as ~1.6px), so assert the hairline RANGE, not an exact
+    // px: a real border that is thinner than the M03 2px.
+    const topWidth = parseFloat((await topbar.getCSSProperty('border-bottom-width')).value ?? '0');
+    expect(topWidth).to.be.above(0);
+    expect(topWidth).to.be.below(1.5);
+    // a node card is a thin hairline too — never the M03 2px border.
     const node = $('[data-testid="tool-node-a1-Read"]');
     await node.waitForDisplayed({ timeout: 5_000 });
-    const width = (await node.getCSSProperty('border-top-width')).value ?? '';
-    expect(width).to.equal('1px');
+    const nodeWidth = parseFloat((await node.getCSSProperty('border-top-width')).value ?? '99');
+    expect(nodeWidth).to.be.below(1.5);
   });
 
   it('opens_the_tester_as_a_full_modal_with_metric_cards', async () => {

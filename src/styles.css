@@ -616,8 +616,10 @@ p.error {
   font-family: var(--font-mono);
 }
 .tool-node__duration {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: 11px;
-  color: var(--node-fg-muted);
+  color: var(--text-2);
   margin-top: 2px;
 }
 
