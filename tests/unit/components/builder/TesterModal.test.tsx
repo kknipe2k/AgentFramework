@@ -1,19 +1,18 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // M08.F2 — the Builder Tester modal (spec Phase 9; MVP §M8 criterion 5).
-// The modal opens on builderStore's Tester-open state, takes a
-// natural-language task, runs the candidate framework through Stage F1's
-// `test_framework`, and renders the test run — a smaller graph pane
-// SCOPED to the test session + VDR/token/pass-fail surfaces.
+// M08.8.B.fix — MIGRATED onto the reusable Modal primitive (TD-043): the
+// hand-rolled `.tester-modal` shell is gone; the Tester is now
+// `<Modal size="full">`. This rewrite rides the RED commit (the structural
+// migration is test-bearing — the old test pinned `tester-close` /
+// `tester-modal__*` classes a pure repaint could not change). The
+// behavioral contract (run / pass-fail / scoped graph / promote) is
+// unchanged; only the shell + close affordance moved onto Modal.
 //
 // Two mocks:
 //  1. @xyflow/react — TesterGraphPane mounts a real <ReactFlow>, whose
 //     rendering needs a measured pane happy-dom does not provide. The
-//     deterministic double renders one testid div per node (the
-//     BuilderCanvas.test.tsx precedent) so the scoped-graph assertions
-//     are exact.
+//     deterministic double renders one testid div per node.
 //  2. ../../../../src/lib/ipc — `testFramework` is replaced; the rest
 //     (unwrapCmdError) stays real so the error path is genuinely
 //     exercised (gotcha #30).
@@ -119,6 +118,12 @@ function typeTask(text: string): void {
   fireEvent.change(screen.getByTestId('tester-task-input'), { target: { value: text } });
 }
 
+/** Close via the Modal primitive's × button (the migration replaced the
+ *  hand-rolled `tester-close` button with Modal's aria-labelled Close). */
+function closeViaModal(): void {
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+}
+
 describe('TesterModal', () => {
   beforeEach(() => {
     testFrameworkMock.mockReset();
@@ -162,8 +167,6 @@ describe('TesterModal', () => {
     typeTask('summarize the input');
     fireEvent.click(screen.getByTestId('tester-run'));
     await waitFor(() => expect(testFrameworkMock).toHaveBeenCalledTimes(1));
-    // The candidate framework crosses the wire straight from the canvas
-    // (spec Phase 9 — no disk round-trip).
     expect(testFrameworkMock).toHaveBeenCalledWith(
       useBuilderStore.getState().framework,
       'summarize the input',
@@ -198,13 +201,10 @@ describe('TesterModal', () => {
     openTester();
     typeTask('read a file');
     fireEvent.click(screen.getByTestId('tester-run'));
-    // The violation renders as a failure LINE (F1.3.3 — never a HITL
-    // prompt; F1's test-defaults HitlSeam never prompts).
     const failures = await screen.findByTestId('tester-capability-failures');
     expect(failures).toHaveTextContent('worker');
     expect(failures).toHaveTextContent('read');
     expect(failures).toHaveTextContent('declared scope `none`');
-    // No HITL surface is ever raised by a test run.
     expect(screen.queryByTestId('hitl-modal')).toBeNull();
   });
 
@@ -218,9 +218,19 @@ describe('TesterModal', () => {
     expect(tokens).toHaveTextContent('in 120');
     expect(tokens).toHaveTextContent('out 45');
     expect(tokens).toHaveTextContent('total 165');
-    // `timing` crosses the wire as serde's Duration shape { secs, nanos }
-    // — 1s + 250ms folds to 1250 ms.
     expect(tokens).toHaveTextContent('1250 ms');
+  });
+
+  it('renders_the_result_metric_cards_result_and_tokens', async () => {
+    // M08.8.B.fix — the mockup's `.metric` grid (Result / Verify / Tokens /
+    // Spend). Styled here from the real TestOutcome where available.
+    testFrameworkMock.mockResolvedValue(passOutcome());
+    render(<TesterModal />);
+    openTester();
+    typeTask('a task');
+    fireEvent.click(screen.getByTestId('tester-run'));
+    expect(await screen.findByTestId('metric-result')).toHaveTextContent('PASS');
+    expect(screen.getByTestId('metric-tokens')).toHaveTextContent('165');
   });
 
   it('renders_the_vdr_record', async () => {
@@ -240,18 +250,14 @@ describe('TesterModal', () => {
     typeTask('a task');
     fireEvent.click(screen.getByTestId('tester-run'));
     await screen.findByTestId('tester-result');
-    fireEvent.click(screen.getByTestId('tester-close'));
-    // closeTester flips the builderStore flag — the modal unmounts.
+    closeViaModal();
     expect(useBuilderStore.getState().testerOpen).toBe(false);
     expect(screen.queryByTestId('tester-modal')).toBeNull();
-    // The outcome is dropped — a re-open shows no stale result.
     openTester();
     expect(screen.queryByTestId('tester-result')).toBeNull();
   });
 
   it('a_failed_test_framework_call_surfaces_the_error', async () => {
-    // A test_framework infrastructure failure crosses as a CmdError-shape
-    // object — unwrapCmdError renders it, not String(e) (gotcha #30).
     testFrameworkMock.mockRejectedValue({ type: 'internal', message: 'drone spawn failed' });
     render(<TesterModal />);
     openTester();
@@ -259,24 +265,20 @@ describe('TesterModal', () => {
     fireEvent.click(screen.getByTestId('tester-run'));
     const err = await screen.findByTestId('tester-error');
     expect(err).toHaveTextContent('drone spawn failed');
-    // A failed call leaves no result surface.
     expect(screen.queryByTestId('tester-result')).toBeNull();
   });
 
   it('survives_repeated_open_close_cycles_with_a_fresh_run_each', async () => {
-    // gotcha #66 contract test — the modal must be re-runnable: each
-    // open/run/close cycle starts from a clean slate.
     testFrameworkMock.mockResolvedValue(failOutcome());
     render(<TesterModal />);
     openTester();
     typeTask('first task');
     fireEvent.click(screen.getByTestId('tester-run'));
     expect(await screen.findByTestId('tester-result-verdict')).toHaveTextContent('FAIL');
-    fireEvent.click(screen.getByTestId('tester-close'));
+    closeViaModal();
 
     testFrameworkMock.mockResolvedValue(passOutcome());
     openTester();
-    // The prior run's result did not leak into the fresh open.
     expect(screen.queryByTestId('tester-result')).toBeNull();
     typeTask('second task');
     fireEvent.click(screen.getByTestId('tester-run'));
@@ -285,11 +287,53 @@ describe('TesterModal', () => {
   });
 
   it('formatTiming_folds_the_serde_duration_shape_to_milliseconds', () => {
-    // serde serializes a Rust Duration as { secs, nanos } — NOT a bare
-    // ms count. The helper folds both parts.
     expect(_testing.formatTiming({ secs: 0, nanos: 5_000_000 })).toBe('5 ms');
     expect(_testing.formatTiming({ secs: 2, nanos: 340_000_000 })).toBe('2340 ms');
     expect(_testing.formatTiming({ secs: 0, nanos: 0 })).toBe('0 ms');
+  });
+});
+
+// ── TD-043: the Tester IS a Modal (migrated off the hand-rolled shell) ──
+
+describe('TesterModal — migrated onto the Modal primitive (TD-043)', () => {
+  beforeEach(() => {
+    testFrameworkMock.mockReset();
+    useBuilderStore.setState(useBuilderStore.getInitialState(), true);
+    useGraphStore.getState().clear();
+    useTestGraphStore.getState().clear();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    useGraphStore.getState().clear();
+    useTestGraphStore.getState().clear();
+  });
+
+  it('renders_as_a_full_size_modal_dialog', () => {
+    render(<TesterModal />);
+    openTester();
+    const dialog = screen.getByTestId('tester-modal');
+    expect(dialog).toHaveAttribute('role', 'dialog');
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    // size="full" — the near-full-screen candidate-run surface.
+    expect(dialog).toHaveClass('modal--full');
+  });
+
+  it('closes_on_escape', () => {
+    render(<TesterModal />);
+    openTester();
+    expect(screen.getByTestId('tester-modal')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(useBuilderStore.getState().testerOpen).toBe(false);
+    expect(screen.queryByTestId('tester-modal')).toBeNull();
+  });
+
+  it('closes_on_scrim_click', () => {
+    render(<TesterModal />);
+    openTester();
+    fireEvent.mouseDown(screen.getByTestId('modal-scrim'));
+    expect(useBuilderStore.getState().testerOpen).toBe(false);
+    expect(screen.queryByTestId('tester-modal')).toBeNull();
   });
 });
 
@@ -315,15 +359,11 @@ describe('TesterModal — the scoped test-session graph', () => {
     openTester();
     typeTask('a task');
     fireEvent.click(screen.getByTestId('tester-run'));
-    // The trace's session_start + agent_spawned reduce into the scoped
-    // graph; the smaller pane renders both nodes.
     expect(await screen.findByTestId('rf-node-agent:worker')).toBeInTheDocument();
     expect(screen.getByTestId('rf-node-framework:tester-fixture')).toBeInTheDocument();
   });
 
   it('running_a_test_does_not_write_to_the_live_useGraphStore_singleton', async () => {
-    // THE load-bearing scoping invariant: a test run reduces its trace
-    // into the SCOPED store only; the live runtime graph is untouched.
     testFrameworkMock.mockResolvedValue(passOutcome());
     render(<TesterModal />);
     openTester();
@@ -342,15 +382,11 @@ describe('TesterModal — the scoped test-session graph', () => {
     fireEvent.click(screen.getByTestId('tester-run'));
     await screen.findByTestId('tester-result');
     expect(useTestGraphStore.getState().nodes.length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByTestId('tester-close'));
-    // Discard-on-close — the scoped graph is cleared.
+    closeViaModal();
     expect(useTestGraphStore.getState().nodes).toHaveLength(0);
   });
 
   it('promote_writes_the_test_run_into_the_live_graph_store', async () => {
-    // The explicit Save/Promote affordance is the ONLY persist path
-    // (spec Phase 9 "full graph available by promoting test session to
-    // main"). Promote replays the trace into the live useGraphStore.
     testFrameworkMock.mockResolvedValue(passOutcome());
     render(<TesterModal />);
     openTester();
@@ -360,42 +396,6 @@ describe('TesterModal — the scoped test-session graph', () => {
     expect(useGraphStore.getState().nodes).toHaveLength(0);
     fireEvent.click(screen.getByTestId('tester-promote'));
     expect(useGraphStore.getState().nodes.some((n) => n.id === 'agent:worker')).toBe(true);
-    // Promote closes the Tester (the run is now the main session).
     expect(useBuilderStore.getState().testerOpen).toBe(false);
-  });
-});
-
-// gotcha #67 — a className with no styles.css rule renders unstyled and
-// the user sees nothing. Every Tester class M08.F2 introduces must have
-// a corresponding rule, and use --node-* theme tokens (M07-IRL #3).
-describe('M08.F2 Tester modal styles (gotcha #67)', () => {
-  const css = readFileSync(resolve(__dirname, '../../../../src/styles.css'), 'utf8');
-  const F2_CLASSES = [
-    'tester-modal',
-    'tester-modal__header',
-    'tester-modal__close',
-    'tester-modal__body',
-    'tester-modal__task-input',
-    'tester-modal__run',
-    'tester-modal__error',
-    'tester-graph-pane',
-    'tester-result',
-    'tester-result--pass',
-    'tester-result--fail',
-    'tester-result__verdict',
-    'tester-capability-failures',
-    'tester-capability-failure',
-    'tester-result__tokens',
-    'tester-result__vdr',
-    'tester-result__actions',
-    'tester-promote',
-  ] as const;
-
-  it.each(F2_CLASSES)('styles.css defines a rule for .%s', (cls) => {
-    expect(css).toMatch(new RegExp(`\\.${cls}[\\s,{]`));
-  });
-
-  it('Tester modal styles use theme variables, not literal colors (M07-IRL #3)', () => {
-    expect(css).toMatch(/\.tester-modal[\s\S]*?var\(--node-/);
   });
 });

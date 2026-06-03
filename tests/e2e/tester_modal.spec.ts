@@ -155,7 +155,9 @@ test.describe('M08.F2 Builder Tester modal', () => {
     await openTesterModal(page);
     await runTask(page, 'summarize the input');
     await expect(page.getByTestId('tester-result')).toBeVisible();
-    await page.getByTestId('tester-close').click();
+    // M08.8.B.fix — the Tester migrated onto the Modal primitive (TD-043);
+    // close via Modal's aria-labelled × (the hand-rolled tester-close is gone).
+    await page.getByRole('button', { name: 'Close' }).click();
     await expect(page.getByTestId('tester-modal')).toHaveCount(0);
     // Discard-on-close: the test run never wrote into the live runtime
     // graph (the load-bearing F2 scoping invariant).
