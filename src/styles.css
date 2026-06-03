@@ -1,59 +1,340 @@
-/* M03 Stage B+C: graph canvas + 11 node types layered on the M02
- * smoke-renderer baseline. Spec §3 Visual Design: dark background,
- * color-encoded status, animated edges during active tool calls,
- * dashed edges for skill loads. Stage C extends Stage B's foundation
- * with the remaining 8 node types + the full color palette + edge
- * keyframes. */
+/* =====================================================================
+   Agent Runtime — "Light Instrument" visual layer (M08.8.B).
+   Ported from docs/design/workbench-mockup/tokens.css (the committed
+   W3C-DTCG token system; values authored by Claude Design over DESIGN.md).
+   Three-tier: primitive -> semantic (--kind-* / --st-*) -> component.
+   Light, cool blue-gray surfaces · crisp dark text · ONE electric-blue
+   accent · IBM Plex Sans (UI) + IBM Plex Mono (code/JSON/IDs/counts).
+   The legacy M03 --node-* names are remapped onto the tokens at the end
+   of :root so the existing node/panel CSS repaints to light rename-free.
+   ===================================================================== */
 
-/* Spec §3 Visual Design Principles — color encoding palette. */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
 :root {
-  --node-active: #4a90e2;
-  --node-complete: #4caf50;
-  --node-error: #e53935;
-  --node-gap: #ffa726;
-  --node-hitl: #ffffff;
-  --node-base-border: #2a3045;
-  --node-bg: #15192a;
-  --node-bg-alt: #1a1f33;
-  --node-fg: #e6e6e6;
-  --node-fg-muted: #a8a8a8;
+  /* ---- Brand accent (electric blue) ---- */
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-active: #1e40af;
+  --accent-on-light: #1d4ed8;
+  --accent-bg: #eef4ff;
+  --accent-bg-strong: #dbe7ff;
+  --accent-border: #bcd2fb;
+  --accent-ring: rgba(37, 99, 235, 0.32);
 
-  /* DESIGN.md "Light Instrument" tokens (M08.8.A — the vocabulary the
-   * execution-view surfaces consume; a full canvas repaint to the light
-   * palette is the milestone-wide build-out, not Stage A). The node-kind
-   * (two-axis model) + status families + the mono instrument register. */
-  --font-mono: 'IBM Plex Mono', 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+  /* ---- Surfaces (cool blue-gray) ---- */
+  --app-bg: #e9eef6;
+  --canvas-bg: #f1f4fa;
+  --surface-0: #ffffff;
+  --surface-1: #f6f8fc;
+  --surface-2: #eef2f8;
+  --surface-3: #e6ebf3;
+
+  /* ---- Lines ---- */
+  --border-subtle: #e7ecf3;
+  --border: #d6deea;
+  --border-strong: #b9c4d6;
+  --border-mono: #c8d2e0;
+
+  /* ---- Text (crisp dark, AA on white) ---- */
+  --text-0: #14202f;
+  --text-1: #3d4759;
+  --text-2: #687486;
+  --text-3: #98a3b4;
+  --text-on-accent: #ffffff;
+  --text-on-dark: #eef2f8;
+
+  /* ---- Semantic status ---- */
+  --ok: #16a34a;
+  --ok-text: #15803d;
+  --ok-bg: #e7f7ed;
+  --ok-border: #b6e6c6;
+  --warn: #d97706;
+  --warn-text: #b45309;
+  --warn-bg: #fdf2dc;
+  --warn-border: #f3d79a;
+  --error: #dc2626;
+  --error-text: #b91c1c;
+  --error-bg: #fdeaea;
+  --error-border: #f5c2c2;
+  --info: var(--accent);
+  --info-text: var(--accent-on-light);
+  --info-bg: var(--accent-bg);
+  --info-border: var(--accent-border);
+
+  /* ---- Five node kinds (AA on light canvas) ---- */
   --kind-agent: #2563eb;
+  --kind-agent-text: #1e40af;
+  --kind-agent-bg: #eef4ff;
   --kind-tool: #0d9488;
+  --kind-tool-text: #0f766e;
+  --kind-tool-bg: #e6faf6;
   --kind-skill: #7c3aed;
+  --kind-skill-text: #6d28d9;
+  --kind-skill-bg: #f4f0ff;
   --kind-hook: #db2777;
+  --kind-hook-text: #be185d;
+  --kind-hook-bg: #fdeef6;
   --kind-hitl: #d97706;
+  --kind-hitl-text: #b45309;
+  --kind-hitl-bg: #fdf2dc;
+  --kind-gap: #ea580c;
+  --kind-gap-text: #c2410c;
+  --kind-gap-bg: #fdeede;
+  --kind-mcp: #475569;
+  --kind-mcp-text: #334155;
+  --kind-mcp-bg: #eef1f6;
+
+  /* ---- Runtime status (orthogonal to kind) ---- */
   --st-idle: #98a3b4;
-  --st-active: #2563eb;
-  --st-complete: #16a34a;
-  --st-error: #dc2626;
-  --st-gap: #ea580c;
+  --st-active: var(--accent);
+  --st-complete: var(--ok);
+  --st-error: var(--error);
+  --st-gap: var(--kind-gap);
+  --st-blocked: var(--kind-hitl);
+
+  /* ---- Type ---- */
+  --font-sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+  --fs-display: 28px;
+  --lh-display: 34px;
+  --fs-title: 20px;
+  --lh-title: 27px;
+  --fs-h2: 16px;
+  --lh-h2: 22px;
+  --fs-body: 14px;
+  --lh-body: 20px;
+  --fs-small: 12.5px;
+  --lh-small: 17px;
+  --fs-label: 11px;
+  --lh-label: 14px;
+  --fs-mono: 12.5px;
+  --lh-mono: 18px;
+  --fs-micro: 11px;
+  --lh-micro: 15px;
+  --tracking-label: 0.07em;
+
+  /* ---- Spacing (4px grid) ---- */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 20px;
+  --s6: 24px;
+  --s8: 32px;
+  --s10: 40px;
+  --s12: 48px;
+
+  /* ---- Radii ---- */
+  --r-xs: 3px;
+  --r-sm: 5px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-pill: 999px;
+
+  /* ---- Elevation ---- */
+  --e0: none;
+  --e1: 0 1px 2px rgba(16, 32, 46, 0.06), 0 1px 1px rgba(16, 32, 46, 0.04);
+  --e2: 0 4px 14px rgba(16, 32, 46, 0.09), 0 1px 3px rgba(16, 32, 46, 0.06);
+  --e3: 0 14px 38px rgba(16, 32, 46, 0.16), 0 4px 10px rgba(16, 32, 46, 0.08);
+  --focus-ring: 0 0 0 3px var(--accent-ring);
+
+  /* ---- Motion ---- */
+  --t-fast: 120ms cubic-bezier(0.4, 0, 0.2, 1);
+  --t-med: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* density-driven (overridden by [data-density]) */
+  --pad-panel: var(--s4);
+  --row-h: 32px;
+
+  /* ---- Legacy M03 node variable names, remapped onto the tokens so the
+     existing node/panel CSS repaints to light rename-free (M08.8.B). ---- */
+  --node-bg: var(--surface-0);
+  --node-bg-alt: var(--surface-2);
+  --node-fg: var(--text-0);
+  --node-fg-muted: var(--text-2);
+  --node-base-border: var(--border);
+  --node-active: var(--st-active);
+  --node-complete: var(--st-complete);
+  --node-error: var(--st-error);
+  --node-gap: var(--st-gap);
+  --node-hitl: var(--kind-hitl);
+}
+
+/* =====================================================================
+   THEMING HOOKS — accent hue / density / visual direction on <html>.
+   ===================================================================== */
+[data-accent='blue'] {
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-active: #1e40af;
+  --accent-on-light: #1d4ed8;
+  --accent-bg: #eef4ff;
+  --accent-bg-strong: #dbe7ff;
+  --accent-border: #bcd2fb;
+  --accent-ring: rgba(37, 99, 235, 0.32);
+}
+[data-accent='cyan'] {
+  --accent: #0891b2;
+  --accent-hover: #0e7490;
+  --accent-active: #155e75;
+  --accent-on-light: #0e7490;
+  --accent-bg: #e7f8fc;
+  --accent-bg-strong: #cdeef6;
+  --accent-border: #a8e0ee;
+  --accent-ring: rgba(8, 145, 178, 0.32);
+}
+[data-accent='violet'] {
+  --accent: #6d28d9;
+  --accent-hover: #5b21b6;
+  --accent-active: #4c1d95;
+  --accent-on-light: #6d28d9;
+  --accent-bg: #f3effe;
+  --accent-bg-strong: #e4d8fb;
+  --accent-border: #cdb6f5;
+  --accent-ring: rgba(109, 40, 217, 0.32);
+}
+[data-accent='indigo'] {
+  --accent: #4338ca;
+  --accent-hover: #3730a3;
+  --accent-active: #312e81;
+  --accent-on-light: #4338ca;
+  --accent-bg: #eef0fe;
+  --accent-bg-strong: #dcdefb;
+  --accent-border: #bcc0f4;
+  --accent-ring: rgba(67, 56, 202, 0.32);
+}
+[data-density='comfortable'] {
+  --pad-panel: var(--s5);
+  --row-h: 36px;
+}
+[data-density='compact'] {
+  --pad-panel: var(--s3);
+  --row-h: 28px;
+  --fs-body: 13px;
+  --lh-body: 18px;
+}
+[data-direction='bythebook'] {
+  --e1: none;
+  --e2: 0 2px 6px rgba(16, 32, 46, 0.08);
+  --e3: 0 8px 24px rgba(16, 32, 46, 0.14);
+  --r-xs: 2px;
+  --r-sm: 3px;
+  --r-md: 4px;
+  --r-lg: 6px;
+}
+[data-direction='expressive'] {
+  --r-xs: 4px;
+  --r-sm: 7px;
+  --r-md: 11px;
+  --r-lg: 16px;
+  --e1: 0 2px 5px rgba(16, 32, 46, 0.08);
+  --e2: 0 8px 22px rgba(16, 32, 46, 0.12);
+  --e3: 0 20px 50px rgba(16, 32, 46, 0.2);
+  --fs-display: 32px;
+  --lh-display: 38px;
+  --fs-title: 22px;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html,
 body {
   margin: 0;
-  font-family:
-    system-ui,
-    -apple-system,
-    'Segoe UI',
-    Roboto,
-    sans-serif;
-  background: #fafafa;
-  color: #222;
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--text-0);
+  background: var(--app-bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 main {
-  margin: 1rem;
+  margin: 0;
   padding: 0;
+}
+
+/* ---- Typographic utilities (the instrument register) ---- */
+.t-display {
+  font-size: var(--fs-display);
+  line-height: var(--lh-display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.t-title {
+  font-size: var(--fs-title);
+  line-height: var(--lh-title);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.t-h2 {
+  font-size: var(--fs-h2);
+  line-height: var(--lh-h2);
+  font-weight: 600;
+}
+.t-body {
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  font-weight: 400;
+}
+.t-strong {
+  font-weight: 500;
+}
+.t-small {
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+.t-label {
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+  font-feature-settings: 'zero' 1;
+}
+.mono-micro {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+}
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+.muted {
+  color: var(--text-2);
+}
+
+::selection {
+  background: var(--accent-bg-strong);
+}
+
+/* scrollbars — thin, instrument-like */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+  background-clip: content-box;
 }
 
 h1 {
@@ -113,38 +394,43 @@ p.error {
 
 /* ---- Graph canvas + Inspector right-rail (spec §3) ---- */
 
+/* Legacy M03 flex wrapper — retained for back-compat; the M08.8.B shell
+ * now lays canvas + inspector out via AppShell's three panes. */
 .graph-layout {
   display: flex;
   flex-direction: row;
-  gap: 0.75rem;
-  margin-top: 1rem;
+  gap: var(--s3);
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .graph-canvas {
   flex: 1 1 auto;
-  height: 70vh;
-  background: #0e1014;
-  border: 1px solid var(--node-base-border);
-  border-radius: 4px;
+  min-height: 0;
+  height: 100%;
+  /* the light dotted field (DESIGN.md — canvas-bg, 22px radial grid).
+     React Flow's <Background/> also draws dots; the color shows behind. */
+  background-color: var(--canvas-bg);
+  background-image: radial-gradient(var(--border) 1px, transparent 0);
+  background-size: 22px 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
 }
 
-/* Stage D Inspector. Right-rail layout per M03.C retro Decision: graph
- * canvas at 70vh, panel at fixed width. Non-modal per WAI APG dialog
- * pattern; aria-modal="false" + ESC close + close-button. */
+/* The Output/Inspector rail (DESIGN.md right rail). Fills the AppShell
+ * 360px right rail. Non-modal per WAI APG dialog pattern; aria-modal
+ * ="false" + ESC close + close-button. */
 .inspector-panel {
-  flex: 0 0 320px;
-  height: 70vh;
+  width: 100%;
+  height: 100%;
   overflow: auto;
-  padding: 0.75rem;
-  background: var(--node-bg);
-  color: var(--node-fg);
-  border: 1px solid var(--node-base-border);
-  border-radius: 4px;
-  font-family:
-    system-ui,
-    -apple-system,
-    sans-serif;
-  font-size: 13px;
+  padding: var(--pad-panel);
+  background: var(--surface-0);
+  color: var(--text-0);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  font-family: var(--font-sans);
+  font-size: var(--fs-small);
   outline: none;
 }
 
@@ -265,7 +551,7 @@ p.error {
     sans-serif;
   font-size: 12px;
   border: 2px solid var(--node-base-border);
-  background: var(--node-bg-alt);
+  background: var(--node-bg);
   color: var(--node-fg);
   min-width: 110px;
 }
@@ -564,7 +850,7 @@ p.error {
     sans-serif;
   font-size: 12px;
   border: 2px solid var(--node-base-border);
-  background: var(--node-bg-alt);
+  background: var(--node-bg);
   color: var(--node-fg);
   min-width: 130px;
 }
@@ -601,7 +887,7 @@ p.error {
   padding: 1px 5px;
   border-radius: 3px;
   background: var(--node-hitl);
-  color: #15192a;
+  color: var(--text-on-accent);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.5px;
@@ -635,7 +921,7 @@ p.error {
     sans-serif;
   font-size: 12px;
   border: 2px solid var(--node-base-border);
-  background: var(--node-bg-alt);
+  background: var(--node-bg);
   color: var(--node-fg);
   min-width: 120px;
 }
@@ -675,7 +961,7 @@ p.error {
     sans-serif;
   font-size: 12px;
   border: 2px solid var(--node-base-border);
-  background: var(--node-bg-alt);
+  background: var(--node-bg);
   color: var(--node-fg);
   min-width: 130px;
 }
@@ -710,7 +996,7 @@ p.error {
     sans-serif;
   font-size: 14px;
   border: 2px solid var(--node-base-border);
-  background: #1c2238;
+  background: var(--surface-2);
   color: var(--node-fg);
   min-width: 180px;
 }
@@ -1812,22 +2098,30 @@ p.error {
    A non-blocking modal — a fixed, centered panel over the Builder
    shell; closing it discards the run (discard-on-close). Theme-token
    driven (--node-*) per gotcha #67 + M07-IRL #3. */
+/* The Tester is the candidate-run watch surface — given the full-screen
+ * treatment (the 2026-06-03 IRL finding) so the scoped graph + Output
+ * rail have room. Repainted to the Light Instrument tokens. (A structural
+ * migration onto the Modal primitive is deferred: TesterModal's unit
+ * tests pin tester-modal__close/header and strict-TDD forbids editing
+ * them in this impl commit; the migration's test updates belong in a
+ * later stage's red phase.) */
 .tester-modal {
   position: fixed;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  z-index: 60;
+  z-index: 300;
   display: flex;
   flex-direction: column;
-  width: 540px;
-  max-width: 92vw;
-  max-height: 88vh;
-  background: var(--node-bg);
-  color: var(--node-fg);
-  border: 1px solid var(--node-base-border);
-  border-radius: 6px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  width: 96vw;
+  max-width: 1280px;
+  height: 92vh;
+  max-height: 92vh;
+  background: var(--surface-0);
+  color: var(--text-0);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--e3);
 }
 
 .tester-modal__header {
@@ -2104,4 +2398,389 @@ p.error {
   margin: 0.3rem 0 0;
   font-size: 11px;
   color: var(--node-fg-muted);
+}
+
+/* =====================================================================
+   M08.8.B — Light Instrument shell + Toast/Modal primitives + transport.
+   The 52px topbar over a 232px / 1fr / 360px three-pane workspace
+   (DESIGN.md "Layout & spacing").
+   ===================================================================== */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--app-bg);
+}
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  height: 52px;
+  flex: 0 0 52px;
+  padding: 0 var(--s4);
+  background: var(--surface-0);
+  border-bottom: 1px solid var(--border);
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.brand__mark {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--r-sm);
+  background: linear-gradient(135deg, var(--accent), var(--accent-active));
+}
+.brand__name {
+  margin: 0;
+  font-size: var(--fs-h2);
+  line-height: 1;
+  font-weight: 600;
+  color: var(--text-0);
+  white-space: nowrap;
+}
+.brand__ver {
+  color: var(--text-2);
+  font-weight: 400;
+  margin-left: var(--s1);
+}
+.topbar__spacer {
+  flex: 1 1 auto;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 3px var(--s3);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: var(--fs-small);
+  color: var(--text-1);
+  white-space: nowrap;
+}
+.chip__swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--text-3);
+}
+.chip__swatch--tier {
+  background: var(--warn);
+}
+.chip__swatch--ok {
+  background: var(--ok);
+}
+.chip__swatch--off {
+  background: var(--text-3);
+}
+
+.subchrome {
+  padding: var(--s2) var(--s4) 0;
+  background: var(--app-bg);
+}
+
+.workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4) var(--s4);
+}
+.workspace--triple {
+  grid-template-columns: 232px 1fr 360px;
+}
+.workspace--single {
+  grid-template-columns: 1fr;
+}
+.rail {
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.pane--center {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+/* ---- Toast: bottom-right, left status border, NO interactive children
+   (role=status live region; auto-dismiss only). ---- */
+.toast-stack {
+  position: fixed;
+  right: var(--s4);
+  bottom: var(--s4);
+  z-index: 400;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  max-width: 360px;
+  pointer-events: none;
+}
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  padding: var(--s3);
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-3);
+  border-radius: var(--r-md);
+  box-shadow: var(--e2);
+}
+.toast--ok {
+  border-left-color: var(--ok);
+}
+.toast--error {
+  border-left-color: var(--error);
+}
+.toast--warn {
+  border-left-color: var(--warn);
+}
+.toast--info {
+  border-left-color: var(--accent);
+}
+.toast__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--text-on-accent);
+}
+.toast--ok .toast__icon {
+  background: var(--ok);
+}
+.toast--error .toast__icon {
+  background: var(--error);
+}
+.toast--warn .toast__icon {
+  background: var(--warn);
+}
+.toast--info .toast__icon {
+  background: var(--accent);
+}
+.toast__title {
+  font-size: var(--fs-body);
+  font-weight: 500;
+  color: var(--text-0);
+}
+.toast__message {
+  font-size: var(--fs-small);
+  color: var(--text-1);
+  margin-top: 2px;
+}
+
+/* ---- Modal: z-300 over a blurred scrim, lg radius, e3, bounded body.
+   Closes #24 (untruncated labels in a scrollable bounded panel). ---- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s6);
+  background: rgba(16, 32, 46, 0.34);
+  backdrop-filter: blur(3px);
+}
+.modal {
+  display: flex;
+  flex-direction: column;
+  width: 560px;
+  max-width: 92vw;
+  background: var(--surface-0);
+  color: var(--text-0);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--e3);
+}
+.modal--full {
+  width: 96vw;
+  max-width: 1280px;
+  height: 92vh;
+}
+.modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.modal__title {
+  margin: 0;
+  font-size: var(--fs-h2);
+  font-weight: 600;
+  color: var(--text-0);
+}
+.modal__close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  line-height: 1;
+  font-size: 20px;
+  color: var(--text-2);
+  padding: 0 var(--s1);
+}
+.modal__close:hover {
+  color: var(--text-0);
+}
+.modal__body {
+  overflow-y: auto;
+  padding: var(--s4);
+}
+.modal__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* ---- Run banner + transport over the canvas (presentational chrome;
+   the transport re-drives the EXISTING agent_event replay). ---- */
+.run-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--e1);
+  font-size: var(--fs-small);
+}
+.run-banner--running {
+  background: var(--accent-bg);
+  color: var(--accent-on-light);
+  border-color: var(--accent-border);
+}
+.run-banner--suspended {
+  background: var(--kind-gap-bg);
+  color: var(--kind-gap-text);
+  border-color: var(--warn-border);
+}
+.run-banner--done {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+  border-color: var(--ok-border);
+}
+.run-banner__pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+}
+.run-banner__pulse--running {
+  animation: run-banner-pulse 1.4s ease-in-out infinite;
+}
+@keyframes run-banner-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.transport {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--e1);
+}
+.transport__play,
+.transport__restart {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-0);
+  cursor: pointer;
+  font-size: 13px;
+}
+.transport__play:hover,
+.transport__restart:hover {
+  background: var(--surface-3);
+}
+.transport__scrub {
+  flex: 1 1 auto;
+}
+.transport__track {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-3);
+}
+.transport__fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent);
+}
+.transport__head {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: var(--e1);
+}
+.transport__speed {
+  font-size: var(--fs-small);
+  color: var(--text-2);
+}
+
+/* ---- Node cards → DESIGN.md light cards (surface-0, e1, md radius;
+   selected = accent focus ring). The kind bar + glyph chip + status dot
+   are already on the nodes (M08.8.A two-axis); this lifts them to cards. */
+.agent-node,
+.tool-node,
+.skill-node,
+.mcp-node,
+.gap-node,
+.hitl-node,
+.plan-node,
+.task-node,
+.verify-node,
+.hook-node,
+.framework-node {
+  box-shadow: var(--e1);
+  border-radius: var(--r-md);
+}
+.react-flow__node.selected .agent-node,
+.react-flow__node.selected .tool-node,
+.react-flow__node.selected .skill-node,
+.react-flow__node.selected .mcp-node,
+.react-flow__node.selected .gap-node,
+.react-flow__node.selected .hitl-node,
+.react-flow__node.selected .plan-node,
+.react-flow__node.selected .task-node,
+.react-flow__node.selected .verify-node,
+.react-flow__node.selected .hook-node,
+.react-flow__node.selected .framework-node {
+  box-shadow: var(--focus-ring);
 }

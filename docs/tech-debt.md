@@ -1040,3 +1040,38 @@ If a second model-aware budget action lands (or the action set grows),
 revisit whether the per-action model should be derived rather than carried
 as mutable loop state.
 
+## TD-043 — `TesterModal` not migrated onto the `Modal` primitive
+
+**Date logged:** 2026-06-03
+**Found by:** M08.8.B (Light Instrument visual foundation)
+**Pass that surfaced it:** Stage-B implementation (Modal-primitive consolidation)
+**Category:** other (consolidation / duplicate-implementation)
+**Resolution status:** open
+
+### Description
+
+M08.8.B shipped the `TesterModal` full-screen *visual* via a CSS repaint of
+its existing `.tester-modal*` classes (z-300, 96vw × 92vh, Light Instrument
+tokens), NOT a migration onto the reusable `Modal` primitive
+(`<Modal size="full">`, B.3.4). Two modal implementations therefore coexist:
+the `Modal` primitive (overlay/scrim/z-index/focus-trap/Esc, used by
+`MCPServerAddModal`) and `TesterModal`'s hand-rolled overlay.
+
+### Why it's debt not bug
+
+The migration is **test-bearing**: `TesterModal.test.tsx` pins
+`tester-close` / `tester-modal__close` / `tester-modal__header` (testids +
+a CSS-rule-exists check), and strict-TDD (`CLAUDE.md` §5) forbids editing
+those tests in an impl commit. A clean swap onto `Modal` would change those
+selectors, so it cannot land as a pure repaint mid-stage. The shipped CSS
+repaint is correct and full-screen; this is a consolidation flag, not a
+defect.
+
+### Recommended approach (when addressed)
+
+A later stage's **red phase** rewrites the `tester-modal__*` tests against
+the `Modal` primitive's structure (the primitive's `data-testid`/role +
+a Tester-owned close affordance), then the impl migrates `TesterModal` onto
+`<Modal size="full">` and deletes the duplicate `.tester-modal` overlay CSS.
+Ref B.3.4.
+

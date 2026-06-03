@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { ApprovalPanel } from './components/ApprovalPanel';
+import { AppShell } from './components/AppShell';
 import { BudgetHeaderBar } from './components/BudgetHeaderBar';
 import { BuilderShell } from './components/builder/BuilderShell';
-import { ViewSwitch, type AppView } from './components/builder/ViewSwitch';
+import { type AppView } from './components/builder/ViewSwitch';
 import { GapPanel } from './components/GapPanel';
 import { GraphCanvas } from './components/GraphCanvas';
 import { HITLModal } from './components/HITLModal';
@@ -12,10 +13,13 @@ import { ImportPanel } from './components/ImportPanel';
 import { InspectorPanel } from './components/InspectorPanel';
 import { MCPServerSettings } from './components/MCPServerSettings';
 import { RecoveryDialog } from './components/RecoveryDialog';
+import { RunBanner, type RunStatus } from './components/RunBanner';
 import { SettingsPanel } from './components/SettingsPanel';
 import { SetupPanel } from './components/SetupPanel';
 import { SmokeButton } from './components/SmokeButton';
 import { SqlInspector } from './components/SqlInspector';
+import { ToastProvider } from './components/Toast';
+import { Transport } from './components/Transport';
 import { UncertaintyPrompt } from './components/UncertaintyPrompt';
 import {
   invokeHasApiKey,
@@ -27,6 +31,7 @@ import {
 } from './lib/ipc';
 import { useBuilderStore, useTestGraphStore } from './lib/builderStore';
 import { useGraphStore } from './lib/graphStore';
+import { useToastStore } from './lib/toastStore';
 import './styles.css';
 
 const LAST_SESSION_KEY = 'lastSessionId';
@@ -59,58 +64,18 @@ declare global {
     // the scoped store the Tester modal renders (the real `agent_event`
     // path replays into this store; injecting mirrors it without a key).
     __testGraphStore?: typeof useTestGraphStore;
+    // M08.8.B — the reusable Toast store, exposed so
+    // tests/e2e-tauri/visual_foundation.e2e.ts can push a toast and watch
+    // it appear bottom-right + auto-dismiss (same affordance pattern as
+    // __graphStore; the store carries no secrets).
+    __toastStore?: typeof useToastStore;
   }
 }
 if (typeof window !== 'undefined') {
   window.__graphStore = useGraphStore;
   window.__builderStore = useBuilderStore;
   window.__testGraphStore = useTestGraphStore;
-}
-
-interface RuntimeLayoutProps {
-  hasKey: boolean;
-  running: boolean;
-  error: string | null;
-  onSetKey: (key: string) => Promise<void>;
-  onSmoke: () => Promise<void>;
-  lastSessionId: string | null;
-}
-
-// RuntimeLayout — the live-execution view (SetupPanel + SmokeButton +
-// the `graph-layout` panels + the modal/dialog overlays). Extracted
-// verbatim from App's return so the Runtime view is a clean unit and the
-// M08.C Builder view is a sibling, not a rewrite. Behavior is unchanged:
-// App still owns the hasKey / running / error state, the
-// subscribeAgentEvents effect, and the replay-on-mount.
-function RuntimeLayout({
-  hasKey,
-  running,
-  error,
-  onSetKey,
-  onSmoke,
-  lastSessionId,
-}: RuntimeLayoutProps): JSX.Element {
-  return (
-    <>
-      <SetupPanel onSave={onSetKey} />
-      <SmokeButton disabled={!hasKey || running} onClick={onSmoke} />
-      {error && <p className="error">{error}</p>}
-      <div className="graph-layout">
-        <GraphCanvas />
-        <InspectorPanel />
-        <ApprovalPanel />
-        <HITLPanel />
-        <GapPanel />
-        <MCPServerSettings />
-        <ImportPanel />
-      </div>
-      <HITLModal />
-      <HITLToast />
-      <RecoveryDialog />
-      <UncertaintyPrompt sessionId={lastSessionId ?? ''} />
-      <SqlInspector />
-    </>
-  );
+  window.__toastStore = useToastStore;
 }
 
 export function App(): JSX.Element {
@@ -118,6 +83,7 @@ export function App(): JSX.Element {
   const [hasKey, setHasKey] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const tier = useGraphStore((s) => s.currentTier);
 
   useEffect(() => {
     // M07-IRL #7: seed `hasKey` from the OS keychain so a key entered in
@@ -185,25 +151,73 @@ export function App(): JSX.Element {
 
   const lastSessionId =
     typeof localStorage !== 'undefined' ? localStorage.getItem(LAST_SESSION_KEY) : null;
+  const replayAvailable = lastSessionId !== null && lastSessionId.length > 0;
+  const handleReplay = (): void => {
+    if (lastSessionId !== null && lastSessionId.length > 0) {
+      void invokeReplaySession(lastSessionId).catch((e) => {
+        console.error('Replay session error:', e);
+      });
+    }
+  };
+  const runStatus: RunStatus = running ? 'running' : 'idle';
+
+  // BudgetHeaderBar (dormant until a budget event) + the collapsible
+  // SettingsPanel mount OUTSIDE the view conditional — both stay reachable
+  // in Runtime and Builder (settings_tier_promotion.spec relies on this).
+  const subchrome = (
+    <>
+      <BudgetHeaderBar />
+      <SettingsPanel />
+    </>
+  );
 
   return (
-    <main>
-      <BudgetHeaderBar />
-      <h1>Agent Runtime — M03 live graph</h1>
-      <ViewSwitch value={view} onChange={setView} />
-      <SettingsPanel />
+    <ToastProvider>
       {view === 'runtime' ? (
-        <RuntimeLayout
-          hasKey={hasKey}
-          running={running}
-          error={error}
-          onSetKey={handleSetKey}
-          onSmoke={handleSmoke}
-          lastSessionId={lastSessionId}
-        />
+        <>
+          <AppShell
+            view={view}
+            onViewChange={setView}
+            hasKey={hasKey}
+            tier={tier}
+            subchrome={subchrome}
+            left={
+              <>
+                <SetupPanel onSave={handleSetKey} />
+                <SmokeButton disabled={!hasKey || running} onClick={handleSmoke} />
+                {error && <p className="error">{error}</p>}
+                <ApprovalPanel />
+                <HITLPanel />
+                <GapPanel />
+                <MCPServerSettings />
+                <ImportPanel />
+              </>
+            }
+            center={
+              <>
+                <RunBanner status={runStatus} />
+                <GraphCanvas />
+                <Transport replayAvailable={replayAvailable} onReplay={handleReplay} />
+              </>
+            }
+            right={<InspectorPanel />}
+          />
+          <HITLModal />
+          <HITLToast />
+          <RecoveryDialog />
+          <UncertaintyPrompt sessionId={lastSessionId ?? ''} />
+          <SqlInspector />
+        </>
       ) : (
-        <BuilderShell />
+        <AppShell
+          view={view}
+          onViewChange={setView}
+          hasKey={hasKey}
+          tier={tier}
+          subchrome={subchrome}
+          center={<BuilderShell />}
+        />
       )}
-    </main>
+    </ToastProvider>
   );
 }
