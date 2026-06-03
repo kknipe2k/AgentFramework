@@ -1046,7 +1046,11 @@ as mutable loop state.
 **Found by:** M08.8.B (Light Instrument visual foundation)
 **Pass that surfaced it:** Stage-B implementation (Modal-primitive consolidation)
 **Category:** other (consolidation / duplicate-implementation)
-**Resolution status:** open
+**Resolution status:** RESOLVED at M08.8.B.fix — `TesterModal` now renders
+`<Modal size="full" testId="tester-modal">`; the hand-rolled `.tester-modal`
+overlay CSS + its `tester-modal__*` test pins were removed (the unit + the
+Playwright close-selector rewrite rode the B.fix RED commit). Two modal
+implementations no longer coexist.
 
 ### Description
 
@@ -1075,3 +1079,44 @@ a Tester-owned close affordance), then the impl migrates `TesterModal` onto
 `<Modal size="full">` and deletes the duplicate `.tester-modal` overlay CSS.
 Ref B.3.4.
 
+
+---
+
+## TD-044 — `smoke.e2e.ts` "reload reconstructs the graph" is key-dependent + races the post-reload rebuild
+
+**Date logged:** 2026-06-03
+**Found by:** M08.8.B.fix (first full `test:e2e:tauri` run to completion)
+**Pass that surfaced it:** real-app `tauri-driver` suite (design-conformance close)
+**Category:** test-infra (real-app spec flake / environment dependency)
+**Resolution status:** open — pre-existing; NOT a B.fix exposure (deferred, do not chase in B.fix)
+
+### Description
+
+`tests/e2e-tauri/smoke.e2e.ts` → "reload reconstructs the graph from persisted
+signals" waits for `[data-testid^="agent-node-"]` after a window reload and
+times out (15s) when the key-present branch runs: the spec first performs a
+**real Anthropic smoke run** (it needs a live `ANTHROPIC_API_KEY`/keychain
+entry), persists signals, reloads, and expects the graph to rebuild from the
+persisted signal chain. On the build machine (key present) the post-reload
+rebuild did not surface a node in the window; CI runs keyless and skips the
+real-run leg, so this never blocked merge.
+
+### Why it's debt not a B.fix bug
+
+B.fix is renderer/CSS only — `git diff 47e10a2..HEAD --name-only` shows it
+touched **zero** persistence / signal-replay / `commands.rs` / store
+reconstruction code (only `styles.css`, 5 components, fonts, tests). The
+reload-rebuild path is unchanged since before M08.8; this spec was simply
+never run to green in A/B (B's retro left `test:e2e:tauri` "pending"), so the
+first completed run surfaced a **pre-existing** key-present timing/rebuild
+issue. The `agent-node-*` testid the spec waits on was not altered by the
+restyle.
+
+### Recommended approach (when addressed)
+
+Separate triage (not B.fix): (1) confirm whether the post-reload rebuild
+genuinely fails or merely races (add a `waitUntil` on the reconstructed graph,
+mirroring the TD-044-sibling `builder_load_aria` deflake), and (2) decide the
+key-present vs CI-keyless contract for this leg — gate the real-run+reload
+assertion behind a key-present guard so the spec is deterministic in both
+environments.
