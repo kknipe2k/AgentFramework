@@ -25,7 +25,7 @@ import {
   subscribeAgentEvents,
   unwrapCmdError,
 } from './lib/ipc';
-import { useBuilderStore } from './lib/builderStore';
+import { useBuilderStore, useTestGraphStore } from './lib/builderStore';
 import { useGraphStore } from './lib/graphStore';
 import './styles.css';
 
@@ -54,11 +54,17 @@ declare global {
     // applyLoadedFramework action via executeScript — the exact code
     // path Inspector.onLoad runs minus the dialog click).
     __builderStore?: typeof useBuilderStore;
+    // M08.8.A — the Tester's scoped graph store, exposed so
+    // tests/e2e-tauri/execution_view.e2e.ts can inject a run trace into
+    // the scoped store the Tester modal renders (the real `agent_event`
+    // path replays into this store; injecting mirrors it without a key).
+    __testGraphStore?: typeof useTestGraphStore;
   }
 }
 if (typeof window !== 'undefined') {
   window.__graphStore = useGraphStore;
   window.__builderStore = useBuilderStore;
+  window.__testGraphStore = useTestGraphStore;
 }
 
 interface RuntimeLayoutProps {

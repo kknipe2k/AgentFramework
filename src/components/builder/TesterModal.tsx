@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useBuilderStore, useTestGraphStore } from '../../lib/builderStore';
 import { useGraphStore } from '../../lib/graphStore';
 import { testFramework, unwrapCmdError, type TestOutcome, type WireDuration } from '../../lib/ipc';
+import { InspectorPanel } from '../InspectorPanel';
 import { TesterGraphPane } from './TesterGraphPane';
 
 const MS_PER_SEC = 1000;
@@ -191,8 +192,14 @@ export function TesterModal(): JSX.Element | null {
             {error}
           </p>
         )}
-        {/* The smaller graph pane — scoped to the test session. */}
-        <TesterGraphPane />
+        {/* The smaller graph pane — scoped to the test session — beside
+            the Output/Inspector rail bound to the SAME scoped store
+            (M08.8.A: a Tester run's agent text + tool payloads are
+            observable in-app, not only via RUST_LOG). */}
+        <div className="tester-modal__watch">
+          <TesterGraphPane />
+          <InspectorPanel store={useTestGraphStore} />
+        </div>
         {outcome !== null && <TesterResult outcome={outcome} onPromote={handlePromote} />}
       </div>
     </div>

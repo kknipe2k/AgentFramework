@@ -21,13 +21,24 @@ import { nodeTypes } from '../GraphCanvas';
 export function TesterGraphPane(): JSX.Element {
   const nodes = useTestGraphStore((s) => s.nodes);
   const edges = useTestGraphStore((s) => s.edges);
+  const selectNode = useTestGraphStore((s) => s.selectNode);
   // `layoutGraph` is pure; memoize on the store's array identities so the
   // dagre pass re-runs only when the scoped graph actually changes (the
   // arrays are referentially stable between reducer no-ops).
   const laidNodes = useMemo(() => layoutGraph(nodes, edges), [nodes, edges]);
   return (
     <div className="tester-graph-pane" data-testid="tester-graph-pane">
-      <ReactFlow nodes={laidNodes} edges={edges} nodeTypes={nodeTypes} fitView>
+      <ReactFlow
+        nodes={laidNodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        fitView
+        // M08.8.A: clicking a node selects it in the SCOPED store so the
+        // Tester's Inspector rail surfaces its payload (the live
+        // GraphCanvas wires the same onNodeClick → selectNode).
+        onNodeClick={(_, node) => selectNode(node.id)}
+        onPaneClick={() => selectNode(null)}
+      >
         <Background />
         <Controls />
       </ReactFlow>

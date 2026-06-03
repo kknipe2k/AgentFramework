@@ -94,6 +94,18 @@ export interface ToolNodeData extends Record<string, unknown> {
   tokensIn: number;
   /** Per-call output tokens. Same semantics as `tokensIn`. */
   tokensOut: number;
+  /**
+   * M08.8.A (TD-034): the tool call's input payload (`tool_invoked.input`)
+   * retained for the Inspector — the path a `Read` read, the args a tool
+   * was called with. `undefined` until the `tool_invoked` event lands.
+   */
+  input?: unknown;
+  /**
+   * M08.8.A (TD-034): the tool call's result payload (`tool_result.output`)
+   * retained for the Inspector — the file contents `Read` returned, etc.
+   * `undefined` until the `tool_result` event lands.
+   */
+  output?: unknown;
 }
 
 export interface SkillNodeData extends Record<string, unknown> {
@@ -562,6 +574,14 @@ interface GraphState {
    * preference, like `currentTier`, not per-session graph state).
    */
   globalBudgetCap: number;
+  /**
+   * M08.8.A (TD-034): the agent's streamed reply text for the current
+   * session, accumulated from `stream_text` events. Renders live in the
+   * Output rail (DESIGN principle 1 — visible output; mono register).
+   * Pre-M08.8.A `stream_text` was a graphStore no-op, so the reply was
+   * watchable only via `RUST_LOG`. Reset on `clear()`.
+   */
+  outputBuffer: string;
 
   /**
    * Single entry point for translating AgentEvent into node + edge
@@ -790,6 +810,7 @@ const graphStoreInitializer: StateCreator<GraphState> = (set) => ({
   activeMcpCalls: {},
   imports: {},
   globalBudgetCap: 0,
+  outputBuffer: '',
 
   applyEvent: (event) =>
     set((state) => {
@@ -905,6 +926,7 @@ const graphStoreInitializer: StateCreator<GraphState> = (set) => ({
                 durationMs: null,
                 tokensIn: 0,
                 tokensOut: 0,
+                input: event.input,
               },
             };
             const agentToMcpId = `edge:agent:${event.agent_id}->${mcpId}`;
@@ -952,6 +974,7 @@ const graphStoreInitializer: StateCreator<GraphState> = (set) => ({
               durationMs: null,
               tokensIn: 0,
               tokensOut: 0,
+              input: event.input,
             },
           };
           return {
@@ -995,6 +1018,7 @@ const graphStoreInitializer: StateCreator<GraphState> = (set) => ({
                     durationMs: event.duration_ms,
                     tokensIn,
                     tokensOut,
+                    output: event.output,
                   },
                 };
               }
@@ -1725,13 +1749,19 @@ const graphStoreInitializer: StateCreator<GraphState> = (set) => ({
           };
         }
 
-        // No-op variants — stream_text + decision_record feed the
-        // inspector, not the graph; session_end + tool_error +
-        // mode_changed are graph-no-op by design.
+        // M08.8.A (TD-034): the agent's streamed reply is no longer
+        // dropped — it accumulates into outputBuffer so the Output rail
+        // renders it live (DESIGN principle 1). Graph topology is
+        // unchanged: stream_text mutates no node/edge.
+        case 'stream_text':
+          return { ...state, outputBuffer: state.outputBuffer + event.text };
+
+        // No-op variants — decision_record feeds the inspector, not the
+        // graph; session_end + tool_error + mode_changed are graph-no-op
+        // by design.
         case 'session_end':
         case 'tool_error':
         case 'mode_changed':
-        case 'stream_text':
         case 'decision_record':
           return state;
 
@@ -1776,6 +1806,9 @@ const graphStoreInitializer: StateCreator<GraphState> = (set) => ({
       // globalBudgetCap is a user preference (like currentTier), not
       // per-session graph state — the configured cap survives a clear().
       globalBudgetCap: state.globalBudgetCap,
+      // outputBuffer is per-session streamed agent text — reset on clear()
+      // so a new run's Output rail starts empty (M08.8.A).
+      outputBuffer: '',
     })),
 
   selectNode: (id) => set({ selectedNodeId: id }),

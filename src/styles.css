@@ -17,6 +17,22 @@
   --node-bg-alt: #1a1f33;
   --node-fg: #e6e6e6;
   --node-fg-muted: #a8a8a8;
+
+  /* DESIGN.md "Light Instrument" tokens (M08.8.A — the vocabulary the
+   * execution-view surfaces consume; a full canvas repaint to the light
+   * palette is the milestone-wide build-out, not Stage A). The node-kind
+   * (two-axis model) + status families + the mono instrument register. */
+  --font-mono: 'IBM Plex Mono', 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+  --kind-agent: #2563eb;
+  --kind-tool: #0d9488;
+  --kind-skill: #7c3aed;
+  --kind-hook: #db2777;
+  --kind-hitl: #d97706;
+  --st-idle: #98a3b4;
+  --st-active: #2563eb;
+  --st-complete: #16a34a;
+  --st-error: #dc2626;
+  --st-gap: #ea580c;
 }
 
 * {
@@ -165,11 +181,37 @@ p.error {
   padding: 0.5rem;
   background: var(--node-bg-alt);
   border-radius: 3px;
-  font-family: 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* M08.8.A — the Output rail (streamed agent reply) + the tool I/O
+ * sections, both in the mono "instrument register" per DESIGN.md. */
+.inspector-panel__section-label {
+  margin: 0.6rem 0 0.25rem;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--node-fg-muted);
+}
+.inspector-panel__output,
+.inspector-panel__io {
+  margin: 0;
+  padding: 0.5rem;
+  background: var(--node-bg-alt);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.inspector-panel__output {
+  border-left: 3px solid var(--st-active);
 }
 
 /* Stage D MiniMap container — keep React Flow's default layering but
@@ -237,12 +279,66 @@ p.error {
   border-color: var(--node-error);
 }
 .tool-node__name {
-  font-family: 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+  font-family: var(--font-mono);
 }
 .tool-node__duration {
   font-size: 11px;
   color: var(--node-fg-muted);
   margin-top: 2px;
+}
+
+/* ---- DESIGN.md two-axis node model (M08.8.A) ----
+ * Kind axis: a 4px left accent bar + a mono glyph chip (A/T/…). Status
+ * axis: a colored dot (idle→active→complete/error/gap). The two signals
+ * never collide — a running Tool reads as Tool (teal) AND running (blue). */
+.agent-node {
+  position: relative;
+  border-left: 4px solid var(--kind-agent);
+}
+.tool-node {
+  position: relative;
+  border-left: 4px solid var(--kind-tool);
+}
+.node-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-right: 4px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  vertical-align: middle;
+}
+.node-glyph--agent {
+  background: var(--kind-agent);
+}
+.node-glyph--tool {
+  background: var(--kind-tool);
+}
+.node-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 4px;
+  vertical-align: middle;
+  background: var(--st-idle);
+}
+.node-status-dot--active {
+  background: var(--st-active);
+}
+.node-status-dot--complete {
+  background: var(--st-complete);
+}
+.node-status-dot--error {
+  background: var(--st-error);
+}
+.node-status-dot--gap {
+  background: var(--st-gap);
 }
 
 /* ---- SkillNode ---- */
@@ -1806,10 +1902,24 @@ p.error {
 }
 
 .tester-graph-pane {
+  flex: 1 1 auto;
   height: 220px;
   background: var(--node-bg-alt);
   border: 1px solid var(--node-base-border);
   border-radius: 3px;
+}
+
+/* M08.8.A — the Tester's run-watch row: the scoped graph pane beside the
+ * Output/Inspector rail bound to the same scoped store. */
+.tester-modal__watch {
+  display: flex;
+  flex-direction: row;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+.tester-modal__watch .inspector-panel {
+  flex: 0 0 260px;
+  height: 220px;
 }
 
 .tester-result {
