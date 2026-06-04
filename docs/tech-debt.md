@@ -1252,3 +1252,26 @@ verify test that seeds `serde_json::to_value(&AgentEvent::VerifyPassed{…})` /
 `VerifyFailed{…}` (not a hand-built `{"passed":…}`) and asserts the projected
 `outcome` — so the fix is pinned by the real shape. Land it in the same rung that
 wires the verify producer, so projector and producer go live shape-matched. ~30 min.
+
+## TD-047 — Tester `fold_outcome` does not fold an L4 `TierViolation`; a tier-limited run reports `passed = true`
+
+**Date logged:** 2026-06-04
+**Found by:** M08.8.C green-phase (the tier wire made the Novice-tier-denied Tester path reachable in a production-shaped test; surfaced when the red Novice test's `!passed` assertion proved false)
+**Pass that surfaced it:** N/A (impl-phase grounding)
+**Category:** observability (Tester results UX — a tier-limited run is not distinguished from a clean pass)
+
+**Resolution status:** open (owner: the Stage F / M09 Tester-results UI — surface "tier-limited" distinctly; NOT a correctness defect — see below)
+
+### Description
+
+`crates/runtime-main/src/builder/tester.rs::fold_outcome` (`:127–162`) folds **only**
+`AgentEvent::CapabilityViolation` into `capability_failures` (the L1/L2 scope gate) and
+`AgentEvent::ArtifactHashMismatch` into `integrity_blocked`; `passed = capability_failures.is_empty() && !integrity_blocked`. An `AgentEvent::TierViolation` (the L4 tier gate) hits the `_ => {}` arm — it is **not** folded into anything. So a run where the agent's only blocked action was **tier**-denied (e.g. a Novice user testing a Write-using framework) records `passed = true` with the `TierViolation` present in `trace` but no `capability_failures` entry and no distinct "tier-limited" signal on the outcome. The M08.8.C assembled test `test_framework_with_at_novice_…` asserts this current behavior (`outcome.passed == true`).
+
+### Why it's debt not a bug
+
+This is the **documented, defensible contract**, not an inference. Three doc sites pin it: `TestOutcome.passed` field doc (`tester.rs:55–58`: "Any `capability_failures` entry or any `AgentEvent::ArtifactHashMismatch` in `trace` forces `false`" — TierViolation not listed); the `capability_failures` field doc (`:59–62`: "§8.security **L2** capability violations"); and the `fold_outcome` fn doc (`:122–125`: "the presence of any `AgentEvent::ArtifactHashMismatch` (or any capability failure) forces `passed = false`" — again TierViolation not listed). The design split is sound: an L1/L2 **scope** `CapabilityViolation` means the framework's agent attempted something **outside its declared capabilities** — a framework-authoring defect the builder must fix → fail the test. An L4 **TierViolation** means the action is fine for the framework but the **user's current session tier** forbids it — the framework is correct; the user just needs to promote → not a framework failure. Reporting a well-authored framework as "failed" because the user is at Novice would mislead. So `passed = true` on a tier-limited run is the right call for the pass/fail bit; the gap is purely **observability** — the outcome does not surface a "this run was tier-limited; promote to exercise it" signal distinct from a clean pass (the `TierViolation` is in the raw trace only).
+
+### Recommended approach (when addressed)
+
+Do NOT fold `TierViolation` into `capability_failures` (that would wrongly mark the framework failed). Instead, at the Stage F / M09 Tester-results UI, derive a distinct "tier-limited" badge from `trace.iter().any(AgentEvent::TierViolation)` and render it alongside `passed` (e.g. "Passed — but N action(s) were tier-limited at Novice; promote to exercise them"). Optionally add a `tier_limited: bool` (or the tier-violated kinds) to `TestOutcome` so the renderer needn't re-scan the trace. ~30–60 min; pairs with the Tester-results metric cards (M08.8 Stage F / the DESIGN.md §Components Tester surface). No change to `fold_outcome`'s pass/fail logic.
