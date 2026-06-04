@@ -6,7 +6,7 @@ In short: contributors are expected to treat each other professionally and const
 
 ## Reporting
 
-To report a violation, contact the maintainers privately at the address listed in `SECURITY.md` under "Maintainer contact." Reports are handled in confidence. The Covenant's enforcement guidelines (§5 of the linked text) describe the response process; this project follows them.
+To report a violation, email the maintainers privately at **ardenagentic+conduct@gmail.com**. Reports are handled in confidence. The Covenant's enforcement guidelines (§5 of the linked text) describe the response process; this project follows them.
 
 ## Scope
 
