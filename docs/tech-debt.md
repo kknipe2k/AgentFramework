@@ -1188,14 +1188,14 @@ halt / behaviour change), so the `replay.rs` disease did **not** spread to the
   `paints`), so they are exercised only by `seed_signal` fabricated fixtures. When
   rungs 7/8 wire the producers, convert those fixtures to
   `serde_json::to_value(&real_event)` and drive them producer-first.
-- **`recovery_lifecycle.rs:114–181` — FABRICATED-FIXTURE eval (Stage-D precondition).**
+- **`recovery_lifecycle.rs:114–181` — FABRICATED-FIXTURE eval (Stage-E precondition).**
   Hand-builds the signal rows AND the snapshot `state_json` (`:181`
   `json!({"checkpoint":1})`) via `client.write_signal`, then `recover_session`; it does
   NOT drive `AgentSdk::run_agent`, and the snapshot state it deserializes is an
   arbitrary shape no producer emits — the **snapshot-state-deser path has no producer
   cross-check** (the Stage-V blind spot `smoke_signal_persistence.rs` flagged). Signal
-  shapes are accurate TODAY but drift-prone. Because M08.8.D's `gap→resume→complete`
-  reuses `recovery::resume`, hardening this is a **Stage-D precondition** (per 58d3316).
+  shapes are accurate TODAY but drift-prone. Because M08.8.E's `gap→resume→complete`
+  reuses `recovery::resume`, hardening this is a **Stage-E precondition** (per 58d3316).
   Fix: seed via `serde_json::to_value(&real_event)` + a real serialized snapshot state.
 - **`ipc.ts` mirror cluster — TD-011 sibling (TS side).** Hand-written interfaces
   mirroring Rust serde output (`McpTool`/`McpServerSummary` = TD-011; plus `ResumePlan`,
