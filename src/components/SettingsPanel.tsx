@@ -46,7 +46,10 @@ function TierControl(): JSX.Element {
   // Novice → Promoted is the promotion; Promoted → Novice the demotion.
   // Operator is NOT a target — TierRef has only 'novice' | 'promoted'.
   const target: TierRef = tier === 'novice' ? 'promoted' : 'novice';
-  const actionLabel = tier === 'novice' ? 'Promote to Promoted' : 'Demote to Novice';
+  // #20 / DESIGN.md principle 8 (labels-true): the action verb alone —
+  // the redundant "Promote to Promoted" / "Demote to Novice" read as
+  // mislabels. The current tier and the target are already shown above.
+  const actionLabel = tier === 'novice' ? 'Promote' : 'Demote';
 
   async function handleTransition(): Promise<void> {
     setPending(true);

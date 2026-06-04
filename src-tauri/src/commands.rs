@@ -1638,14 +1638,23 @@ pub async fn disconnect_test_session_mcp(dispatcher: &McpDispatcher, servers: &[
 
 /// Test-seam for [`test_framework`] (CLAUDE.md §5 `*_with`).
 ///
-/// Delegates to [`runtime_main::builder::run_test_session_with`] and maps
-/// a `TesterError` onto the wire-format [`CmdError`]. A *failed test* is
-/// `Ok(TestOutcome { passed: false, .. })`, not an `Err`.
+/// Delegates to [`runtime_main::builder::run_test_session_with_tier`],
+/// threading the caller-supplied `tier` into the run-loop enforcer
+/// (M08.8.C / TD-036), and maps a `TesterError` onto the wire-format
+/// [`CmdError`]. A *failed test* is `Ok(TestOutcome { passed: false, .. })`,
+/// not an `Err`.
+///
+/// The `tier` is the user's tracked tier (read from [`CurrentTierState`] by
+/// the production [`test_framework`] wrapper). Per ADR-0030, the Tester runs
+/// at the user's actual tier so a test result faithfully predicts a live
+/// run's capability behavior (ADR-0019) — at Promoted an out-of-scope Write
+/// reaches the L1 scope gate; at Novice the L4 tier gate denies it first.
 ///
 /// # Errors
 ///
 /// [`CmdError::Internal`] wrapping a `TesterError` (infrastructure
 /// failure — drone spawn / temp-DB setup).
+#[allow(clippy::too_many_arguments)] // reason: mirrors run_test_session_with_tier's 8-arg Tester seam (M08.8.C tier wire); arg-struct refactor deferred
 pub async fn test_framework_with<P: LLMProvider + 'static>(
     framework_doc: &Framework,
     task: &str,
@@ -1654,8 +1663,9 @@ pub async fn test_framework_with<P: LLMProvider + 'static>(
     drone: Arc<DroneClient>,
     mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
     session_id: SessionId,
+    tier: Tier,
 ) -> Result<TestOutcome, CmdError> {
-    runtime_main::builder::run_test_session_with(
+    runtime_main::builder::run_test_session_with_tier(
         framework_doc,
         task,
         db_path,
@@ -1663,6 +1673,7 @@ pub async fn test_framework_with<P: LLMProvider + 'static>(
         drone,
         mcp_dispatch,
         session_id,
+        tier,
     )
     .await
     .map_err(|e| CmdError::internal(e.to_string()))
@@ -1716,6 +1727,14 @@ fn build_test_mcp_dispatcher(
 /// Phase 9 "does NOT need to save first"). The throwaway DB + the
 /// test-session drone are torn down before returning.
 ///
+/// The session runs at the user's **tracked tier**, read from
+/// [`CurrentTierState`] at invocation (M08.8.C / TD-036; ADR-0030). A fresh
+/// enforcer is built per run and the tier read each time, so a tier
+/// transition between runs is picked up automatically — no mid-run
+/// re-application is needed because each Tester run is its own session.
+/// This is also the root fix for #19 (the Settings tier display no longer
+/// desyncs from the enforced tier — the run now enforces what the UI shows).
+///
 /// # Errors
 ///
 /// - [`CmdError::SetupRequired`] if no API key is in the keychain.
@@ -1727,10 +1746,16 @@ pub async fn test_framework(
     app: AppHandle,
     framework_doc: Framework,
     task: String,
+    tier_state: tauri::State<'_, CurrentTierState>,
 ) -> Result<TestOutcome, CmdError> {
     let api_key = read_api_key()?;
     let provider = AnthropicProvider::new(api_key.clone());
     let db_path = throwaway_test_db_path();
+
+    // The user's tracked tier gates this run (TD-036). Read at invocation
+    // so a transition since the last run is reflected without any mid-run
+    // re-application — each Tester run is a fresh isolated session.
+    let tier = *tier_state.lock().await;
 
     // Spawn the test-session drone against the THROWAWAY db (ADR-0019) —
     // never the user session DB.
@@ -1762,6 +1787,7 @@ pub async fn test_framework(
         Arc::clone(&lifecycle.client),
         mcp_dispatch,
         session_id,
+        tier,
     )
     .await;
 
@@ -3240,6 +3266,10 @@ mod tests {
                 Arc::new(DroneClient::noop()),
                 None,
                 SessionId::new(),
+                // M08.8.C: the seam now threads a tier; Novice preserves
+                // this pre-existing clean-run test's exact prior semantics
+                // (a tool-free run is tier-agnostic).
+                Tier::Novice,
             )
             .await
             .expect("the Tester seam returns Ok(TestOutcome) for a clean run");
