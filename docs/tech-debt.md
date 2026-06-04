@@ -1166,3 +1166,89 @@ type, and (b) are pinned only by fixtures built by hand rather than by
 type directly (as `replay.rs` now does) and rewrite fixtures to serialize real
 values. Pairs with any future audit-trail / replay / recovery touch. ~1–2h to
 sweep; per-site fixes are small.
+
+### Sweep results (M08.8.B.fix2 audit — inventory only, NO fixes applied)
+
+The sweep ran across the translators + the six execution-licensing evals.
+Headline: **the five `executes`-row evals (E-01…E-05) are all REAL-SHAPE** —
+each drives the real producer (`AgentSdk::run_agent` via a `ProviderEvent`
+stub) and asserts a side effect (file on disk / clean suspend / counted-turn
+halt / behaviour change), so the `replay.rs` disease did **not** spread to the
+`docs/execution-status.md` `executes` rows. Findings by classification:
+
+- **`token_usage.rs:104–116` — REAL-SHAPE ✅.** Reads `input/output/model/cost_usd`
+  = exact `AgentEvent::TokenUsage` serde fields; emitted live (`event_pipeline.rs:157`),
+  projected per-signal (`command_handler.rs:173`). Not the disease.
+- **`vdr.rs:92–104` verify arm — confirmed broken-shape; promoted to TD-046** (🔴
+  latent). The one genuine sibling of the `replay.rs` bug.
+- **`vdr.rs:74–90` decision arm + `plan_projector.rs:83,149,171` — DORMANT, fields
+  correct.** Field names match the real serde (`decision/rationale/tool_used`;
+  `plan_id/task_count/approval_required`, `task_id/agent_id` ↔ `DecisionRecord`/
+  `PlanCreated`/`TaskStarted`), but no live producer emits these in v0.1 (plans/hooks =
+  `paints`), so they are exercised only by `seed_signal` fabricated fixtures. When
+  rungs 7/8 wire the producers, convert those fixtures to
+  `serde_json::to_value(&real_event)` and drive them producer-first.
+- **`recovery_lifecycle.rs:114–181` — FABRICATED-FIXTURE eval (Stage-D precondition).**
+  Hand-builds the signal rows AND the snapshot `state_json` (`:181`
+  `json!({"checkpoint":1})`) via `client.write_signal`, then `recover_session`; it does
+  NOT drive `AgentSdk::run_agent`, and the snapshot state it deserializes is an
+  arbitrary shape no producer emits — the **snapshot-state-deser path has no producer
+  cross-check** (the Stage-V blind spot `smoke_signal_persistence.rs` flagged). Signal
+  shapes are accurate TODAY but drift-prone. Because M08.8.D's `gap→resume→complete`
+  reuses `recovery::resume`, hardening this is a **Stage-D precondition** (per 58d3316).
+  Fix: seed via `serde_json::to_value(&real_event)` + a real serialized snapshot state.
+- **`ipc.ts` mirror cluster — TD-011 sibling (TS side).** Hand-written interfaces
+  mirroring Rust serde output (`McpTool`/`McpServerSummary` = TD-011; plus `ResumePlan`,
+  `ImportOutcome`, `InstalledArtifact`, `TestOutcome`) pinned by hand-built
+  `ipc.test.ts` fixtures. Same class; outside the Rust sweep's primary scope, listed
+  for completeness.
+- **`snapshot.rs:236` — N/A.** Stores/replays `payload_json` as an opaque `Value`; no
+  typed field extraction, so not a translator of this class.
+
+**Fix pattern (all sites, when scoped):** replace hand-built `json!` fixtures with
+`serde_json::to_value(&real_event)` (or drive the real producer), so a fixture can
+never encode a shape the producer does not emit. **No fixes applied in this audit.**
+
+## TD-046 — `vdr.rs` verify arm reads a phantom `passed` field → records every verify "fail"
+
+**Date logged:** 2026-06-03
+**Found by:** M08.8.B.fix2 TD-045 sweep (the one confirmed sibling of the `replay.rs` bug)
+**Pass that surfaced it:** translator field-shape cross-check (vdr read vs `AgentEvent` variant)
+**Category:** structural (broken real behavior — latent; the TD-044/`replay.rs` disease class)
+**Resolution status:** open — **owner M08.9 rung 8 (hooks/verify firing engine)**
+
+### Description
+
+`crates/runtime-drone/src/vdr.rs:92–104` projects a `verify`-kind signal into the
+`vdr` table by reading
+`payload.get("passed").and_then(Value::as_bool).unwrap_or(false)` and recording
+`outcome = if passed {"pass"} else {"fail"}`. But the real producer writes
+`payload_json = serde_json::to_value(&AgentEvent)` (`agent_sdk.rs:1274`), and
+`AgentEvent::VerifyPassed { hook_id, duration_ms, output_preview }` /
+`VerifyFailed { hook_id, duration_ms, error, on_failure }` carry **no `passed`
+field** — pass/fail is the serde *variant tag* (`verify_passed` vs `verify_failed`),
+and both map to signal-kind `"verify"` (`signal_kind`, `agent_sdk.rs:1340`). So
+`get("passed")` always returns `None` → `unwrap_or(false)` → **every verify signal is
+recorded `"fail"`**, including a pass. Compounding: the `vdr.rs` test module seeds only
+`decision`/`tool` signals — the verify arm has **no test at all** (the exact TD-044
+shape: a translator reading a field the producer never emits, unguarded by a
+producer-shaped test).
+
+### Why it's debt not a live bug (yet)
+
+**Latent.** No v0.1 production path emits `VerifyPassed`/`VerifyFailed` — hooks/verify
+are `paints` in `docs/execution-status.md` (no firing engine; the variants exist only
+as enum definitions, with no construction site in any run loop). The mis-projection
+cannot fire until a verify producer is wired. Severity is 🔴 (real-behavior breakage —
+it silently mis-records every verification outcome the moment it goes live), gated to
+latent by the absent producer.
+
+### Recommended approach (when addressed — M08.9 rung 8, BEFORE wiring a verify producer)
+
+Discriminate pass/fail by the variant tag, not a phantom field: project from the
+signal's `event` column / `payload_json.type` (`verify_passed` → `"pass"`,
+`verify_failed` → `"fail"`) and drop the `get("passed")` read. Add a producer-shaped
+verify test that seeds `serde_json::to_value(&AgentEvent::VerifyPassed{…})` /
+`VerifyFailed{…}` (not a hand-built `{"passed":…}`) and asserts the projected
+`outcome` — so the fix is pinned by the real shape. Land it in the same rung that
+wires the verify producer, so projector and producer go live shape-matched. ~30 min.
