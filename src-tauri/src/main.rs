@@ -63,6 +63,7 @@ fn main() {
             commands::run_smoke_session,
             commands::query_session_db,
             commands::replay_session,
+            commands::replay_latest_session,
             commands::approve_plan,
             commands::revise_plan,
             commands::abort_plan,

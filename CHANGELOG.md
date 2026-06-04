@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed — M08.8.B.fix2 (TD-044: reload reconstructs the graph from persisted signals)
+
+- **`crates/runtime-main/src/sdk/replay.rs`** — the signal→`AgentEvent`
+  translator was hand-rolled and read invented field names
+  (`payload_json.event`) the real persisted signal log never carried (the
+  discriminator is `payload_json.type`), so it produced **zero** events
+  against real data — `replay_session` was always broken in the assembled
+  app. Replaced the ~170-line field-by-field translator with a direct
+  `serde_json::from_value::<AgentEvent>` (the `payload_json` IS a serialized
+  `AgentEvent`), and replaced the fabricated `{event:"spawned"}` fixtures
+  (in-source + `tests/sdk_replay.rs`) with real serialized-event round-trips
+  (§5 behavior-not-tautology).
+- **`src-tauri/src/commands.rs`** — added `replay_latest_session`
+  (+ `replay_latest_session_with` seam): reads the most-recent session WITH
+  signals from the persisted log and replays it. The renderer's
+  `localStorage.lastSessionId` does not survive a full app restart
+  (a relaunched WebView comes up on a fresh profile), so the backend — which
+  owns persistence — supplies the session to reconstruct.
+- **`src/App.tsx`** — registers the `agent_event` listener (awaited) BEFORE
+  firing replay (closes an emit-before-listen race on the reconstruct path),
+  and falls back to `replay_latest_session` when no `lastSessionId` is
+  stashed. **`src/lib/ipc.ts`** — `invokeReplayLatestSession` wrapper.
+- Verified on the real app: `tests/e2e-tauri/smoke.e2e.ts` reload leg
+  **5/5** consecutive green + full `test:e2e:tauri` **8/8**. Closes TD-044;
+  logs TD-045 (sweep for other fabricated-fixture hand-rolled translators).
+
 ### Changed — M08.7 Closeout (summary, immutable gap-analysis, simplify pass, coverage reconciliation, ADR flips)
 
 - **`docs/adr/0028-builtin-tool-execution-contract.md`** — filed at this

@@ -23,12 +23,14 @@ import { Transport } from './components/Transport';
 import { UncertaintyPrompt } from './components/UncertaintyPrompt';
 import {
   invokeHasApiKey,
+  invokeReplayLatestSession,
   invokeReplaySession,
   invokeRunSmokeSession,
   invokeSetApiKey,
   subscribeAgentEvents,
   unwrapCmdError,
 } from './lib/ipc';
+import type { UnlistenFn } from '@tauri-apps/api/event';
 import { useBuilderStore, useTestGraphStore } from './lib/builderStore';
 import { useGraphStore } from './lib/graphStore';
 import { useToastStore } from './lib/toastStore';
@@ -96,29 +98,51 @@ export function App(): JSX.Element {
         console.error('has_api_key error:', e);
       });
 
-    // Replay-on-mount: if a previous session id was stashed in
-    // localStorage by a prior session_start, ask main to read its
-    // signal log and re-emit AgentEvents through the existing
-    // `agent_event` channel. graphStore.applyEvent's idempotence
-    // guarantees the reconstructed graph matches the original.
-    const lastSessionId = localStorage.getItem(LAST_SESSION_KEY);
-    if (lastSessionId !== null && lastSessionId.length > 0) {
-      void invokeReplaySession(lastSessionId).catch((e) => {
-        console.error('Replay session error:', e);
+    // Replay-on-mount reconstructs the prior session's graph. The
+    // `agent_event` listener MUST be registered (and its registration
+    // awaited) BEFORE any replay fires — the backend re-emits the signal
+    // log as soon as the command runs, and an emit that beats the
+    // subscription is dropped. The reconstruct-on-mount path is exactly
+    // where that race lives (the live smoke path registers long before a
+    // user click), so order the subscription first.
+    let unlisten: UnlistenFn | undefined;
+    let cancelled = false;
+    void (async () => {
+      unlisten = await subscribeAgentEvents((event) => {
+        if (event.type === 'session_start') {
+          localStorage.setItem(LAST_SESSION_KEY, event.session_id);
+        }
+        useGraphStore.getState().applyEvent(event);
+        if (event.type === 'agent_complete' || event.type === 'agent_error') {
+          setRunning(false);
+        }
       });
-    }
-
-    const unsubscribePromise = subscribeAgentEvents((event) => {
-      if (event.type === 'session_start') {
-        localStorage.setItem(LAST_SESSION_KEY, event.session_id);
+      if (cancelled) {
+        unlisten();
+        return;
       }
-      useGraphStore.getState().applyEvent(event);
-      if (event.type === 'agent_complete' || event.type === 'agent_error') {
-        setRunning(false);
+      // `lastSessionId` survives a soft reload but NOT a full app restart
+      // (a relaunched WebView comes up on a fresh profile that wipes
+      // localStorage — TD-044). The backend owns persistence, so when no
+      // id is stashed, ask it to replay the most-recent session WITH
+      // signals; graphStore.applyEvent's idempotence guarantees the
+      // reconstructed graph matches the original either way.
+      const lastSessionId = localStorage.getItem(LAST_SESSION_KEY);
+      try {
+        if (lastSessionId !== null && lastSessionId.length > 0) {
+          await invokeReplaySession(lastSessionId);
+        } else {
+          await invokeReplayLatestSession();
+        }
+      } catch (e) {
+        console.error('Replay session error:', e);
       }
-    });
+    })();
     return () => {
-      void unsubscribePromise.then((unsub) => unsub());
+      cancelled = true;
+      if (unlisten !== undefined) {
+        unlisten();
+      }
     };
   }, []);
 

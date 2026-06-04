@@ -1088,7 +1088,7 @@ Ref B.3.4.
 **Found by:** M08.8.B.fix (first full `test:e2e:tauri` run to completion)
 **Pass that surfaced it:** real-app `tauri-driver` suite (design-conformance close)
 **Category:** test-infra (real-app spec flake / environment dependency)
-**Resolution status:** open — pre-existing; NOT a B.fix exposure (deferred, do not chase in B.fix)
+**Resolution status:** **resolved** (M08.8.B.fix2 impl commit `<IMPL_SHA>`) — and this entry's own triage was wrong. The recommended approach below (add a `waitUntil` / gate the leg behind a key-present guard) treated it as a *flake/timing* issue; it was **deterministic**, and TWO real bugs, neither a flake: **(1)** `localStorage.lastSessionId` does not survive a full app restart under `tauri-driver` (a relaunched WebView2 comes up on a fresh profile — proven by a throwaway probe: marker LOST after `reloadSession`), so replay never fired; **(2)** even when replay fired, `crates/runtime-main/src/sdk/replay.rs::translate_agent` read `payload_json.event` (a field the real signal log never had — the discriminator is `payload_json.type`), so the hand-rolled translator produced ZERO `AgentEvent`s against real data — meaning `replay_session` was *always* broken in the assembled app (its in-source + `tests/sdk_replay.rs` fixtures fabricated an `event`-keyed shape, a §5 tautology miss). Fix: backend `replay_latest_session` reads the latest persisted session from the signal log (survives the localStorage wipe; `app_local_data_dir`/`session.sqlite` IS stable across reload — verified, 77 signals before & after) + App.tsx awaits the listener before replay + `replay.rs` now deserializes `payload_json` straight to `AgentEvent` via serde, with its fabricated tests replaced by real serialized-event round-trips. Verified: `smoke.e2e.ts` reload leg 5/5 consecutive green + full `test:e2e:tauri` 8/8. Entry retained for audit trail; original text below unchanged.
 
 ### Description
 
@@ -1120,3 +1120,49 @@ mirroring the TD-044-sibling `builder_load_aria` deflake), and (2) decide the
 key-present vs CI-keyless contract for this leg — gate the real-run+reload
 assertion behind a key-present guard so the spec is deterministic in both
 environments.
+
+## TD-045 — Audit for other hand-rolled translators reading fabricated unit-test payloads
+
+**Date logged:** 2026-06-03
+**Found by:** M08.8.B.fix2 (TD-044 root-cause triage — the `replay.rs` translator bug)
+**Pass that surfaced it:** real-app `tauri-driver` reload leg (assembled-path observation)
+**Category:** structural (latent broken real behavior — same class as the TD-044 `replay.rs` bug)
+**Resolution status:** open
+
+### Description
+
+TD-044 found `crates/runtime-main/src/sdk/replay.rs` had a hand-rolled,
+field-by-field signal→`AgentEvent` translator that read invented field names
+(`payload_json.event`) the real persisted signal log never carried, so it
+produced ZERO events against real data while its unit + integration fixtures
+fabricated the matching wrong shape and stayed green (a §5 tautology miss).
+`payload_json` is in fact a fully serialized `AgentEvent`; the fix was a
+one-line `serde_json::from_value::<AgentEvent>`. The broader risk: other
+modules may hand-translate a persisted/wire JSON shape field-by-field and pin
+it with fabricated fixtures instead of round-tripping the real serde type.
+Candidate areas to audit (NOT exhaustive; NOT yet confirmed buggy): the drone
+projectors (`crates/runtime-drone/src/{vdr,plan_projector,token_usage}.rs`
+read `payload_json` by hand), `recovery::resume` / `recover_session`
+projection, and any `ipc.ts` hand-mirrored wire interface whose tests build
+the shape by hand rather than from the Rust serde output.
+
+### Why it's debt not a (closed) bug
+
+The one confirmed instance (`replay.rs`) is fixed at M08.8.B.fix2. This entry
+is the *sweep* — there is no second confirmed defect yet, only a class of
+risk: a translator that round-trips a serde type by hand can silently diverge
+from the real shape while fabricated fixtures keep it green. Classified 🟡
+(not 🟢): if a second instance exists it is, like `replay.rs`, *latent broken
+real behavior* in the assembled app, not a cosmetic concern — the live
+severity discriminator (real-behavior breakage) sets the tier regardless of
+whether anything is observably broken today.
+
+### Recommended approach (when addressed)
+
+Grep for hand-rolled JSON→typed translators that (a) read individual fields
+off a `serde_json::Value` that mirrors an existing `#[derive(Deserialize)]`
+type, and (b) are pinned only by fixtures built by hand rather than by
+`serde_json::to_value(&real_value)`. For each, prefer deserializing the real
+type directly (as `replay.rs` now does) and rewrite fixtures to serialize real
+values. Pairs with any future audit-trail / replay / recovery touch. ~1–2h to
+sweep; per-site fixes are small.

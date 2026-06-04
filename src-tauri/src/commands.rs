@@ -417,6 +417,102 @@ where
     Ok(())
 }
 
+/// SELECT that finds the most-recent session that actually wrote signals.
+/// Ordered by `(timestamp, id)` to match the drone's `ReadSignals`
+/// ordering (`vdr.rs`); the freshly-spawned drone seeds only a `sessions`
+/// row for its own id (no `signals`), so a prior session's rows win.
+const LATEST_SESSION_WITH_SIGNALS_SQL: &str =
+    "SELECT session_id FROM signals ORDER BY timestamp DESC, id DESC LIMIT 1";
+
+/// Reconstruct the most-recent persisted session's graph — the
+/// reload-after-restart fallback for [`replay_session`] (closes TD-044).
+///
+/// The renderer's `lastSessionId` (localStorage) survives a soft reload
+/// but NOT a full app restart: a relaunched `WebView` comes up on a fresh
+/// profile that wipes localStorage, so the only record of the prior
+/// session id is gone. Each app launch also mints a fresh drone session
+/// id, so the backend cannot infer the prior session from its own
+/// startup state — it must read it back from the persisted signal log,
+/// the single source of truth that DOES survive a restart. This command
+/// finds the latest session WITH signals and replays it through the same
+/// `agent_event` channel.
+///
+/// Resolves the replayed session id, or `None` when no prior session has
+/// persisted any signal (a first-ever launch).
+///
+/// # Errors
+///
+/// - [`CmdError::Drone`] if the IPC fails after retry exhaustion.
+#[tauri::command]
+pub async fn replay_latest_session(
+    app: AppHandle,
+    drone: tauri::State<'_, Arc<DroneClient>>,
+) -> Result<Option<String>, CmdError> {
+    let drone = Arc::clone(&drone);
+    let query_drone = Arc::clone(&drone);
+    replay_latest_session_with(
+        move |sql| {
+            let drone = Arc::clone(&query_drone);
+            async move {
+                drone
+                    .query_session_db(sql)
+                    .await
+                    .map_err(|e| CmdError::drone(e.to_string()))
+            }
+        },
+        move |id| {
+            let drone = Arc::clone(&drone);
+            async move {
+                drone
+                    .read_signals(id)
+                    .await
+                    .map_err(|e| CmdError::drone(e.to_string()))
+            }
+        },
+        |event| {
+            let _ = app.emit("agent_event", &event);
+            Ok::<(), CmdError>(())
+        },
+    )
+    .await
+}
+
+/// Test-seam for [`replay_latest_session`] (CLAUDE.md §5 `*_with`
+/// archetype). Accepts an injectable latest-session query, signal-reader,
+/// and emitter so unit tests exercise the find → read → translate → emit
+/// pipeline without a real drone or Tauri `AppHandle`. Reuses
+/// [`replay_session_with`] once the latest session id is resolved.
+///
+/// # Errors
+///
+/// Surfaces whatever `query` or the inner [`replay_session_with`] returns.
+pub async fn replay_latest_session_with<Q, QFut, F, Fut, Emit>(
+    query: Q,
+    read_signals: F,
+    emit: Emit,
+) -> Result<Option<String>, CmdError>
+where
+    Q: FnOnce(String) -> QFut,
+    QFut: std::future::Future<Output = Result<Vec<Value>, CmdError>>,
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<Value>, CmdError>>,
+    Emit: FnMut(AgentEvent) -> Result<(), CmdError>,
+{
+    let rows = query(LATEST_SESSION_WITH_SIGNALS_SQL.to_string()).await?;
+    let Some(session_id) = rows
+        .first()
+        .and_then(|r| r.get("session_id"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    else {
+        tracing::info!("replay_latest_session: no prior session with signals");
+        return Ok(None);
+    };
+    tracing::info!(session_id, "replay_latest_session resolved latest session");
+    replay_session_with(session_id.clone(), read_signals, emit).await?;
+    Ok(Some(session_id))
+}
+
 /// Resolve the in-process [`ApprovalSeam`] with `Approved` for `plan_id`.
 ///
 /// Production wrapper: pulls the [`Arc<ApprovalSeam>`] from Tauri-managed
@@ -2361,16 +2457,35 @@ mod tests {
         assert!(matches!(result, Err(CmdError::Drone(_))));
     }
 
+    /// Build a drone signal-log row the replay pipeline consumes:
+    /// `payload_json` IS a serialized `AgentEvent` (the real on-disk shape
+    /// `vdr::signals_for_session` returns — M08.8.B.fix2 / TD-044).
+    fn signal_row(event: &AgentEvent) -> Value {
+        let mut row = serde_json::Map::new();
+        row.insert(
+            "payload_json".to_string(),
+            serde_json::to_value(event).expect("serialize AgentEvent"),
+        );
+        Value::Object(row)
+    }
+
     #[tokio::test]
     async fn replay_session_with_emits_translated_events() {
+        // payload_json IS a serialized AgentEvent (the real on-disk shape —
+        // M08.8.B.fix2 / TD-044); build the signal rows by serializing real
+        // events so the fixtures match production, not a fabricated shape.
         let signals = vec![
-            serde_json::json!({
-                "type": "session",
-                "payload_json": {"event": "start", "session_id": "s1", "framework": "aria", "model": "haiku"},
+            signal_row(&AgentEvent::SessionStart {
+                session_id: "s1".to_string(),
+                framework: "aria".to_string(),
+                model: "haiku".to_string(),
             }),
-            serde_json::json!({
-                "type": "agent",
-                "payload_json": {"event": "spawned", "agent_id": "a1", "agent_name": "n", "session_id": "s1"},
+            signal_row(&AgentEvent::AgentSpawned {
+                agent_id: "a1".to_string(),
+                agent_name: "n".to_string(),
+                parent_id: None,
+                session_id: "s1".to_string(),
+                narrowed_from: Vec::new(),
             }),
         ];
         let mut emitted: Vec<AgentEvent> = Vec::new();
@@ -2406,13 +2521,19 @@ mod tests {
     #[tokio::test]
     async fn replay_session_with_swallows_emit_errors_and_continues() {
         let signals = vec![
-            serde_json::json!({
-                "type": "agent",
-                "payload_json": {"event": "spawned", "agent_id": "a1", "agent_name": "n", "session_id": "s1"},
+            signal_row(&AgentEvent::AgentSpawned {
+                agent_id: "a1".to_string(),
+                agent_name: "n".to_string(),
+                parent_id: None,
+                session_id: "s1".to_string(),
+                narrowed_from: Vec::new(),
             }),
-            serde_json::json!({
-                "type": "agent",
-                "payload_json": {"event": "spawned", "agent_id": "a2", "agent_name": "n", "session_id": "s1"},
+            signal_row(&AgentEvent::AgentSpawned {
+                agent_id: "a2".to_string(),
+                agent_name: "n".to_string(),
+                parent_id: None,
+                session_id: "s1".to_string(),
+                narrowed_from: Vec::new(),
             }),
         ];
         let mut count = 0;
@@ -2427,6 +2548,90 @@ mod tests {
         .await
         .expect("replay must not surface emit errors");
         assert_eq!(count, 2, "emit must be invoked for every translated event");
+    }
+
+    #[tokio::test]
+    async fn replay_latest_session_with_finds_and_replays_latest_session() {
+        // The query seam must receive the latest-session-with-signals
+        // SELECT (the contract that survives an app restart — TD-044), and
+        // its returned session_id must drive read_signals → translate →
+        // emit, resolving Some(id).
+        let signals = vec![signal_row(&AgentEvent::AgentSpawned {
+            agent_id: "a1".to_string(),
+            agent_name: "n".to_string(),
+            parent_id: None,
+            session_id: "s1".to_string(),
+            narrowed_from: Vec::new(),
+        })];
+        let mut emitted: Vec<AgentEvent> = Vec::new();
+        let replayed = replay_latest_session_with(
+            |sql| async move {
+                assert_eq!(sql, LATEST_SESSION_WITH_SIGNALS_SQL);
+                Ok(vec![serde_json::json!({ "session_id": "s1" })])
+            },
+            move |id| async move {
+                assert_eq!(id, "s1");
+                Ok(signals)
+            },
+            |event| {
+                emitted.push(event);
+                Ok(())
+            },
+        )
+        .await
+        .expect("replay latest");
+        assert_eq!(replayed.as_deref(), Some("s1"));
+        assert_eq!(emitted.len(), 1);
+        assert!(matches!(emitted[0], AgentEvent::AgentSpawned { .. }));
+    }
+
+    #[tokio::test]
+    async fn replay_latest_session_with_returns_none_when_no_prior_signals() {
+        // First-ever launch: the signals table is empty, so the query
+        // returns no rows. No read, no emit, Ok(None) — not an error.
+        let mut read_called = false;
+        let mut emit_called = false;
+        let replayed = replay_latest_session_with(
+            |_sql| async move { Ok(Vec::new()) },
+            |_id| async {
+                read_called = true;
+                Ok(Vec::new())
+            },
+            |_event| {
+                emit_called = true;
+                Ok(())
+            },
+        )
+        .await
+        .expect("no prior session is not an error");
+        assert!(replayed.is_none());
+        assert!(!read_called, "read_signals must not run without a session");
+        assert!(!emit_called, "emit must not run without a session");
+    }
+
+    #[tokio::test]
+    async fn replay_latest_session_with_returns_none_when_row_lacks_session_id() {
+        // Defensive: a malformed query row (no `session_id` column) yields
+        // None rather than replaying an empty/garbage id.
+        let replayed = replay_latest_session_with(
+            |_sql| async move { Ok(vec![serde_json::json!({ "other": "x" })]) },
+            |_id| async move { Ok(Vec::new()) },
+            |_event| Ok::<(), CmdError>(()),
+        )
+        .await
+        .expect("malformed row is not an error");
+        assert!(replayed.is_none());
+    }
+
+    #[tokio::test]
+    async fn replay_latest_session_with_propagates_query_error() {
+        let result = replay_latest_session_with(
+            |_sql| async move { Err(CmdError::drone("boom")) },
+            |_id| async move { Ok(Vec::new()) },
+            |_event| Ok::<(), CmdError>(()),
+        )
+        .await;
+        assert!(matches!(result, Err(CmdError::Drone(_))));
     }
 
     #[test]

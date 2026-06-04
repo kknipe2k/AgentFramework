@@ -73,6 +73,21 @@ export async function invokeReplaySession(sessionId: string): Promise<void> {
 }
 
 /**
+ * Reconstruct the most-recent persisted session's graph — the
+ * reload-after-restart fallback for {@link invokeReplaySession} (TD-044).
+ *
+ * `lastSessionId` in localStorage survives a soft reload but a full app
+ * restart comes up on a fresh WebView profile that wipes it, so the
+ * renderer loses the prior session id. The backend owns persistence: it
+ * reads the latest session WITH signals back from the signal log and
+ * replays it through the existing `agent_event` channel. Resolves the
+ * replayed session id, or `null` when no prior session has signals.
+ */
+export async function invokeReplayLatestSession(): Promise<string | null> {
+  return await invoke<string | null>('replay_latest_session');
+}
+
+/**
  * Approve a pending plan (M04 Stage C). Resolves the in-process
  * `ApprovalSeam` (Tauri-managed-state) with `ApprovalDecision::Approved`.
  * The SDK's awaiting plan_loop wakes and emits `plan_approved`, which
