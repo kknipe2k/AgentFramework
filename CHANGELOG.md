@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M08.8.C (tier in the run loop — TD-036; ADR-0030)
+
+- **`src-tauri/src/commands.rs`** — the Builder Tester now runs at the user's
+  **tracked tier** (TD-036). `test_framework` reads `CurrentTierState` at
+  invocation and threads it through `test_framework_with` →
+  `run_test_session_with_tier` (`set_tier` before dispatch); the tier is read
+  per-invocation, so a transition between runs is reflected without any
+  mid-run re-application (each Tester run is a fresh isolated session). No
+  production path called `set_tier` before — every real-app run was pinned to
+  Novice (`enforcer.rs:64`), so the Promoted scope-gate was unreachable in-app
+  **and** the Settings tier display desynced from the enforced tier
+  (M08.6-IRL **#19**, root-fixed here: the run now enforces what the UI shows).
+- **`src/components/SettingsPanel.tsx`** — the tier-transition button reads a
+  truthful **"Promote" / "Demote"** (M08.6-IRL **#20** / DESIGN.md principle 8
+  labels-true), not the redundant "Promote to Promoted".
+- **Smoke is intentionally not wired** (ADR-0030): `run_smoke_session_with`
+  uses `AgentSdk::new` (no enforcer) on a no-tool prompt, so a tier gates
+  nothing there; adding one would widen the capability surface for no effect.
+  The Tester is the observable, enforcement-bearing path.
+- **`docs/adr/0030-tester-runs-at-tracked-tier.md`** (Proposed) — refines
+  ADR-0019 (the isolated-session model stands; only the enforcer's tier
+  changes from default-Novice to the user's tracked tier). ADR-0019 carries a
+  "Refined by ADR-0030" backnote.
+- Tests: two assembled production-wire tests (`commands.rs::tester_backend`)
+  prove the Promoted-vs-Novice contrast — a Promoted out-of-scope Write
+  reaches the L1 **scope** gate (`CapabilityViolation{Write}`, no file on
+  disk); the same Write at Novice is L4 **tier**-denied (`TierViolation`,
+  scope never reached). Exact-`textContent` label asserts in
+  `SettingsPanel.test.tsx`; `tests/e2e-tauri/tier_enforcement.e2e.ts` for the
+  real-app UI-truth close (ADR-0021). Blocking mutation gate: cargo-mutants
+  finds 2 unviable mutants; a hand-mutant (ignore the threaded tier) fails the
+  Promoted test — the wire is behaviorally pinned. The real-app IRL (a
+  Promoted run enforces Promoted) is the authoritative close (rule 11).
+
 ### Fixed — M08.8.B.fix2 (TD-044: reload reconstructs the graph from persisted signals)
 
 - **`crates/runtime-main/src/sdk/replay.rs`** — the signal→`AgentEvent`

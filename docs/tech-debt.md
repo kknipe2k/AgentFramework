@@ -768,7 +768,7 @@ For any later rung that accepts **relative** paths from the user or model (a wor
 **Found by:** M08.7.B rung-2 ground-at-red (grep for `set_tier` callers; maintainer-approved disposition — Option 1, test-seam + log TD)
 **Pass that surfaced it:** N/A (ground-at-red investigation during rung-2 implementation)
 **Category:** other (painted-not-wired — capability/tier enforcement; cf. [[TD-034]])
-**Resolution status:** open (routed to the live-session / tier-wiring rung)
+**Resolution status:** in-flight (M08.8.C impl `c15c6a8` — the wire is built + assembled-verified: `test_framework` → `test_framework_with` → `run_test_session_with_tier` threads the tracked `CurrentTierState`; ADR-0030 refines ADR-0019; the blocking mutation gate caught a wrong-tier hand-mutant. The real-app IRL — a Promoted run enforces Promoted in the running app — is the authoritative close per rule 11, pending the maintainer watch. The smoke half is intentionally NOT wired; see ADR-0030. Entry text immutable; status updated in place per the TD-002/005 precedent.)
 
 ### Description
 

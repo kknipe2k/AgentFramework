@@ -1,6 +1,8 @@
 # ADR-0019: The Tester isolated-session model
 
-**Status:** Accepted
+**Status:** Accepted (Refined by ADR-0030 — the Tester runs at the user's
+tracked tier, not the default Novice; the isolated-session model here is
+otherwise unchanged)
 **Date:** 2026-05-21
 **Deciders:** @kknipe2k
 **Tags:** scope, capability, security, isolation, builder
