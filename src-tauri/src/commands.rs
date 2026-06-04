@@ -3246,6 +3246,259 @@ mod tests {
             assert!(outcome.passed, "a clean tool-free run passes");
         }
 
+        // ── M08.8.C — the tier-into-the-run-loop production wire (TD-036) ──
+        //
+        // The existing `capability_live_tool.rs` rung-2 tests prove the
+        // *seam* `run_test_session_with_tier(.., Tier::Promoted)`. What was
+        // NOT proven is the *production wire*: that `test_framework_with`
+        // (the Tauri command seam) THREADS the tracked tier into the
+        // run-loop enforcer instead of pinning Novice. These two assembled
+        // tests pin exactly that — the SAME out-of-scope Write reaches the
+        // L1 SCOPE gate at Promoted but is denied at the L4 TIER gate at
+        // Novice, which is only possible if `test_framework_with` reads the
+        // tier rather than hardcoding one. Grounded-claims (CLAUDE.md rule
+        // 11 / gotcha #66): the file never appears on disk on a denial.
+
+        use runtime_core::event::CapabilityKindRef;
+
+        /// Forward-slash a path so the same string is a valid `std::fs`
+        /// argument (Windows accepts `/`) and a stable `globset` target.
+        fn fwd(p: &std::path::Path) -> String {
+            p.to_string_lossy().replace('\\', "/")
+        }
+
+        /// A schema-valid one-agent framework whose `worker` declares the
+        /// given `file_access.write` globs + `allowed_tools: ["Write"]`;
+        /// `session_root_agent` is `worker`. Mirrors the rung-2 fixture.
+        fn write_scoped_framework(write: &[&str]) -> Framework {
+            serde_json::from_value(serde_json::json!({
+                "name": "m08-8-c-tier-wire",
+                "version": "1.0.0",
+                "description": "M08.8.C tier-in-the-run-loop production-wire fixture",
+                "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+                "agents": [{
+                    "id": "worker",
+                    "role": "worker",
+                    "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+                    "capabilities": {
+                        "tools_called": [],
+                        "skills_loaded": [],
+                        "file_access": { "read": [], "write": write },
+                        "network": [],
+                        "shell": false,
+                        "spawn_agents": []
+                    },
+                    "allowed_tools": ["Write"],
+                    "allowed_skills": [],
+                    "spawns": []
+                }],
+                "tools": [],
+                "skills": [],
+                "session_root_agent": "worker",
+            }))
+            .expect("the tier-wire fixture framework round-trips through the schema")
+        }
+
+        /// A provider stub emitting one scripted `Write` `ToolUse` on turn 1,
+        /// then stopping — the only stub in the assembled
+        /// `test_framework_with` path (the executor, enforcer, and the
+        /// multi-turn loop are all real).
+        struct WriteToolStub {
+            path: String,
+            turn: std::sync::Mutex<usize>,
+        }
+
+        impl WriteToolStub {
+            fn new(path: String) -> Self {
+                Self {
+                    path,
+                    turn: std::sync::Mutex::new(0),
+                }
+            }
+        }
+
+        #[async_trait]
+        impl LLMProvider for WriteToolStub {
+            fn name(&self) -> &'static str {
+                "m08-8-c-write-stub"
+            }
+            fn supports(&self) -> ProviderSupport {
+                ProviderSupport {
+                    tool_use: true,
+                    streaming: true,
+                    thinking: false,
+                }
+            }
+            async fn stream(
+                &self,
+                _config: AgentConfig,
+            ) -> Result<BoxStream<'_, ProviderEvent>, ProviderError> {
+                let n = {
+                    let mut t = self.turn.lock().expect("turn lock");
+                    let n = *t;
+                    *t += 1;
+                    n
+                };
+                if n == 0 {
+                    return Ok(Box::pin(futures::stream::iter(vec![
+                        ProviderEvent::ToolUse {
+                            id: "tu-1".to_string(),
+                            name: "Write".to_string(),
+                            input: serde_json::json!({
+                                "path": self.path,
+                                "content": "should-not-be-written",
+                            }),
+                        },
+                    ])));
+                }
+                Ok(Box::pin(futures::stream::iter(vec![
+                    ProviderEvent::TextDelta {
+                        text: "ok".to_string(),
+                    },
+                    ProviderEvent::MessageStop {
+                        stop_reason: "end_turn".to_string(),
+                        total_tokens: None,
+                    },
+                ])))
+            }
+            async fn count_tokens(&self, _m: &[Message]) -> Result<u64, ProviderError> {
+                Ok(0)
+            }
+            async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+                Ok(Vec::new())
+            }
+            fn estimate_cost(&self, _b: &CostBreakdown, _m: &str) -> f64 {
+                0.0
+            }
+        }
+
+        /// The first `CapabilityViolation`'s kind in the trace. Does NOT
+        /// match `TierViolation` — a `Some` discriminates a SCOPE denial
+        /// from a tier denial.
+        fn first_scope_violation(trace: &[AgentEvent]) -> Option<CapabilityKindRef> {
+            trace.iter().find_map(|e| match e {
+                AgentEvent::CapabilityViolation {
+                    capability_kind, ..
+                } => Some(*capability_kind),
+                _ => None,
+            })
+        }
+
+        #[tokio::test]
+        async fn test_framework_with_at_promoted_threads_the_tier_so_a_write_reaches_the_scope_gate(
+        ) {
+            // At Promoted the L4 tier gate is a pass-through, so an
+            // out-of-scope Write reaches the L1 SCOPE gate and is denied
+            // THERE (`CapabilityViolation { capability_kind: Write }`), NOT
+            // at the tier gate. Observable only if `test_framework_with`
+            // threads the tracked tier into the run-loop enforcer.
+            let dir = tempfile::tempdir().expect("tempdir");
+            let target = dir.path().join("secret.txt");
+            let path_arg = format!("{}/secret.txt", fwd(dir.path()));
+            let db_path = dir.path().join("runtime-tester.sqlite");
+
+            // The write grant covers a DIFFERENT subtree — the request path
+            // is outside it, so the SCOPE gate must reject it.
+            let fw = write_scoped_framework(&["allowed/**"]);
+            let outcome = test_framework_with(
+                &fw,
+                "write the secret file",
+                &db_path,
+                WriteToolStub::new(path_arg),
+                Arc::new(DroneClient::noop()),
+                None,
+                SessionId::new(),
+                Tier::Promoted,
+            )
+            .await
+            .expect("the assembled run completes (a denial is a failed test, not Err)");
+
+            assert_eq!(
+                first_scope_violation(&outcome.trace),
+                Some(CapabilityKindRef::Write),
+                "at Promoted the out-of-scope Write must reach the L1 SCOPE gate; trace={:?}",
+                outcome.trace
+            );
+            assert!(
+                !outcome
+                    .trace
+                    .iter()
+                    .any(|e| matches!(e, AgentEvent::TierViolation { .. })),
+                "at Promoted the Write must NOT be tier-denied — the tier was threaded; trace={:?}",
+                outcome.trace
+            );
+            assert!(
+                !target.exists(),
+                "a scope-denied write must create no file on disk (the executor never ran)"
+            );
+            assert!(
+                !outcome.passed,
+                "a capability violation fails the test outcome"
+            );
+        }
+
+        #[tokio::test]
+        async fn test_framework_with_at_novice_threads_the_tier_so_the_same_write_tier_denies() {
+            // The contrast that proves `test_framework_with` READS the tier
+            // rather than hardcoding one: the SAME out-of-scope Write that
+            // reached the SCOPE gate at Promoted is denied at the L4 TIER
+            // gate at Novice (Novice forbids every Write before scope is
+            // consulted). A `TierViolation` in the trace is the
+            // discriminator (builtin_tool_execution.rs:385).
+            let dir = tempfile::tempdir().expect("tempdir");
+            let target = dir.path().join("secret.txt");
+            let path_arg = format!("{}/secret.txt", fwd(dir.path()));
+            let db_path = dir.path().join("runtime-tester.sqlite");
+
+            let fw = write_scoped_framework(&["allowed/**"]);
+            let outcome = test_framework_with(
+                &fw,
+                "write the secret file",
+                &db_path,
+                WriteToolStub::new(path_arg),
+                Arc::new(DroneClient::noop()),
+                None,
+                SessionId::new(),
+                Tier::Novice,
+            )
+            .await
+            .expect("the assembled run completes");
+
+            assert!(
+                outcome
+                    .trace
+                    .iter()
+                    .any(|e| matches!(e, AgentEvent::TierViolation { .. })),
+                "at Novice the Write must be denied at the L4 TIER gate; trace={:?}",
+                outcome.trace
+            );
+            assert!(
+                !outcome
+                    .trace
+                    .iter()
+                    .any(|e| matches!(e, AgentEvent::CapabilityViolation { .. })),
+                "at Novice the tier gate denies first — the SCOPE gate is never reached; trace={:?}",
+                outcome.trace
+            );
+            assert!(
+                !target.exists(),
+                "a tier-denied write must create no file on disk"
+            );
+            // fold_outcome (tester.rs:122-156) folds only an L1
+            // CapabilityViolation into capability_failures; an L4
+            // TierViolation does NOT fail the outcome — the framework is
+            // well-authored, the user's tier is simply too low. So a
+            // Novice tier-denied run reports passed = true with the
+            // TierViolation visible in the trace. (Contrast: the Promoted
+            // SCOPE violation above DOES fold and forces passed = false —
+            // which sharpens the proof that the tier is actually threaded.)
+            assert!(
+                outcome.passed,
+                "a tier-denied run is not a test failure — only an L1 scope violation is; trace={:?}",
+                outcome.trace
+            );
+        }
+
         #[test]
         fn throwaway_test_db_path_is_under_the_os_temp_dir() {
             let path = throwaway_test_db_path();

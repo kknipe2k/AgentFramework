@@ -42,15 +42,19 @@ describe('SettingsPanel (M08.G)', () => {
   });
 
   it('tier_control_button_label_is_promote_when_novice', () => {
+    // #20 / principle 8 (labels-true): the redundant "Promote to Promoted"
+    // is replaced by a truthful "Promote". Asserted on exact textContent —
+    // a substring `toHaveTextContent('Promote')` would pass against the old
+    // "Promote to Promoted" and never go red.
     useGraphStore.setState({ currentTier: 'novice' });
     render(<SettingsPanel />);
-    expect(screen.getByTestId('tier-transition-button')).toHaveTextContent('Promote to Promoted');
+    expect(screen.getByTestId('tier-transition-button').textContent).toBe('Promote');
   });
 
   it('tier_control_button_label_is_demote_when_promoted', () => {
     useGraphStore.setState({ currentTier: 'promoted' });
     render(<SettingsPanel />);
-    expect(screen.getByTestId('tier-transition-button')).toHaveTextContent('Demote to Novice');
+    expect(screen.getByTestId('tier-transition-button').textContent).toBe('Demote');
   });
 
   it('clicking_promote_calls_requestTierTransition_with_promoted', async () => {
