@@ -156,6 +156,45 @@ jobs:
       - name: Validate stage-prompt XML schemas
         run: node bin/validate-stage-prompts.mjs
 
+  # Developer Certificate of Origin gate. CONTRIBUTING.md requires every
+  # commit to carry a `Signed-off-by:` trailer (added by `git commit -s`)
+  # as the project's contributor-IP hygiene mechanism (DCO in lieu of a
+  # CLA). Without this gate it was honor-system only. Self-contained — no
+  # third-party action, matching the inline gitleaks + append-only checks.
+  # Runs on PRs only (you cannot retroactively sign an already-pushed
+  # commit on `main`); always-on, not gated on code_changed, since DCO
+  # applies to docs-only PRs too.
+  dco:
+    name: DCO sign-off
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify every commit is signed off
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          echo "Checking DCO sign-off across ${base}..${head}"
+          missing=0
+          for sha in $(git rev-list --no-merges "${base}..${head}"); do
+            subject=$(git show -s --format='%s' "$sha")
+            if git show -s --format='%B' "$sha" \
+                 | grep -qiE '^Signed-off-by: .+ <.+@.+\..+>[[:space:]]*$'; then
+              echo "OK    $sha  $subject"
+            else
+              echo "::error::Missing or malformed Signed-off-by on $sha ($subject)"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::One or more commits lack a DCO sign-off. Amend with 'git commit -s' (see CONTRIBUTING.md, 'Sign-off (DCO)')."
+            exit 1
+          fi
+          echo "All non-merge commits carry a valid DCO sign-off."
+
   # ────────────────────────────────────────────────────────────────────────
   # Code jobs — gated on Cargo workspace existing.
   # These activate at M1 (Foundation) when crates/ lands.
