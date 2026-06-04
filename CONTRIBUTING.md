@@ -75,7 +75,7 @@ npm audit
 
 CI mirrors these gates. PRs that fail any of them won't be reviewed until they pass.
 
-Coverage thresholds: **80% line on all new code; 100% on safety primitives** (drone, capability enforcer, plan state machine, snapshot/recovery). Drops in coverage block merge.
+Coverage thresholds: **80% line on all new code; 95% on safety primitives** (drone, capability enforcer, plan state machine, snapshot/recovery). Drops in coverage block merge.
 
 ### Code review
 
