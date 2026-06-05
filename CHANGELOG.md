@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed — M08.8.C.fix (tier UI display half — M08.6-IRL #19 desync + #20 feedback)
+
+- **`src/App.tsx`** — the App mount now **seeds `currentTier` from the
+  backend** (`get_current_tier`) so the Settings display matches the
+  **enforced** tier across a restart. The renderer defaulted `currentTier` to
+  `'novice'` and wrote it ONLY from `tier_transition` events, so after a
+  restart with a Promoted backend (`tier.json`) the display read Novice while
+  the run enforced Promoted — the **#19 desync**. C wired the enforcement half
+  but never touched the display layer (Hard Rule 11 — enforcement-observed ≠
+  display-fixed). The seed mirrors the `invokeHasApiKey` startup read; a
+  defensive `TierRef` guard keeps a malformed bridge payload from corrupting
+  the slot that drives the topbar chip + the SettingsPanel toggle.
+- **`src/App.tsx`** — a `tier_transition` event now pushes a feedback **toast**
+  naming the new tier (M08.6-IRL **#20** / DESIGN.md principle 1 — feedback).
+- **`src/lib/ipc.ts`** — new `getCurrentTier()` wrapper over the EXISTING
+  `get_current_tier` command (zero args; serde-lowercase `TierRef`, direct).
+- **`src/lib/graphStore.ts`** — new `setCurrentTier` store action (seeds the
+  slot; reflects the enforced tier, never widens it).
+- **Frontend-only** — no backend / enforcer / `SettingsPanel` change: the
+  idempotent no-op (`commands.rs:717–720`) is correct (a no-op is not a
+  transition). Once seeded, `SettingsPanel`'s target/label are correct.
+- Tests: 5 vitest units (the wrapper, the action, the App-mount seed, the
+  tier-transition toast) + `tests/e2e-tauri/tier_display.e2e.ts` — the
+  assembled-app reload regression: a reloaded renderer over the same Promoted
+  backend must read "Demote" (the seed); on `main` pre-fix it reverts to
+  "Promote" (the #19 desync). Key-independent (runs in CI). The maintainer
+  re-IRL WITH a restart is the authoritative close (rule 11) and also
+  completes parent C (tier execution-status "observed in app" + TD-036).
+
 ### Added — M08.8.C (tier in the run loop — TD-036; ADR-0030)
 
 - **`src-tauri/src/commands.rs`** — the Builder Tester now runs at the user's
