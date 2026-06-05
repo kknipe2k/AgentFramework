@@ -1,6 +1,6 @@
 # ADR-0031: Re-cut v0.1 around author-and-run (workbench-first); defer generators to v1.0
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-05
 **Deciders:** @kknipe2k (maintainer / product owner)
 **Tags:** scope, product

@@ -1,6 +1,6 @@
 # ADR-0030: The Tester runs at the user's tracked tier
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-04
 **Deciders:** @kknipe2k
 **Tags:** capability, security, scope, builder, tier
