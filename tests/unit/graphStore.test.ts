@@ -455,6 +455,18 @@ describe('graphStore.applyEvent', () => {
       expect(Object.keys(useGraphStore.getState().tierViolations)).toEqual(['worker']);
     });
 
+    it('set_current_tier_seeds_the_slot_from_the_backend', () => {
+      // M08.8.C.fix (#19 display desync): the App mount seeds currentTier
+      // from get_current_tier so the display matches the enforced tier
+      // across a restart. Before this action the renderer only wrote
+      // currentTier from tier_transition events — never the persisted
+      // backend value at startup.
+      useGraphStore.getState().setCurrentTier('promoted');
+      expect(useGraphStore.getState().currentTier).toBe('promoted');
+      useGraphStore.getState().setCurrentTier('novice');
+      expect(useGraphStore.getState().currentTier).toBe('novice');
+    });
+
     it('clear_preserves_current_tier_but_resets_tier_violations', () => {
       // Tier is a per-installation user preference; clear() is for
       // per-session graph state. The runtime persists tier across
