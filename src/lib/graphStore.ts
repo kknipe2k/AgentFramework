@@ -632,6 +632,16 @@ interface GraphState {
    * persists so the budget-cap input reflects the committed value.
    */
   setGlobalBudgetCap: (cap: number) => void;
+
+  /**
+   * M08.8.C.fix (#19 display desync): seed `currentTier` from the
+   * backend's persisted/enforced tier. The App mount calls this after
+   * `getCurrentTier` so the Settings display matches the enforced tier
+   * across a restart — the renderer previously wrote `currentTier` ONLY
+   * from `tier_transition` events, never the persisted backend value at
+   * startup. REFLECTS the enforced tier; never widens it.
+   */
+  setCurrentTier: (tier: TierRef) => void;
 }
 
 const AGENT_X_STRIDE = 220;
@@ -1814,6 +1824,8 @@ const graphStoreInitializer: StateCreator<GraphState> = (set) => ({
   selectNode: (id) => set({ selectedNodeId: id }),
 
   setGlobalBudgetCap: (cap) => set({ globalBudgetCap: cap }),
+
+  setCurrentTier: (tier) => set({ currentTier: tier }),
 
   recordUncertainInvocation: (invocation) =>
     set((state) => {

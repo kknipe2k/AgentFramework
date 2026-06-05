@@ -22,6 +22,7 @@ import { ToastProvider } from './components/Toast';
 import { Transport } from './components/Transport';
 import { UncertaintyPrompt } from './components/UncertaintyPrompt';
 import {
+  getCurrentTier,
   invokeHasApiKey,
   invokeReplayLatestSession,
   invokeReplaySession,
@@ -98,6 +99,27 @@ export function App(): JSX.Element {
         console.error('has_api_key error:', e);
       });
 
+    // M08.8.C.fix #19: seed `currentTier` from the backend's
+    // persisted/enforced tier so the Settings display matches the
+    // enforced tier across a restart. The renderer defaulted currentTier
+    // to 'novice' and wrote it ONLY from tier_transition events — after a
+    // restart with a Promoted backend (tier.json) the display read Novice
+    // while the run enforced Promoted. Mirrors the invokeHasApiKey seed
+    // above; the seed REFLECTS the enforced tier, it never widens it.
+    void getCurrentTier()
+      .then((seeded) => {
+        // Only seed a valid TierRef — a malformed bridge payload must not
+        // corrupt currentTier (it drives the topbar chip's titleCase + the
+        // SettingsPanel toggle). Defensive, like listInstalledArtifacts'
+        // Array.isArray coercion.
+        if (seeded === 'novice' || seeded === 'promoted') {
+          useGraphStore.getState().setCurrentTier(seeded);
+        }
+      })
+      .catch((e) => {
+        console.error('get_current_tier error:', e);
+      });
+
     // Replay-on-mount reconstructs the prior session's graph. The
     // `agent_event` listener MUST be registered (and its registration
     // awaited) BEFORE any replay fires — the backend re-emits the signal
@@ -111,6 +133,15 @@ export function App(): JSX.Element {
       unlisten = await subscribeAgentEvents((event) => {
         if (event.type === 'session_start') {
           localStorage.setItem(LAST_SESSION_KEY, event.session_id);
+        }
+        if (event.type === 'tier_transition') {
+          // M08.8.C.fix #20 (DESIGN.md principle 1 — feedback): every tier
+          // change confirms with a toast naming the new tier. The reducer
+          // updates currentTier; this surfaces the change to the user.
+          useToastStore.getState().push({
+            kind: 'info',
+            title: `Tier changed to ${event.current}`,
+          });
         }
         useGraphStore.getState().applyEvent(event);
         if (event.type === 'agent_complete' || event.type === 'agent_error') {
