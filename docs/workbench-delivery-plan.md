@@ -74,11 +74,14 @@ Microsoft Agent Framework) converges on the same shape:
   wired into the run loop (`dispatch.rs:91`, `agent_sdk.rs:884`), health-pinging,
   tool enumeration (`McpClient::test_connection`/`list_tools`), an `MCPNode`
   canvas component already exists (`nodes/MCPNode.tsx`).
-- **Capability model is well-formed** (`capability.v1.json`): `{kind:
-  read|write|exec|network|process_spawn, resource, scope: glob|domain|path,
-  side_effect_class}`, enforced L1–L5; the live-tool enforcement eval (E-02,
-  `capability_live_tool.rs`) proves an in-scope Write lands and an out-of-scope
-  Write is blocked with no file on disk.
+- **Capability model is well-formed + two-layered.** The per-action *declaration*
+  (`capability.v1.json`: `{kind, resource, scope, side_effect_class}`) is the
+  enforcer's L1/L2 shape; the **agent** carries the `Capabilities` *aggregate*
+  (`common.v1.json#/$defs/Capabilities`: `file_access.{read,write}` globs +
+  `tools_called`/`network`/`shell`/`spawn_agents`), required per `agent.v1.json:9`.
+  The live-tool eval (E-02, `capability_live_tool.rs`) proves an in-scope Write
+  lands and an out-of-scope Write is blocked with no file on disk. **α.B edits the
+  agent's `file_access`.**
 - **Continuous schema validation** on canvas edits (`validate_framework`,
   debounced — `builderStore.ts:454`).
 
@@ -116,7 +119,7 @@ out-of-scope write is blocked.
 | Stage | Deliverable | Real seams (grounded) |
 |---|---|---|
 | **α.A** | **Blank-create on the canvas.** A "+ New agent / tool / skill" affordance per Palette tab that mints a fresh unique ref and calls `addNode` → a configurable node appears on a fresh project. | `Palette.tsx` (add the "new" item); `builderStore.addNode` (`:506`) + `builderAgent` (`:145`) already support it; auto-id now (full id-rename → M-β, `updateNode` re-keys `:519`). |
-| **α.B** | **Capability / file_access editor.** Add `capabilities: CapabilityDeclaration[]` to `builderAgent`; a structured form in `NodeConfigPanel` (kind dropdown · resource · scope glob/domain/path · side_effect). | `builderAgent` (`:145`); `NodeConfigPanel.tsx`; shape from `capability.v1.json` + `agent.v1.json`; enforcement already real (E-02 `capability_live_tool.rs`). |
+| **α.B** | **file_access editor.** `builderAgent` initializes a valid `capabilities` (the `Capabilities` aggregate — `common.v1.json#/$defs/Capabilities`, **required** per `agent.v1.json:9`, today omitted); a Read/Write glob-list editor in `NodeConfigPanel` over `agent.capabilities.file_access.{read,write}`. | `builderAgent` (`:145`); `NodeConfigPanel.tsx`; shape from `common.v1.json#/$defs/Capabilities` + `agent.v1.json:41`; enforcement already real (E-02 `capability_live_tool.rs`). |
 | **α.C** | **Attach a real MCP tool.** New `mcp_list_server_tools(name)` Tauri command (reuse `McpClient::test_connection`→`list_tools`); surface an installed server's tools in the Tools palette (`source:'mcp'`); attaching adds to the agent's `allowed_tools`. | new command wraps `client/mod.rs:246`; `mcp_list_servers` (`commands.rs:1083`); agent→tool edge already writes `allowed_tools` (`builderStore.ts:419`); dispatch already executes (`agent_sdk.rs:884`). |
 | **α.D** | **Assembled IRL + execution-status flip.** Build fresh → Run → real MCP data → real file. Flip the ledger: "canvas-authored single-agent + MCP + capability path observed end-to-end in the app." | `tests/e2e-tauri/` real-app regression; `docs/execution-status.md`. |
 
