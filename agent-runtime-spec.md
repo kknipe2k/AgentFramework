@@ -328,6 +328,8 @@ Framework JSON files live in `examples/`. Edit a file, hit "Reload framework" in
 > **Locked (2026-04-18, OSS shipping plan; revised after workbench-MVP discussion).** What's in v0.1.0 Windows Preview, v1.0, and v2.0+. Pulls every "deferred to v2" / "v1.1" / "stretch goal" note from elsewhere in the spec into one consolidated table. The release scope is the contract; scope-creep means redating, not silently adding.
 >
 > **MVP framing:** v0.1 is a **workbench**, not a runtime spectator. A novice must be able to build an agentic process from scratch using the Builder Canvas and the three Generators (no JSON editing required). An experienced user must be able to build something complex and useful (canvas + JSON view + Tester + import-by-URL). Both share one workbench.
+>
+> **Amended by ADR-0031 (2026-06-05).** The post-M08 v0.1 scope is re-cut around **author-and-run**: the workbench builds *and runs* single-agent, MCP-data workflows from scratch (M09 vertical slice → M10 author-anything → M11 real-data → the v0.1 release). **Generators (Phase 8a/b/c) and multi-agent / plan / hook *execution* move to v1.0** (M12 execution-breadth, M13 hardening); the v0.1 success criterion changes from generator-centric to author-and-run. The rows below for **Generators** and **plan/hook execution** have their v0.1/v1.0 columns superseded to v1.0 by this ADR. Detailed roadmap: `docs/workbench-delivery-plan.md`; milestone index: `docs/MVP-v0.1.md`.
 
 | Capability | v0.1.0 Windows Preview | v1.0 (multi-OS, full) | v2.0+ (deferred) |
 |---|:---:|:---:|:---:|
