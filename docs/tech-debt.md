@@ -768,7 +768,7 @@ For any later rung that accepts **relative** paths from the user or model (a wor
 **Found by:** M08.7.B rung-2 ground-at-red (grep for `set_tier` callers; maintainer-approved disposition — Option 1, test-seam + log TD)
 **Pass that surfaced it:** N/A (ground-at-red investigation during rung-2 implementation)
 **Category:** other (painted-not-wired — capability/tier enforcement; cf. [[TD-034]])
-**Resolution status:** in-flight (M08.8.C impl `c15c6a8` — the wire is built + assembled-verified: `test_framework` → `test_framework_with` → `run_test_session_with_tier` threads the tracked `CurrentTierState`; ADR-0030 refines ADR-0019; the blocking mutation gate caught a wrong-tier hand-mutant. The real-app IRL — a Promoted run enforces Promoted in the running app — is the authoritative close per rule 11, pending the maintainer watch. The smoke half is intentionally NOT wired; see ADR-0030. Entry text immutable; status updated in place per the TD-002/005 precedent.)
+**Resolution status:** resolved (M08.8.C impl `c15c6a8` + M08.8.C.fix `b4bfc2a` — closed at the M08.8.G closeout, 2026-06-05. The wire is built + assembled-verified: `test_framework` → `test_framework_with` → `run_test_session_with_tier` threads the tracked `CurrentTierState` into `enforcer.set_tier`; ADR-0030 refines ADR-0019; the blocking mutation gate caught a wrong-tier hand-mutant. The tier-UI-truth + display-seed are real-app-observed (`tests/e2e-tauri/tier_enforcement.e2e.ts` + `tier_display.e2e.ts`, V-confirmed 2026-06-05 on a clean Novice baseline) + the maintainer IRL. The positive Promoted-Write-lands enforcement is assembled-test-grounded (`src-tauri/src/commands.rs::test_framework_with_at_promoted_…` / `…_at_novice_…`: Promoted reaches the L1 scope gate, Novice is tier-denied, neither writes the file) + the maintainer IRL (key/live-model-dependent, not CI-drivable). The **smoke** half is intentionally NOT wired; see ADR-0030. The Tester-results observability gap (a tier-limited run reads `passed=true` with no distinct badge) is the separate, still-open [[TD-047]] — a different surface, not a regression of this wire. Entry text immutable; status updated in place per the TD-002/005 precedent.)
 
 ### Description
 
@@ -1275,3 +1275,45 @@ This is the **documented, defensible contract**, not an inference. Three doc sit
 ### Recommended approach (when addressed)
 
 Do NOT fold `TierViolation` into `capability_failures` (that would wrongly mark the framework failed). Instead, at the Stage F / M09 Tester-results UI, derive a distinct "tier-limited" badge from `trace.iter().any(AgentEvent::TierViolation)` and render it alongside `passed` (e.g. "Passed — but N action(s) were tier-limited at Novice; promote to exercise them"). Optionally add a `tier_limited: bool` (or the tier-violated kinds) to `TestOutcome` so the renderer needn't re-scan the trace. ~30–60 min; pairs with the Tester-results metric cards (M08.8 Stage F / the DESIGN.md §Components Tester surface). No change to `fold_outcome`'s pass/fail logic.
+
+## TD-048 — tier-change toast title is the raw lowercase tier, not the title-cased register the phase doc illustrated
+
+**Date logged:** 2026-06-05
+**Found by:** Stage V verifier run M08.8.V (finding 🟢 #2 — `assembled_execution` / Wire pass)
+**Pass that surfaced it:** Wire / assembled_execution
+**Category:** cosmetic (UX register consistency)
+
+**Resolution status:** open (owner: any future App.tsx / toast-register touch — title-case + a title+message split; cosmetic, the contract is met)
+
+### Description
+
+`src/App.tsx:141–144` pushes the tier-change toast as `push({ kind: 'info', title: \`Tier changed to ${event.current}\` })` — the raw lowercase tier name ("Tier changed to promoted"), the whole string in the `title` slot with no `message`. The phase doc C.fix.3 step 4 illustrated a title-cased value (`Now ${event.current === 'promoted' ? 'Promoted' : 'Novice'}`). `tier_display.e2e.ts:59` passes regardless because it matches `/promoted/i` case-insensitively, so the divergence is invisible to the gate.
+
+### Why it's debt not bug
+
+The DESIGN.md interaction contract — *every tier change confirms with a toast naming the new tier* (principle 1, feedback) — is fully met: a toast appears bottom-right naming the new tier. The only divergence is register: the rest of the instrument surface title-cases tier names (the topbar chip `titleCase(tier)`, the SettingsPanel toggle), so a lowercase "promoted" in the toast is cosmetically inconsistent. Nothing functional is wrong.
+
+### Recommended approach (when addressed)
+
+Title-case the tier in `App.tsx:143` (reuse the `titleCase` helper the chip/Settings already use) and optionally split into `title: 'Tier changed'` + `message: \`Now ${titleCase(event.current)}\`` to match the Toast's icon+title+body shape. ~5 min; fold into any App.tsx / Toast register touch. Pairs with the M08.8.B Toast primitive's title/message structure.
+
+## TD-049 — `design_conformance.e2e.ts` Tester-modal test over-claims its assertion (name says "with metric cards"; body does not assert them)
+
+**Date logged:** 2026-06-05
+**Found by:** Stage V verifier run M08.8.V (finding 🟢 #3 — `assembled_execution` pass)
+**Pass that surfaced it:** assembled_execution
+**Category:** observability (test-assertion completeness — a regression-guard gap)
+
+**Resolution status:** open (owner: any future Tester-modal e2e touch — add a `metric-*` presence assertion)
+
+### Description
+
+`tests/e2e-tauri/design_conformance.e2e.ts:96` `opens_the_tester_as_a_full_modal_with_metric_cards` asserts only that the opened Tester dialog has class `modal--full`, `role="dialog"`, and an `aria-label="Close"` × (the TD-043 Modal migration). It does **not** assert any `.metric` / `[data-testid^="metric-"]` element renders — so despite the name, the metric cards are not real-app-regression-guarded. The cards do exist (`src/components/builder/MetricCard.tsx`; `TesterModal.tsx:48` `data-testid="tester-metrics"`), so this is a test-coverage gap, not a missing surface.
+
+### Why it's debt not bug
+
+The metric cards ship and render (B.fix built the Result/Verify/Tokens/Spend grid; the vitest unit suite exercises `MetricCard`); the real-app surface is correct. The debt is purely that the e2e's name implies a real-app regression guard the body lacks — a future change that broke the metric grid in the assembled app would not be caught by this spec.
+
+### Recommended approach (when addressed)
+
+Add an assertion to `design_conformance.e2e.ts:96` that a `[data-testid="tester-metrics"]` (or a `[data-testid^="metric-"]` card) element is displayed inside the opened Tester modal, so the metric cards join the real-app regression suite. ~10 min; fold into any Tester-modal e2e touch.
