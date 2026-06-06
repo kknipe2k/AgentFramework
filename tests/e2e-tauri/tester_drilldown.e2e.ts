@@ -78,6 +78,19 @@ async function openBuilderTester(): Promise<void> {
 }
 
 describe('Tauri real-app E2E — M08.9.B Tester run drill-down', () => {
+  // Teardown (M08.9.D.fix — V 🔴 #1): every test in this describe shares one
+  // app session, so an `it` that opens the Tester modal leaves it open for the
+  // next `it` — whose `openBuilderTester` view-switch click is then intercepted
+  // by the modal scrim (crash with a key; the substantive case never runs).
+  // Close the modal after each case and wait for it to disappear.
+  afterEach(async () => {
+    await browser.execute('window.__builderStore.getState().closeTester();');
+    await $('[data-testid="tester-modal"]').waitForDisplayed({
+      timeout: 5_000,
+      reverse: true,
+    });
+  });
+
   it('shows no drill-down before a run (no trace steps without a result)', async () => {
     await openBuilderTester();
     // Before any run there is no result surface, hence no drill-down and no
