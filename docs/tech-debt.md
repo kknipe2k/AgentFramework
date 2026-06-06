@@ -768,7 +768,7 @@ For any later rung that accepts **relative** paths from the user or model (a wor
 **Found by:** M08.7.B rung-2 ground-at-red (grep for `set_tier` callers; maintainer-approved disposition — Option 1, test-seam + log TD)
 **Pass that surfaced it:** N/A (ground-at-red investigation during rung-2 implementation)
 **Category:** other (painted-not-wired — capability/tier enforcement; cf. [[TD-034]])
-**Resolution status:** open (routed to the live-session / tier-wiring rung)
+**Resolution status:** resolved (M08.8.C impl `c15c6a8` + M08.8.C.fix `b4bfc2a` — closed at the M08.8.G closeout, 2026-06-05. The wire is built + assembled-verified: `test_framework` → `test_framework_with` → `run_test_session_with_tier` threads the tracked `CurrentTierState` into `enforcer.set_tier`; ADR-0030 refines ADR-0019; the blocking mutation gate caught a wrong-tier hand-mutant. The tier-UI-truth + display-seed are real-app-observed (`tests/e2e-tauri/tier_enforcement.e2e.ts` + `tier_display.e2e.ts`, V-confirmed 2026-06-05 on a clean Novice baseline) + the maintainer IRL. The positive Promoted-Write-lands enforcement is assembled-test-grounded (`src-tauri/src/commands.rs::test_framework_with_at_promoted_…` / `…_at_novice_…`: Promoted reaches the L1 scope gate, Novice is tier-denied, neither writes the file) + the maintainer IRL (key/live-model-dependent, not CI-drivable). The **smoke** half is intentionally NOT wired; see ADR-0030. The Tester-results observability gap (a tier-limited run reads `passed=true` with no distinct badge) is the separate, still-open [[TD-047]] — a different surface, not a regression of this wire. Entry text immutable; status updated in place per the TD-002/005 precedent.)
 
 ### Description
 
@@ -1040,3 +1040,280 @@ If a second model-aware budget action lands (or the action set grows),
 revisit whether the per-action model should be derived rather than carried
 as mutable loop state.
 
+## TD-043 — `TesterModal` not migrated onto the `Modal` primitive
+
+**Date logged:** 2026-06-03
+**Found by:** M08.8.B (Light Instrument visual foundation)
+**Pass that surfaced it:** Stage-B implementation (Modal-primitive consolidation)
+**Category:** other (consolidation / duplicate-implementation)
+**Resolution status:** RESOLVED at M08.8.B.fix — `TesterModal` now renders
+`<Modal size="full" testId="tester-modal">`; the hand-rolled `.tester-modal`
+overlay CSS + its `tester-modal__*` test pins were removed (the unit + the
+Playwright close-selector rewrite rode the B.fix RED commit). Two modal
+implementations no longer coexist.
+
+### Description
+
+M08.8.B shipped the `TesterModal` full-screen *visual* via a CSS repaint of
+its existing `.tester-modal*` classes (z-300, 96vw × 92vh, Light Instrument
+tokens), NOT a migration onto the reusable `Modal` primitive
+(`<Modal size="full">`, B.3.4). Two modal implementations therefore coexist:
+the `Modal` primitive (overlay/scrim/z-index/focus-trap/Esc, used by
+`MCPServerAddModal`) and `TesterModal`'s hand-rolled overlay.
+
+### Why it's debt not bug
+
+The migration is **test-bearing**: `TesterModal.test.tsx` pins
+`tester-close` / `tester-modal__close` / `tester-modal__header` (testids +
+a CSS-rule-exists check), and strict-TDD (`CLAUDE.md` §5) forbids editing
+those tests in an impl commit. A clean swap onto `Modal` would change those
+selectors, so it cannot land as a pure repaint mid-stage. The shipped CSS
+repaint is correct and full-screen; this is a consolidation flag, not a
+defect.
+
+### Recommended approach (when addressed)
+
+A later stage's **red phase** rewrites the `tester-modal__*` tests against
+the `Modal` primitive's structure (the primitive's `data-testid`/role +
+a Tester-owned close affordance), then the impl migrates `TesterModal` onto
+`<Modal size="full">` and deletes the duplicate `.tester-modal` overlay CSS.
+Ref B.3.4.
+
+
+---
+
+## TD-044 — `smoke.e2e.ts` "reload reconstructs the graph" is key-dependent + races the post-reload rebuild
+
+**Date logged:** 2026-06-03
+**Found by:** M08.8.B.fix (first full `test:e2e:tauri` run to completion)
+**Pass that surfaced it:** real-app `tauri-driver` suite (design-conformance close)
+**Category:** test-infra (real-app spec flake / environment dependency)
+**Resolution status:** **resolved** (M08.8.B.fix2 impl commit `4cb21f2`) — and this entry's own triage was wrong. The recommended approach below (add a `waitUntil` / gate the leg behind a key-present guard) treated it as a *flake/timing* issue; it was **deterministic**, and TWO real bugs, neither a flake: **(1)** `localStorage.lastSessionId` does not survive a full app restart under `tauri-driver` (a relaunched WebView2 comes up on a fresh profile — proven by a throwaway probe: marker LOST after `reloadSession`), so replay never fired; **(2)** even when replay fired, `crates/runtime-main/src/sdk/replay.rs::translate_agent` read `payload_json.event` (a field the real signal log never had — the discriminator is `payload_json.type`), so the hand-rolled translator produced ZERO `AgentEvent`s against real data — meaning `replay_session` was *always* broken in the assembled app (its in-source + `tests/sdk_replay.rs` fixtures fabricated an `event`-keyed shape, a §5 tautology miss). Fix: backend `replay_latest_session` reads the latest persisted session from the signal log (survives the localStorage wipe; `app_local_data_dir`/`session.sqlite` IS stable across reload — verified, 77 signals before & after) + App.tsx awaits the listener before replay + `replay.rs` now deserializes `payload_json` straight to `AgentEvent` via serde, with its fabricated tests replaced by real serialized-event round-trips. Verified: `smoke.e2e.ts` reload leg 5/5 consecutive green + full `test:e2e:tauri` 8/8. Entry retained for audit trail; original text below unchanged.
+
+### Description
+
+`tests/e2e-tauri/smoke.e2e.ts` → "reload reconstructs the graph from persisted
+signals" waits for `[data-testid^="agent-node-"]` after a window reload and
+times out (15s) when the key-present branch runs: the spec first performs a
+**real Anthropic smoke run** (it needs a live `ANTHROPIC_API_KEY`/keychain
+entry), persists signals, reloads, and expects the graph to rebuild from the
+persisted signal chain. On the build machine (key present) the post-reload
+rebuild did not surface a node in the window; CI runs keyless and skips the
+real-run leg, so this never blocked merge.
+
+### Why it's debt not a B.fix bug
+
+B.fix is renderer/CSS only — `git diff 47e10a2..HEAD --name-only` shows it
+touched **zero** persistence / signal-replay / `commands.rs` / store
+reconstruction code (only `styles.css`, 5 components, fonts, tests). The
+reload-rebuild path is unchanged since before M08.8; this spec was simply
+never run to green in A/B (B's retro left `test:e2e:tauri` "pending"), so the
+first completed run surfaced a **pre-existing** key-present timing/rebuild
+issue. The `agent-node-*` testid the spec waits on was not altered by the
+restyle.
+
+### Recommended approach (when addressed)
+
+Separate triage (not B.fix): (1) confirm whether the post-reload rebuild
+genuinely fails or merely races (add a `waitUntil` on the reconstructed graph,
+mirroring the TD-044-sibling `builder_load_aria` deflake), and (2) decide the
+key-present vs CI-keyless contract for this leg — gate the real-run+reload
+assertion behind a key-present guard so the spec is deterministic in both
+environments.
+
+## TD-045 — Audit for other hand-rolled translators reading fabricated unit-test payloads
+
+**Date logged:** 2026-06-03
+**Found by:** M08.8.B.fix2 (TD-044 root-cause triage — the `replay.rs` translator bug)
+**Pass that surfaced it:** real-app `tauri-driver` reload leg (assembled-path observation)
+**Category:** structural (latent broken real behavior — same class as the TD-044 `replay.rs` bug)
+**Resolution status:** open
+
+### Description
+
+TD-044 found `crates/runtime-main/src/sdk/replay.rs` had a hand-rolled,
+field-by-field signal→`AgentEvent` translator that read invented field names
+(`payload_json.event`) the real persisted signal log never carried, so it
+produced ZERO events against real data while its unit + integration fixtures
+fabricated the matching wrong shape and stayed green (a §5 tautology miss).
+`payload_json` is in fact a fully serialized `AgentEvent`; the fix was a
+one-line `serde_json::from_value::<AgentEvent>`. The broader risk: other
+modules may hand-translate a persisted/wire JSON shape field-by-field and pin
+it with fabricated fixtures instead of round-tripping the real serde type.
+Candidate areas to audit (NOT exhaustive; NOT yet confirmed buggy): the drone
+projectors (`crates/runtime-drone/src/{vdr,plan_projector,token_usage}.rs`
+read `payload_json` by hand), `recovery::resume` / `recover_session`
+projection, and any `ipc.ts` hand-mirrored wire interface whose tests build
+the shape by hand rather than from the Rust serde output.
+
+### Why it's debt not a (closed) bug
+
+The one confirmed instance (`replay.rs`) is fixed at M08.8.B.fix2. This entry
+is the *sweep* — there is no second confirmed defect yet, only a class of
+risk: a translator that round-trips a serde type by hand can silently diverge
+from the real shape while fabricated fixtures keep it green. Classified 🟡
+(not 🟢): if a second instance exists it is, like `replay.rs`, *latent broken
+real behavior* in the assembled app, not a cosmetic concern — the live
+severity discriminator (real-behavior breakage) sets the tier regardless of
+whether anything is observably broken today.
+
+### Recommended approach (when addressed)
+
+Grep for hand-rolled JSON→typed translators that (a) read individual fields
+off a `serde_json::Value` that mirrors an existing `#[derive(Deserialize)]`
+type, and (b) are pinned only by fixtures built by hand rather than by
+`serde_json::to_value(&real_value)`. For each, prefer deserializing the real
+type directly (as `replay.rs` now does) and rewrite fixtures to serialize real
+values. Pairs with any future audit-trail / replay / recovery touch. ~1–2h to
+sweep; per-site fixes are small.
+
+### Sweep results (M08.8.B.fix2 audit — inventory only, NO fixes applied)
+
+The sweep ran across the translators + the six execution-licensing evals.
+Headline: **the five `executes`-row evals (E-01…E-05) are all REAL-SHAPE** —
+each drives the real producer (`AgentSdk::run_agent` via a `ProviderEvent`
+stub) and asserts a side effect (file on disk / clean suspend / counted-turn
+halt / behaviour change), so the `replay.rs` disease did **not** spread to the
+`docs/execution-status.md` `executes` rows. Findings by classification:
+
+- **`token_usage.rs:104–116` — REAL-SHAPE ✅.** Reads `input/output/model/cost_usd`
+  = exact `AgentEvent::TokenUsage` serde fields; emitted live (`event_pipeline.rs:157`),
+  projected per-signal (`command_handler.rs:173`). Not the disease.
+- **`vdr.rs:92–104` verify arm — confirmed broken-shape; promoted to TD-046** (🔴
+  latent). The one genuine sibling of the `replay.rs` bug.
+- **`vdr.rs:74–90` decision arm + `plan_projector.rs:83,149,171` — DORMANT, fields
+  correct.** Field names match the real serde (`decision/rationale/tool_used`;
+  `plan_id/task_count/approval_required`, `task_id/agent_id` ↔ `DecisionRecord`/
+  `PlanCreated`/`TaskStarted`), but no live producer emits these in v0.1 (plans/hooks =
+  `paints`), so they are exercised only by `seed_signal` fabricated fixtures. When
+  rungs 7/8 wire the producers, convert those fixtures to
+  `serde_json::to_value(&real_event)` and drive them producer-first.
+- **`recovery_lifecycle.rs:114–181` — FABRICATED-FIXTURE eval (Stage-E precondition).**
+  Hand-builds the signal rows AND the snapshot `state_json` (`:181`
+  `json!({"checkpoint":1})`) via `client.write_signal`, then `recover_session`; it does
+  NOT drive `AgentSdk::run_agent`, and the snapshot state it deserializes is an
+  arbitrary shape no producer emits — the **snapshot-state-deser path has no producer
+  cross-check** (the Stage-V blind spot `smoke_signal_persistence.rs` flagged). Signal
+  shapes are accurate TODAY but drift-prone. Because M08.8.E's `gap→resume→complete`
+  reuses `recovery::resume`, hardening this is a **Stage-E precondition** (per 58d3316).
+  Fix: seed via `serde_json::to_value(&real_event)` + a real serialized snapshot state.
+- **`ipc.ts` mirror cluster — TD-011 sibling (TS side).** Hand-written interfaces
+  mirroring Rust serde output (`McpTool`/`McpServerSummary` = TD-011; plus `ResumePlan`,
+  `ImportOutcome`, `InstalledArtifact`, `TestOutcome`) pinned by hand-built
+  `ipc.test.ts` fixtures. Same class; outside the Rust sweep's primary scope, listed
+  for completeness.
+- **`snapshot.rs:236` — N/A.** Stores/replays `payload_json` as an opaque `Value`; no
+  typed field extraction, so not a translator of this class.
+
+**Fix pattern (all sites, when scoped):** replace hand-built `json!` fixtures with
+`serde_json::to_value(&real_event)` (or drive the real producer), so a fixture can
+never encode a shape the producer does not emit. **No fixes applied in this audit.**
+
+## TD-046 — `vdr.rs` verify arm reads a phantom `passed` field → records every verify "fail"
+
+**Date logged:** 2026-06-03
+**Found by:** M08.8.B.fix2 TD-045 sweep (the one confirmed sibling of the `replay.rs` bug)
+**Pass that surfaced it:** translator field-shape cross-check (vdr read vs `AgentEvent` variant)
+**Category:** structural (broken real behavior — latent; the TD-044/`replay.rs` disease class)
+**Resolution status:** open — **owner M08.9 rung 8 (hooks/verify firing engine)**
+
+### Description
+
+`crates/runtime-drone/src/vdr.rs:92–104` projects a `verify`-kind signal into the
+`vdr` table by reading
+`payload.get("passed").and_then(Value::as_bool).unwrap_or(false)` and recording
+`outcome = if passed {"pass"} else {"fail"}`. But the real producer writes
+`payload_json = serde_json::to_value(&AgentEvent)` (`agent_sdk.rs:1274`), and
+`AgentEvent::VerifyPassed { hook_id, duration_ms, output_preview }` /
+`VerifyFailed { hook_id, duration_ms, error, on_failure }` carry **no `passed`
+field** — pass/fail is the serde *variant tag* (`verify_passed` vs `verify_failed`),
+and both map to signal-kind `"verify"` (`signal_kind`, `agent_sdk.rs:1340`). So
+`get("passed")` always returns `None` → `unwrap_or(false)` → **every verify signal is
+recorded `"fail"`**, including a pass. Compounding: the `vdr.rs` test module seeds only
+`decision`/`tool` signals — the verify arm has **no test at all** (the exact TD-044
+shape: a translator reading a field the producer never emits, unguarded by a
+producer-shaped test).
+
+### Why it's debt not a live bug (yet)
+
+**Latent.** No v0.1 production path emits `VerifyPassed`/`VerifyFailed` — hooks/verify
+are `paints` in `docs/execution-status.md` (no firing engine; the variants exist only
+as enum definitions, with no construction site in any run loop). The mis-projection
+cannot fire until a verify producer is wired. Severity is 🔴 (real-behavior breakage —
+it silently mis-records every verification outcome the moment it goes live), gated to
+latent by the absent producer.
+
+### Recommended approach (when addressed — M08.9 rung 8, BEFORE wiring a verify producer)
+
+Discriminate pass/fail by the variant tag, not a phantom field: project from the
+signal's `event` column / `payload_json.type` (`verify_passed` → `"pass"`,
+`verify_failed` → `"fail"`) and drop the `get("passed")` read. Add a producer-shaped
+verify test that seeds `serde_json::to_value(&AgentEvent::VerifyPassed{…})` /
+`VerifyFailed{…}` (not a hand-built `{"passed":…}`) and asserts the projected
+`outcome` — so the fix is pinned by the real shape. Land it in the same rung that
+wires the verify producer, so projector and producer go live shape-matched. ~30 min.
+
+## TD-047 — Tester `fold_outcome` does not fold an L4 `TierViolation`; a tier-limited run reports `passed = true`
+
+**Date logged:** 2026-06-04
+**Found by:** M08.8.C green-phase (the tier wire made the Novice-tier-denied Tester path reachable in a production-shaped test; surfaced when the red Novice test's `!passed` assertion proved false)
+**Pass that surfaced it:** N/A (impl-phase grounding)
+**Category:** observability (Tester results UX — a tier-limited run is not distinguished from a clean pass)
+
+**Resolution status:** open (owner: the Stage F / M09 Tester-results UI — surface "tier-limited" distinctly; NOT a correctness defect — see below)
+
+### Description
+
+`crates/runtime-main/src/builder/tester.rs::fold_outcome` (`:127–162`) folds **only**
+`AgentEvent::CapabilityViolation` into `capability_failures` (the L1/L2 scope gate) and
+`AgentEvent::ArtifactHashMismatch` into `integrity_blocked`; `passed = capability_failures.is_empty() && !integrity_blocked`. An `AgentEvent::TierViolation` (the L4 tier gate) hits the `_ => {}` arm — it is **not** folded into anything. So a run where the agent's only blocked action was **tier**-denied (e.g. a Novice user testing a Write-using framework) records `passed = true` with the `TierViolation` present in `trace` but no `capability_failures` entry and no distinct "tier-limited" signal on the outcome. The M08.8.C assembled test `test_framework_with_at_novice_…` asserts this current behavior (`outcome.passed == true`).
+
+### Why it's debt not a bug
+
+This is the **documented, defensible contract**, not an inference. Three doc sites pin it: `TestOutcome.passed` field doc (`tester.rs:55–58`: "Any `capability_failures` entry or any `AgentEvent::ArtifactHashMismatch` in `trace` forces `false`" — TierViolation not listed); the `capability_failures` field doc (`:59–62`: "§8.security **L2** capability violations"); and the `fold_outcome` fn doc (`:122–125`: "the presence of any `AgentEvent::ArtifactHashMismatch` (or any capability failure) forces `passed = false`" — again TierViolation not listed). The design split is sound: an L1/L2 **scope** `CapabilityViolation` means the framework's agent attempted something **outside its declared capabilities** — a framework-authoring defect the builder must fix → fail the test. An L4 **TierViolation** means the action is fine for the framework but the **user's current session tier** forbids it — the framework is correct; the user just needs to promote → not a framework failure. Reporting a well-authored framework as "failed" because the user is at Novice would mislead. So `passed = true` on a tier-limited run is the right call for the pass/fail bit; the gap is purely **observability** — the outcome does not surface a "this run was tier-limited; promote to exercise it" signal distinct from a clean pass (the `TierViolation` is in the raw trace only).
+
+### Recommended approach (when addressed)
+
+Do NOT fold `TierViolation` into `capability_failures` (that would wrongly mark the framework failed). Instead, at the Stage F / M09 Tester-results UI, derive a distinct "tier-limited" badge from `trace.iter().any(AgentEvent::TierViolation)` and render it alongside `passed` (e.g. "Passed — but N action(s) were tier-limited at Novice; promote to exercise them"). Optionally add a `tier_limited: bool` (or the tier-violated kinds) to `TestOutcome` so the renderer needn't re-scan the trace. ~30–60 min; pairs with the Tester-results metric cards (M08.8 Stage F / the DESIGN.md §Components Tester surface). No change to `fold_outcome`'s pass/fail logic.
+
+## TD-048 — tier-change toast title is the raw lowercase tier, not the title-cased register the phase doc illustrated
+
+**Date logged:** 2026-06-05
+**Found by:** Stage V verifier run M08.8.V (finding 🟢 #2 — `assembled_execution` / Wire pass)
+**Pass that surfaced it:** Wire / assembled_execution
+**Category:** cosmetic (UX register consistency)
+
+**Resolution status:** open (owner: any future App.tsx / toast-register touch — title-case + a title+message split; cosmetic, the contract is met)
+
+### Description
+
+`src/App.tsx:141–144` pushes the tier-change toast as `push({ kind: 'info', title: \`Tier changed to ${event.current}\` })` — the raw lowercase tier name ("Tier changed to promoted"), the whole string in the `title` slot with no `message`. The phase doc C.fix.3 step 4 illustrated a title-cased value (`Now ${event.current === 'promoted' ? 'Promoted' : 'Novice'}`). `tier_display.e2e.ts:59` passes regardless because it matches `/promoted/i` case-insensitively, so the divergence is invisible to the gate.
+
+### Why it's debt not bug
+
+The DESIGN.md interaction contract — *every tier change confirms with a toast naming the new tier* (principle 1, feedback) — is fully met: a toast appears bottom-right naming the new tier. The only divergence is register: the rest of the instrument surface title-cases tier names (the topbar chip `titleCase(tier)`, the SettingsPanel toggle), so a lowercase "promoted" in the toast is cosmetically inconsistent. Nothing functional is wrong.
+
+### Recommended approach (when addressed)
+
+Title-case the tier in `App.tsx:143` (reuse the `titleCase` helper the chip/Settings already use) and optionally split into `title: 'Tier changed'` + `message: \`Now ${titleCase(event.current)}\`` to match the Toast's icon+title+body shape. ~5 min; fold into any App.tsx / Toast register touch. Pairs with the M08.8.B Toast primitive's title/message structure.
+
+## TD-049 — `design_conformance.e2e.ts` Tester-modal test over-claims its assertion (name says "with metric cards"; body does not assert them)
+
+**Date logged:** 2026-06-05
+**Found by:** Stage V verifier run M08.8.V (finding 🟢 #3 — `assembled_execution` pass)
+**Pass that surfaced it:** assembled_execution
+**Category:** observability (test-assertion completeness — a regression-guard gap)
+
+**Resolution status:** open (owner: any future Tester-modal e2e touch — add a `metric-*` presence assertion)
+
+### Description
+
+`tests/e2e-tauri/design_conformance.e2e.ts:96` `opens_the_tester_as_a_full_modal_with_metric_cards` asserts only that the opened Tester dialog has class `modal--full`, `role="dialog"`, and an `aria-label="Close"` × (the TD-043 Modal migration). It does **not** assert any `.metric` / `[data-testid^="metric-"]` element renders — so despite the name, the metric cards are not real-app-regression-guarded. The cards do exist (`src/components/builder/MetricCard.tsx`; `TesterModal.tsx:48` `data-testid="tester-metrics"`), so this is a test-coverage gap, not a missing surface.
+
+### Why it's debt not bug
+
+The metric cards ship and render (B.fix built the Result/Verify/Tokens/Spend grid; the vitest unit suite exercises `MetricCard`); the real-app surface is correct. The debt is purely that the e2e's name implies a real-app regression guard the body lacks — a future change that broke the metric grid in the assembled app would not be caught by this spec.
+
+### Recommended approach (when addressed)
+
+Add an assertion to `design_conformance.e2e.ts:96` that a `[data-testid="tester-metrics"]` (or a `[data-testid^="metric-"]` card) element is displayed inside the opened Tester modal, so the metric cards join the real-app regression suite. ~10 min; fold into any Tester-modal e2e touch.

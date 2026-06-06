@@ -22,11 +22,17 @@ export function AgentNode({ data }: NodeProps<AgentReactFlowNode>): JSX.Element 
     <div
       className={`agent-node agent-node--${status}`}
       data-testid={`agent-node-${agentId}`}
+      data-kind="agent"
       data-status={status}
       style={{ transform: `scale(${scale})`, transformOrigin: 'center' }}
       aria-label={`agent ${agentName} (${status})`}
     >
       <Handle type="target" position={Position.Top} />
+      {/* DESIGN.md two-axis model: kind glyph chip (blue "A") + status dot. */}
+      <span className="node-glyph node-glyph--agent" aria-hidden="true">
+        A
+      </span>
+      <span className={`node-status-dot node-status-dot--${status}`} aria-hidden="true" />
       <div className="agent-node__name">{agentName}</div>
       <div className="agent-node__id">{agentId.slice(0, 8)}</div>
       <CapabilityBadge agentId={agentId} />

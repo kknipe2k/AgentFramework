@@ -2,6 +2,9 @@ import { useState } from 'react';
 import { useBuilderStore, useTestGraphStore } from '../../lib/builderStore';
 import { useGraphStore } from '../../lib/graphStore';
 import { testFramework, unwrapCmdError, type TestOutcome, type WireDuration } from '../../lib/ipc';
+import { InspectorPanel } from '../InspectorPanel';
+import { MetricCard } from '../MetricCard';
+import { Modal } from '../Modal';
 import { TesterGraphPane } from './TesterGraphPane';
 
 const MS_PER_SEC = 1000;
@@ -39,6 +42,23 @@ function TesterResult({
       <header className="tester-result__verdict" data-testid="tester-result-verdict">
         {outcome.passed ? 'PASS' : 'FAIL'}
       </header>
+      {/* The mockup's metric grid (M08.8.B.fix) — Result / Verify / Tokens /
+          Spend in the mono-tabular instrument register. Spend has no wire
+          field yet (a stub dash; F wires the real cost). */}
+      <div className="metrics" data-testid="tester-metrics">
+        <MetricCard
+          label="Result"
+          value={outcome.passed ? 'PASS' : 'FAIL'}
+          tone={outcome.passed ? 'ok' : 'bad'}
+        />
+        <MetricCard label="Verify" value={outcome.vdr !== null ? 'OK' : '—'} />
+        <MetricCard
+          label="Tokens"
+          value={String(outcome.token_spend.total)}
+          delta={`in ${outcome.token_spend.input} · out ${outcome.token_spend.output}`}
+        />
+        <MetricCard label="Spend" value="—" />
+      </div>
       {/* §8.security L2 violations surface as test-failure lines, never
           as HITL prompts (F1.3.3 — the test-defaults HitlSeam never
           prompted; capability failures arrive folded onto TestOutcome). */}
@@ -156,19 +176,13 @@ export function TesterModal(): JSX.Element | null {
   };
 
   return (
-    <div className="tester-modal" role="dialog" aria-label="Tester" data-testid="tester-modal">
-      <header className="tester-modal__header">
-        <h2>Test framework</h2>
-        <button
-          type="button"
-          className="tester-modal__close"
-          data-testid="tester-close"
-          aria-label="Close tester"
-          onClick={handleClose}
-        >
-          ×
-        </button>
-      </header>
+    <Modal
+      open={isOpen}
+      onClose={handleClose}
+      title="Test framework"
+      size="full"
+      testId="tester-modal"
+    >
       <div className="tester-modal__body">
         <textarea
           className="tester-modal__task-input"
@@ -191,11 +205,17 @@ export function TesterModal(): JSX.Element | null {
             {error}
           </p>
         )}
-        {/* The smaller graph pane — scoped to the test session. */}
-        <TesterGraphPane />
+        {/* The smaller graph pane — scoped to the test session — beside
+            the Output/Inspector rail bound to the SAME scoped store
+            (M08.8.A: a Tester run's agent text + tool payloads are
+            observable in-app, not only via RUST_LOG). */}
+        <div className="tester-modal__watch">
+          <TesterGraphPane />
+          <InspectorPanel store={useTestGraphStore} />
+        </div>
         {outcome !== null && <TesterResult outcome={outcome} onPromote={handlePromote} />}
       </div>
-    </div>
+    </Modal>
   );
 }
 

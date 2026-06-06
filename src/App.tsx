@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { ApprovalPanel } from './components/ApprovalPanel';
+import { AppShell } from './components/AppShell';
 import { BudgetHeaderBar } from './components/BudgetHeaderBar';
 import { BuilderShell } from './components/builder/BuilderShell';
-import { ViewSwitch, type AppView } from './components/builder/ViewSwitch';
+import { type AppView } from './components/builder/ViewSwitch';
 import { GapPanel } from './components/GapPanel';
 import { GraphCanvas } from './components/GraphCanvas';
 import { HITLModal } from './components/HITLModal';
@@ -12,21 +13,28 @@ import { ImportPanel } from './components/ImportPanel';
 import { InspectorPanel } from './components/InspectorPanel';
 import { MCPServerSettings } from './components/MCPServerSettings';
 import { RecoveryDialog } from './components/RecoveryDialog';
+import { RunBanner, type RunStatus } from './components/RunBanner';
 import { SettingsPanel } from './components/SettingsPanel';
 import { SetupPanel } from './components/SetupPanel';
 import { SmokeButton } from './components/SmokeButton';
 import { SqlInspector } from './components/SqlInspector';
+import { ToastProvider } from './components/Toast';
+import { Transport } from './components/Transport';
 import { UncertaintyPrompt } from './components/UncertaintyPrompt';
 import {
+  getCurrentTier,
   invokeHasApiKey,
+  invokeReplayLatestSession,
   invokeReplaySession,
   invokeRunSmokeSession,
   invokeSetApiKey,
   subscribeAgentEvents,
   unwrapCmdError,
 } from './lib/ipc';
-import { useBuilderStore } from './lib/builderStore';
+import type { UnlistenFn } from '@tauri-apps/api/event';
+import { useBuilderStore, useTestGraphStore } from './lib/builderStore';
 import { useGraphStore } from './lib/graphStore';
+import { useToastStore } from './lib/toastStore';
 import './styles.css';
 
 const LAST_SESSION_KEY = 'lastSessionId';
@@ -54,57 +62,23 @@ declare global {
     // applyLoadedFramework action via executeScript — the exact code
     // path Inspector.onLoad runs minus the dialog click).
     __builderStore?: typeof useBuilderStore;
+    // M08.8.A — the Tester's scoped graph store, exposed so
+    // tests/e2e-tauri/execution_view.e2e.ts can inject a run trace into
+    // the scoped store the Tester modal renders (the real `agent_event`
+    // path replays into this store; injecting mirrors it without a key).
+    __testGraphStore?: typeof useTestGraphStore;
+    // M08.8.B — the reusable Toast store, exposed so
+    // tests/e2e-tauri/visual_foundation.e2e.ts can push a toast and watch
+    // it appear bottom-right + auto-dismiss (same affordance pattern as
+    // __graphStore; the store carries no secrets).
+    __toastStore?: typeof useToastStore;
   }
 }
 if (typeof window !== 'undefined') {
   window.__graphStore = useGraphStore;
   window.__builderStore = useBuilderStore;
-}
-
-interface RuntimeLayoutProps {
-  hasKey: boolean;
-  running: boolean;
-  error: string | null;
-  onSetKey: (key: string) => Promise<void>;
-  onSmoke: () => Promise<void>;
-  lastSessionId: string | null;
-}
-
-// RuntimeLayout — the live-execution view (SetupPanel + SmokeButton +
-// the `graph-layout` panels + the modal/dialog overlays). Extracted
-// verbatim from App's return so the Runtime view is a clean unit and the
-// M08.C Builder view is a sibling, not a rewrite. Behavior is unchanged:
-// App still owns the hasKey / running / error state, the
-// subscribeAgentEvents effect, and the replay-on-mount.
-function RuntimeLayout({
-  hasKey,
-  running,
-  error,
-  onSetKey,
-  onSmoke,
-  lastSessionId,
-}: RuntimeLayoutProps): JSX.Element {
-  return (
-    <>
-      <SetupPanel onSave={onSetKey} />
-      <SmokeButton disabled={!hasKey || running} onClick={onSmoke} />
-      {error && <p className="error">{error}</p>}
-      <div className="graph-layout">
-        <GraphCanvas />
-        <InspectorPanel />
-        <ApprovalPanel />
-        <HITLPanel />
-        <GapPanel />
-        <MCPServerSettings />
-        <ImportPanel />
-      </div>
-      <HITLModal />
-      <HITLToast />
-      <RecoveryDialog />
-      <UncertaintyPrompt sessionId={lastSessionId ?? ''} />
-      <SqlInspector />
-    </>
-  );
+  window.__testGraphStore = useTestGraphStore;
+  window.__toastStore = useToastStore;
 }
 
 export function App(): JSX.Element {
@@ -112,6 +86,7 @@ export function App(): JSX.Element {
   const [hasKey, setHasKey] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const tier = useGraphStore((s) => s.currentTier);
 
   useEffect(() => {
     // M07-IRL #7: seed `hasKey` from the OS keychain so a key entered in
@@ -124,29 +99,81 @@ export function App(): JSX.Element {
         console.error('has_api_key error:', e);
       });
 
-    // Replay-on-mount: if a previous session id was stashed in
-    // localStorage by a prior session_start, ask main to read its
-    // signal log and re-emit AgentEvents through the existing
-    // `agent_event` channel. graphStore.applyEvent's idempotence
-    // guarantees the reconstructed graph matches the original.
-    const lastSessionId = localStorage.getItem(LAST_SESSION_KEY);
-    if (lastSessionId !== null && lastSessionId.length > 0) {
-      void invokeReplaySession(lastSessionId).catch((e) => {
-        console.error('Replay session error:', e);
+    // M08.8.C.fix #19: seed `currentTier` from the backend's
+    // persisted/enforced tier so the Settings display matches the
+    // enforced tier across a restart. The renderer defaulted currentTier
+    // to 'novice' and wrote it ONLY from tier_transition events — after a
+    // restart with a Promoted backend (tier.json) the display read Novice
+    // while the run enforced Promoted. Mirrors the invokeHasApiKey seed
+    // above; the seed REFLECTS the enforced tier, it never widens it.
+    void getCurrentTier()
+      .then((seeded) => {
+        // Only seed a valid TierRef — a malformed bridge payload must not
+        // corrupt currentTier (it drives the topbar chip's titleCase + the
+        // SettingsPanel toggle). Defensive, like listInstalledArtifacts'
+        // Array.isArray coercion.
+        if (seeded === 'novice' || seeded === 'promoted') {
+          useGraphStore.getState().setCurrentTier(seeded);
+        }
+      })
+      .catch((e) => {
+        console.error('get_current_tier error:', e);
       });
-    }
 
-    const unsubscribePromise = subscribeAgentEvents((event) => {
-      if (event.type === 'session_start') {
-        localStorage.setItem(LAST_SESSION_KEY, event.session_id);
+    // Replay-on-mount reconstructs the prior session's graph. The
+    // `agent_event` listener MUST be registered (and its registration
+    // awaited) BEFORE any replay fires — the backend re-emits the signal
+    // log as soon as the command runs, and an emit that beats the
+    // subscription is dropped. The reconstruct-on-mount path is exactly
+    // where that race lives (the live smoke path registers long before a
+    // user click), so order the subscription first.
+    let unlisten: UnlistenFn | undefined;
+    let cancelled = false;
+    void (async () => {
+      unlisten = await subscribeAgentEvents((event) => {
+        if (event.type === 'session_start') {
+          localStorage.setItem(LAST_SESSION_KEY, event.session_id);
+        }
+        if (event.type === 'tier_transition') {
+          // M08.8.C.fix #20 (DESIGN.md principle 1 — feedback): every tier
+          // change confirms with a toast naming the new tier. The reducer
+          // updates currentTier; this surfaces the change to the user.
+          useToastStore.getState().push({
+            kind: 'info',
+            title: `Tier changed to ${event.current}`,
+          });
+        }
+        useGraphStore.getState().applyEvent(event);
+        if (event.type === 'agent_complete' || event.type === 'agent_error') {
+          setRunning(false);
+        }
+      });
+      if (cancelled) {
+        unlisten();
+        return;
       }
-      useGraphStore.getState().applyEvent(event);
-      if (event.type === 'agent_complete' || event.type === 'agent_error') {
-        setRunning(false);
+      // `lastSessionId` survives a soft reload but NOT a full app restart
+      // (a relaunched WebView comes up on a fresh profile that wipes
+      // localStorage — TD-044). The backend owns persistence, so when no
+      // id is stashed, ask it to replay the most-recent session WITH
+      // signals; graphStore.applyEvent's idempotence guarantees the
+      // reconstructed graph matches the original either way.
+      const lastSessionId = localStorage.getItem(LAST_SESSION_KEY);
+      try {
+        if (lastSessionId !== null && lastSessionId.length > 0) {
+          await invokeReplaySession(lastSessionId);
+        } else {
+          await invokeReplayLatestSession();
+        }
+      } catch (e) {
+        console.error('Replay session error:', e);
       }
-    });
+    })();
     return () => {
-      void unsubscribePromise.then((unsub) => unsub());
+      cancelled = true;
+      if (unlisten !== undefined) {
+        unlisten();
+      }
     };
   }, []);
 
@@ -179,25 +206,73 @@ export function App(): JSX.Element {
 
   const lastSessionId =
     typeof localStorage !== 'undefined' ? localStorage.getItem(LAST_SESSION_KEY) : null;
+  const replayAvailable = lastSessionId !== null && lastSessionId.length > 0;
+  const handleReplay = (): void => {
+    if (lastSessionId !== null && lastSessionId.length > 0) {
+      void invokeReplaySession(lastSessionId).catch((e) => {
+        console.error('Replay session error:', e);
+      });
+    }
+  };
+  const runStatus: RunStatus = running ? 'running' : 'idle';
+
+  // BudgetHeaderBar (dormant until a budget event) + the collapsible
+  // SettingsPanel mount OUTSIDE the view conditional — both stay reachable
+  // in Runtime and Builder (settings_tier_promotion.spec relies on this).
+  const subchrome = (
+    <>
+      <BudgetHeaderBar />
+      <SettingsPanel />
+    </>
+  );
 
   return (
-    <main>
-      <BudgetHeaderBar />
-      <h1>Agent Runtime — M03 live graph</h1>
-      <ViewSwitch value={view} onChange={setView} />
-      <SettingsPanel />
+    <ToastProvider>
       {view === 'runtime' ? (
-        <RuntimeLayout
-          hasKey={hasKey}
-          running={running}
-          error={error}
-          onSetKey={handleSetKey}
-          onSmoke={handleSmoke}
-          lastSessionId={lastSessionId}
-        />
+        <>
+          <AppShell
+            view={view}
+            onViewChange={setView}
+            hasKey={hasKey}
+            tier={tier}
+            subchrome={subchrome}
+            left={
+              <>
+                <SetupPanel onSave={handleSetKey} />
+                <SmokeButton disabled={!hasKey || running} onClick={handleSmoke} />
+                {error && <p className="error">{error}</p>}
+                <ApprovalPanel />
+                <HITLPanel />
+                <GapPanel />
+                <MCPServerSettings />
+                <ImportPanel />
+              </>
+            }
+            center={
+              <>
+                <RunBanner status={runStatus} />
+                <GraphCanvas />
+                <Transport replayAvailable={replayAvailable} onReplay={handleReplay} />
+              </>
+            }
+            right={<InspectorPanel />}
+          />
+          <HITLModal />
+          <HITLToast />
+          <RecoveryDialog />
+          <UncertaintyPrompt sessionId={lastSessionId ?? ''} />
+          <SqlInspector />
+        </>
       ) : (
-        <BuilderShell />
+        <AppShell
+          view={view}
+          onViewChange={setView}
+          hasKey={hasKey}
+          tier={tier}
+          subchrome={subchrome}
+          center={<BuilderShell />}
+        />
       )}
-    </main>
+    </ToastProvider>
   );
 }

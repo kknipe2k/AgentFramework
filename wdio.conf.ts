@@ -28,8 +28,9 @@
 // so a key in .env.local outranks any stale OS-keychain placeholder
 // the M08.5 smoke-test #2 may have saved.
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 if (existsSync('.env.local')) {
   for (const line of readFileSync('.env.local', 'utf8').split('\n')) {
@@ -61,6 +62,40 @@ const APP_BIN_NAME = process.platform === 'win32' ? 'agent-runtime.exe' : 'agent
 // exec the app binary"). `process.cwd()` is the repo root: wdio runs from
 // there via the `test:e2e:tauri` npm script.
 const APP_BIN_PATH = resolve(process.cwd(), 'target', 'release', APP_BIN_NAME);
+
+// M08.8.G (Stage-V finding 🟡 #1 — hermetic tier gate). The app reads the
+// persisted tier from `app_local_data_dir/tier.json` at BACKEND-process
+// startup (commands.rs `CurrentTierState`), so a stale `{"tier":"promoted"}`
+// from a prior run makes `tier_display`/`tier_enforcement` mount Promoted and
+// fail their Novice baseline assertions — and because `tier_display` only
+// restores Novice in its end-of-test cleanup, an earlier failure wedges every
+// subsequent LOCAL run red (CI is unaffected: a fresh runner has no
+// `tier.json` → Novice default). Seeding `tier.json`=novice BEFORE each
+// session's app launch makes the gate independent of persisted state. A mocha
+// `before()` is too late — the backend already read the file when the session
+// (and thus the app process) started; `beforeSession` runs before that, so it
+// is the correct seam.
+//
+// Tauri 2.x `app_local_data_dir` for identifier `dev.aria-runtime.app`:
+// Windows `%LOCALAPPDATA%\dev.aria-runtime.app`; Linux
+// `$XDG_DATA_HOME/dev.aria-runtime.app` (else `~/.local/share/...`). macOS is
+// skipped above (tauri-driver unsupported).
+const APP_IDENTIFIER = 'dev.aria-runtime.app';
+
+function appLocalDataDir(): string {
+  if (process.platform === 'win32') {
+    const base = process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local');
+    return join(base, APP_IDENTIFIER);
+  }
+  const base = process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share');
+  return join(base, APP_IDENTIFIER);
+}
+
+function seedNoviceTier(): void {
+  const dir = appLocalDataDir();
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'tier.json'), '{"tier":"novice"}');
+}
 
 let tauriDriverProc: ChildProcess | undefined;
 
@@ -144,6 +179,12 @@ export const config = {
     tauriDriverProc = spawn('tauri-driver', ['--port', String(TAURI_DRIVER_PORT)], {
       stdio: 'inherit',
     });
+  },
+
+  // Seed Novice before each spec's app process launches, so the tier gate is
+  // hermetic w.r.t. any `tier.json` a prior run left behind (Stage-V 🟡 #1).
+  beforeSession(): void {
+    seedNoviceTier();
   },
 
   onComplete(): void {

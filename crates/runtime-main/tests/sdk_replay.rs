@@ -1,97 +1,129 @@
-//! Replay tests — Stage E (M03).
+//! Replay tests — Stage E (M03); real-shape rewrite at M08.8.B.fix2 (TD-044).
 //!
 //! Exercises `runtime_main::sdk::replay::replay_signals_to_events`. Pure-
 //! function translator from drone-stored signal-log JSON shape to
 //! `runtime_core::event::AgentEvent`. Inverse of the M02.D `EventPipeline`.
+//!
+//! These tests were rewritten when TD-044 found the original fixtures
+//! FABRICATED a signal shape that never existed on disk (`payload_json`
+//! keyed on a fictional `event` field). The real `payload_json` IS a
+//! serialized `AgentEvent`, so the fixtures here build each signal by
+//! `serde_json::to_value`-ing a real `AgentEvent` — the §5 behavior-not-
+//! tautology fix. The drone's `ReadSignals` row also carries top-level
+//! `type` (the signal kind) + `event` columns alongside `payload_json`
+//! (see `vdr::signals_for_session`); the translator reads only
+//! `payload_json`, but the fixtures include the siblings to mirror the
+//! real on-disk row.
 
-use runtime_core::event::AgentEvent;
+use runtime_core::event::{AgentEvent, ToolSource};
 use runtime_main::sdk::replay::replay_signals_to_events;
 use serde_json::json;
 
-fn signal(sig_type: &str, payload: &serde_json::Value) -> serde_json::Value {
+/// Build a drone signal-log row: top-level `type` (kind) + `event`
+/// columns plus `payload_json` = the serialized `AgentEvent` (the real
+/// shape `vdr::signals_for_session` returns).
+fn signal(kind: &str, event: &str, evt: &AgentEvent) -> serde_json::Value {
     json!({
-        "type": sig_type,
-        "payload_json": payload,
+        "type": kind,
+        "event": event,
+        "payload_json": serde_json::to_value(evt).expect("serialize AgentEvent"),
     })
 }
 
 #[test]
 fn each_signal_type_translates_to_expected_agent_event() {
-    let signals = vec![
-        signal(
+    let originals = [
+        (
             "session",
-            &json!({"event": "start", "session_id": "s1", "framework": "aria", "model": "haiku"}),
+            "session_start",
+            AgentEvent::SessionStart {
+                session_id: "s1".into(),
+                framework: "aria".into(),
+                model: "haiku".into(),
+            },
         ),
-        signal(
+        (
             "agent",
-            &json!({"event": "spawned", "agent_id": "a1", "agent_name": "smoke", "session_id": "s1"}),
+            "agent_spawned",
+            AgentEvent::AgentSpawned {
+                agent_id: "a1".into(),
+                agent_name: "smoke".into(),
+                parent_id: None,
+                session_id: "s1".into(),
+                narrowed_from: Vec::new(),
+            },
         ),
-        signal(
+        (
             "tool",
-            &json!({"agent_id": "a1", "tool_name": "search", "input": {"q": "hi"}}),
+            "tool_invoked",
+            AgentEvent::ToolInvoked {
+                agent_id: "a1".into(),
+                tool_name: "search".into(),
+                source: ToolSource::Builtin,
+                server: None,
+                input: json!({"q": "hi"}),
+            },
         ),
-        signal(
+        (
             "skill",
-            &json!({"agent_id": "a1", "skill_name": "skim", "mode": "lite"}),
+            "skill_loaded",
+            AgentEvent::SkillLoaded {
+                agent_id: "a1".into(),
+                skill_name: "skim".into(),
+                mode: Some("lite".into()),
+            },
         ),
-        signal(
+        (
             "decision",
-            &json!({
-                "agent_id": "a1",
-                "decision": "pick haiku",
-                "rationale": "cost",
-                "tool_used": "estimate_cost"
-            }),
+            "decision_record",
+            AgentEvent::DecisionRecord {
+                agent_id: "a1".into(),
+                decision: "pick haiku".into(),
+                rationale: "cost".into(),
+                tool_used: Some("estimate_cost".into()),
+            },
         ),
-        signal(
+        (
             "agent",
-            &json!({"event": "complete", "agent_id": "a1", "result": "hi"}),
+            "agent_complete",
+            AgentEvent::AgentComplete {
+                agent_id: "a1".into(),
+                result: "hi".into(),
+                tokens_total: None,
+            },
         ),
     ];
-
-    let events = replay_signals_to_events(&signals);
-    let kinds: Vec<&str> = events
+    let signals: Vec<serde_json::Value> = originals
         .iter()
-        .map(|e| match e {
-            AgentEvent::SessionStart { .. } => "session_start",
-            AgentEvent::AgentSpawned { .. } => "agent_spawned",
-            AgentEvent::ToolInvoked { .. } => "tool_invoked",
-            AgentEvent::SkillLoaded { .. } => "skill_loaded",
-            AgentEvent::DecisionRecord { .. } => "decision_record",
-            AgentEvent::AgentComplete { .. } => "agent_complete",
-            _ => "other",
-        })
+        .map(|(kind, event, evt)| signal(kind, event, evt))
         .collect();
 
+    let events = replay_signals_to_events(&signals);
+    let expected: Vec<AgentEvent> = originals.iter().map(|(_, _, e)| e.clone()).collect();
     assert_eq!(
-        kinds,
-        vec![
-            "session_start",
-            "agent_spawned",
-            "tool_invoked",
-            "skill_loaded",
-            "decision_record",
-            "agent_complete"
-        ]
+        events, expected,
+        "each real signal row must replay back to its exact AgentEvent"
     );
 }
 
 #[test]
 fn ordering_is_preserved_across_translation() {
-    let signals = vec![
-        signal(
-            "agent",
-            &json!({"event": "spawned", "agent_id": "a1", "agent_name": "n", "session_id": "s1"}),
-        ),
-        signal(
-            "agent",
-            &json!({"event": "spawned", "agent_id": "a2", "agent_name": "n", "session_id": "s1"}),
-        ),
-        signal(
-            "agent",
-            &json!({"event": "spawned", "agent_id": "a3", "agent_name": "n", "session_id": "s1"}),
-        ),
-    ];
+    let signals: Vec<serde_json::Value> = ["a1", "a2", "a3"]
+        .iter()
+        .map(|id| {
+            signal(
+                "agent",
+                "agent_spawned",
+                &AgentEvent::AgentSpawned {
+                    agent_id: (*id).into(),
+                    agent_name: "n".into(),
+                    parent_id: None,
+                    session_id: "s1".into(),
+                    narrowed_from: Vec::new(),
+                },
+            )
+        })
+        .collect();
 
     let events = replay_signals_to_events(&signals);
     let ids: Vec<String> = events
@@ -105,23 +137,22 @@ fn ordering_is_preserved_across_translation() {
 }
 
 #[test]
-fn missing_required_fields_are_filtered_not_panicked() {
-    // Each entry deliberately omits a required discriminator or field.
+fn malformed_payloads_are_filtered_not_panicked() {
+    // None of these `payload_json` values is a serialized `AgentEvent`, so
+    // each must drop out (deserialize → Err → filtered) rather than panic.
     let signals = vec![
-        json!({}),                                     // no type at all
-        signal("tool", &json!({})),                    // tool with no agent_id/tool_name
-        signal("decision", &json!({"agent_id": "a"})), // decision missing rationale
-        signal("agent", &json!({"event": "spawned"})), // agent_spawned missing agent_id
-        signal("agent", &json!({"event": "weird"})),   // unknown agent event
-        signal("nope", &json!({})),                    // unknown signal type
+        json!({}),                                            // no payload_json at all
+        json!({ "payload_json": null }),                      // null payload
+        json!({ "payload_json": {"agent_id": "a"} }),         // no `type` tag
+        json!({ "payload_json": {"type": "not_an_event"} }),  // unknown variant tag
+        json!({ "payload_json": {"type": "agent_spawned"} }), // missing required fields
+        json!({ "payload_json": {"type": "token_usage"} }),   // projector-only signal
     ];
 
-    // Must not panic.
     let events = replay_signals_to_events(&signals);
-    // None of these produce events because they miss required fields.
     assert!(
         events.is_empty(),
-        "malformed signals must be filtered, got {events:?}"
+        "malformed / non-event signals must be filtered, got {events:?}"
     );
 }
 
@@ -130,18 +161,21 @@ fn large_signal_log_translates_without_panic_or_oom() {
     // Per docs/gotchas.md #28 — bounded fixture (Vec, not stream::repeat).
     // 100 signals exercises iteration path + heap allocations without
     // approaching memory pressure (each signal is small JSON).
-    let mut signals = Vec::with_capacity(100);
-    for i in 0..100 {
-        signals.push(signal(
-            "agent",
-            &json!({
-                "event": "spawned",
-                "agent_id": format!("a{i}"),
-                "agent_name": "n",
-                "session_id": "s1",
-            }),
-        ));
-    }
+    let signals: Vec<serde_json::Value> = (0..100)
+        .map(|i| {
+            signal(
+                "agent",
+                "agent_spawned",
+                &AgentEvent::AgentSpawned {
+                    agent_id: format!("a{i}"),
+                    agent_name: "n".into(),
+                    parent_id: None,
+                    session_id: "s1".into(),
+                    narrowed_from: Vec::new(),
+                },
+            )
+        })
+        .collect();
 
     let events = replay_signals_to_events(&signals);
     assert_eq!(events.len(), 100, "all 100 signals must translate");

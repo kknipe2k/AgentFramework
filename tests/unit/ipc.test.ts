@@ -19,6 +19,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 import {
   cancelPendingImport,
   completeImportArtifact,
+  getCurrentTier,
   importArtifact,
   invokeQuerySessionDb,
   invokeReplaySession,
@@ -115,6 +116,26 @@ describe('ipc', () => {
     invokeMock.mockResolvedValueOnce(undefined);
     await invokeReplaySession('s-xyz');
     expect(invokeMock).toHaveBeenCalledWith('replay_session', { sessionId: 's-xyz' });
+  });
+
+  // ── M08.8.C.fix (#19 display desync) — getCurrentTier wrapper. ──
+  // The App mount seeds `currentTier` from this so the Settings display
+  // matches the enforced tier across a restart (the invokeHasApiKey
+  // precedent). ZERO JS args; returns the serde-lowercase TierRef
+  // direct from `get_current_tier` (commands.rs:633 → Tier), no mapping.
+
+  it('getCurrentTier_invokes_get_current_tier_with_no_args_and_returns_promoted', async () => {
+    invokeMock.mockResolvedValueOnce('promoted');
+    const tier = await getCurrentTier();
+    expect(invokeMock).toHaveBeenCalledWith('get_current_tier');
+    const [, arg] = invokeMock.mock.calls[0] as [string, unknown];
+    expect(arg).toBeUndefined();
+    expect(tier).toBe('promoted');
+  });
+
+  it('getCurrentTier_returns_novice_direct_tierref', async () => {
+    invokeMock.mockResolvedValueOnce('novice');
+    expect(await getCurrentTier()).toBe('novice');
   });
 
   // ── unwrapCmdError — M04 Stage A2 consumes generated CmdError shape. ──

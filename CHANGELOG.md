@@ -6,6 +6,95 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed — M08.8.C.fix (tier UI display half — M08.6-IRL #19 desync + #20 feedback)
+
+- **`src/App.tsx`** — the App mount now **seeds `currentTier` from the
+  backend** (`get_current_tier`) so the Settings display matches the
+  **enforced** tier across a restart. The renderer defaulted `currentTier` to
+  `'novice'` and wrote it ONLY from `tier_transition` events, so after a
+  restart with a Promoted backend (`tier.json`) the display read Novice while
+  the run enforced Promoted — the **#19 desync**. C wired the enforcement half
+  but never touched the display layer (Hard Rule 11 — enforcement-observed ≠
+  display-fixed). The seed mirrors the `invokeHasApiKey` startup read; a
+  defensive `TierRef` guard keeps a malformed bridge payload from corrupting
+  the slot that drives the topbar chip + the SettingsPanel toggle.
+- **`src/App.tsx`** — a `tier_transition` event now pushes a feedback **toast**
+  naming the new tier (M08.6-IRL **#20** / DESIGN.md principle 1 — feedback).
+- **`src/lib/ipc.ts`** — new `getCurrentTier()` wrapper over the EXISTING
+  `get_current_tier` command (zero args; serde-lowercase `TierRef`, direct).
+- **`src/lib/graphStore.ts`** — new `setCurrentTier` store action (seeds the
+  slot; reflects the enforced tier, never widens it).
+- **Frontend-only** — no backend / enforcer / `SettingsPanel` change: the
+  idempotent no-op (`commands.rs:717–720`) is correct (a no-op is not a
+  transition). Once seeded, `SettingsPanel`'s target/label are correct.
+- Tests: 5 vitest units (the wrapper, the action, the App-mount seed, the
+  tier-transition toast) + `tests/e2e-tauri/tier_display.e2e.ts` — the
+  assembled-app reload regression: a reloaded renderer over the same Promoted
+  backend must read "Demote" (the seed); on `main` pre-fix it reverts to
+  "Promote" (the #19 desync). Key-independent (runs in CI). The maintainer
+  re-IRL WITH a restart is the authoritative close (rule 11) and also
+  completes parent C (tier execution-status "observed in app" + TD-036).
+
+### Added — M08.8.C (tier in the run loop — TD-036; ADR-0030)
+
+- **`src-tauri/src/commands.rs`** — the Builder Tester now runs at the user's
+  **tracked tier** (TD-036). `test_framework` reads `CurrentTierState` at
+  invocation and threads it through `test_framework_with` →
+  `run_test_session_with_tier` (`set_tier` before dispatch); the tier is read
+  per-invocation, so a transition between runs is reflected without any
+  mid-run re-application (each Tester run is a fresh isolated session). No
+  production path called `set_tier` before — every real-app run was pinned to
+  Novice (`enforcer.rs:64`), so the Promoted scope-gate was unreachable in-app
+  **and** the Settings tier display desynced from the enforced tier
+  (M08.6-IRL **#19**, root-fixed here: the run now enforces what the UI shows).
+- **`src/components/SettingsPanel.tsx`** — the tier-transition button reads a
+  truthful **"Promote" / "Demote"** (M08.6-IRL **#20** / DESIGN.md principle 8
+  labels-true), not the redundant "Promote to Promoted".
+- **Smoke is intentionally not wired** (ADR-0030): `run_smoke_session_with`
+  uses `AgentSdk::new` (no enforcer) on a no-tool prompt, so a tier gates
+  nothing there; adding one would widen the capability surface for no effect.
+  The Tester is the observable, enforcement-bearing path.
+- **`docs/adr/0030-tester-runs-at-tracked-tier.md`** (Proposed) — refines
+  ADR-0019 (the isolated-session model stands; only the enforcer's tier
+  changes from default-Novice to the user's tracked tier). ADR-0019 carries a
+  "Refined by ADR-0030" backnote.
+- Tests: two assembled production-wire tests (`commands.rs::tester_backend`)
+  prove the Promoted-vs-Novice contrast — a Promoted out-of-scope Write
+  reaches the L1 **scope** gate (`CapabilityViolation{Write}`, no file on
+  disk); the same Write at Novice is L4 **tier**-denied (`TierViolation`,
+  scope never reached). Exact-`textContent` label asserts in
+  `SettingsPanel.test.tsx`; `tests/e2e-tauri/tier_enforcement.e2e.ts` for the
+  real-app UI-truth close (ADR-0021). Blocking mutation gate: cargo-mutants
+  finds 2 unviable mutants; a hand-mutant (ignore the threaded tier) fails the
+  Promoted test — the wire is behaviorally pinned. The real-app IRL (a
+  Promoted run enforces Promoted) is the authoritative close (rule 11).
+
+### Fixed — M08.8.B.fix2 (TD-044: reload reconstructs the graph from persisted signals)
+
+- **`crates/runtime-main/src/sdk/replay.rs`** — the signal→`AgentEvent`
+  translator was hand-rolled and read invented field names
+  (`payload_json.event`) the real persisted signal log never carried (the
+  discriminator is `payload_json.type`), so it produced **zero** events
+  against real data — `replay_session` was always broken in the assembled
+  app. Replaced the ~170-line field-by-field translator with a direct
+  `serde_json::from_value::<AgentEvent>` (the `payload_json` IS a serialized
+  `AgentEvent`), and replaced the fabricated `{event:"spawned"}` fixtures
+  (in-source + `tests/sdk_replay.rs`) with real serialized-event round-trips
+  (§5 behavior-not-tautology).
+- **`src-tauri/src/commands.rs`** — added `replay_latest_session`
+  (+ `replay_latest_session_with` seam): reads the most-recent session WITH
+  signals from the persisted log and replays it. The renderer's
+  `localStorage.lastSessionId` does not survive a full app restart
+  (a relaunched WebView comes up on a fresh profile), so the backend — which
+  owns persistence — supplies the session to reconstruct.
+- **`src/App.tsx`** — registers the `agent_event` listener (awaited) BEFORE
+  firing replay (closes an emit-before-listen race on the reconstruct path),
+  and falls back to `replay_latest_session` when no `lastSessionId` is
+  stashed. **`src/lib/ipc.ts`** — `invokeReplayLatestSession` wrapper.
+- Verified on the real app: `tests/e2e-tauri/smoke.e2e.ts` reload leg
+  **5/5** consecutive green + full `test:e2e:tauri` **8/8**. Closes TD-044;
+  logs TD-045 (sweep for other fabricated-fixture hand-rolled translators).
+
 ### Changed — M08.7 Closeout (summary, immutable gap-analysis, simplify pass, coverage reconciliation, ADR flips)
 
 - **`docs/adr/0028-builtin-tool-execution-contract.md`** — filed at this

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useBuilderStore } from '../../lib/builderStore';
 import type { Framework } from '../../types/framework';
+import { ValidationCard } from '../ValidationCard';
 
 /**
  * The Canvas | JSON binding's JSON tab (M08.E — spec Phase 9 / MVP §M8
@@ -62,9 +63,16 @@ export function JsonView(): JSX.Element {
         spellCheck={false}
       />
       {parseError !== null && (
-        <p className="json-view__error" role="alert" data-testid="builder-json-error">
-          {parseError}
-        </p>
+        <div className="json-view__error" data-testid="builder-json-error">
+          {/* M08.8.B.fix — the validation err-card (plain cause + → fix +
+              Show-raw disclosure). The plain/fix copy is the stable
+              JSON-parse case; the raw parser message rides the disclosure. */}
+          <ValidationCard
+            plain="This JSON isn't valid, so the canvas was left unchanged."
+            fix="Fix the highlighted syntax — the canvas updates as soon as it parses."
+            raw={parseError}
+          />
+        </div>
       )}
     </div>
   );

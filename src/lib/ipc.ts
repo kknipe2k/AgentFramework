@@ -73,6 +73,21 @@ export async function invokeReplaySession(sessionId: string): Promise<void> {
 }
 
 /**
+ * Reconstruct the most-recent persisted session's graph — the
+ * reload-after-restart fallback for {@link invokeReplaySession} (TD-044).
+ *
+ * `lastSessionId` in localStorage survives a soft reload but a full app
+ * restart comes up on a fresh WebView profile that wipes it, so the
+ * renderer loses the prior session id. The backend owns persistence: it
+ * reads the latest session WITH signals back from the signal log and
+ * replays it through the existing `agent_event` channel. Resolves the
+ * replayed session id, or `null` when no prior session has signals.
+ */
+export async function invokeReplayLatestSession(): Promise<string | null> {
+  return await invoke<string | null>('replay_latest_session');
+}
+
+/**
  * Approve a pending plan (M04 Stage C). Resolves the in-process
  * `ApprovalSeam` (Tauri-managed-state) with `ApprovalDecision::Approved`.
  * The SDK's awaiting plan_loop wakes and emits `plan_approved`, which
@@ -177,6 +192,25 @@ export async function invokeRespondUncertainty(
  */
 export async function invokeSetGlobalBudget(usdCap: number): Promise<void> {
   await invoke('set_global_budget', { usdCap });
+}
+
+/**
+ * Read the user's current (persisted/enforced) tier — M08.8.C.fix
+ * (#19 display desync). Wraps the EXISTING `get_current_tier` Tauri
+ * command (`src-tauri/src/commands.rs:633` → `Tier`, serde lowercase =
+ * {@link TierRef}). Takes ZERO JS args; the backend reads its in-memory
+ * `CurrentTierState` (seeded from `<app_data_dir>/tier.json` at setup).
+ *
+ * The App mount seeds the store's `currentTier` from this so the Settings
+ * display matches the ENFORCED tier across an app restart — the renderer
+ * previously defaulted `currentTier` to `'novice'` and wrote it ONLY from
+ * `tier_transition` events, so a restart with a Promoted backend showed
+ * Novice while the run enforced Promoted. Mirrors the `invokeHasApiKey`
+ * startup seed (App.tsx). DIRECT `TierRef`, no mapping. The seed REFLECTS
+ * the enforced tier; it never widens it.
+ */
+export async function getCurrentTier(): Promise<TierRef> {
+  return await invoke<TierRef>('get_current_tier');
 }
 
 /**

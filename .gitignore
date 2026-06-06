@@ -1,6 +1,7 @@
 
 # Rust build artifacts
 /target/
+/src-tauri/target/
 # cargo-fuzz build artifacts and crash artifacts (fuzz/Cargo.lock is committed)
 crates/*/fuzz/target/
 crates/*/fuzz/artifacts/
