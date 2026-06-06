@@ -55,11 +55,26 @@ pub struct TestOutcome {
     /// Whether the test session completed without a capability failure
     /// or an integrity block. Any `capability_failures` entry or any
     /// `AgentEvent::ArtifactHashMismatch` in `trace` forces `false`.
+    ///
+    /// A *tier* block (an L4 `TierViolation`) does NOT force `false` — a
+    /// tier limit is the user's tier setting, not a framework defect
+    /// (ADR-0030). The UI-facing distinction lives on [`Self::verdict`].
     pub passed: bool,
+    /// The truthful, UI-facing verdict (`Pass` / `Fail` / `TierLimited`).
+    /// Distinct from [`Self::passed`] (the framework-defect bool): a
+    /// tier-blocked run has `passed == true` but `verdict ==
+    /// TierLimited` — it must NOT read as a clean PASS (TD-047).
+    pub verdict: TestVerdict,
     /// §8.security L2 capability violations observed during the run.
     /// Non-empty ⇒ `passed == false`. F2 surfaces these as test
     /// failures; they are NEVER raised as a live HITL/gap prompt.
     pub capability_failures: Vec<CapabilityFailure>,
+    /// §8.security L4 tier blocks observed during the run — actions the
+    /// user's tier forbade. A non-empty `tier_blocks` does NOT force
+    /// `passed == false` (the framework is fine; ADR-0030); it drives the
+    /// `TierLimited` verdict so the run reads "tier-limited, promote to
+    /// exercise it" rather than a misleading clean PASS.
+    pub tier_blocks: Vec<TierBlock>,
     /// Token spend for the run (in / out / total).
     pub token_spend: TokenSpend,
     /// Wall-clock duration of the test session.
@@ -82,6 +97,41 @@ pub struct CapabilityFailure {
     pub needed: String,
     /// The enforcer's reason string.
     pub reason: String,
+}
+
+/// One §8.security L4 tier block observed in the test session.
+///
+/// The user's tier forbade the action (NOT a framework defect; contrast
+/// [`CapabilityFailure`], an L2 scope violation = a defect). Folded onto
+/// [`TestOutcome::tier_blocks`] and surfaced as the `TierLimited` verdict.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct TierBlock {
+    /// The runtime agent id whose dispatch the L4 tier gate rejected.
+    pub agent_id: String,
+    /// The coarse capability kind the tier's allowlist excluded
+    /// (canonical `snake_case` label, e.g. `write`).
+    pub kind: String,
+    /// Plain-English description of what the agent attempted.
+    pub attempted_action: String,
+}
+
+/// The Tester's truthful, UI-facing verdict.
+///
+/// Distinct from [`TestOutcome::passed`] (the framework-defect bool, kept
+/// for back-compat): a `TierLimited` run has `passed == true` (the
+/// framework is fine — the user's tier blocked it), but must NOT read as
+/// a clean `Pass` (TD-047).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TestVerdict {
+    /// No capability failure, no integrity block, no tier block.
+    Pass,
+    /// A framework defect — an L2 capability violation or an integrity
+    /// block (`passed == false`).
+    Fail,
+    /// The framework is defect-free (`passed == true`) but the user's
+    /// tier forbade one or more actions; promote to exercise them.
+    TierLimited,
 }
 
 /// Token in / out / total for a test run.
@@ -120,12 +170,20 @@ pub enum TesterError {
 /// Fold an ordered `AgentEvent` trace into a [`TestOutcome`].
 ///
 /// Pure: every `AgentEvent::CapabilityViolation` becomes a
-/// [`CapabilityFailure`]; every `AgentEvent::TokenUsage` accumulates into
+/// [`CapabilityFailure`]; every `AgentEvent::TierViolation` becomes a
+/// [`TierBlock`]; every `AgentEvent::TokenUsage` accumulates into
 /// [`TokenSpend`]; the presence of any `AgentEvent::ArtifactHashMismatch`
 /// (or any capability failure) forces `passed = false`.
+///
+/// The derived [`TestVerdict`] is the UI truth: a framework defect
+/// (capability/integrity → `!passed`) is `Fail`; a defect-free run whose
+/// only blocks were *tier* blocks is `TierLimited` (NOT a clean `Pass` —
+/// TD-047); otherwise `Pass`. A tier block never flips `passed` (a tier
+/// limit is the user's setting, not a defect — ADR-0030).
 #[must_use]
 pub fn fold_outcome(trace: Vec<AgentEvent>, timing: Duration) -> TestOutcome {
     let mut capability_failures = Vec::new();
+    let mut tier_blocks = Vec::new();
     let mut token_spend = TokenSpend::default();
     let mut integrity_blocked = false;
     for event in &trace {
@@ -142,6 +200,16 @@ pub fn fold_outcome(trace: Vec<AgentEvent>, timing: Duration) -> TestOutcome {
                     "requested `{requested_action}` — declared scope `{declared_scope}`"
                 ),
             }),
+            AgentEvent::TierViolation {
+                agent_id,
+                capability_kind,
+                attempted_action,
+                ..
+            } => tier_blocks.push(TierBlock {
+                agent_id: agent_id.clone(),
+                kind: capability_kind_label(*capability_kind).to_string(),
+                attempted_action: attempted_action.clone(),
+            }),
             AgentEvent::TokenUsage { input, output, .. } => {
                 token_spend.input += *input;
                 token_spend.output += *output;
@@ -151,9 +219,19 @@ pub fn fold_outcome(trace: Vec<AgentEvent>, timing: Duration) -> TestOutcome {
         }
     }
     token_spend.total = token_spend.input + token_spend.output;
+    let passed = capability_failures.is_empty() && !integrity_blocked;
+    let verdict = if !passed {
+        TestVerdict::Fail
+    } else if tier_blocks.is_empty() {
+        TestVerdict::Pass
+    } else {
+        TestVerdict::TierLimited
+    };
     TestOutcome {
-        passed: capability_failures.is_empty() && !integrity_blocked,
+        passed,
+        verdict,
         capability_failures,
+        tier_blocks,
         token_spend,
         timing,
         vdr: serde_json::Value::Null,

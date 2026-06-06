@@ -2320,6 +2320,10 @@ p.error {
   border-left-color: var(--error);
 }
 
+.tester-result--tier-limited {
+  border-left-color: var(--warn, var(--accent));
+}
+
 .tester-result__verdict {
   font-weight: 600;
   font-size: var(--fs-h2);
@@ -2333,6 +2337,52 @@ p.error {
 
 .tester-result--fail .tester-result__verdict {
   color: var(--error-text);
+}
+
+.tester-result--tier-limited .tester-result__verdict {
+  color: var(--warn-text, var(--text-0));
+}
+
+.tester-tier-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.5rem 0.6rem;
+  font-size: var(--fs-micro);
+  background: var(--warn-bg, var(--surface-1));
+  border: 1px solid var(--warn-border, var(--border));
+  border-radius: var(--r-sm);
+}
+
+.tester-tier-blocks__lead {
+  margin: 0;
+  color: var(--text-1);
+}
+
+.tester-tier-blocks__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.tester-tier-block {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+.tester-tier-promote {
+  align-self: flex-start;
+  padding: 5px 11px;
+  font-size: var(--fs-small);
+  font-weight: 500;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  cursor: pointer;
 }
 
 .tester-capability-failures {

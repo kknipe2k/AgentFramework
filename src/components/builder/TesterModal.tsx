@@ -1,7 +1,14 @@
 import { useState } from 'react';
 import { useBuilderStore, useTestGraphStore } from '../../lib/builderStore';
 import { useGraphStore } from '../../lib/graphStore';
-import { testFramework, unwrapCmdError, type TestOutcome, type WireDuration } from '../../lib/ipc';
+import {
+  requestTierTransition,
+  testFramework,
+  unwrapCmdError,
+  type TestOutcome,
+  type TestVerdict,
+  type WireDuration,
+} from '../../lib/ipc';
 import { InspectorPanel } from '../InspectorPanel';
 import { MetricCard } from '../MetricCard';
 import { Modal } from '../Modal';
@@ -22,10 +29,26 @@ function formatTiming(duration: WireDuration): string {
 }
 
 /**
- * The result surface — pass/fail verdict, capability failures as
- * test-failure lines (F1.3.3 — never HITL prompts), token spend +
- * timing, and the VDR record. The Promote button is the only persist
- * path (spec Phase 9).
+ * The verdict's UI presentation — the 3-state truth (TD-047). Distinct
+ * from `outcome.passed` (the framework-defect bool): a `tier_limited` run
+ * has `passed === true` but must read TIER-LIMITED, never a clean PASS
+ * (ADR-0030 — a tier block is the user's setting, not a defect).
+ */
+const VERDICT_PRESENTATION: Record<
+  TestVerdict,
+  { label: string; modifier: string; tone: 'ok' | 'bad' | 'default' }
+> = {
+  pass: { label: 'PASS', modifier: 'pass', tone: 'ok' },
+  fail: { label: 'FAIL', modifier: 'fail', tone: 'bad' },
+  tier_limited: { label: 'TIER-LIMITED', modifier: 'tier-limited', tone: 'default' },
+};
+
+/**
+ * The result surface — the 3-state verdict (Pass / Fail / Tier-limited;
+ * TD-047), capability failures as test-failure lines (F1.3.3 — never HITL
+ * prompts), tier blocks as a "promote to exercise" affordance, token spend
+ * + timing, and the VDR record. "Promote to main session" is the only
+ * persist path (spec Phase 9).
  */
 function TesterResult({
   outcome,
@@ -34,23 +57,20 @@ function TesterResult({
   outcome: TestOutcome;
   onPromote: () => void;
 }): JSX.Element {
+  const verdict = VERDICT_PRESENTATION[outcome.verdict];
   return (
     <section
-      className={`tester-result tester-result--${outcome.passed ? 'pass' : 'fail'}`}
+      className={`tester-result tester-result--${verdict.modifier}`}
       data-testid="tester-result"
     >
       <header className="tester-result__verdict" data-testid="tester-result-verdict">
-        {outcome.passed ? 'PASS' : 'FAIL'}
+        {verdict.label}
       </header>
       {/* The mockup's metric grid (M08.8.B.fix) — Result / Verify / Tokens /
           Spend in the mono-tabular instrument register. Spend has no wire
           field yet (a stub dash; F wires the real cost). */}
       <div className="metrics" data-testid="tester-metrics">
-        <MetricCard
-          label="Result"
-          value={outcome.passed ? 'PASS' : 'FAIL'}
-          tone={outcome.passed ? 'ok' : 'bad'}
-        />
+        <MetricCard label="Result" value={verdict.label} tone={verdict.tone} />
         <MetricCard label="Verify" value={outcome.vdr !== null ? 'OK' : '—'} />
         <MetricCard
           label="Tokens"
@@ -59,6 +79,41 @@ function TesterResult({
         />
         <MetricCard label="Spend" value="—" />
       </div>
+      {/* §8.security L4 tier blocks (TD-047): the framework is fine, but the
+          user's tier forbade these actions. Surfaced distinctly from a
+          framework defect — with a "Promote?" affordance to lift the tier
+          (the SettingsPanel `request_tier_transition` path) so the user can
+          re-run and exercise the blocked actions. */}
+      {outcome.tier_blocks.length > 0 && (
+        <div className="tester-tier-blocks" data-testid="tester-tier-blocks">
+          <p className="tester-tier-blocks__lead">
+            This run was tier-limited — your current tier forbade{' '}
+            {outcome.tier_blocks.length === 1 ? 'an action' : 'these actions'}:
+          </p>
+          <ul className="tester-tier-blocks__list">
+            {outcome.tier_blocks.map((block, i) => (
+              <li key={i} className="tester-tier-block">
+                <code>{block.agent_id}</code> — {block.kind}: {block.attempted_action}
+              </li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            className="tester-tier-promote"
+            data-testid="tester-tier-promote"
+            onClick={() => {
+              void requestTierTransition(
+                'promoted',
+                'user promoted from a tier-limited Tester run',
+              ).catch((e) => {
+                console.error('request_tier_transition error:', e);
+              });
+            }}
+          >
+            Promote?
+          </button>
+        </div>
+      )}
       {/* §8.security L2 violations surface as test-failure lines, never
           as HITL prompts (F1.3.3 — the test-defaults HitlSeam never
           prompted; capability failures arrive folded onto TestOutcome). */}
