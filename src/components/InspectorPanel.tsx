@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { formatPayload } from '../lib/formatPayload';
 import { useGraphStore } from '../lib/graphStore';
 
 /**
@@ -123,19 +124,4 @@ export function InspectorPanel({
       )}
     </aside>
   );
-}
-
-/**
- * Render a tool payload for the Inspector: strings pass through verbatim
- * (a file body reads as-is in the mono register), everything else is
- * pretty-printed JSON. `undefined` shows an explicit em-dash placeholder.
- */
-function formatPayload(value: unknown): string {
-  if (value === undefined) {
-    return '—';
-  }
-  if (typeof value === 'string') {
-    return value;
-  }
-  return JSON.stringify(value, null, 2);
 }

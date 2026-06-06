@@ -2404,6 +2404,163 @@ p.error {
   border-radius: var(--r-xs);
 }
 
+/* M08.9.B — the run drill-down: verdict → per-tool-call input/result → raw.
+ * Progressive disclosure (DESIGN.md principle 3): collapsed step rows expand
+ * to the payload; the raw event is one more click away. */
+.trace-drilldown {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.trace-drilldown__label {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--node-fg-muted);
+}
+
+.trace-drilldown__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.trace-step {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-sm);
+  background: var(--surface-1);
+  overflow: hidden;
+}
+
+.trace-step__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  font: inherit;
+  font-size: var(--fs-small);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--text-0);
+}
+
+.trace-step__name {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.trace-step__status {
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-2);
+}
+
+.trace-step__summary--error .trace-step__status {
+  color: var(--error-text);
+}
+
+.trace-step__summary--ok .trace-step__status {
+  color: var(--st-active, var(--accent));
+}
+
+.trace-step__detail {
+  padding: 0.4rem 0.6rem 0.6rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.trace-step__label {
+  margin: 0.5rem 0 0.2rem;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--node-fg-muted);
+}
+
+.trace-step__io {
+  margin: 0;
+  padding: 0.5rem;
+  background: var(--node-bg-alt);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.trace-step__raw-wrap {
+  margin-top: 0.5rem;
+}
+
+.trace-step__raw-toggle {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.trace-step__raw {
+  margin: 0.5rem 0 0;
+  padding: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--node-bg-alt);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-xs);
+  color: var(--text-1);
+}
+
+.trace-step__violation {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.4rem 0.6rem;
+  font-size: var(--fs-micro);
+}
+
+.trace-step--tier {
+  border-color: var(--warn-border, var(--border));
+  background: var(--warn-bg, var(--surface-1));
+}
+
+.trace-step--capability {
+  border-color: var(--error-border);
+  background: var(--error-bg);
+}
+
+.trace-step__detail-text {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+.trace-step__explainer {
+  align-self: flex-start;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+}
+
 .tester-result__tokens {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;

@@ -13,6 +13,7 @@ import { InspectorPanel } from '../InspectorPanel';
 import { MetricCard } from '../MetricCard';
 import { Modal } from '../Modal';
 import { TesterGraphPane } from './TesterGraphPane';
+import { TraceDrilldown } from './TraceDrilldown';
 
 const MS_PER_SEC = 1000;
 const NANOS_PER_MS = 1_000_000;
@@ -126,6 +127,10 @@ function TesterResult({
           ))}
         </ul>
       )}
+      {/* The run drill-down (M08.9.B): verdict → per-tool-call input/result
+          → raw, over outcome.trace. Pure disclosure — reuses the M08.8.A
+          payload formatter + the shared Show-raw disclosure. */}
+      <TraceDrilldown trace={outcome.trace} />
       <div className="tester-result__tokens" data-testid="tester-result-tokens">
         in {outcome.token_spend.input} · out {outcome.token_spend.output} · total{' '}
         {outcome.token_spend.total} · {formatTiming(outcome.timing)}
