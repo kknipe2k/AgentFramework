@@ -513,6 +513,7 @@ mod tests {
 
     use async_trait::async_trait;
     use futures::stream::BoxStream;
+    use runtime_core::event::TierRef;
     use runtime_core::generated::skills_lock::LockEntry;
     use serde_json::json;
 
@@ -746,6 +747,115 @@ mod tests {
             outcome.trace.len(),
             trace.len(),
             "the outcome carries the full ordered trace for F2 to render"
+        );
+    }
+
+    // ── M08.9.A — the truthful verdict (TD-047) ─────────────────────
+
+    #[test]
+    fn fold_outcome_clean_trace_verdict_is_pass() {
+        let trace = vec![event(json!({
+            "type": "agent_spawned",
+            "agent_id": "worker", "agent_name": "worker", "session_id": "s-1"
+        }))];
+        let outcome = fold_outcome(trace, Duration::from_millis(5));
+        assert_eq!(
+            outcome.verdict,
+            TestVerdict::Pass,
+            "a clean run's UI verdict is Pass"
+        );
+        assert!(
+            outcome.tier_blocks.is_empty(),
+            "a clean run records no tier blocks"
+        );
+    }
+
+    #[test]
+    fn fold_outcome_folds_tier_violation_into_tier_blocks_verdict_tier_limited_passed_stays_true() {
+        // Producer-driven (gotcha #94): construct the REAL
+        // `AgentEvent::TierViolation` the run loop emits, so a field
+        // rename/retag breaks THIS test, not silently the production fold.
+        // A tier block is the user's tier setting, NOT a framework defect
+        // (ADR-0030) — so `passed` STAYS TRUE; the verdict is the new UI
+        // truth (`TierLimited`), which must NOT read as a clean PASS (TD-047).
+        let trace = vec![AgentEvent::TierViolation {
+            agent_id: "worker".to_string(),
+            tier: TierRef::Novice,
+            capability_kind: CapabilityKindRef::Write,
+            attempted_action: "write report.md".to_string(),
+        }];
+        let outcome = fold_outcome(trace, Duration::from_millis(5));
+        assert!(
+            outcome.passed,
+            "a tier block is the user's tier setting, not a framework defect (ADR-0030)"
+        );
+        assert_eq!(
+            outcome.verdict,
+            TestVerdict::TierLimited,
+            "a tier-blocked-but-otherwise-clean run reads TIER-LIMITED, never a clean PASS"
+        );
+        assert_eq!(
+            outcome.tier_blocks.len(),
+            1,
+            "the TierViolation folds into exactly one TierBlock"
+        );
+        assert_eq!(outcome.tier_blocks[0].agent_id, "worker");
+        assert_eq!(
+            outcome.tier_blocks[0].kind, "write",
+            "the coarse kind is the canonical capability label"
+        );
+        assert_eq!(outcome.tier_blocks[0].attempted_action, "write report.md");
+        assert!(
+            outcome.capability_failures.is_empty(),
+            "a tier block is NOT folded into capability_failures (it is not an L2 defect)"
+        );
+    }
+
+    #[test]
+    fn fold_outcome_capability_violation_verdict_is_fail() {
+        let trace = vec![event(json!({
+            "type": "capability_violation",
+            "agent_id": "worker", "capability_kind": "read",
+            "declared_scope": "none", "requested_action": "read /etc/passwd"
+        }))];
+        let outcome = fold_outcome(trace, Duration::from_millis(5));
+        assert_eq!(
+            outcome.verdict,
+            TestVerdict::Fail,
+            "an L2 capability violation is a Fail verdict (a framework defect)"
+        );
+        assert!(!outcome.passed);
+    }
+
+    #[test]
+    fn fold_outcome_tier_block_and_capability_violation_is_fail_with_tier_blocks_populated() {
+        // Multi-call invariant: a real framework defect (L2) DOMINATES the
+        // verdict (Fail), but the tier block is still recorded so the
+        // drill-down (Stage B) can surface it.
+        let trace = vec![
+            AgentEvent::TierViolation {
+                agent_id: "worker".to_string(),
+                tier: TierRef::Novice,
+                capability_kind: CapabilityKindRef::Write,
+                attempted_action: "write report.md".to_string(),
+            },
+            event(json!({
+                "type": "capability_violation",
+                "agent_id": "worker", "capability_kind": "read",
+                "declared_scope": "none", "requested_action": "read /etc/passwd"
+            })),
+        ];
+        let outcome = fold_outcome(trace, Duration::from_millis(5));
+        assert_eq!(
+            outcome.verdict,
+            TestVerdict::Fail,
+            "a framework defect (L2) dominates a tier limit in the verdict"
+        );
+        assert!(!outcome.passed);
+        assert_eq!(
+            outcome.tier_blocks.len(),
+            1,
+            "the tier block is still recorded for the drill-down even when the run fails"
         );
     }
 
