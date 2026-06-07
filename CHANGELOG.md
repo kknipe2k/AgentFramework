@@ -6,6 +6,72 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M08.9 (honest, drill-able Tester — TD-047; ADR-0031 trust prerequisite for M09)
+
+- **`crates/runtime-main/src/builder/tester.rs`** — the Tester verdict
+  is now **truthful** (closes **TD-047**). `fold_outcome` previously
+  dropped `AgentEvent::TierViolation` at the `_ => {}` arm, so a
+  tier-blocked run returned `passed=true` with an empty failures list and
+  `TesterModal` rendered a green **PASS** — the maintainer hit this live
+  (a Novice run "said passed" and wrote no file). The `TierViolation`
+  signal was already sitting in `outcome.trace`; M08.9.A **folds** it
+  (it did not detect anything new) into a new
+  `TestOutcome.tier_blocks: Vec<TierBlock>` and derives a 3-state
+  `verdict: TestVerdict` (`Pass` / `Fail` / `TierLimited`): a framework
+  defect (L2 capability / integrity) ⇒ `Fail`; else a tier block ⇒
+  `TierLimited`; else `Pass`. `passed` is **unchanged** — a tier block is
+  the user's tier setting, **not** a framework defect (ADR-0030), so a
+  tier-limited run is `passed=true, verdict=TierLimited`.
+- **`src/lib/ipc.ts`** — the hand-written `TestOutcome` TS mirror gains a
+  `TierBlock` interface, a `TestVerdict` (`'pass' | 'fail' |
+  'tier_limited'`) type, and the `tier_blocks` + `verdict` fields,
+  byte-aligned with the Rust `snake_case` serde (gotcha #94 — the mirror
+  is producer-driven; no `schemas/` change, no ADR).
+- **`src/components/builder/TesterModal.tsx`** — renders the 3-state
+  verdict badge keyed on `outcome.verdict` instead of the binary
+  `outcome.passed ? 'PASS' : 'FAIL'`. A Novice tier-blocked run reads
+  **TIER-LIMITED** with the blocked action(s) + a "Promote?" affordance,
+  never a clean PASS (DESIGN.md principle 8 — labels-true).
+- **`src/components/builder/TraceDrilldown.tsx` (new)** — M08.9.B makes
+  the run **drill-able**: `TesterModal` renders `outcome.trace` as
+  verdict → per-tool-call (input/result) → raw. The drill-down reuses the
+  existing disclosure primitives via two behavior-preserving
+  lift-to-shared extractions — `src/lib/formatPayload.ts` (the M08.8.A
+  Output-rail payload formatter, lifted from `InspectorPanel`) and
+  `src/components/RawDisclosure.tsx` (the Show-raw disclosure, lifted from
+  `ValidationCard`, which now delegates to it with DOM/testids preserved
+  so its tests pass untouched). Tier-limited / capability rows are
+  visually distinct and link to their explainer. Renderer-only — no
+  backend or schema change.
+- Tests: producer-driven Rust fold units (a serialized real
+  `AgentEvent::TierViolation` → `fold_outcome` → assert `tier_blocks` +
+  `verdict=TierLimited` + `passed` still `true`; a both-tier-and-capability
+  run reads `Fail` with `tier_blocks` retained) + vitest verdict/drill-down
+  units + the assembled-modal wiring test +
+  `tests/e2e-tauri/tester_verdict.e2e.ts` and `tester_drilldown.e2e.ts`
+  (the real-app `tauri-driver` regressions, ADR-0021). M08.9.V's 5th
+  assembled-execution pass drove the real Tauri binary and **observed**
+  TD-047 closed: a Novice Write run reads TIER-LIMITED + writes no file; a
+  Read run drills a tool call → input/result → raw. The maintainer
+  real-app IRL is the authoritative close (rule 11).
+
+### Fixed — M08.9.D.fix (V 🔴 #1 — the committed Tester e2e regression never executed its assertion)
+
+- **`tests/e2e-tauri/tester_verdict.e2e.ts` + `tester_drilldown.e2e.ts`**
+  — both specs share one app session per `describe`; Test 1 opened the
+  Tester modal via `openBuilderTester` and never closed it, so Test 2's
+  view-switch click was intercepted by the modal scrim — the substantive
+  case crashed (suite 10/2, exit 1 with an Anthropic key; `this.skip()` on
+  CI, so the merge gate was green while the assertion never executed).
+  Added an `afterEach` to each `describe` that calls `closeTester()` and
+  waits for `[data-testid="tester-modal"]` to disappear (`reverse`).
+  **Test-harness only** — 26 insertions, 0 deletions; no product / `src/`
+  / Rust / schema change, assertions intact. The modal-scrim root cause
+  was the hypothesis the green run disproved: with a key + `tauri-driver`
+  the full suite is **12/12, exit 0** with the TIER-LIMITED + drill-down
+  cases now executing. Graduated as **gotcha #95** (an `e2e-tauri` helper
+  that opens a modal must close it in `afterEach`).
+
 ### Fixed — M08.8.C.fix (tier UI display half — M08.6-IRL #19 desync + #20 feedback)
 
 - **`src/App.tsx`** — the App mount now **seeds `currentTier` from the

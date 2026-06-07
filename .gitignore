@@ -62,3 +62,16 @@ mutants.out*/
 mutants.diff
 test-read.txt
 rung1/
+
+# Maintainer IRL scratch dirs — per-rung / per-feature working
+# directories the real-app walkthroughs write into (the M08.7 `rung1/`
+# sibling set). Never build artifacts, never source.
+rung2/
+budget-irl/
+gap-irl/
+
+# Claude Code per-user session scratch (active-mode marker, scheduler
+# lock, a stale settings backup) — local, machine-specific, not source.
+.claude/active-mode
+.claude/scheduled_tasks.lock
+.claude/settings.local.jsonold.txt

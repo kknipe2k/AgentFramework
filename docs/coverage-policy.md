@@ -569,6 +569,39 @@ History is immutable (a measurement true for M0X stays true for M0X).
   exclusion-category list, CLAUDE.md §6 `cargo llvm-cov` commands,
   `codecov.yml`, and §A above — were **unchanged by M08.8** and are
   verified byte-consistent as of M08.8.G. No drift found.
+- **M08.9 (closeout `<coverage_policy_reconciliation>` — Stage G)** —
+  **no threshold and no `--ignore-filename-regex` value changed anywhere
+  in M08.9** (the honest-Tester milestone: A truthful verdict, B run
+  drill-down, V verifier, D.fix e2e teardown). The only gated `crates/**`
+  touch:
+  - **M08.9.A (truthful verdict)** — grew
+    `crates/runtime-main/src/builder/tester.rs` (the new `TierBlock`
+    struct + `TestVerdict` enum + the `fold_outcome` `TierViolation`
+    match arm + the derived-verdict computation + the two new
+    `TestOutcome` fields) **INSIDE the existing runtime-main ≥95 package
+    gate** — NOT a new `--package` gate, NOT excluded. Every new line is
+    exercised by the producer-driven fold units (a serialized real
+    `AgentEvent::TierViolation` → `fold_outcome` → `tier_blocks` /
+    `verdict=TierLimited` / `passed` still true; the both-tier-and-
+    capability `Fail`-with-tier_blocks case). `runtime-main` aggregate
+    **95.03% line ≥ 95** (measured at A, exit 0). No exclusion, no
+    threshold, no `--package` gate moved.
+  - **M08.9.B (run drill-down)** — renderer-only
+    (`src/components/builder/{TesterModal,TraceDrilldown}.tsx` +
+    `src/lib/formatPayload.ts` + `src/components/RawDisclosure.tsx` + the
+    `InspectorPanel`/`ValidationCard` delegations); the Vitest renderer
+    gate (≥80% on `src/`) held — global lines **93.54%**, exit 0;
+    `TraceDrilldown.tsx` 97.67%. No `crates/**` coverage change.
+  - **M08.9.D.fix (e2e teardown)** — test-harness-only
+    (`tests/e2e-tauri/*.e2e.ts`, +26/-0); no source file changed, no
+    `cargo llvm-cov` / `vitest --coverage` gate moved.
+  The M08.9.G reconciliation appends this §C entry and **no new §B
+  baseline** (no module entered a gate; the M08-era `runtime-main
+  builder` row stands — `tester.rs` was already inside it from M08.8).
+  The four canonical mirrors — CLAUDE.md §5 exclusion-category list,
+  CLAUDE.md §6 `cargo llvm-cov` commands, `codecov.yml`, and §A above —
+  were **unchanged by M08.9** and are verified byte-consistent as of
+  M08.9.G. No drift found.
 
 ---
 
