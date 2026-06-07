@@ -590,6 +590,30 @@ export interface CapabilityFailure {
 }
 
 /**
+ * One §8.security L4 tier block observed in a Tester run — an action the
+ * user's tier forbade. Mirrors the serde shape of
+ * `runtime_main::builder::TierBlock` (M08.9.A — producer-driven mirror,
+ * gotcha #94; the `CapabilityFailure` precedent). A tier block is NOT a
+ * framework defect (ADR-0030); it drives the `tier_limited` verdict.
+ */
+export interface TierBlock {
+  /** The runtime agent id whose dispatch the L4 tier gate rejected. */
+  agent_id: string;
+  /** The coarse capability kind the tier excluded (e.g. `write`). */
+  kind: string;
+  /** Plain-English description of what the agent attempted. */
+  attempted_action: string;
+}
+
+/**
+ * The Tester's truthful, UI-facing verdict — mirrors the `snake_case`
+ * serde of `runtime_main::builder::TestVerdict` (M08.9.A). Distinct from
+ * {@link TestOutcome.passed}: a `tier_limited` run has `passed === true`
+ * but must NOT read as a clean PASS (TD-047 / ADR-0030).
+ */
+export type TestVerdict = 'pass' | 'fail' | 'tier_limited';
+
+/**
  * Token in / out / total for a Tester run. Mirrors
  * `runtime_main::builder::TokenSpend` (M08 Stage F1).
  */
@@ -613,14 +637,30 @@ export interface TokenSpend {
  * a thrown error (those are infrastructure-only).
  */
 export interface TestOutcome {
-  /** Whether the run completed with no capability failure / integrity block. */
+  /**
+   * Whether the run completed with no capability failure / integrity
+   * block. A *tier* block does NOT flip this to `false` (tier ≠ defect;
+   * ADR-0030) — the UI-facing distinction lives on {@link verdict}.
+   */
   passed: boolean;
+  /**
+   * The truthful, 3-state verdict (`pass` / `fail` / `tier_limited`). The
+   * modal renders this instead of the binary `passed`: a tier-blocked run
+   * reads TIER-LIMITED, never a clean PASS (TD-047).
+   */
+  verdict: TestVerdict;
   /**
    * §8.security L2 violations observed during the run. F2 surfaces these
    * as test failures, never as live HITL prompts. Non-empty ⇒ `passed`
    * is `false`.
    */
   capability_failures: CapabilityFailure[];
+  /**
+   * §8.security L4 tier blocks observed during the run — actions the
+   * user's tier forbade. Non-empty drives the `tier_limited` verdict but
+   * does NOT force `passed === false` (the framework is fine; ADR-0030).
+   */
+  tier_blocks: TierBlock[];
   /** Token spend for the run (in / out / total). */
   token_spend: TokenSpend;
   /** Wall-clock duration — serde's Duration shape (see {@link WireDuration}). */

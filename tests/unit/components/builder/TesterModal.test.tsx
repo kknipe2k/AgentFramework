@@ -76,12 +76,21 @@ const CAPABILITY_VIOLATION: AgentEvent = {
   declared_scope: 'none',
   requested_action: 'read /etc/passwd',
 };
+const TIER_VIOLATION: AgentEvent = {
+  type: 'tier_violation',
+  agent_id: 'worker',
+  tier: 'novice',
+  capability_kind: 'write',
+  attempted_action: 'write report.md',
+};
 
-/** A clean run — `passed: true`, a two-node trace, a non-null VDR. */
+/** A clean run — `passed: true`, `verdict: 'pass'`, a two-node trace. */
 function passOutcome(): TestOutcome {
   return {
     passed: true,
+    verdict: 'pass',
     capability_failures: [],
+    tier_blocks: [],
     token_spend: { input: 120, output: 45, total: 165 },
     timing: { secs: 1, nanos: 250_000_000 },
     vdr: { decision: 'ok' },
@@ -94,6 +103,7 @@ function passOutcome(): TestOutcome {
 function failOutcome(): TestOutcome {
   return {
     passed: false,
+    verdict: 'fail',
     capability_failures: [
       {
         agent_id: 'worker',
@@ -101,10 +111,27 @@ function failOutcome(): TestOutcome {
         reason: 'requested `read /etc/passwd` — declared scope `none`',
       },
     ],
+    tier_blocks: [],
     token_spend: { input: 80, output: 10, total: 90 },
     timing: { secs: 0, nanos: 500_000_000 },
     vdr: null,
     trace: [SESSION_START, AGENT_SPAWNED, CAPABILITY_VIOLATION],
+  };
+}
+
+/** A tier-limited run (TD-047) — `passed` STAYS TRUE (the framework is
+ *  fine; the user's Novice tier blocked a Write), but the verdict is
+ *  `tier_limited`, which must NOT read as a clean PASS (ADR-0030). */
+function tierLimitedOutcome(): TestOutcome {
+  return {
+    passed: true,
+    verdict: 'tier_limited',
+    capability_failures: [],
+    tier_blocks: [{ agent_id: 'worker', kind: 'write', attempted_action: 'write report.md' }],
+    token_spend: { input: 60, output: 12, total: 72 },
+    timing: { secs: 0, nanos: 800_000_000 },
+    vdr: null,
+    trace: [SESSION_START, AGENT_SPAWNED, TIER_VIOLATION],
   };
 }
 
@@ -193,6 +220,33 @@ describe('TesterModal', () => {
     const verdict = await screen.findByTestId('tester-result-verdict');
     expect(verdict).toHaveTextContent('FAIL');
     expect(screen.getByTestId('tester-result')).toHaveClass('tester-result--fail');
+  });
+
+  it('renders_tier_limited_verdict_not_pass_when_verdict_is_tier_limited', async () => {
+    // TD-047: a Novice tier-blocked run must read TIER-LIMITED, never a
+    // green PASS — even though `passed` stays true (tier ≠ defect; ADR-0030).
+    testFrameworkMock.mockResolvedValue(tierLimitedOutcome());
+    render(<TesterModal />);
+    openTester();
+    typeTask('write a report');
+    fireEvent.click(screen.getByTestId('tester-run'));
+    const verdict = await screen.findByTestId('tester-result-verdict');
+    expect(verdict).toHaveTextContent('TIER-LIMITED');
+    expect(verdict).not.toHaveTextContent(/^PASS$/);
+    expect(screen.getByTestId('tester-result')).toHaveClass('tester-result--tier-limited');
+  });
+
+  it('tier_limited_lists_the_blocked_action_and_a_promote_affordance', async () => {
+    testFrameworkMock.mockResolvedValue(tierLimitedOutcome());
+    render(<TesterModal />);
+    openTester();
+    typeTask('write a report');
+    fireEvent.click(screen.getByTestId('tester-run'));
+    const blocks = await screen.findByTestId('tester-tier-blocks');
+    expect(blocks).toHaveTextContent('worker');
+    expect(blocks).toHaveTextContent('write report.md');
+    // The "Promote?" affordance points the user at lifting their tier.
+    expect(screen.getByTestId('tester-tier-promote')).toBeInTheDocument();
   });
 
   it('renders_capability_failures_as_test_failure_lines_not_hitl_prompts', async () => {
