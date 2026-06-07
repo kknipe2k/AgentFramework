@@ -1,6 +1,6 @@
 # ADR-0031: Re-cut v0.1 around author-and-run (workbench-first); defer generators to v1.0
 
-**Status:** Accepted
+**Status:** Accepted — M10–M12 structure + the v0.1/v1.0 line **superseded in part by ADR-0032** (2026-06-07); the M09 walking skeleton is retained.
 **Date:** 2026-06-05
 **Deciders:** @kknipe2k (maintainer / product owner)
 **Tags:** scope, product
