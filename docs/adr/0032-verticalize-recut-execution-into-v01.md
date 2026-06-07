@@ -1,6 +1,6 @@
 # ADR-0032: Re-verticalize M10–M13; execution breadth + shell-exec into v0.1 (OS-native sandbox, semi-trusted threat model)
 
-**Status:** Proposed (flips to Accepted in the introducing PR, per §11)
+**Status:** Accepted (2026-06-07, PR #127)
 **Date:** 2026-06-07
 **Deciders:** @kknipe2k (maintainer / product owner)
 **Tags:** scope, product, security, capability
