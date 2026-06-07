@@ -20,8 +20,10 @@
 > **Lifespan.** **Seeded at M08.7; persists through v0.1 ship.** The
 > M08.7 ladder closes the six `paints` rows below (its ending is "ARIA
 > runs the v0.1 subset"); the ledger then remains the capability-status
-> surface through **M08.6.7 / M09 / M10 / M11**. Any milestone that adds
-> or changes a runtime primitive adds or re-opens a row here.
+> surface through **M09–M13** (the ADR-0032 vertical re-cut — execution
+> breadth is now wired *per slice*: gap-resume + plans at M10, sub-agents
+> at M11, hooks/rails + shell-exec at M12). Any milestone that adds or
+> changes a runtime primitive adds or re-opens a row here.
 
 ---
 

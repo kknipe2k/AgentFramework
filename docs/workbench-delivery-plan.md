@@ -1,13 +1,13 @@
 # Workbench Delivery Plan — author-anything + real-data execution
 
-> **Status:** proposed (2026-06-05). Re-cuts the remaining roadmap around the
-> product the maintainer actually wants: an app where you **build any agentic
-> workflow** — drag every primitive from a complete palette, or import JSON —
-> **configure it for real** (capabilities, models, MCP/API data), and **run it
-> for real**, industrial-strength. This document supersedes the M08.8 stage-trim
-> (tier-display / budget-bar / gap-resume polish) as the sequencing spine. It is
-> grounded in the actual code (file:line) and the executes-vs-paints ledger
-> (`docs/execution-status.md`), and researched against the 2026 industrial bar.
+> **Status:** Accepted — ADR-0031 (2026-06-05, author-and-run) + the **ADR-0032
+> vertical re-cut** (2026-06-07): re-verticalized M10–M13 and pulled execution
+> breadth + shell-exec into v0.1. The authoritative detailed roadmap for the
+> product the maintainer wants: an app where you **build any agentic workflow** —
+> drag every primitive, or import JSON — **configure it for real** (capabilities,
+> models, MCP/API data), and **run it for real**, industrial-strength. Grounded in
+> the actual code (file:line) and the executes-vs-paints ledger
+> (`docs/execution-status.md`), researched against the 2026 industrial bar.
 
 ---
 
@@ -105,10 +105,12 @@ Microsoft Agent Framework) converges on the same shape:
 Sequenced so a real, end-to-end, industrial-feeling result lands **first**, on the
 substrate that already executes; breadth and execution-completeness follow.
 
-### M-α — The Vertical Slice: *one real agent, real data, real file*
+### M09 — The Vertical Slice: *one real agent, real data, real file* (the walking skeleton)
 
 **Why first:** proves the entire thesis end-to-end on the executing substrate, and
-de-risks every later milestone. It is small because the substrate exists.
+de-risks every later milestone. It is small because the substrate exists. Kept **pure**
+(ADR-0032): author + run one agent; gap *resume* moves to M10 so the skeleton stays the
+thinnest "does it run" thread (it ships with **suspends cleanly**, E-04).
 
 **Closing IRL (rule 11 / ADR-0021):** on a fresh project, the maintainer drags a
 **new** agent onto the canvas, gives it a write `file_access` capability + attaches
@@ -118,101 +120,126 @@ out-of-scope write is blocked.
 
 | Stage | Deliverable | Real seams (grounded) |
 |---|---|---|
-| **α.A** | **Blank-create on the canvas.** A "+ New agent / tool / skill" affordance per Palette tab that mints a fresh unique ref and calls `addNode` → a configurable node appears on a fresh project. | `Palette.tsx` (add the "new" item); `builderStore.addNode` (`:506`) + `builderAgent` (`:145`) already support it; auto-id now (full id-rename → M-β, `updateNode` re-keys `:519`). |
-| **α.B** | **file_access editor.** `builderAgent` initializes a valid `capabilities` (the `Capabilities` aggregate — `common.v1.json#/$defs/Capabilities`, **required** per `agent.v1.json:9`, today omitted); a Read/Write glob-list editor in `NodeConfigPanel` over `agent.capabilities.file_access.{read,write}`. | `builderAgent` (`:145`); `NodeConfigPanel.tsx`; shape from `common.v1.json#/$defs/Capabilities` + `agent.v1.json:41`; enforcement already real (E-02 `capability_live_tool.rs`). |
-| **α.C** | **Attach a real MCP tool.** New `mcp_list_server_tools(name)` Tauri command (reuse `McpClient::test_connection`→`list_tools`); surface an installed server's tools in the Tools palette (`source:'mcp'`); attaching adds to the agent's `allowed_tools`. | new command wraps `client/mod.rs:246`; `mcp_list_servers` (`commands.rs:1083`); agent→tool edge already writes `allowed_tools` (`builderStore.ts:419`); dispatch already executes (`agent_sdk.rs:884`). |
-| **α.D** | **Assembled IRL + execution-status flip.** Build fresh → Run → real MCP data → real file. Flip the ledger: "canvas-authored single-agent + MCP + capability path observed end-to-end in the app." | `tests/e2e-tauri/` real-app regression; `docs/execution-status.md`. |
+| **M09.A** | **Blank-create on the canvas.** A "+ New agent" affordance that mints a fresh unique ref and calls `addNode` → a configurable node appears on a fresh project. | `Palette.tsx`; `builderStore.addNode` (`:506`) + `builderAgent` (`:145`) already support it (full id-rename → M13, `updateNode` re-keys `:519`). |
+| **M09.B** | **file_access editor.** `builderAgent` initializes a valid `capabilities` (`common.v1.json#/$defs/Capabilities`, **required** per `agent.v1.json:9`, today omitted); a Read/Write glob-list editor in `NodeConfigPanel` over `agent.capabilities.file_access.{read,write}`. | `builderAgent` (`:145`); `NodeConfigPanel.tsx`; shape from `common.v1.json#/$defs/Capabilities`; enforcement already real (E-02 `capability_live_tool.rs`). |
+| **M09.C** | **Attach a real MCP tool.** New `mcp_list_server_tools(name)` Tauri command (reuse `McpClient::test_connection`→`list_tools`); surface an installed server's tools (`source:'mcp'`); attaching writes `allowed_tools`. | new command wraps `client/mod.rs:246`; `mcp_list_servers` (`commands.rs:1083`); agent→tool edge writes `allowed_tools` (`builderStore.ts:419`); dispatch executes (`agent_sdk.rs:884`). |
+| **M09.D** | **Assembled IRL + execution-status flip.** Build fresh → Run → real MCP data → real file. Flip the ledger: "canvas-authored single-agent + MCP + capability path observed end-to-end in the app." | `tests/e2e-tauri/` real-app regression; `docs/execution-status.md`. |
 
-Strict v1.8 TDD; the α.C MCP command + α.B capability wiring are the higher-risk
-seams (real backend). Mutation advisory on the renderer, **blocking** on any
-capability-enforcer touch (none expected — α.B authors a declaration the existing
-L2 enforcer already consumes).
+Strict v1.11 two-commit TDD; M09.C/B are the higher-risk seams (real backend). Mutation
+advisory on the renderer, **blocking** on any capability-enforcer touch (none expected —
+M09.B authors a declaration the existing L2 enforcer already consumes). **No gap-resume
+here** (→ M10).
 
-### M-β — Author-anything (complete the palette + config)
+### M10 — HITL steers the run (gap resolve→resume + plans)
 
-Make the canvas a real authoring tool for the **whole** vocabulary.
+The slice where a **human approves/grants to let execution proceed** — the shared theme
+of gap-resume, plan-approval, and task execution. Each is authored on the canvas and **runs**.
 
-- **β.1 Missing primitives as first-class canvas citizens:** extend
-  `BuilderNodeKind` + `applyDrop` + `projectCanvasNodes` + node components for
-  **Plan, MCP-server, rails, budget** (each lands in its `framework` home).
-- **β.2 Config for every node kind** (the "D2 widens to other kinds" that never
-  shipped — `NodeConfigPanel.tsx:11`): tool, skill, hook, hitl, plan, mcp.
-- **β.3 Node delete + agent id-rename** (`removeNode` stub `:535`; `updateNode`
-  re-key `:519`).
-- **β.4 Palette integrity (G6):** the palette only offers what executes, or marks
-  the unbuilt (`Bash`/`Glob`/`Grep`/`WebFetch`) explicitly as "not yet wired."
-- **Close:** build a non-trivial multi-node framework entirely on the canvas, no
-  JSON, and it validates.
+- **M10.1 Gap resolve→resume** (ADR-0029): M09 ships suspend (E-04); M10 adds **resume** —
+  once the user grants/installs/declines, restore session state + resume the loop, with the
+  grant→resume affordance in the UI. (Suspend = E-04; resume is the unwired half.)
+- **M10.2 Plan task execution** (ADR-0026; rung 7): `drive_plan` gets its **production
+  caller** + a task loop — each task runs on the **single-agent** loop (`AgentSdk::run_agent`,
+  **not** sub-agents — `plan_loop.rs:7-8,128`), one at a time, behind the **plan-approval
+  HITL** gate (`drive_plan` already emits `plan_approval_requested` → awaits the seam,
+  `plan_loop.rs:94-126`).
+- **Author + run.** Author a plan (tasks) on the canvas + approve it → tasks run
+  one-at-a-time in the live graph; a run that hits a gap suspends, you grant, it resumes.
+  **Close (IRL):** the maintainer authors-approves-runs a plan and resumes a suspended gap;
+  flip the **plans** + **gap-resume** execution-status rows.
 
-### M-γ — Real data, industrialized
+### M11 — Sub-agents (sequential)
 
-The "pull significant real data into the flow" milestone.
+The **multi-agent entry phase**: an orchestrator spawns a child with narrowed grants; the
+child runs its own loop and returns a summary; the parent continues.
 
-- **γ.1 MCP server as a canvas node** (`MCPNode` exists — wire it into the builder
-  projection) + an **agent ↔ MCP-tool** edge so data wiring is visual.
-- **γ.2 Data-source catalog:** install MCP servers from *within* the builder
+- **Sequential only** (`spawn_constraints.max_concurrent: 1`) — the dev loop is inherently
+  sequential (research → PRD → plan → implement). Parallel fan-out is v1.0.
+- **The wire** (rung 6): `spawn_framework_subagents` (`agent_sdk.rs:467`, paints today —
+  emits `AgentSpawned` then stops) gets a real child execution context + narrowed grants +
+  the summary returned to the parent.
+- **Author + run.** Author a two-agent framework on the canvas (orchestrator → child, e.g.
+  **research-agent + PRD-writer**) → the child runs, returns, the parent uses its result.
+  **Close (IRL):** the two-agent run; flip the **sub-agents** execution-status row.
+
+### M12 — The verify loop (hooks/rails + shell exec — H)
+
+The objective-verify capability that makes the dev loop self-correcting — and the milestone
+where **shell execution comes in scope** (ADR-0032; the §12 correction). **One vertical
+capability, staged heavily.**
+
+- **M12.1 Hooks/rails firing engine** (rung 8): a **post-task `verify` hook** fires on its
+  trigger and a **`dont_touch` rail** blocks a forbidden edit (defined in framework JSON
+  today; **no firing engine** — `M08.7-execution-engine.md` §Background).
+- **M12.2 H — controlled shell exec (its own Hard-Rule-8 sub-ladder + ADR):** finish
+  `runtime-sandbox`'s exec path — a **controlled-exec isolation profile** (the validation
+  profile denies exec today, `landlock.rs:198`), `SandboxRequest::Execute` (`protocol.rs:29`
+  is `ValidateArtifact|Shutdown`), the command-spawn — on the **existing** `seccomp` /
+  `landlock` / `job_objects` fences. **Threat model: semi-trusted** (your own framework +
+  own `verify.sh`, local, single-user, no-telemetry); OS-native is the correct fit,
+  **explicitly weaker than microVM** (the v1.0+ upgrade) — recorded, not over-claimed.
+  `// SAFETY:` discipline + security-review posture.
+- **The loop.** Post-task → `bash verify.sh` runs the tests → **green → next task / red →
+  rollback + retry**; a `dont_touch`-violating edit is blocked. **Close (IRL):** the
+  maintainer watches a verify gate run the tests (green-advances, red-rolls-back) + a
+  forbidden edit blocked; flip the **hooks/rails** + **shell-exec** execution-status rows.
+
+### M13 — Industrialize + ship
+
+- **M13.1 Data-source catalog:** install MCP servers from *within* the app
   (GitHub/Postgres/Slack/Drive/Notion…), reusing the validated import pipeline
-  (`ImportPanel.tsx`) + the keychain secret path (`auth_secret_ref`).
-- **γ.3 MCP resources** (not just tools) + credential UX.
-- **Close:** author a flow that reads from a live external system (a real DB / API
-  via MCP) and acts on it, watched in the app.
-
-### M-δ — Execution breadth (turn paint into run) — *the old M08.9*
-
-Make authored multi-step workflows actually execute.
-
-- **δ.1 Sub-agents run** — a spawned child runs its own loop and returns a result
-  (`agent_sdk.rs:467` paints today; rung 6).
-- **δ.2 Plans drive real tasks** — `drive_plan` gets a production caller and runs
-  `TaskStarted/TaskCompleted → PlanComplete` (`plan_loop.rs`; ADR-0026; rung 7).
-- **δ.3 Hooks/rails fire** on their triggers (rung 8; + the TD-046 `vdr` fix
-  before a verify producer wires).
-- **Close:** a two-agent and a plan-driven framework, authored on the canvas, run
-  to completion in the app (each an IRL flip in `execution-status.md`).
-
-### M-ε — Industrial hardening
-
-- **ε.1 Validated whole-workflow import/export (G5):** route JSON/file/clipboard
-  import through `validate_framework`; export to file; never `as Framework` a raw
-  paste into the store.
-- **ε.2 Save-path robustness** (#32 save-companions, #22 budget-persist, #17
-  template) — your built work persists correctly across restart.
-- **ε.3 Error/validation UX** + the execution-status integrity audit (nothing in
-  the UI claims a capability the runtime lacks).
+  (`ImportPanel.tsx`) + the keychain secret path (`auth_secret_ref`); MCP server as a canvas
+  node (`MCPNode` → the builder projection) + MCP **resources** + credentials UX.
+- **M13.2 Validated whole-workflow import/export (G5):** route JSON/file/clipboard import
+  through `validate_framework`; export to file; never `as Framework` a raw paste.
+- **M13.3 Save-path + first-run:** save-companions (#32), budget-persist (#22), template
+  (#17); first-run polish; node delete + agent id-rename; the execution-status integrity
+  audit (nothing in the UI claims a capability the runtime lacks).
+- **Close:** the full **research→PRD→plan→implement→verify** loop builds, runs, and ships;
+  the v0.1 success criterion (the author-and-run + verify-loop IRL).
 
 ---
 
-## 5. Sequencing & scope reconciliation (decision needed)
+## 5. Sequencing & scope (ADR-0032 — decided)
 
 ```
-M-α  vertical slice ──▶ M-β author-anything ──▶ M-γ real data
-   (proves the loop)        (breadth)              (industrial)
-                                 └──────────────▶ M-δ execution breadth (backend, parallelizable)
-                                                       └──▶ M-ε hardening
+M09 ──▶ M10 ──▶ M11 ──▶ M12 ──▶ M13
+slice   HITL    sub-    verify   industrialize
+        steers  agents  loop     + ship
 ```
 
-M-α is the gate: until a single real workflow runs end-to-end **in the app**, the
-later milestones are building on an unproven loop. M-δ is backend-heavy and can run
-in parallel with M-β/γ once M-α lands.
+**Vertical, not horizontal** (ADR-0032). Each milestone cuts canvas→engine→run and ships
+one capability the maintainer can **author AND run AND IRL-watch** — proving the author→run
+integration continuously, never bolting authoring onto a separately-built engine. M09 is the
+walking skeleton; M10–M13 each add one runnable capability on top. This **supersedes** the
+prior horizontal split (a whole author-anything layer → a whole real-data layer → a whole
+execution-breadth layer) **and** the withdrawn **M08.9.1** (wire-all-execution-first against
+hand-written JSON) — both were horizontal slicing (the ADR-0032 Alternatives A + B).
 
-**This re-cut exceeds the locked v0.1 scope** (§0d: single-session, Novice +
-Promoted, Anthropic-only, STANDARD mode). It does not break those locks — it adds
-authoring breadth + execution completeness on top. **Recommended scope re-line:**
+**Scope (ADR-0032):**
 
-- **New v0.1 = M-α + M-β + M-γ** — "a real workbench that builds and runs
-  single-agent, MCP-data workflows from scratch." Shippable, demoable, honest.
-- **v1.0 = M-δ + M-ε** — multi-agent/plan/hook execution + hardening.
+- **v0.1 = M09 + M10 + M11 + M12 + M13** — the software-development loop
+  (research→PRD→plan→implement→verify) **builds, runs, and ships**, industrial-strength:
+  multi-agent (sequential), objective verify gates (`bash verify.sh` via the controlled-exec
+  sandbox), HITL approval, rails, and gap suspend→resume. Execution breadth is **in** v0.1, not
+  deferred.
+- **v1.0 = concurrent/parallel multi-agent** (fan-out / agent-pool / teams — the P2–P4
+  orchestration model) **+ the ML/data framework** (a structurally identical pipeline, mostly
+  tool/skill swaps) **+ the microVM/gVisor sandbox upgrade** (if the threat model ever becomes
+  arbitrary untrusted code at scale) **+ Generators** (the LLM build-assist, old M9) + the
+  remainder of §0d's v1.0 column.
 
-That boundary is the maintainer's call (product scope). Everything else here is
-technical sequencing I own.
+The shell-exec sandbox (M12.2) is **OS-native** under a **semi-trusted threat model** (your
+own framework + own `verify.sh`, local, single-user, no-telemetry) — the correct fit, and
+explicitly weaker than microVM for arbitrary untrusted code (ADR-0032; rule 11 — do not
+over-claim the isolation).
 
-**Milestone numbering.** M-α = **M09** (redefines the deprioritized
-generators/mentor milestone), M-β = **M10**, M-γ = **M11**, M-δ = **M12** (the
-execution-breadth milestone the handoff called "M08.9"), M-ε = **M13**. Phase
-docs use these numeric ids — the stage-prompt validator requires `M\d\d.<X>`
-(`bin/validate-stage-prompts.mjs`). `docs/MVP-v0.1.md` and the in-flight M08.8
-(stages D/E/F now superseded by this re-cut) are reconciled to this spine at the
-M08.8 closeout.
+**Milestone numbering.** M09 (vertical slice) · M10 (HITL-steers) · M11 (sub-agents) · M12
+(verify loop + shell exec) · M13 (industrialize + ship). The stage-prompt validator requires
+`M\d\d.<X>` (`bin/validate-stage-prompts.mjs`); phase docs authored at Protocol **v1.11+**
+carry the explicit two-commit `<execution_steps>` (the v1.11 strict-TDD gate). `docs/MVP-v0.1.md`
+is the milestone index; `docs/execution-status.md` tracks the paint→execute flips, now
+**per-slice**.
 
 ---
 
