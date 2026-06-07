@@ -16,7 +16,7 @@
 > - **M1–M7**: shipped, historical, unchanged.
 > - **M8** (Workbench): in progress — A/B/B.fix/C shipped; **D/E/F superseded** by the re-cut.
 > - **M9–M11** below (Generators / First-run / Ship): **SUPERSEDED** — their numbers are reassigned to the new spine; the old content is relocated (Generators → v1.0; First-run + Ship → the v0.1 *Release* milestone). The detail sections are kept for history, each prefixed with a superseded note.
-> - **New spine (ADR-0031):** **M09** vertical slice · **M10** author-anything · **M11** real-data · **M12** execution-breadth · **M13** hardening. **v0.1 = M09 + M10 + M11 + Release; v1.0 = M12 + M13 + Generators.** See "Post-M08 re-cut" just below the overview table.
+> - **New spine (ADR-0032 — re-verticalized):** **M09** vertical slice · **M10** HITL-steers-the-run (gap resolve→resume + plans) · **M11** sub-agents (sequential) · **M12** the verify loop (hooks/rails + shell exec) · **M13** industrialize + ship. **v0.1 = M09 + M10 + M11 + M12 + M13** (execution breadth is *in* v0.1); **v1.0 = parallel multi-agent (P2–P4) + the ML/data framework + the microVM sandbox upgrade + Generators.** See ADR-0032 + `docs/workbench-delivery-plan.md` §4/§5. (ADR-0031 introduced this spine; ADR-0032 re-verticalized M10–M13.)
 
 ---
 
@@ -44,31 +44,29 @@ The MVP succeeds when **both** §0d MVP success-criterion paths (novice and expe
 | **M6** | MCP basic | 11–12 | Phase 5 add/connect/list + per-server auth | Connect a real MCP server, agent uses its tools |
 | **M7** | Registry import | 13 | Phase 7 import-by-URL + import-by-file + skills.lock | Paste GitHub raw URL of a skill.md → installed and loadable |
 | **M8** | Workbench (Builder Canvas) | 14–17 | Phase 9 palette + drag-drop + JSON preview + Tester | **In progress** — A/B/B.fix/C shipped; D/E/F superseded (ADR-0031) |
-| **M9** | Workbench vertical slice *(re-cut — ADR-0031)* | — | Author one agent from scratch + file_access + a real MCP tool; run it | A from-scratch agent writes a real file from real MCP data, at the enforced tier |
-| **M10** | Author-anything *(re-cut)* | — | Full palette (Plan/MCP/rails/budget) + config every node kind + delete/rename + integrity | A non-trivial multi-node framework built entirely on the canvas, validated |
-| **M11** | Real data *(re-cut)* | — | MCP servers as canvas citizens + data-source catalog + credentials | A flow reads a live external system (DB/API via MCP) and acts on it |
-| **M12** | Execution breadth *(v1.0 — ADR-0031)* | — | Sub-agents run · plans drive tasks · hooks fire | A two-agent + a plan-driven framework run to completion in the app |
-| **M13** | Hardening *(v1.0)* | — | Validated whole-workflow import/export + save-path + integrity | Built work persists across restart; whole-workflow import validates |
-| **Release** | v0.1 ship (first-run + ship) | — | §14 onboarding + Settings/Help + .msi + the (rewritten) two-path criterion | v0.1 ships on a fresh Windows VM — sequences after M11, before the v1.0 M12/M13 |
+| **M9** | Workbench vertical slice *(ADR-0031/0032)* | — | Author one agent from scratch + file_access + a real MCP tool; run it (pure skeleton) | A from-scratch agent writes a real file from real MCP data, at the enforced tier |
+| **M10** | HITL steers the run *(ADR-0032)* | — | Gap resolve→resume + plan-approval + plan task execution (single-agent tasks) | A plan runs task-by-task on approval; a suspended gap resumes on grant |
+| **M11** | Sub-agents, sequential *(ADR-0032)* | — | Orchestrator spawns a child (narrowed grants) → child runs, returns; `max_concurrent:1` | A two-agent framework (research-agent → PRD-writer) runs to completion |
+| **M12** | The verify loop *(ADR-0032 — now v0.1)* | — | Hooks/rails firing engine + controlled shell exec (H); green→next / red→rollback | A post-task `bash verify.sh` gate runs the tests; a `dont_touch` edit is blocked |
+| **M13** | Industrialize + ship *(ADR-0032 — now v0.1)* | — | MCP data-source catalog + validated import/export + save-path + first-run + `.msi` | The full research→…→verify loop builds, runs, and ships on a fresh Windows VM |
 
 Total: ~24 weeks elapsed at sustained pace. Compresses with parallel work; expands with rework. *(Pre-re-cut estimate; the ADR-0031 spine's estimates are TBD — `docs/workbench-delivery-plan.md` carries the current sequencing.)*
 
 ---
 
-## Post-M08 re-cut (ADR-0031) — the author-and-run spine
+## Post-M08 re-cut (ADR-0031 → ADR-0032) — the vertical author-and-run spine
 
-The detailed, file-grounded roadmap is **`docs/workbench-delivery-plan.md`**. This table is the index:
+The detailed, file-grounded roadmap is **`docs/workbench-delivery-plan.md`** (§4/§5, rewritten for ADR-0032). This table is the index:
 
 | Milestone | Goal | Phase doc | Version |
 |---|---|---|---|
-| **M09 — Vertical slice** | Author one agent from scratch + `file_access` + a real MCP tool; run it; write a real file at the enforced tier. | `docs/build-prompts/M09-workbench-vertical-slice.md` | v0.1 |
-| **M10 — Author-anything** | The full palette (Plan/MCP/rails/budget) + config for every node kind + delete/rename + the palette-integrity fix. | (TBA) | v0.1 |
-| **M11 — Real data** | MCP servers as first-class canvas citizens + a data-source catalog + credentials. | (TBA) | v0.1 |
-| **M12 — Execution breadth** | Sub-agents run · plans drive tasks · hooks fire (the old M08.9 — ADR-0026 / 0029). | (TBA) | **v1.0** |
-| **M13 — Hardening** | Validated whole-workflow import/export + save-path + integrity. | (TBA) | **v1.0** |
-| **Release (v0.1 ship)** | First-run / onboarding + Settings/Help + `.msi` + the **rewritten** two-path success criterion (author-and-run, not generate-a-tool). Seeded by the old M10/M11 detail below; sequences after M11. | (TBA) | v0.1 |
+| **M09 — Vertical slice** | Author one agent from scratch + `file_access` + a real MCP tool; run it; write a real file at the enforced tier (pure skeleton). | `docs/build-prompts/M09-workbench-vertical-slice.md` | v0.1 |
+| **M10 — HITL steers the run** | Gap resolve→resume (ADR-0029) + plan-approval + plan task execution (ADR-0026; single-agent tasks). | (TBA) | v0.1 |
+| **M11 — Sub-agents (sequential)** | Orchestrator → child (narrowed grants) → child runs, returns; `max_concurrent:1` (rung 6). | (TBA) | v0.1 |
+| **M12 — The verify loop** | Hooks/rails firing engine (rung 8) + controlled shell exec (H, OS-native sandbox); green→next / red→rollback. | (TBA) | **v0.1** |
+| **M13 — Industrialize + ship** | MCP data-source catalog + validated import/export + save-path + first-run + `.msi` + the rewritten two-path success criterion. | (TBA) | **v0.1** |
 
-**Scope line:** **v0.1 = M09 + M10 + M11 + Release**; **v1.0 = M12 + M13 + Generators** (the old M9) + the remainder of §0d's v1.0 column. M08.8's in-flight D/E/F fold into M11 / M13 (reconciled at the M08.8 closeout). The old generator-centric **success criterion (old M11 below) is superseded** — the v0.1 criterion is seeded by the M09.D author-and-run IRL and expanded at Release.
+**Scope line (ADR-0032):** **v0.1 = M09 + M10 + M11 + M12 + M13** — execution breadth is *in* v0.1. **v1.0 = parallel/P2–P4 multi-agent + the ML/data framework + the microVM sandbox upgrade + Generators** (the old M9) + the remainder of §0d's v1.0 column. The old generator-centric **success criterion is superseded** — the v0.1 criterion is the author-and-run + verify-loop IRL (seeded at M09.D, completed at M13).
 
 ---
 
