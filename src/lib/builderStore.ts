@@ -217,6 +217,14 @@ function applyDrop(framework: Framework, kind: BuilderNodeKind, ref: string): Fr
       return {
         ...framework,
         agents: [...framework.agents, builderAgent(ref)] as Framework['agents'],
+        // Root the session on the FIRST authored agent so the
+        // canvas-authored framework is RUNNABLE — the run path picks the
+        // dispatch agent off `session_root_agent` (agent_sdk.rs:780), and a
+        // fresh project opens with it empty (`emptyFramework()`). `|| ref`
+        // only roots when unset, so a later create never steals the root and
+        // a loaded framework's existing root is preserved (M09.D). The
+        // explicit multi-agent root affordance is a later ADR-0032 slice.
+        session_root_agent: framework.session_root_agent || ref,
       };
     case 'tool':
       return {
