@@ -237,3 +237,76 @@ describe('Palette — loaded-framework source (M08.6.E)', () => {
     expect(item).toHaveAttribute('data-source', 'installed');
   });
 });
+
+// M09.A — the "+ New agent" affordance. Pre-M09 the Agents tab listed
+// only installed + loaded-framework agents (Palette.tsx:173-184), so a
+// fresh project (emptyFramework, agents: []) rendered the empty state and
+// nothing could be authored on the canvas. M09.A prepends a blank-create
+// item carrying a fresh nextAgentRef id through the same drag contract;
+// the existing addNode path mints the agent on drop (no drop-handler /
+// store-core change). Repeated creates yield distinct ids because the
+// Palette reads `framework` and re-derives nextAgentRef each render.
+describe('Palette — New agent affordance (M09.A)', () => {
+  /** A minimal inline Agent, the shape addNode mints + a loaded framework
+   *  surfaces (matches builderStore.builderAgent's pre-capabilities form). */
+  function inlineAgent(id: string): Agent {
+    return {
+      id,
+      role: 'role-for-test',
+      model: { provider: 'anthropic', id: 'claude-sonnet-4-6' },
+      allowed_tools: [],
+      allowed_skills: [],
+      spawns: [],
+    } as unknown as Agent;
+  }
+
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue([]);
+    // The Palette reads `framework` from the store; reset it so a stale
+    // agents[] from a prior test cannot mask a missing implementation.
+    useBuilderStore.setState(useBuilderStore.getInitialState(), true);
+  });
+
+  it('a_fresh_agents_tab_shows_a_new_agent_item', async () => {
+    render(<Palette />);
+    await userEvent.click(screen.getByTestId('palette-tab-agents'));
+    // The blank-create affordance — its testid suffix is the fresh ref
+    // (agent-1 on an empty project), its label the "+ New agent" cue.
+    expect(screen.getByText('+ New agent')).toBeInTheDocument();
+    expect(screen.getByTestId('palette-item-agent-1')).toBeInTheDocument();
+  });
+
+  it('the_new_agent_item_drags_a_fresh_agent_payload', async () => {
+    render(<Palette />);
+    await userEvent.click(screen.getByTestId('palette-tab-agents'));
+    const item = screen.getByTestId('palette-item-agent-1');
+    expect(item).toHaveAttribute('draggable', 'true');
+    // The uniform application/x-builder-node contract BuilderCanvas.onDrop
+    // reads — addNode('agent', 'agent-1', position) mints builderAgent.
+    const setData = vi.fn();
+    fireEvent.dragStart(item, { dataTransfer: { setData, effectAllowed: '' } });
+    expect(setData).toHaveBeenCalledWith(
+      'application/x-builder-node',
+      JSON.stringify({ kind: 'agent', ref: 'agent-1' }),
+    );
+  });
+
+  it('the_new_agent_ref_advances_past_existing_agents', async () => {
+    // With agent-1 already in the document, the New-agent item carries
+    // agent-2 — so a second create never collides with the first.
+    useBuilderStore.setState({
+      framework: { ...emptyFramework(), agents: [inlineAgent('agent-1')] as Framework['agents'] },
+    });
+    render(<Palette />);
+    await userEvent.click(screen.getByTestId('palette-tab-agents'));
+    const item = screen.getByTestId('palette-item-agent-2');
+    expect(item).toHaveTextContent('+ New agent');
+    const setData = vi.fn();
+    fireEvent.dragStart(item, { dataTransfer: { setData, effectAllowed: '' } });
+    expect(setData).toHaveBeenCalledWith(
+      'application/x-builder-node',
+      JSON.stringify({ kind: 'agent', ref: 'agent-2' }),
+    );
+  });
+});
