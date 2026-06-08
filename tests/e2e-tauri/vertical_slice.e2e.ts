@@ -167,7 +167,7 @@ describe('Tauri real-app E2E — M09.D the vertical slice (assembled)', () => {
 
     // The composition hypothesis: the canvas-authored framework_doc is a
     // complete, RUNNABLE document — exactly what a hand-written framework is.
-    const doc = (await browser.execute(`
+    const doc = await browser.execute(`
       var fw = window.__builderStore.getState().framework;
       var agent = fw.agents.find(function (a) { return a.id === 'agent-1'; });
       return {
@@ -177,22 +177,20 @@ describe('Tauri real-app E2E — M09.D the vertical slice (assembled)', () => {
         allowedTools: agent ? agent.allowed_tools : null,
         toolsCalled: agent ? agent.capabilities.tools_called : null,
       };
-    `)) as {
-      sessionRoot: string;
-      role: string | null;
-      fileAccess: { read: string[]; write: string[] } | null;
-      allowedTools: string[] | null;
-      toolsCalled: string[] | null;
-    };
+    `);
 
-    // The session is rooted on the authored agent — the red-phase
-    // right-reason failure (pre-M09.D this is '' and the framework cannot
-    // run as hand-written JSON does).
-    expect(doc.sessionRoot).to.equal('agent-1');
-    expect(doc.role).to.equal('writer');
-    expect(doc.fileAccess).to.deep.equal({ read: ['data/**'], write: ['out/**'] });
-    expect(doc.allowedTools).to.deep.equal([MCP_TOOL_REF]);
-    expect(doc.toolsCalled).to.deep.equal([MCP_TOOL_REF]);
+    // The whole authored document is a complete, RUNNABLE framework_doc —
+    // session rooted on the authored agent (the red-phase right-reason: pre
+    // M09.D sessionRoot is '' and the framework cannot run as hand-written
+    // JSON does), role + file_access.write granted, the MCP tool in
+    // allowed_tools + capabilities.tools_called.
+    expect(doc).to.deep.equal({
+      sessionRoot: 'agent-1',
+      role: 'writer',
+      fileAccess: { read: ['data/**'], write: ['out/**'] },
+      allowedTools: [MCP_TOOL_REF],
+      toolsCalled: [MCP_TOOL_REF],
+    });
   });
 
   it('the_authored_framework_runs_through_the_assembled_tester', async function () {
