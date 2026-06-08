@@ -30,9 +30,13 @@ Agents message each other directly, not just parent-child. Current agent-to-agen
 
 True peer-to-peer needs broadcast, subscription, or pub/sub primitives. The drone IPC layer + capability matrix would need extension (per-edge permission rules for which agents can message which agents on which topics). Not trivial — affects the spec's whole agent-relationship model — but architecturally compatible with the runtime's safety-first design.
 
+> **Sharpened (proposal [`0004-runtime-clustering.md`](./0004-runtime-clustering.md)).** For the *runtime→runtime* case (a super-orchestrator coordinating clustered runtimes), adopt **A2A** (Agent2Agent) as the wire protocol rather than a bespoke IPC topology — the same "adopt the open standard" instinct as M6 MCP. Each runtime exposes an A2A endpoint; the super-orchestrator delegates with capability narrowing across the runtime boundary. Same-trust-domain clustering is the near-term (v1.5–2.0) version. See `0004` for the surface sketch + decision points.
+
 ### 1.4 Cross-runtime swarms — v3.0+ (out of scope until inter-runtime trust model exists)
 
 Your agent stack talks to your colleague's agent stack. Requires inter-runtime trust model, identity, message routing across machine boundaries, cross-org capability federation. Big architecture, not roadmap-relevant pre-v2.
+
+> **Sharpened (proposal [`0004-runtime-clustering.md`](./0004-runtime-clustering.md)).** Cross-org is the far end of the same A2A-based clustering surface as §1.3: same wire protocol, but adds inter-runtime identity federation + cross-org capability trust. `0004` keeps cross-org explicitly at v3.0+ and scopes only same-trust-domain clustering near-term.
 
 ### 1.5 Why this runtime is well-positioned for swarms
 
@@ -69,7 +73,8 @@ Three reasons:
 
 ### 2.4 Realistic future additions
 
-- **Lightweight built-in vector index via SQLite (sqlite-vec).** "Quick-start RAG" for novice users who want to demo a knowledge-bound agent without standing up a vector DB. Small additive scope; real value for first-time UX. Conditional on user research showing MCP friction is blocking adoption. Probably v1.0 or v1.5.
+- **Persistent, retrievable cross-session memory (per built runtime) — graduated to proposal [`0003-cross-session-memory.md`](./0003-cross-session-memory.md).** Memory that survives session end and is retrievable in later sessions, scoped per framework, stored in that framework's data dir (SQLite). Closes the "Memory" pillar (the runtime's weakest against the 2026 field) and is the cheap half of relaxing the single-session lock (persistence ≠ concurrency, §1.2). It is *data the agent reads/writes*, not self-modification (§3.4 preserved). The `sqlite-vec` index below is its semantic-retrieval backend. v1.0 candidate.
+- **Lightweight built-in vector index via SQLite (sqlite-vec).** "Quick-start RAG" for novice users who want to demo a knowledge-bound agent without standing up a vector DB, **and** the semantic-retrieval backend for cross-session memory (`0003`). Small additive scope; real value for first-time UX. Conditional on user research showing MCP friction is blocking adoption. Probably v1.0 or v1.5.
 - **Curated starter MCP examples** for the common data integrations (a sample "RAG MCP server" the mentor can scaffold for novice users; same for "structured data lookup MCP" against Postgres). Ships as kit content, not runtime code.
 
 Full RAG pipeline (chunker + embedder + retriever as built-in features) stays MCP-delegated by design.
@@ -129,8 +134,9 @@ A future "agent self-tunes via offline RLHF on eval scores between runs" pattern
 |---|---|---|---|---|
 | Hierarchical multi-agent | ✓ (M9+) | ✓ | ✓ | ✓ |
 | Concurrent multi-agent | — (single-session lock) | ✓ (M11+) | ✓ | ✓ |
-| Peer-to-peer swarm | — | — | ✓ (new IPC) | ✓ |
-| Cross-runtime swarm | — | — | — | maybe v3.0+ |
+| Persistent cross-session memory, per-runtime (`0003`) | — (single-session lock) | ✓ (candidate) | ✓ | ✓ |
+| Peer-to-peer / clustered runtimes via A2A (`0004`) | — | — | ✓ (same-trust-domain) | ✓ |
+| Cross-org runtime federation (`0004`) | — | — | — | maybe v3.0+ |
 | Built-in vector index (SQLite-vec) | — | — / ✓ | ✓ | ✓ |
 | Built-in graph DB | — | — | — | unlikely |
 | Built-in RAG pipeline | — | — | — | unlikely (stays MCP) |
@@ -171,5 +177,7 @@ The bet is that the orchestration + safety + mentorship layer is where teams wil
 - When user research clarifies the built-in-vector-index demand (update §2.4)
 - When a peer-to-peer swarm ADR is drafted (update §1.3)
 - When a self-modifying-agents ADR is proposed (update §3.4)
+- When proposal [`0003-cross-session-memory.md`](./0003-cross-session-memory.md) is scoped to a milestone (graduate §2.4 from candidate to committed; add the memory module + ADR if a schema is introduced)
+- When proposal [`0004-runtime-clustering.md`](./0004-runtime-clustering.md) advances (file the A2A-adoption ADR; update §1.3/§1.4 from sketch to committed surface)
 
 Until then, this is the stable forward-look for the three most-asked architecture questions.
