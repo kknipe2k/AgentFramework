@@ -80,7 +80,9 @@ describe('NodeConfigPanel — File access editor (M09.B)', () => {
     await userEvent.click(screen.getByTestId('node-config-add-fa-write'));
     // The new write glob lands; read stays []; the rest of Capabilities is
     // carried through — the granted scope the L2 enforcer consumes at run time.
-    expect(updateNode).toHaveBeenCalledWith('agent:planner', { capabilities: capsWith([], ['out/**']) });
+    expect(updateNode).toHaveBeenCalledWith('agent:planner', {
+      capabilities: capsWith([], ['out/**']),
+    });
   });
 
   it('adding_a_read_glob_preserves_the_existing_write_scope', async () => {
