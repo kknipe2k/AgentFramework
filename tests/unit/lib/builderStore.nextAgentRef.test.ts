@@ -23,7 +23,7 @@ function frameworkWithAgentIds(ids: string[]): Framework {
       allowed_tools: [],
       allowed_skills: [],
       spawns: [],
-    })) as Framework['agents'],
+    })) as unknown as Framework['agents'],
   };
 }
 
