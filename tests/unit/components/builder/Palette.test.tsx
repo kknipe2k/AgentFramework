@@ -328,12 +328,13 @@ describe('Palette — MCP server tools (M09.C)', () => {
     // → one connected stdio server; mcp_list_server_tools → that server's
     // single tool. The Palette reads `framework` from the store; reset it so
     // a stale tools[] cannot mask a missing implementation.
-    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+    invokeMock.mockImplementation(async (...args: unknown[]) => {
+      const command = args[0] as string;
       if (command === 'mcp_list_servers') {
         return [{ name: 'fs', transport: 'stdio', has_auth: false, status: 'connected' }];
       }
       if (command === 'mcp_list_server_tools') {
-        expect(args).toEqual({ name: 'fs' });
+        expect(args[1]).toEqual({ name: 'fs' });
         return [{ name: 'read_file', description: 'Read a file', input_schema: {} }];
       }
       return [];
@@ -374,8 +375,8 @@ describe('Palette — MCP server tools (M09.C)', () => {
     // A backend with no McpClient (or a registry error) must not blank the
     // Tools tab — the built-ins still render; the MCP source is simply
     // absent. Mirrors listInstalledArtifacts' catch-and-log resilience.
-    invokeMock.mockImplementation(async (command: string) => {
-      if (command === 'mcp_list_servers') {
+    invokeMock.mockImplementation(async (...args: unknown[]) => {
+      if ((args[0] as string) === 'mcp_list_servers') {
         throw new Error('no McpClient');
       }
       return [];

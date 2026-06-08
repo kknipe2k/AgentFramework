@@ -295,7 +295,11 @@ mod tests {
             .list_server_tools("fs")
             .await
             .expect("list_server_tools enumerates the registered server's tools");
-        assert_eq!(tools.len(), 1, "the registered server's single tool enumerates");
+        assert_eq!(
+            tools.len(),
+            1,
+            "the registered server's single tool enumerates"
+        );
         assert_eq!(tools[0].name, "read_file");
     }
 
