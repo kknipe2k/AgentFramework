@@ -21,6 +21,18 @@ function frameworkWithAgent(): Framework {
         allowed_tools: ['Read'],
         allowed_skills: [],
         spawns: [],
+        // capabilities is REQUIRED by agent.v1.json:9; M09.B's NodeConfigPanel
+        // renders the File-access editor off capabilities.file_access, so the
+        // fixture must carry the full minimal-valid Capabilities (mirrors
+        // builderAgent — builderStore.ts).
+        capabilities: {
+          tools_called: [],
+          skills_loaded: [],
+          file_access: { read: [], write: [] },
+          network: [],
+          shell: false,
+          spawn_agents: [],
+        },
       },
     ],
   } as unknown as Framework;
