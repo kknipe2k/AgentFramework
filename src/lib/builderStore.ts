@@ -135,12 +135,16 @@ export function emptyFramework(): Framework {
 }
 
 /**
- * A builder-authored agent entry. The Builder writes a *minimal* agent
- * into `framework.agents` as the user composes it on the canvas; the
- * generated `Agent` type models the complete valid shape (capabilities,
- * spawn_constraints, …) the framework only reaches once fully built —
- * D2's continuous validation surfaces the gap. The one boundary cast
- * here is the same pre-valid stance `emptyFramework()` documents.
+ * A builder-authored agent entry. The Builder writes a *minimal-valid*
+ * agent into `framework.agents` as the user composes it on the canvas.
+ * `capabilities` is REQUIRED by agent.v1.json:9
+ * (common.v1.json#/$defs/Capabilities), so it is minted here all-empty —
+ * `file_access: { read: [], write: [] }` is the M09.B scope the
+ * NodeConfigPanel editor then grants (the enforced write lands at M09.D).
+ * The remaining valid shape (`role` non-empty, `spawn_constraints`, …)
+ * fills in as the user builds; D2's continuous validation surfaces the
+ * gap. The one boundary cast here is the same pre-valid stance
+ * `emptyFramework()` documents.
  */
 function builderAgent(id: string): Agent {
   return {
@@ -150,6 +154,14 @@ function builderAgent(id: string): Agent {
     allowed_tools: [],
     allowed_skills: [],
     spawns: [],
+    capabilities: {
+      tools_called: [],
+      skills_loaded: [],
+      file_access: { read: [], write: [] },
+      network: [],
+      shell: false,
+      spawn_agents: [],
+    },
   } as unknown as Agent;
 }
 
