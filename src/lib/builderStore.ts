@@ -153,6 +153,25 @@ function builderAgent(id: string): Agent {
   } as unknown as Agent;
 }
 
+/**
+ * The next free `agent-N` id for a blank-created agent (M09.A). Matches
+ * the agent.v1.json id pattern `^[a-z][a-z0-9-]*$` and skips ids already
+ * in the framework, so a re-create never collides with `addNode`'s
+ * `${kind}:${ref}` idempotence guard (the Palette reads `framework` and
+ * re-derives this each render, so repeated creates advance agent-1 →
+ * agent-2 → …). Pure — the "+ New agent" Palette item carries the result
+ * as its `ref`; the existing drop path mints the agent.
+ */
+export function nextAgentRef(framework: Framework): string {
+  const taken = new Set(framework.agents.map((entry) => entry.id));
+  for (let n = 1; ; n += 1) {
+    const ref = `agent-${n}`;
+    if (!taken.has(ref)) {
+      return ref;
+    }
+  }
+}
+
 /** True when an `agents[]` entry is an inline `Agent` (D1 only creates
  *  inline agents; a `{ id, path }` $ref entry arrives only via a
  *  loaded framework — E's concern). */

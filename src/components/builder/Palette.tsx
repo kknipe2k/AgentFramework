@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useBuilderStore, type BuilderNodeKind } from '../../lib/builderStore';
+import { nextAgentRef, useBuilderStore, type BuilderNodeKind } from '../../lib/builderStore';
 import { listInstalledArtifacts, type InstalledArtifact } from '../../lib/ipc';
 import type { Framework } from '../../types/framework';
 
@@ -171,7 +171,20 @@ function paletteItemsForTab(
         ...frameworkItemsForKind(framework, 'skill'),
       ]);
     case 'agents':
+      // M09.A — the blank-create affordance. A fresh project's Agents tab
+      // was empty (installed + framework only); prepend a "+ New agent"
+      // item carrying a fresh `agent-N` ref through the uniform drag
+      // contract. The existing addNode drop path mints `builderAgent`;
+      // the Palette re-derives `nextAgentRef` each render so repeated
+      // creates advance the id. (The "+ New" affordance for tools/skills
+      // widens in a later ADR-0032 slice.)
       return dedupeByKindRef([
+        {
+          kind: 'agent' as const,
+          ref: nextAgentRef(framework),
+          label: '+ New agent',
+          source: 'builtin' as const,
+        },
         ...installed
           .filter((a) => a.kind === 'agent')
           .map((a) => ({
