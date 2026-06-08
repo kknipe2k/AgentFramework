@@ -2347,6 +2347,23 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn mcp_list_server_tools_with_unregistered_name_errs() {
+        // M09.C — the read-only enumeration command behind the Palette's
+        // "attach an installed server's tool" source. An unknown server name
+        // has no registry row, so the command surfaces the error rather than
+        // a silent empty list (the palette distinguishes "no tools" from "no
+        // such server"). The happy path (a registered server's tools
+        // enumerate) is unit-tested in runtime-mcp's connection_resolver and
+        // observed end-to-end via the e2e + maintainer IRL with a real server.
+        let (_dir, client) = mcp_client_over_tempdir();
+        let result = mcp_list_server_tools_with("ghost".to_string(), &client).await;
+        assert!(
+            result.is_err(),
+            "an unregistered server name must error, not return an empty tool list"
+        );
+    }
+
     /// Stub provider whose `stream()` returns a `ProviderError` so the
     /// `run_smoke_session_with` error-path tracing branch is exercised.
     struct FailingProvider;

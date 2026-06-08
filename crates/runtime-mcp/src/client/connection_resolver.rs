@@ -234,4 +234,66 @@ mod tests {
         let mapped = lifecycle_to_mcp("srv", LifecycleError::Json(json_err));
         assert!(matches!(mapped, McpError::Protocol(_)));
     }
+
+    #[tokio::test]
+    async fn list_server_tools_enumerates_a_registered_servers_tools() {
+        // M09.C — `list_server_tools` resolves a *registered* server by name
+        // through the same `connection()` path dispatch uses (registry.get →
+        // record_to_transport → cached connection) and returns its tools.
+        // Seed the connection cache with a MockTransport-backed connection so
+        // `get_connection` short-circuits to it before any real connect — the
+        // unit observes the list_tools enumeration, not a subprocess spawn.
+        use crate::client::{InMemorySecretStore, Registry, SecretStore};
+        use crate::transport::{Connection, MockTransport, Transport};
+
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let registry =
+            Arc::new(Registry::open(&dir.path().join("mcp.sqlite")).expect("open registry"));
+        let secret_store: Arc<dyn SecretStore> = Arc::new(InMemorySecretStore::new());
+        let client = McpClient::new(registry, secret_store, "sess-lst");
+
+        // Register a stdio row so `connection()`'s registry.get +
+        // record_to_transport both succeed for the name.
+        let mut record = rec("stdio");
+        record.name = "fs".to_string();
+        record.command = Some("/bin/true".to_string());
+        client.registry.insert(&record).expect("insert record");
+
+        // Seed the cache with a scripted mock so the resolve returns it.
+        let transport = MockTransport::new().with_tool(
+            "read_file",
+            Some("Read a file".to_string()),
+            serde_json::json!({ "type": "object" }),
+        );
+        let conn: Arc<dyn Connection> = Arc::from(transport.connect().await.expect("mock connect"));
+        client
+            .connections
+            .write()
+            .await
+            .insert("fs".to_string(), conn);
+
+        let tools = client
+            .list_server_tools("fs")
+            .await
+            .expect("list_server_tools enumerates the registered server's tools");
+        assert_eq!(tools.len(), 1, "the registered server's single tool enumerates");
+        assert_eq!(tools[0].name, "read_file");
+    }
+
+    #[tokio::test]
+    async fn list_server_tools_for_unregistered_server_errs() {
+        // Read-only enumeration of an unknown name surfaces the registry
+        // NotFound (mapped to ConnectFailed) rather than an empty list.
+        use crate::client::{InMemorySecretStore, Registry, SecretStore};
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let registry =
+            Arc::new(Registry::open(&dir.path().join("mcp.sqlite")).expect("open registry"));
+        let secret_store: Arc<dyn SecretStore> = Arc::new(InMemorySecretStore::new());
+        let client = McpClient::new(registry, secret_store, "sess-lst");
+        let result = client.list_server_tools("ghost").await;
+        assert!(
+            matches!(result, Err(McpError::ConnectFailed(_))),
+            "an unregistered name maps registry NotFound → ConnectFailed, got {result:?}"
+        );
+    }
 }

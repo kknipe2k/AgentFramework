@@ -310,3 +310,80 @@ describe('Palette — New agent affordance (M09.A)', () => {
     );
   });
 });
+
+// M09.C — an installed MCP server's tools become draggable Palette items.
+// Pre-M09.C the Tools tab listed only built-ins + installed-artifacts +
+// loaded-framework tools (Palette.tsx:143-160); a connected MCP server's
+// tools — the data-bearing tools an agent actually needs — were never
+// reachable on the canvas. M09.C adds the `mcp_list_server_tools(name)`
+// command (Vec<McpTool>) and the Palette fetches `mcp_list_servers()` on
+// mount, then each server's tools, and surfaces them as `source:'mcp'`
+// items labelled `<server> · <tool>` with the canonical `<server>__<tool>`
+// drag ref (the §5a namespace form the dispatcher resolves). The drag
+// contract stays the uniform application/x-builder-node payload.
+describe('Palette — MCP server tools (M09.C)', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    // Per-command dispatch: list_installed_artifacts → []; mcp_list_servers
+    // → one connected stdio server; mcp_list_server_tools → that server's
+    // single tool. The Palette reads `framework` from the store; reset it so
+    // a stale tools[] cannot mask a missing implementation.
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'mcp_list_servers') {
+        return [{ name: 'fs', transport: 'stdio', has_auth: false, status: 'connected' }];
+      }
+      if (command === 'mcp_list_server_tools') {
+        expect(args).toEqual({ name: 'fs' });
+        return [{ name: 'read_file', description: 'Read a file', input_schema: {} }];
+      }
+      return [];
+    });
+    useBuilderStore.setState(useBuilderStore.getInitialState(), true);
+  });
+
+  it('an_installed_servers_tools_appear_in_the_tools_tab_with_source_mcp', async () => {
+    render(<Palette />);
+    // The default tab is Tools — the MCP server's tool surfaces alongside
+    // the built-ins, keyed by the canonical `<server>__<tool>` ref.
+    const item = await screen.findByTestId('palette-item-fs__read_file');
+    expect(item).toBeInTheDocument();
+    // Visible-and-testable origin marker — distinct from builtin/installed/
+    // framework so the user sees the tool came from a connected MCP server.
+    expect(item).toHaveAttribute('data-source', 'mcp');
+    // Labelled `<server> · <tool>` so the same short tool name across two
+    // servers is distinguishable in the list.
+    expect(item).toHaveTextContent('fs · read_file');
+  });
+
+  it('the_mcp_tool_drags_the_canonical_server__tool_payload', async () => {
+    render(<Palette />);
+    const item = await screen.findByTestId('palette-item-fs__read_file');
+    expect(item).toHaveAttribute('draggable', 'true');
+    // The uniform application/x-builder-node contract — the ref is the
+    // canonical `<server>__<tool>` the §5a resolver accepts unambiguously,
+    // so the dropped tool node + Agent→Tool edge record a dispatchable name.
+    const setData = vi.fn();
+    fireEvent.dragStart(item, { dataTransfer: { setData, effectAllowed: '' } });
+    expect(setData).toHaveBeenCalledWith(
+      'application/x-builder-node',
+      JSON.stringify({ kind: 'tool', ref: 'fs__read_file' }),
+    );
+  });
+
+  it('an_mcp_list_servers_failure_degrades_to_built_ins_only', async () => {
+    // A backend with no McpClient (or a registry error) must not blank the
+    // Tools tab — the built-ins still render; the MCP source is simply
+    // absent. Mirrors listInstalledArtifacts' catch-and-log resilience.
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === 'mcp_list_servers') {
+        throw new Error('no McpClient');
+      }
+      return [];
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    render(<Palette />);
+    expect(await screen.findByTestId('palette-item-Read')).toBeInTheDocument();
+    expect(screen.queryByTestId('palette-item-fs__read_file')).not.toBeInTheDocument();
+    consoleError.mockRestore();
+  });
+});
