@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { nextAgentRef, useBuilderStore, type BuilderNodeKind } from '../../lib/builderStore';
-import { listInstalledArtifacts, type InstalledArtifact } from '../../lib/ipc';
+import {
+  listInstalledArtifacts,
+  mcpListServers,
+  mcpListServerTools,
+  type InstalledArtifact,
+} from '../../lib/ipc';
 import type { Framework } from '../../types/framework';
 
 // M08.C — the Builder Palette (spec Phase 9): five tabs (Tools / Skills
@@ -63,11 +68,12 @@ const TAB_NOUN: Record<PaletteTab, string> = {
 /**
  * Where a Palette item comes from. Drives the `data-source` attribute
  * so the user can see at a glance whether an item is a runtime built-in
- * (always available), an installed artifact from `skills.lock`, or a
- * resolved artifact in the open framework (M08.6.E). HITL trigger types
- * + hook firing points are runtime primitives — also `'builtin'`.
+ * (always available), an installed artifact from `skills.lock`, a
+ * resolved artifact in the open framework (M08.6.E), or a tool exposed by
+ * a connected MCP server (M09.C). HITL trigger types + hook firing points
+ * are runtime primitives — also `'builtin'`.
  */
-type PaletteItemSource = 'builtin' | 'installed' | 'framework';
+type PaletteItemSource = 'builtin' | 'installed' | 'framework' | 'mcp';
 
 interface PaletteItem {
   /** The builder-node kind D1's addNode instantiates. */
@@ -132,12 +138,13 @@ function dedupeByKindRef(items: PaletteItem[]): PaletteItem[] {
 }
 
 /** Build the (unfiltered) item list for `tab` — built-ins + installed
- *  + the loaded framework's resolved artifacts (M08.6.E), de-duplicated
- *  by (kind, ref). */
+ *  + the loaded framework's resolved artifacts (M08.6.E) + a connected
+ *  MCP server's tools (M09.C), de-duplicated by (kind, ref). */
 function paletteItemsForTab(
   tab: PaletteTab,
   installed: InstalledArtifact[],
   framework: Framework,
+  mcpTools: PaletteItem[],
 ): PaletteItem[] {
   switch (tab) {
     case 'tools':
@@ -157,6 +164,11 @@ function paletteItemsForTab(
             source: 'installed' as const,
           })),
         ...frameworkItemsForKind(framework, 'tool'),
+        // M09.C — a connected MCP server's tools, keyed by the canonical
+        // `<server>__<tool>` ref the §5a resolver accepts. Last in the
+        // union so a built-in / installed / framework tool of the same
+        // ref wins the dedupe (precedence preserved).
+        ...mcpTools,
       ]);
     case 'skills':
       return dedupeByKindRef([
@@ -216,6 +228,10 @@ export function Palette(): JSX.Element {
   const [tab, setTab] = useState<PaletteTab>('tools');
   const [filter, setFilter] = useState('');
   const [installed, setInstalled] = useState<InstalledArtifact[]>([]);
+  // M09.C — a connected MCP server's tools, fetched once on mount as
+  // ready-made `source:'mcp'` Palette items so the Tools tab can surface
+  // them alongside the other three sources.
+  const [mcpTools, setMcpTools] = useState<PaletteItem[]>([]);
   // The Palette draws from the loaded framework as a THIRD source
   // (M08.6.E). `s.framework` is a referentially stable object until
   // applyLoadedFramework / replaceFramework / addNode / connectEdge /
@@ -234,9 +250,39 @@ export function Palette(): JSX.Element {
       .catch((e) => console.error('list_installed_artifacts error:', e));
   }, []);
 
+  useEffect(() => {
+    // M09.C — fetch each registered MCP server's tools and project them
+    // into `source:'mcp'` Palette items (labelled `<server> · <tool>`,
+    // ref `<server>__<tool>`). Per-server failures are skipped so one
+    // offline server doesn't blank the rest; any failure (no McpClient,
+    // registry error) logs and leaves the MCP source empty — built-ins
+    // still render (the listInstalledArtifacts resilience precedent).
+    void mcpListServers()
+      .then(async (servers) => {
+        const perServer = await Promise.all(
+          servers.map(async (server) => {
+            try {
+              const tools = await mcpListServerTools(server.name);
+              return tools.map((t) => ({
+                kind: 'tool' as const,
+                ref: `${server.name}__${t.name}`,
+                label: `${server.name} · ${t.name}`,
+                source: 'mcp' as const,
+              }));
+            } catch (e) {
+              console.error(`mcp_list_server_tools error for ${server.name}:`, e);
+              return [];
+            }
+          }),
+        );
+        setMcpTools(perServer.flat());
+      })
+      .catch((e) => console.error('mcp_list_servers error:', e));
+  }, []);
+
   const items = useMemo(
-    () => paletteItemsForTab(tab, installed, framework),
-    [tab, installed, framework],
+    () => paletteItemsForTab(tab, installed, framework, mcpTools),
+    [tab, installed, framework, mcpTools],
   );
   const needle = filter.trim().toLowerCase();
   const shown =
@@ -292,10 +338,10 @@ export function Palette(): JSX.Element {
               }}
             >
               {it.label}
-              {it.source === 'framework' ? (
+              {it.source === 'framework' || it.source === 'mcp' ? (
                 <span className="builder-palette__source-badge" aria-hidden="true">
                   {' '}
-                  · framework
+                  · {it.source}
                 </span>
               ) : null}
             </li>

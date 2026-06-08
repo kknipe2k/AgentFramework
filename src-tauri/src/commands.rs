@@ -1099,6 +1099,39 @@ pub async fn mcp_list_servers_with(client: &McpClient) -> Result<Vec<McpServerSu
         .map_err(|e| CmdError::internal(format!("mcp_list_servers: {e}")))
 }
 
+/// List a *registered* MCP server's tools by name (M09.C — the Palette's
+/// "attach an installed server's tool" source). Read-only: resolves the
+/// server through the registry + lists its tools, reusing the dispatcher's
+/// connection path. No new transport, no persistence.
+///
+/// # Errors
+///
+/// - [`CmdError::Internal`] when the name is not a registered server or the
+///   connect / `list_tools` handshake fails.
+#[tauri::command]
+pub async fn mcp_list_server_tools(
+    name: String,
+    client: tauri::State<'_, Arc<McpClient>>,
+) -> Result<Vec<McpTool>, CmdError> {
+    mcp_list_server_tools_with(name, client.inner().as_ref()).await
+}
+
+/// Test-seam for [`mcp_list_server_tools`].
+///
+/// # Errors
+///
+/// See [`mcp_list_server_tools`].
+pub async fn mcp_list_server_tools_with(
+    name: String,
+    client: &McpClient,
+) -> Result<Vec<McpTool>, CmdError> {
+    tracing::info!(%name, "mcp_list_server_tools invoked");
+    client
+        .list_server_tools(&name)
+        .await
+        .map_err(|e| CmdError::internal(format!("mcp_list_server_tools: {e}")))
+}
+
 /// Shared resolve-and-log helper for the three approval-flow commands.
 /// Treats `ApprovalError::NotFound` as soft-Ok with a warn-log per the
 /// no-pending-await rationale on [`approve_plan`].

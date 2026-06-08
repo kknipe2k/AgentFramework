@@ -404,6 +404,40 @@ function pushAgentList(
   return { ...state, framework: { ...state.framework, agents } };
 }
 
+/** Record an Agent→Tool edge on one inline agent (M09.C). The tool lands
+ *  in BOTH `allowed_tools` (the offered tool) AND
+ *  `capabilities.tools_called` (the declared capability — common.v1.json
+ *  "tools this artifact may invoke"), so an authored agent's capability
+ *  declaration is complete the moment the edge is drawn (an MCP tool's
+ *  canonical `<server>__<tool>` ref lands in both). Idempotent on both
+ *  lists; returns the state unchanged when the agent is absent or already
+ *  records the tool in both. */
+function pushAgentTool(state: BuilderState, agentId: string, toolName: string): BuilderState {
+  let mutated = false;
+  const agents = state.framework.agents.map((entry) => {
+    if (!isInlineAgent(entry) || entry.id !== agentId) {
+      return entry;
+    }
+    const hasAllowed = entry.allowed_tools.includes(toolName);
+    const hasCalled = entry.capabilities.tools_called.includes(toolName);
+    if (hasAllowed && hasCalled) {
+      return entry; // idempotent — no duplicate on either list
+    }
+    mutated = true;
+    return {
+      ...entry,
+      allowed_tools: hasAllowed ? entry.allowed_tools : [...entry.allowed_tools, toolName],
+      capabilities: hasCalled
+        ? entry.capabilities
+        : { ...entry.capabilities, tools_called: [...entry.capabilities.tools_called, toolName] },
+    };
+  }) as Framework['agents'];
+  if (!mutated) {
+    return state;
+  }
+  return { ...state, framework: { ...state.framework, agents } };
+}
+
 /** Push a hook reference onto `task_defaults.post_hooks` (the Hook→Task
  *  edge). The schema's `{ $ref }` post-hook variant carries the hook
  *  node's ref. Idempotent. `task_defaults` is created if absent. */
@@ -448,7 +482,7 @@ function connectEdgeReducer(state: BuilderState, sourceId: string, targetId: str
     case 'agent->skill':
       return pushAgentList(state, source.ref, 'allowed_skills', target.ref);
     case 'agent->tool':
-      return pushAgentList(state, source.ref, 'allowed_tools', target.ref);
+      return pushAgentTool(state, source.ref, target.ref);
     case 'agent->agent':
       return pushAgentList(state, source.ref, 'spawns', target.ref);
     case 'hook->task':

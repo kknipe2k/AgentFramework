@@ -78,6 +78,7 @@ fn main() {
             commands::mcp_remove_server,
             commands::mcp_test_connection,
             commands::mcp_list_servers,
+            commands::mcp_list_server_tools,
             // M07.C — import pipeline
             commands::import_artifact,
             // M07.5 — import validate/commit lifecycle (ADR-0017)

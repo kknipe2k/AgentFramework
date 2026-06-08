@@ -276,6 +276,18 @@ export async function mcpListServers(): Promise<McpServerSummary[]> {
   return await invoke<McpServerSummary[]>('mcp_list_servers');
 }
 
+/**
+ * List a *registered* MCP server's tools by name (M09.C
+ * `mcp_list_server_tools`). Read-only — resolves the server through the
+ * registry + lists its tools (the `mcpTestConnection` `Vec<McpTool>`
+ * bridge, but keyed on an installed server name rather than an inline
+ * config). The Palette's Tools tab fetches this per `mcpListServers`
+ * entry to surface `source:'mcp'` items.
+ */
+export async function mcpListServerTools(name: string): Promise<McpTool[]> {
+  return await invoke<McpTool[]>('mcp_list_server_tools', { name });
+}
+
 /** L3 sandbox report — rides nested inside {@link ImportOutcome}. */
 export interface L3ReportWire {
   report_id: string;

@@ -22,7 +22,7 @@ use crate::client::registry::McpServerRecord;
 use crate::client::McpClient;
 use crate::dispatch::ConnectionResolver;
 use crate::error::McpError;
-use crate::transport::{Connection, HttpTransport, StdioTransport, Transport};
+use crate::transport::{Connection, HttpTransport, McpTool, StdioTransport, Transport};
 
 /// Collapse a lifecycle-layer error onto the stable dispatch-facing
 /// [`McpError`]. A missing registry row is a connect-time failure class
@@ -109,6 +109,25 @@ impl ConnectionResolver for McpClient {
         self.get_connection(server, transport)
             .await
             .map_err(|e| lifecycle_to_mcp(server, e))
+    }
+}
+
+impl McpClient {
+    /// Enumerate a *registered* server's tools by name (M09.C — the
+    /// Palette's "attach an installed server's tool" source). Resolves the
+    /// name through the same record→transport→connection path the
+    /// dispatcher uses ([`ConnectionResolver::connection`]) and lists the
+    /// server's tools. Read-only — no registry / secret mutation, no new
+    /// transport.
+    ///
+    /// # Errors
+    ///
+    /// - [`McpError::ConnectFailed`] when `name` is not a registered server
+    ///   (registry `NotFound`) or the connect handshake fails.
+    /// - [`McpError`] when the `list_tools` call fails.
+    pub async fn list_server_tools(&self, name: &str) -> Result<Vec<McpTool>, McpError> {
+        let conn = self.connection(name).await?;
+        conn.list_tools().await
     }
 }
 
