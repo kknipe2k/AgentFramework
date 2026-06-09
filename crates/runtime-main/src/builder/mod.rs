@@ -42,7 +42,8 @@ pub use persist::{load_framework, save_framework, Companion, LoadedFramework};
 pub use summary::{framework_capability_summary, FrameworkCapabilitySummary, SpawnEdgeNarrowing};
 pub use tester::{
     fold_outcome, load_verified_artifact, run_test_session_with, run_test_session_with_skills,
-    run_test_session_with_tier, CapabilityFailure, TestOutcome, TesterError, TokenSpend,
+    run_test_session_with_tier, run_test_session_with_tools, CapabilityFailure, TestOutcome,
+    TesterError, TokenSpend,
 };
 pub use validate::{
     list_installed, validate_framework, FrameworkValidationReport, InstalledArtifact, NodeError,

@@ -35,7 +35,7 @@ use crate::capability::CapabilityEnforcer;
 use crate::drone_ipc::DroneClient;
 use crate::framework_loader::{grant_framework_capabilities, inline_agents};
 use crate::hitl::HitlSeam;
-use crate::providers::{AgentConfig, ContentBlock, LLMProvider, Message, MessageRole};
+use crate::providers::{AgentConfig, ContentBlock, LLMProvider, Message, MessageRole, ToolDef};
 use crate::sdk::builtin_tools::builtin_tool_defs;
 use crate::sdk::load_skill::load_skill_tool_def;
 use crate::sdk::request_capability::request_capability_tool_def;
@@ -345,7 +345,7 @@ fn verify_framework_artifacts(framework: &Framework, db_path: &Path) -> Vec<Agen
 /// emits the matching `ToolUse` — the union of every inline agent's
 /// `allowed_tools` filtered to the in-process built-in set, deduplicated
 /// (the Anthropic API rejects duplicate tool names).
-fn test_agent_config(framework: &Framework, task: &str) -> AgentConfig {
+fn test_agent_config(framework: &Framework, task: &str, mcp_tool_defs: &[ToolDef]) -> AgentConfig {
     let mut seen = std::collections::BTreeSet::new();
     let allowed: Vec<String> = inline_agents(framework)
         .iter()
@@ -354,6 +354,22 @@ fn test_agent_config(framework: &Framework, task: &str) -> AgentConfig {
         .cloned()
         .collect();
     let mut tools = builtin_tool_defs(&allowed);
+    // M09.D.fix: surface each authored MCP tool to the model. An
+    // `allowed_tools` entry naming an MCP tool (`server__tool`) is NOT a
+    // built-in, so `builtin_tool_defs` drops it — the M09.D IRL showed the
+    // model then saw only `Write`, never emitted the MCP call, and
+    // `try_mcp_dispatch` was never reached. Inject each authored MCP tool's
+    // definition (resolved from the connected server's `list_tools` schema by
+    // the caller) whose `server__tool` name is in `allowed`, deduped against
+    // the built-ins (the Anthropic API rejects duplicate tool names) — the
+    // injected `name` matches the call `try_mcp_dispatch` routes.
+    for def in mcp_tool_defs {
+        if allowed.iter().any(|t| t == &def.name)
+            && !tools.iter().any(|existing| existing.name == def.name)
+        {
+            tools.push(def.clone());
+        }
+    }
     // M08.7 rung 3 (spec §0b): advertise the runtime-injected LoadSkill
     // tool when any inline agent has skills to load, so a real model can
     // emit the matching ToolUse.
@@ -473,6 +489,51 @@ pub async fn run_test_session_with_tier<P: LLMProvider + 'static>(
         session_id,
         tier,
         BTreeMap::new(),
+        Vec::new(),
+    )
+    .await
+}
+
+/// Test-seam variant that injects the connected MCP servers' tool
+/// definitions into the model-facing tool list (M09.D.fix).
+///
+/// The M09.D maintainer IRL disproved the slice: a canvas-authored MCP tool
+/// in `allowed_tools` was never surfaced to the model — `test_agent_config`
+/// resolves only the in-process built-ins, so the MCP `server__tool` name was
+/// silently dropped, the model never emitted the call, and `try_mcp_dispatch`
+/// was never reached. This seam threads each connected server's `list_tools`
+/// definition (named `server__tool`, the Tauri shell builds them from the
+/// connected source) so the model can call the authored MCP tool and the
+/// dispatch executes it. The `resolved_skills`-threading archetype (M08.7
+/// rung 3); the `mcp_dispatch` arg still carries the dispatch routing.
+///
+/// # Errors
+///
+/// [`TesterError`] for infrastructure failure only (same contract as
+/// [`run_test_session_with`]).
+#[allow(clippy::too_many_arguments)] // reason: mirrors run_test_session_with_tier's 8-arg seam + the injected MCP tool defs
+pub async fn run_test_session_with_tools<P: LLMProvider + 'static>(
+    framework: &Framework,
+    task: &str,
+    db_path: &Path,
+    provider: P,
+    drone: Arc<DroneClient>,
+    mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
+    session_id: SessionId,
+    tier: Tier,
+    mcp_tool_defs: Vec<ToolDef>,
+) -> Result<TestOutcome, TesterError> {
+    run_test_session_inner(
+        framework,
+        task,
+        db_path,
+        provider,
+        drone,
+        mcp_dispatch,
+        session_id,
+        tier,
+        BTreeMap::new(),
+        mcp_tool_defs,
     )
     .await
 }
@@ -513,6 +574,7 @@ pub async fn run_test_session_with_skills<P: LLMProvider + 'static>(
         session_id,
         Tier::Novice,
         resolved_skills,
+        Vec::new(),
     )
     .await
 }
@@ -530,6 +592,7 @@ async fn run_test_session_inner<P: LLMProvider + 'static>(
     session_id: SessionId,
     tier: Tier,
     resolved_skills: BTreeMap<String, String>,
+    mcp_tool_defs: Vec<ToolDef>,
 ) -> Result<TestOutcome, TesterError> {
     let started = Instant::now();
 
@@ -568,7 +631,7 @@ async fn run_test_session_inner<P: LLMProvider + 'static>(
     if let Some(dispatch) = mcp_dispatch {
         sdk = sdk.with_mcp_dispatch(dispatch);
     }
-    let config = test_agent_config(framework, task);
+    let config = test_agent_config(framework, task, &mcp_tool_defs);
     let run = tokio::spawn(async move { sdk.run_agent(config).await });
 
     let mut trace = preflight;
