@@ -42,6 +42,10 @@ function TierControl(): JSX.Element {
   const tier = useGraphStore((s) => s.currentTier);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // M09.D.fix iter2: every section is collapsible (DESIGN.md principle 3).
+  // The tier section is state-visible (the current tier — principle 2), so it
+  // defaults OPEN; it is still collapsible.
+  const [open, setOpen] = useState(true);
 
   // Novice → Promoted is the promotion; Promoted → Novice the demotion.
   // Operator is NOT a target — TierRef has only 'novice' | 'promoted'.
@@ -73,31 +77,46 @@ function TierControl(): JSX.Element {
       className="settings-panel__section settings-panel__section--tier"
       data-testid="tier-control"
     >
-      <h3 className="settings-panel__section-title">Capability tier</h3>
-      <p className="settings-panel__tier-current" data-testid="tier-current">
-        Current tier:{' '}
-        <span className={`settings-panel__tier-value settings-panel__tier-value--${tier}`}>
-          {tier}
-        </span>
-      </p>
-      <p className="settings-panel__tier-explainer">
-        {tier === 'novice'
-          ? 'Novice restricts capabilities to safe defaults. Promote to enable MCP-server management and broader tool access.'
-          : 'Promoted enables MCP-server management and broader tool access. Demote to return to Novice safe defaults.'}
-      </p>
       <button
         type="button"
-        className="settings-panel__tier-button"
-        data-testid="tier-transition-button"
-        disabled={pending}
-        onClick={() => void handleTransition()}
+        className="settings-panel__section-toggle"
+        data-testid="settings-section-toggle-tier"
+        aria-expanded={open}
+        onClick={() => setOpen((isOpen) => !isOpen)}
       >
-        {pending ? 'Applying…' : actionLabel}
+        <span className="settings-panel__section-title">Capability tier</span>
+        <span className="settings-panel__section-chevron" aria-hidden="true">
+          {open ? '▾' : '▸'}
+        </span>
       </button>
-      {error !== null && (
-        <p className="settings-panel__error" data-testid="tier-error">
-          {error}
-        </p>
+      {open && (
+        <div className="settings-panel__section-body" data-testid="tier-section-body">
+          <p className="settings-panel__tier-current" data-testid="tier-current">
+            Current tier:{' '}
+            <span className={`settings-panel__tier-value settings-panel__tier-value--${tier}`}>
+              {tier}
+            </span>
+          </p>
+          <p className="settings-panel__tier-explainer">
+            {tier === 'novice'
+              ? 'Novice restricts capabilities to safe defaults. Promote to enable MCP-server management and broader tool access.'
+              : 'Promoted enables MCP-server management and broader tool access. Demote to return to Novice safe defaults.'}
+          </p>
+          <button
+            type="button"
+            className="settings-panel__tier-button"
+            data-testid="tier-transition-button"
+            disabled={pending}
+            onClick={() => void handleTransition()}
+          >
+            {pending ? 'Applying…' : actionLabel}
+          </button>
+          {error !== null && (
+            <p className="settings-panel__error" data-testid="tier-error">
+              {error}
+            </p>
+          )}
+        </div>
       )}
     </div>
   );
