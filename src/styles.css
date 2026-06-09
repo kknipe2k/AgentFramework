@@ -2315,13 +2315,17 @@ p.error {
   flex: 0 0 260px;
   height: 220px;
 }
-/* M09.D.fix: the expanded run view — the watch pane grows so a re-verify run
-   is observable in a usable window (DESIGN.md Modals bounded scroll). */
+/* M09.D.fix iteration 2: the expanded run view grows the CONTENT FRAME — the
+   graph pane + the Output/Inspector rail both fill ~60vh — not the chrome
+   (the iteration-1 re-IRL found Expand added modal whitespace while the inner
+   220px panes stayed fixed). DESIGN.md Modals: content within a bounded,
+   scrollable height. */
 .tester-modal__watch--expanded {
   min-height: 60vh;
 }
+.tester-modal__watch--expanded .tester-graph-pane,
 .tester-modal__watch--expanded .inspector-panel {
-  height: auto;
+  height: 60vh;
 }
 
 .tester-result {
