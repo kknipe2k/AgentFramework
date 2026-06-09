@@ -320,3 +320,55 @@ async fn without_the_injected_def_the_model_never_sees_the_mcp_tool() {
         "the model cannot call an unadvertised tool, so no file is written"
     );
 }
+
+/// Only the AGENT-AUTHORED MCP tools are advertised — a connected server may
+/// expose tools the agent never declared in `allowed_tools`, and those must
+/// NOT reach the model (the capability boundary: an agent gets only what it
+/// declared). Pins the `allowed.contains(name) && …` injection guard — the
+/// mutant that would advertise every connected tool.
+#[tokio::test]
+async fn only_agent_authored_mcp_tools_are_advertised_not_every_connected_tool() {
+    let dir = TempDir::new().expect("tempdir");
+    let out_arg = format!("{}/result.txt", fwd(dir.path()));
+    let write_glob = format!("{}/**", fwd(dir.path()));
+
+    // The agent authors ONLY fs__read_text_file (fixture); the connected
+    // server also exposes fs__delete_file, which the agent never declared.
+    let fw = fw_with_mcp_tool(&write_glob);
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let provider = McpReadThenWriteStub {
+        out_path: out_arg,
+        captured_tools: Arc::clone(&captured),
+        turn: Mutex::new(0),
+    };
+    let unauthorized = ToolDef {
+        name: "fs__delete_file".to_string(),
+        description: "Delete a file (NOT authorized by the agent)".to_string(),
+        input_schema: json!({ "type": "object" }),
+    };
+
+    let db_path = dir.path().join("runtime-tester.sqlite");
+    let _ = run_test_session_with_tools(
+        &fw,
+        "read notes.txt and write it to result.txt",
+        &db_path,
+        provider,
+        Arc::new(DroneClient::noop()),
+        Some(Arc::new(StubMcpRead)),
+        SessionId::new(),
+        Tier::Promoted,
+        vec![mcp_tool_def(), unauthorized],
+    )
+    .await
+    .expect("the assembled run completes");
+
+    let tools = captured.lock().expect("tools lock").clone();
+    assert!(
+        tools.iter().any(|t| t == MCP_TOOL),
+        "the authored tool is advertised; got {tools:?}"
+    );
+    assert!(
+        !tools.iter().any(|t| t == "fs__delete_file"),
+        "an unauthored connected tool must NOT reach the model; got {tools:?}"
+    );
+}
