@@ -2288,6 +2288,23 @@ p.error {
 
 /* M08.8.A — the Tester's run-watch row: the scoped graph pane beside the
  * Output/Inspector rail bound to the same scoped store. */
+.tester-modal__watch-bar {
+  display: flex;
+  justify-content: flex-end;
+}
+.tester-modal__expand {
+  background: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  padding: var(--s1) var(--s2);
+  cursor: pointer;
+}
+.tester-modal__expand:hover {
+  color: var(--text-1);
+  border-color: var(--border-strong);
+}
 .tester-modal__watch {
   display: flex;
   flex-direction: row;
@@ -2297,6 +2314,14 @@ p.error {
 .tester-modal__watch .inspector-panel {
   flex: 0 0 260px;
   height: 220px;
+}
+/* M09.D.fix: the expanded run view — the watch pane grows so a re-verify run
+   is observable in a usable window (DESIGN.md Modals bounded scroll). */
+.tester-modal__watch--expanded {
+  min-height: 60vh;
+}
+.tester-modal__watch--expanded .inspector-panel {
+  height: auto;
 }
 
 .tester-result {

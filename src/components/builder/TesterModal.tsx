@@ -174,6 +174,10 @@ export function TesterModal(): JSX.Element | null {
   const [outcome, setOutcome] = useState<TestOutcome | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // M09.D.fix: the watch pane is expandable so a run is observable in a usable
+  // window (DESIGN.md Modals: content scrolls within a bounded height; the
+  // M09.D IRL re-verify needs the run pane growable).
+  const [watchExpanded, setWatchExpanded] = useState(false);
 
   // Stage E ships `openTester`; F2 renders the modal on that state.
   if (!isOpen) {
@@ -216,6 +220,7 @@ export function TesterModal(): JSX.Element | null {
     setOutcome(null);
     setTask('');
     setError(null);
+    setWatchExpanded(false);
     closeTester();
   };
 
@@ -268,8 +273,23 @@ export function TesterModal(): JSX.Element | null {
         {/* The smaller graph pane — scoped to the test session — beside
             the Output/Inspector rail bound to the SAME scoped store
             (M08.8.A: a Tester run's agent text + tool payloads are
-            observable in-app, not only via RUST_LOG). */}
-        <div className="tester-modal__watch">
+            observable in-app, not only via RUST_LOG). M09.D.fix: an expand
+            toggle grows the pane for a usable re-verify window. */}
+        <div className="tester-modal__watch-bar">
+          <button
+            type="button"
+            className="tester-modal__expand"
+            data-testid="tester-expand"
+            aria-pressed={watchExpanded}
+            onClick={() => setWatchExpanded((expanded) => !expanded)}
+          >
+            {watchExpanded ? 'Collapse run view' : 'Expand run view'}
+          </button>
+        </div>
+        <div
+          className={`tester-modal__watch${watchExpanded ? ' tester-modal__watch--expanded' : ''}`}
+          data-testid="tester-watch"
+        >
           <TesterGraphPane />
           <InspectorPanel store={useTestGraphStore} />
         </div>
