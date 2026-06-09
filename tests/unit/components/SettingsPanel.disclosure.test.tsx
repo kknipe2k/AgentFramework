@@ -46,4 +46,16 @@ describe('SettingsPanel — progressive disclosure (M09.D.fix / DESIGN.md princi
     await userEvent.click(screen.getByTestId('settings-section-toggle-budget'));
     expect(screen.getByTestId('budget-cap-input')).toBeInTheDocument();
   });
+
+  it('every_section_is_collapsible_the_tier_section_too', async () => {
+    // M09.D.fix iter2: disclosure on EVERY section (iteration-1 did budget
+    // only). The tier section is state-visible (principle 2) so it defaults
+    // OPEN, but it is collapsible — toggling hides its body.
+    render(<SettingsPanel />);
+    expect(screen.getByTestId('settings-section-toggle-tier')).toBeInTheDocument();
+    // Default-open: the tier transition control is visible without a click.
+    expect(screen.getByTestId('tier-transition-button')).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId('settings-section-toggle-tier'));
+    expect(screen.queryByTestId('tier-transition-button')).not.toBeInTheDocument();
+  });
 });

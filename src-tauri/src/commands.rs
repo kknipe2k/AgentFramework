@@ -3308,6 +3308,122 @@ mod tests {
             )
         }
 
+        // ── M09.D.fix iteration 2 — the MCP dispatcher's enforcer wiring ──
+        use runtime_main::capability::CapabilityError;
+        use runtime_main::sdk::{McpDispatchError, McpDispatchOutcome};
+        use runtime_mcp::mcp_tool_capability;
+
+        /// A canvas-authored framework whose `agent-1` declares the MCP tool
+        /// `fs__read` (matching the MockTransport tool `read` on server `fs`)
+        /// + the built-in `Write`; `session_root_agent` is `agent-1`.
+        fn canvas_fw_with_mcp_tool() -> Framework {
+            serde_json::from_value(serde_json::json!({
+                "name": "m09-d-fix2-canvas",
+                "version": "1.0.0",
+                "description": "canvas-authored MCP-tool framework",
+                "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+                "agents": [{
+                    "id": "agent-1",
+                    "role": "writer",
+                    "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+                    "capabilities": {
+                        "tools_called": ["fs__read"],
+                        "skills_loaded": [],
+                        "file_access": { "read": [], "write": ["out/**"] },
+                        "network": [], "shell": false, "spawn_agents": []
+                    },
+                    "allowed_tools": ["fs__read", "Write"],
+                    "allowed_skills": [],
+                    "spawns": []
+                }],
+                "tools": [],
+                "skills": [],
+                "session_root_agent": "agent-1",
+            }))
+            .expect("the canvas fixture round-trips")
+        }
+
+        #[test]
+        fn build_session_mcp_enforcer_grants_authored_promoted_denies_novice_and_unauthored() {
+            // The MCP dispatcher's enforcer must be framework-/tier-wired so a
+            // canvas-authored MCP tool passes the dispatcher's L4 (tier) + L1
+            // (grant) check (M09.D.fix iter2 — the iteration-1 re-IRL bug was a
+            // bare default-Novice, no-grant enforcer).
+            let fw = canvas_fw_with_mcp_tool();
+            let need = mcp_tool_capability("fs", "read");
+
+            // Promoted + authored → allowed (L4 passes; the granted
+            // mcp_tool_capability L1-subsumes the dispatch requirement).
+            build_session_mcp_enforcer(&fw, Tier::Promoted)
+                .check("agent-1", &need)
+                .expect("Promoted: an authored MCP tool's Exec is granted + tier-allowed");
+
+            // Novice → L4 tier-denied (the maintainer's exact error class).
+            let at_novice = build_session_mcp_enforcer(&fw, Tier::Novice).check("agent-1", &need);
+            assert!(
+                matches!(at_novice, Err(CapabilityError::TierForbidden { .. })),
+                "Novice tier-denies MCP Exec; got {at_novice:?}"
+            );
+
+            // An UNAUTHORED tool at Promoted → L1-denied (the authored-only
+            // boundary: only each agent's own allowed_tools MCP entries are
+            // granted).
+            let unauthored = build_session_mcp_enforcer(&fw, Tier::Promoted)
+                .check("agent-1", &mcp_tool_capability("fs", "delete"));
+            assert!(
+                matches!(unauthored, Err(CapabilityError::Denied { .. })),
+                "an unauthored MCP tool is L1-denied even at Promoted; got {unauthored:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn mcp_dispatch_through_the_real_dispatcher_enforcer_honors_tier() {
+            // The assembled proof: a REAL McpDispatcher whose enforcer is built
+            // by build_session_mcp_enforcer dispatches the authored MCP tool at
+            // Promoted (Invoked) and denies it at Novice (Blocked) — through the
+            // real check() path, not a stub.
+            async fn outcome(tier: Tier) -> Option<Result<McpDispatchOutcome, McpDispatchError>> {
+                let fw = canvas_fw_with_mcp_tool();
+                let transport = MockTransport::new()
+                    .with_tool("read", None, serde_json::json!({ "type": "object" }))
+                    .with_tool_result("read", serde_json::json!({ "ok": true }));
+                let dispatcher = McpDispatcher::new(
+                    Arc::new(RwLock::new(NamespaceResolver::new(BTreeMap::new()))),
+                    Arc::new(build_session_mcp_enforcer(&fw, tier)),
+                    Arc::new(MockConnResolver { transport }),
+                    None,
+                    "m09-d-fix2",
+                );
+                dispatcher
+                    .on_server_connected("fs")
+                    .await
+                    .expect("connect the mock fs server");
+                dispatcher
+                    .dispatch_if_mcp(
+                        "agent-1",
+                        "fs__read",
+                        serde_json::json!({}),
+                        &BTreeMap::new(),
+                    )
+                    .await
+            }
+
+            assert!(
+                matches!(
+                    outcome(Tier::Promoted).await,
+                    Some(Ok(McpDispatchOutcome::Invoked { .. }))
+                ),
+                "Promoted: the authored MCP tool dispatches through the real enforcer"
+            );
+            assert!(
+                matches!(
+                    outcome(Tier::Novice).await,
+                    Some(Ok(McpDispatchOutcome::Blocked { .. }))
+                ),
+                "Novice: the real dispatcher enforcer denies the MCP tool"
+            );
+        }
+
         fn f1_framework() -> Framework {
             serde_json::from_value(builder_seam_framework()).expect("fixture framework")
         }

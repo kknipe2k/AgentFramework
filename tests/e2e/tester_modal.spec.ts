@@ -139,6 +139,26 @@ test.describe('M08.F2 Builder Tester modal', () => {
     await expect(page.getByTestId('tester-result-vdr')).toContainText('"decision": "ok"');
   });
 
+  test('the_results_detail_is_progressive_disclosure_collapsible', async ({ page }) => {
+    // M09.D.fix iter2 (DESIGN.md principle 3): the Tester results section
+    // gets progressive disclosure — the verdict stays visible, the detail
+    // (trace drill-down + VDR) collapses behind a toggle. Red on iter-1: no
+    // results-disclosure toggle.
+    await installTauriMock(page, PASS_OUTCOME);
+    await page.goto('/');
+    await openTesterModal(page);
+    await runTask(page, 'summarize the input');
+    await expect(page.getByTestId('tester-result-verdict')).toHaveText('PASS');
+    const toggle = page.getByTestId('tester-result-toggle');
+    await expect(toggle).toBeVisible();
+    // The detail is open after a run; toggling collapses it (the verdict
+    // remains visible — disclosure, not hide-all).
+    await expect(page.getByTestId('tester-result-vdr')).toBeVisible();
+    await toggle.click();
+    await expect(page.getByTestId('tester-result-vdr')).toBeHidden();
+    await expect(page.getByTestId('tester-result-verdict')).toBeVisible();
+  });
+
   test('a_capability_violating_framework_surfaces_a_test_failure_no_hitl_prompt', async ({
     page,
   }) => {
