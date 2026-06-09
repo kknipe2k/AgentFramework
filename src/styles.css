@@ -2360,6 +2360,28 @@ p.error {
   color: var(--text-0);
 }
 
+/* M09.D.fix iter2: the results-detail disclosure toggle (DESIGN.md principle
+   3 — the verdict stays, the detail collapses). */
+.tester-result__toggle {
+  align-self: flex-start;
+  background: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  padding: var(--s1) var(--s2);
+  cursor: pointer;
+}
+.tester-result__toggle:hover {
+  color: var(--text-1);
+  border-color: var(--border-strong);
+}
+.tester-result__detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
 .tester-result--pass .tester-result__verdict {
   color: var(--ok-text);
 }
