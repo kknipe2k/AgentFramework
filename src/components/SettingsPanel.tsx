@@ -119,6 +119,10 @@ function BudgetControl(): JSX.Element {
   const setCap = useGraphStore((s) => s.setGlobalBudgetCap);
   const [draft, setDraft] = useState<string>(String(cap));
   const [error, setError] = useState<string | null>(null);
+  // M09.D.fix: a dense config panel defaults collapsed behind a disclosure
+  // control (DESIGN.md principle 3 + the Panels rule). The tier section stays
+  // open — it is state-visible (the current tier), not dense config.
+  const [open, setOpen] = useState(false);
 
   async function handleSave(): Promise<void> {
     const parsed = Number(draft);
@@ -142,32 +146,47 @@ function BudgetControl(): JSX.Element {
       className="settings-panel__section settings-panel__section--budget"
       data-testid="budget-control"
     >
-      <h3 className="settings-panel__section-title">Daily budget cap (USD)</h3>
-      <label className="settings-panel__budget-label">
-        Cap:{' '}
-        <input
-          className="settings-panel__budget-input"
-          data-testid="budget-cap-input"
-          type="number"
-          min={0}
-          step="0.01"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-        />
-      </label>{' '}
       <button
         type="button"
-        className="settings-panel__budget-button"
-        data-testid="budget-save-button"
-        onClick={() => void handleSave()}
+        className="settings-panel__section-toggle"
+        data-testid="settings-section-toggle-budget"
+        aria-expanded={open}
+        onClick={() => setOpen((isOpen) => !isOpen)}
       >
-        Save cap
+        <span className="settings-panel__section-title">Daily budget cap (USD)</span>
+        <span className="settings-panel__section-chevron" aria-hidden="true">
+          {open ? '▾' : '▸'}
+        </span>
       </button>
-      <p className="settings-panel__budget-hint">Set 0 to disable the cap.</p>
-      {error !== null && (
-        <p className="settings-panel__error" data-testid="budget-error">
-          {error}
-        </p>
+      {open && (
+        <div className="settings-panel__section-body" data-testid="budget-section-body">
+          <label className="settings-panel__budget-label">
+            Cap:{' '}
+            <input
+              className="settings-panel__budget-input"
+              data-testid="budget-cap-input"
+              type="number"
+              min={0}
+              step="0.01"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+            />
+          </label>{' '}
+          <button
+            type="button"
+            className="settings-panel__budget-button"
+            data-testid="budget-save-button"
+            onClick={() => void handleSave()}
+          >
+            Save cap
+          </button>
+          <p className="settings-panel__budget-hint">Set 0 to disable the cap.</p>
+          {error !== null && (
+            <p className="settings-panel__error" data-testid="budget-error">
+              {error}
+            </p>
+          )}
+        </div>
       )}
     </div>
   );
