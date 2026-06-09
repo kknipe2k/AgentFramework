@@ -609,6 +609,136 @@ AND runs a real single-agent, MCP-data workflow from scratch.
 
 ---
 
+## Stage M09.D.fix — Surface the canvas-authored MCP tool to the model (+ the DESIGN.md disclosure pass)
+
+> **Reopened by the M09.D maintainer IRL — the slice did not run.** An agent authored entirely correctly — `allowed_tools: ["fs__read_text_file","Write"]`, `capabilities.tools_called` matching, `file_access` set, `session_root_agent: "agent-1"`, validates clean, both tools wired on the canvas — ran in the Tester with **only the built-in `Write`** in the tool list the model saw. It reported *"I don't have a filesystem read tool, only Write,"* requested a `filesystem_read` capability, wrote no file (`result: null`), and the verdict still read **PASS**. The canvas-authored MCP tool is recorded but **never surfaced to the model at run time**: `connect_test_session_mcp` + `build_test_mcp_dispatcher` (M09.C, `commands.rs:1769-1775`) wire *dispatch*, but the tool's *definition* is never injected into the model's tool list, so the model never emits the call and `try_mcp_dispatch` is never reached. The one layer no test hit — `vertical_slice.e2e.ts` ran tool-free, `builder_mcp_tool.e2e.ts` was store-driven; the maintainer IRL is the first real-model-meets-real-MCP-tool run, and it found the hole (rule 11 — exactly why the flip waited on the IRL, not the green e2e). **Bundled (maintainer-directed):** a DESIGN.md-grounded UI pass — Tester expand/resize + settings progressive disclosure — required to re-verify in a usable window. The 🔴 wiring is its own mutation-blocked commit; the two UI changes ride beside it as separate commits. Closes the 🔴 and re-licenses the execution-status flip on the maintainer's re-run IRL.
+
+### D.fix.1 Problem statement
+The run path builds the tool list handed to the model by resolving the session-root agent's `allowed_tools` to tool definitions: the built-ins (`Read`/`Write`/`Bash`) resolve to their hand-written defs and `request_capability_tool_def()` is auto-injected (the `run_test_session_inner` construction), but an `allowed_tools` entry that names an **MCP tool** (`server__tool`, e.g. `fs__read_text_file`) has **no resolver** — it is silently dropped, so the model is never told the tool exists. `connect_test_session_mcp` + `build_test_mcp_dispatcher` (M09.C, `commands.rs:1769-1775`) establish *dispatch* (a tool call *would* route to the server), but nothing fetches the connected server's `list_tools` schema and injects the authored MCP tool's definition into the model-facing list. Net: the agent runs tool-blind to its own MCP tool, `try_mcp_dispatch` (`agent_sdk.rs`) is never reached because the model never emits the call, no file is written, and the gap-suspend (the agent requesting the missing capability) reads as a green PASS.
+
+### D.fix.2 Files to change
+**`<wire_signature_audit>` — the build pins the exact file:line at red** (the M09.C run-path diff is local-only at authoring time; this section is authored against the IRL evidence + the architecture, not the unpushed diff):
+- The **model tool-list builder** on the `test_framework` → `run_test_session_inner` path — where the built-in tool defs + `request_capability_tool_def()` are pushed onto the agent's tool list. This is where MCP tool defs must also be injected. *Build pins the fn + file:line.*
+- The **connected MCP tool source** — the `McpDispatcher` / the test session's connected servers, which hold (or fetch) each server's `list_tools` `Vec<McpTool> { name, description?, input_schema }` (`crates/runtime-mcp/src/transport/mod.rs:61`; dispatch `crates/runtime-mcp/src/dispatch.rs`). The injector reads from here and maps `server__tool` → its definition.
+- The **`server__tool` naming** — the same canonical id M09.C records in `allowed_tools` + `try_mcp_dispatch` resolves; the injected def's `name` must match it so the model's call routes.
+- **UI:** `src/components/builder/TesterModal.tsx` + the `Modal` primitive (M08.8.B — z-index/scroll); `src/components/SettingsPanel.tsx`; `DESIGN.md` (the progressive-disclosure / panel-sizing principles to cite).
+
+Files: the run-path tool-list builder (Rust — the 🔴, its own commit); the assembled stub-MCP regression + the two UI tests; `src/components/builder/TesterModal.tsx`; `src/components/SettingsPanel.tsx`; `docs/execution-status.md` (the MCP-dispatch row reconcile + the M09 slice row, flipped on the re-IRL).
+
+### D.fix.3 Detailed changes
+1. **Inject the authored MCP tool definitions into the model's tool list (the 🔴).** In the run-path tool-list construction, after the built-ins + `request_capability`, for each `allowed_tools` entry that is an MCP tool (`server__tool`), resolve its definition from the connected MCP source (`list_tools` schema) and push it, named with the same `server__tool` id so the model's call routes through `try_mcp_dispatch`. Read-through only; no new transport, no dispatch change. Mutation gate **BLOCKING** (this branch decides whether the tool runs — execution-wiring, `cluster-pattern.md` §5).
+2. **The assembled regression** (v1.8 mandate — reproduces the IRL): through the real `run_test_session_inner` path, a stub MCP source exposing one tool (`read_text_file` → known content) + a stub `LLMProvider` that **captures the `AgentConfig.tools` it receives** and scripts a call to that tool (mirror the E-02 `WriteToolStub` pattern). Assert (a) the captured tool list **includes** the authored MCP tool — the direct assertion that fails today; and (b) end-to-end, the agent calls it, the stub dispatch returns the content, the built-in `Write` lands the file. Red must first fail with the MCP tool **absent** from the provider's tools.
+3. **The UI pass (separate commits, DESIGN.md-grounded).** `TesterModal` gains expand/fullscreen + a resizable, scrollable output/disclosure pane; `SettingsPanel` gains progressive-disclosure (collapsible) sections. Each cites the DESIGN.md principle it implements; each gets its own render/e2e test.
+4. **Reconcile the ledger.** `docs/execution-status.md` claims "MCP dispatch executes." This IRL shows the model was never offered the tool, so that claim was not true through the assembled model path. Correct/qualify the row to what is actually proven, and re-assert it on the green of #2 + the maintainer IRL (rule 11).
+
+### D.fix.4 Tests
+The assembled stub-MCP regression (#2) is the core — it pins the model-facing tool-list injection and the end-to-end dispatch→`Write`→file. Plus the two UI render/e2e tests. No weakening of any M09.A–D test.
+
+### D.fix.5 construction_reachability_check
+`inputs_reachable="false"`: the authored MCP tool is in `allowed_tools` (+ `tools_called`, validated, canvas-wired) but **unreachable to the model** — the tool-list builder drops it, so the model can't call it and `try_mcp_dispatch` is never reached. M09.D.fix inverts it: the builder injects the MCP tool def from the connected source. Verify by the assembled test — the provider's captured tool list contains `fs__read_text_file` and the run writes the file; and by the maintainer re-IRL writing a real `result.txt` in-scope, denied out-of-scope.
+
+### D.fix.6 Close gate
+Strict v1.11 two-commit TDD: write all failing tests (the assembled stub-MCP regression + the two UI tests), confirm right-reason red, commit `test(M09.D.fix): …`, **surface red for approval**; then implement as **three distinct commits** untouching tests — (i) the MCP-tool injection [mutation **BLOCKING**], (ii) Tester resize, (iii) settings disclosure — `git diff <red>..<impl> -- '**/tests/**'` EMPTY across them (binary-crate variant via a scoped `#[cfg(test)]` diff if the Rust test is in-source). Full Rust (runtime-main/runtime-mcp ≥95) + frontend gates + **both** e2e legs. **The maintainer real-app re-IRL is the authoritative close** — re-run steps 4–5 in the resizable Tester: a real `C:/…/out/result.txt` lands in-scope, an out-of-scope write is denied, observable in-app. **Flip the execution-status row** on that observation (and the reconciled MCP-dispatch row), citing `vertical_slice.e2e.ts` + the stub-MCP regression + the IRL date. This closes M09.D.
+
+### D.fix.7 CLI prompt
+```xml
+<work_stage_prompt id="M09.D.fix">
+  <context>
+    M09.D.fix — the M09.D maintainer IRL disproved the slice. An agent authored
+    correctly (allowed_tools ["fs__read_text_file","Write"], tools_called matching,
+    file_access set, session_root_agent "agent-1", validates, canvas-wired) ran in
+    the Tester with ONLY built-in Write in the model's tool list — it reported "no
+    read tool", requested a filesystem_read capability, wrote nothing (result null),
+    verdict PASS. The canvas-authored MCP tool is recorded but never surfaced to the
+    model: connect_test_session_mcp + build_test_mcp_dispatcher (M09.C,
+    commands.rs:1769-1775) wire DISPATCH, but the tool DEFINITION is never injected
+    into the model's tool list, so the model never emits the call and try_mcp_dispatch
+    is never reached. Painted, not wired, at the one layer no test hit
+    (vertical_slice.e2e.ts ran tool-free; builder_mcp_tool.e2e.ts store-driven).
+    PRIMARY (the red): inject the authored MCP tool's definition (server__tool →
+    list_tools schema from the connected source) into the model tool-list builder so
+    the model can call it; mutation BLOCKING on that branch (execution-wiring).
+    BUNDLED (maintainer-directed) UI pass, DESIGN.md-grounded, SEPARATE commits:
+    TesterModal expand/resize + SettingsPanel progressive disclosure. Reconcile the
+    execution-status "MCP dispatch executes" claim (never true through the model).
+    Surface red first; no flip until the maintainer re-runs the IRL green.
+  </context>
+  <read_first>
+    <file>docs/build-prompts/M09-workbench-vertical-slice.md (Stage M09.D.fix — D.fix.1–D.fix.6; Stage D + the Background falsifiable hypothesis)</file>
+    <file>the M09.C run-path diff (local): the run_test_session_inner tool-list construction (where built-ins + request_capability_tool_def() are pushed — PIN the fn + file:line); connect_test_session_mcp + build_test_mcp_dispatcher (commands.rs:1769-1775)</file>
+    <file>crates/runtime-mcp/src/transport/mod.rs:61 (McpTool {name,description?,input_schema}) + crates/runtime-mcp/src/dispatch.rs (McpDispatcher — the connected tools source) + crates/runtime-main/src/sdk/agent_sdk.rs (try_mcp_dispatch)</file>
+    <file>crates/runtime-main/tests/capability_live_tool.rs (E-02 — the stub-provider + assembled-run pattern to mirror) + docs/cluster-pattern.md (§4 assert-the-side-effect, §5 mutation gate)</file>
+    <file>DESIGN.md (progressive-disclosure / panel-sizing principles to cite) + src/components/builder/TesterModal.tsx + the Modal primitive + src/components/SettingsPanel.tsx + docs/adr/0021-* + CLAUDE.md §4 rule 11 / §5/§6/§8</file>
+  </read_first>
+  <deliverable>The run-path tool-list builder injects each authored MCP tool's definition (server__tool → the connected server's list_tools schema) into the model's tool list, so a canvas-authored MCP tool is callable and try_mcp_dispatch executes it; an assembled stub-MCP regression proves the tool reaches the provider's tool list AND the end-to-end dispatch→Write lands the file; the execution-status MCP-dispatch claim reconciled. Bundled UI (separate commits, DESIGN.md-grounded): TesterModal expand/resize + SettingsPanel progressive disclosure. The red wiring is its own mutation-blocked commit. Closes M09.D.</deliverable>
+  <tdd_discipline strict="true">Write all failing tests first (the assembled stub-MCP regression — the provider's captured AgentConfig.tools lacks the MCP tool and the file isn't written; the Tester-resize e2e; the settings-disclosure render) → commit test(M09.D.fix): … (red) → SURFACE RED. Then implement as THREE distinct commits untouching tests (MCP injection [mutation BLOCKING]; Tester resize; settings disclosure); git diff &lt;red&gt;..&lt;impl&gt; over test paths EMPTY (binary-crate variant via a scoped #[cfg(test)] diff if the Rust test is in-source). Net-new/mechanical test fixups in separate labelled follow-ups.</tdd_discipline>
+  <wire_signature_audit>PIN at red (the M09.C run-path diff is local — author confirms symbols, build pins file:line): the model tool-list builder on test_framework → run_test_session_inner (where built-in defs + request_capability_tool_def() are pushed); the connected MCP tools source (McpDispatcher / the test session's servers, holding list_tools Vec&lt;McpTool&gt;); the server__tool naming (must match allowed_tools + try_mcp_dispatch). UI: TesterModal + Modal primitive; SettingsPanel; the DESIGN.md principle ids.</wire_signature_audit>
+  <construction_reachability_check ref="docs/build-prompts/M09-workbench-vertical-slice.md" section="D.fix.5"/>
+  <execution_steps>
+    <step name="ground_at_red" budget="1"/>
+    <step name="write_failing_tests" budget="1"/>
+    <step name="red_phase_commit" budget="1"/>
+    <step name="surface_for_red_approval"/>
+    <step name="implement" budget="3"/>
+    <step name="verify_gates" budget_iterations="3">Rust ≥95 (runtime-main/runtime-mcp) + frontend gates + BOTH e2e legs (test:e2e + test:e2e:tauri). No schema change.</step>
+    <step name="mutation_gate" blocking="true"/>
+    <step name="green_phase_commit" budget="3"/>
+    <step name="assembled_run_irl"/>
+    <step name="surface_for_final_approval"/>
+    <step name="fill_retrospective"/>
+  </execution_steps>
+  <close_gate>
+    <real_app_irl>Maintainer (Promoted), resizable Tester: re-run steps 4–5 — the in-scope task writes a real C:/…/out/result.txt from real MCP data; the out-of-scope write is denied (no file); both observable in-app. THE authoritative close (rule 11 / ADR-0021); licenses the flip.</real_app_irl>
+    <mutation_gate blocking="true">BLOCKING on the MCP-tool-injection branch (execution-wiring — decides whether the tool runs). Advisory on the UI commits.</mutation_gate>
+    <design_review>The Tester resize + settings disclosure cite + match the DESIGN.md progressive-disclosure / sizing principles.</design_review>
+    <cumulative_regression>the stub-MCP assembled regression + the two UI tests join the suites; the execution-status row + reconcile recorded.</cumulative_regression>
+  </close_gate>
+  <approval_surface>
+    <item>cross-machine state + the red→impl diff over test paths (EMPTY), three distinct impl commits</item>
+    <item>the MCP-tool-injection root cause confirmed (file:line) + the blocking mutation result on that diff</item>
+    <item>the assembled stub-MCP result (the tool present in the provider's list; the file written) + Rust/frontend gates + both e2e legs</item>
+    <item>the DESIGN.md design-review (Tester resize + settings disclosure) + the execution-status MCP-dispatch reconcile</item>
+    <item>explicit: "M09.D.fix is ready. I will not commit until you approve; the flip waits on your re-IRL."</item>
+  </approval_surface>
+  <scope_locks>
+    <lock>The red is run-path tool-list injection only — resolve authored MCP tool names to their connected-server definitions; no new transport, no dispatch change, no enforcer/tier change, no schema change.</lock>
+    <lock>The UI pass is DESIGN.md-grounded, separate commits behind the red; do NOT fold UI into the wiring commit.</lock>
+    <lock>The verdict-shows-PASS-on-gap-suspend truthfulness gap is OUT of scope here (tech-debt / M10) — note it; do not change verdict logic.</lock>
+    <lock>No execution-status flip on green alone — the maintainer re-IRL is the authoritative close (rule 11).</lock>
+  </scope_locks>
+  <gates milestone="M08"/>
+  <retrospective_requirements ref="docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md">
+    <special_log>That the authoring was correct and the gap was model-facing tool-list injection (dispatch wired, definition not injected); that no test hit it (tool-free e2e / store-driven); the execution-status MCP-dispatch reconcile (rule 11); the maintainer re-IRL result; that the red stayed its own mutation-blocked commit beside the UI.</special_log>
+  </retrospective_requirements>
+  <commit_protocol ref="CLAUDE.md" section="8. PR + commit workflow (CRITICAL — read carefully)"/>
+  <commit_message ref="docs/build-prompts/M09-workbench-vertical-slice.md" section="Stage M09.D.fix"/>
+</work_stage_prompt>
+```
+
+### D.fix.8 Commit messages
+```
+test(M09.D.fix): failing assembled stub-MCP + UI-pass tests (red)
+
+fix(M09.D.fix): surface the canvas-authored MCP tool to the model
+
+The M09.D IRL ran a correctly-authored agent (fs__read_text_file in
+allowed_tools, validates, session_root set) in the Tester and the model saw
+ONLY built-in Write — it asked for a read capability and wrote nothing, yet
+the verdict read PASS. Dispatch was wired (M09.C) but the MCP tool's
+definition was never injected into the model's tool list, so the model never
+emitted the call. Resolve each authored MCP allowed_tools entry (server__tool)
+to its connected-server list_tools definition and inject it into the run-path
+tool list, named to match try_mcp_dispatch. Assembled stub-MCP regression
+proves the tool reaches the provider's tool list and the end-to-end
+dispatch->Write lands the file. Mutation-blocking (execution-wiring).
+
+feat(M09.D.fix): Tester expand/resize per DESIGN.md disclosure
+
+feat(M09.D.fix): settings progressive disclosure per DESIGN.md
+```
+
+---
+
 ## Stage M09.V — Five-pass real-app verifier
 
 ### V.1 Problem statement
