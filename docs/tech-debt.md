@@ -1317,3 +1317,45 @@ The metric cards ship and render (B.fix built the Result/Verify/Tokens/Spend gri
 ### Recommended approach (when addressed)
 
 Add an assertion to `design_conformance.e2e.ts:96` that a `[data-testid="tester-metrics"]` (or a `[data-testid^="metric-"]` card) element is displayed inside the opened Tester modal, so the metric cards join the real-app regression suite. ~10 min; fold into any Tester-modal e2e touch.
+
+## TD-050 — `vertical_slice.e2e.ts` run-test asserts only verdict-text-non-empty (weak regression guard)
+
+**Date logged:** 2026-06-09
+**Found by:** Stage V verifier run M09.V (finding 🟢 #1 — Behavior / assembled_execution pass)
+**Pass that surfaced it:** Behavior / assembled_execution
+**Category:** observability (test-assertion completeness — a regression-guard gap)
+
+**Resolution status:** open (owner: any future `vertical_slice.e2e.ts` touch — tighten the verdict assertion once a Promoted-capable hermetic e2e path exists)
+
+### Description
+
+`tests/e2e-tauri/vertical_slice.e2e.ts:244–246` (`the_authored_framework_runs_through_the_assembled_tester`) asserts only `(await verdict.getText()).trim().length > 0` — it passes on `PASS`, `FAIL`, or `TIER-LIMITED` alike. The M09.V 5th pass drove the real Tauri binary with a key (loaded via `.env.local`); because `wdio.conf.ts::beforeSession` calls `seedNoviceTier()` for hermeticity, the authored Write is L4 tier-limited and the verdict came back **TIER-LIMITED** — and the test passed. So this spec confirms the authored framework *reaches* `test_framework` and returns *a* verdict, but does not guard *which* verdict, and no `tests/e2e-tauri/` spec asserts the on-disk file effect.
+
+### Why it's debt not bug
+
+The on-disk effect IS regression-guarded — at the assembled-Rust granularity by `crates/runtime-main/tests/mcp_tool_injection_execution.rs` (the in-scope Write lands with MCP-sourced content + the causality guard + the authored-only boundary) and by the `commands.rs::test_framework_with_at_{promoted,novice}_…` tier-contrast tests (no file on a denial). The Promoted on-disk close is intentionally the maintainer real-app IRL (2026-06-09), because the e2e harness is hermetic-Novice and CI has no live model / MCP server (rule 11 / ADR-0021). The debt is purely that the e2e's run-assertion is weaker than its name implies — same class as [[TD-049]].
+
+### Recommended approach (when addressed)
+
+When a Promoted-capable hermetic e2e path exists (or by relaxing the Novice seed for this one spec), tighten the assertion to `verdict ∈ {PASS, TIER_LIMITED}` (never `FAIL` for a well-authored framework), and ideally assert the in-scope file on disk + the out-of-scope denial in the real app. ~15–30 min; fold into any `vertical_slice.e2e.ts` touch.
+
+## TD-051 — Tester `fold_outcome` reports a gap-suspended run as verdict `Pass` (verdict-truthfulness; route to M10)
+
+**Date logged:** 2026-06-09
+**Found by:** Stage V verifier run M09.V (finding 🟢 #2 — Behavior pass)
+**Pass that surfaced it:** Behavior
+**Category:** observability (Tester results UX — a cleanly-suspended run is not distinguished from a clean pass)
+
+**Resolution status:** open (owner: M10 — the gap resolve→resume slice, ADR-0029; explicitly deferred by the M09.D.fix `<scope_locks>`)
+
+### Description
+
+`crates/runtime-main/src/builder/tester.rs::fold_outcome` (`:184`) has no arm for a clean **gap-suspend**. A `request_capability` gap that suspends the session cleanly (M09 ships "suspends cleanly" / E-04) emits neither `CapabilityViolation` nor `TierViolation`, so `fold_outcome` computes `passed = true` and `verdict = TestVerdict::Pass` — the suspended run reads as a clean PASS. `TestVerdict::TierLimited` ([[TD-047]], resolved) covers only L4 tier blocks, not gap-suspends. This is exactly the truthfulness gap the M09.D.fix iteration-1 IRL flagged ("the verdict still read PASS" when the agent requested a missing capability and wrote nothing).
+
+### Why it's debt not bug
+
+The pass/fail bit is defensible — a gap-suspend is not a framework defect (the framework is correct; it simply needs a capability granted), so `passed = true` is the right call for that bit, mirroring the [[TD-047]] tier-limit reasoning. The gap is purely **observability**: the outcome surfaces no distinct "this run suspended on a gap; resolve and resume" signal versus a clean pass. The M09.D.fix `<scope_locks>` explicitly held this OUT of scope ("note it; do not change verdict logic") and routed it to M10 — it is correctly deferred, just not previously ledgered.
+
+### Recommended approach (when addressed)
+
+In M10 (gap resolve→resume, ADR-0029), derive a distinct verdict/state for a suspended run — e.g. a `TestVerdict::Suspended` (or a `suspended: bool` / the gap kinds on `TestOutcome`) computed from the suspend signal in the trace, rendered in `TesterModal` as "Suspended — resolve the gap to resume" rather than a green PASS. Pairs with the resolve→resume UI that M10 introduces. No change to `fold_outcome`'s pass/fail bit. ~30–60 min within M10's Tester surface.
