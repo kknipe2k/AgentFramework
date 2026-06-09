@@ -102,6 +102,9 @@ test.describe('M08.G Settings panel + tier promotion', () => {
 
   test('the budget cap input reflects and persists a set value', async ({ page }) => {
     await page.goto('/');
+    // M09.D.fix: the budget section now defaults collapsed (DESIGN.md
+    // disclosure) — expand it before driving its input.
+    await page.getByTestId('settings-section-toggle-budget').click();
     await page.getByTestId('budget-cap-input').fill('30');
     await page.getByTestId('budget-save-button').click();
     // The input reflects the persisted value (M06.5 IRL 🟡-4 — the
