@@ -737,6 +737,19 @@ feat(M09.D.fix): Tester expand/resize per DESIGN.md disclosure
 feat(M09.D.fix): settings progressive disclosure per DESIGN.md
 ```
 
+### D.fix.9 — Iteration 2 (re-IRL findings; ADR-0008 last iteration)
+
+The iteration-1 re-IRL (maintainer, real app) proved the **wiring works** — the run shows `fs__read_text_file` injected, the model calling it, the server connected, and `try_mcp_dispatch` reached (the Exec capability check fired). But it surfaced two issues that keep M09.D open:
+
+**🔴 Tier regression (the new seam drops the tracked tier).** The run enforced **Novice** (`capability Exec forbidden in tier Novice`) although the maintainer is **Promoted** (Settings shows Promoted; the log shows `request_tier_transition … target=Promoted` then `tier transition complete target_tier=Promoted`). `test_framework` reads the tracked tier (`commands.rs:1758`), but iteration-1's new `run_test_session_with_tools` seam does not thread it through — the run defaults to Novice, so every Promoted-only path (here the MCP tool's Exec) is wrongly denied. Iteration-1's gates missed it because the assembled `mcp_tool_injection_execution.rs` passes Promoted *explicitly* to the seam, bypassing the `test_framework → seam` tracked-tier path. **Fail-safe note:** it dropped *to* Novice (over-restrictive), not over-permissive — a functional regression, not a privilege escalation; still blocks the slice. **Fix:** thread the tracked tier through `run_test_session_with_tools` exactly as `run_test_session_with_tier` / `…_with_skills` already do. **Regression pin (mutant-killer):** a test asserting the **tracked tier reaches the enforcer through the new seam** — the MCP tool's Exec allowed at Promoted, denied at Novice, via the `test_framework`-equivalent threading (not merely the seam called with an explicit tier). Mutation **BLOCKING** (L4 tier enforcement).
+
+**UI pass v2 (DESIGN.md — iteration-1's UI under-delivered / missed).**
+- The Tester **Expand** grew the empty modal/canvas whitespace, **not** the watch frame — fix it to grow the **canvas + OUTPUT + run-trace** content (the maintainer IRL: "expands the blank surroundings, not the actual frame").
+- The Tester **results section** (the PASS/FAIL card + run trace) gains progressive disclosure.
+- **Settings** disclosure extends to **every** section (iteration-1 shipped budget only).
+
+**Discipline:** the `<work_stage_prompt id="M09.D.fix">` (D.fix.7) governs — strict red-first, distinct commits (the tier 🔴 + its regression-pin as their own mutation-blocked commit; the three UI fixes separate), red→impl test diff EMPTY, full gates + both e2e legs. **This is ADR-0008 iteration 2 — the last before escalation; it must close on the maintainer re-IRL** (a real `out/result.txt` in-scope at Promoted, denied out-of-scope, in a Tester whose content frame actually grows). Only then the execution-status flip.
+
 ---
 
 ## Stage M09.V — Five-pass real-app verifier
