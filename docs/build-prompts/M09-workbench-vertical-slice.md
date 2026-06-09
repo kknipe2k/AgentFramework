@@ -739,70 +739,78 @@ feat(M09.D.fix): settings progressive disclosure per DESIGN.md
 
 ---
 
-## Stage M09.D.fix — Iteration 2 (tier-threading regression + DESIGN.md UI v2)
+## Stage M09.D.fix — Iteration 2 (wire the MCP dispatcher's enforcer; DESIGN.md UI v2)
 
-> **The iteration-1 re-IRL closed the original 🔴 but exposed a regression iteration-1 introduced.** Maintainer, real app: the run showed `fs__read_text_file` **injected, called by the model, the server connected, `try_mcp_dispatch` reached** — conditions 1+2 proven end-to-end (the wiring works). But it **FAILed at Novice** (`capability Exec forbidden in tier Novice for agent agent-1`) although the maintainer is **Promoted** (Settings: "Current tier: Promoted"; log: `request_tier_transition … target=Promoted` → `tier transition complete target_tier=Promoted`). Iteration-1's new `run_test_session_with_tools` seam **drops the tracked tier** — `test_framework` reads Promoted (`commands.rs:1758`) but the seam defaults the run to `Tier::Novice`, so the MCP tool's Exec is wrongly denied. Fail-safe (over-restrictive, not a privilege escalation), but it blocks the slice and silently breaks the M08.8.C / TD-036 tracked-tier pickup for *every* Tester run. Plus two DESIGN.md UI gaps the re-IRL surfaced: the Tester **Expand** grew the modal whitespace not the watch frame, and **settings disclosure** shipped budget-only. **ADR-0008 iteration 2 — the last before escalation.** Reuses `id="M09.D.fix"` (the same D.fix, second pass); closes on the maintainer re-IRL; the flip waits on it.
+> **The iteration-1 re-IRL closed the original 🔴 but exposed a deeper, misdiagnosed root cause — corrected here after a Hard-Rule-8 escalation (maintainer-approved).** Maintainer, real app: the run showed `fs__read_text_file` **injected, called by the model, the server connected, `try_mcp_dispatch` reached** — conditions 1+2 proven end-to-end. But it **FAILed at Novice** (`Exec forbidden in tier Novice`) although the maintainer is **Promoted** (Settings + the `request_tier_transition → target=Promoted` log). The original D.fix.9 diagnosis ("the new seam drops the tracked tier") was **wrong** — the tier threads correctly to the run-session enforcer. The real denial is the **MCP dispatcher's own, separate enforcer**: `build_test_mcp_dispatcher` (`commands.rs:1709`) and production `build_mcp_dispatcher` (`:282`) construct a **bare `CapabilityEnforcer::new()`** — default-Novice, no grants — never framework-/tier-wired (the docstring at `commands.rs:255-266` says exactly this: "the L1 CapabilityEnforcer is the empty default … [the loop] builds the framework-/tier-wired enforcer," CODEOWNERS / Hard-Rule-8). A known stub, harmless while only the no-tools smoke ran; M09 is the first real MCP tool dispatched through it. So `try_mcp_dispatch`'s `check()` (`dispatch.rs:192`) denies on **L4** (Novice, any user tier) and, even tier-fixed, on **L1** (`mcp_tool_capability` is Exec/**Irreversible** `dispatch.rs:74/87`; the framework grant is Exec/**Pure** `capability_map.rs:148`; `subsumes` needs exact `side_effect_class` equality). **Maintainer-approved fix (Hard-Rule-8):** a `build_session_mcp_enforcer(framework, tier)` helper — `set_tier(tier)` + `grant(agent_id, mcp_tool_capability(server, tool))` per authored MCP tool per agent — wired into **both** dispatchers, replacing the bare `new()`. Corrects the execution-status "MCP dispatch executes" claim (never true end-to-end). + the DESIGN.md UI v2. **ADR-0008 iteration 2 — the last;** the misdiagnosis was caught pre-impl (the cap isn't burned).
 
 ### D.fix2.1 Problem statement
-Two issues from the iteration-1 re-IRL keep M09.D open:
-1. **Tier regression (🔴).** Iteration-1 added `run_test_session_with_tools` to thread the MCP tool defs. `test_framework` reads the tracked tier (`commands.rs:1758`, `let tier = *tier_state.lock().await;`) and previously passed it to `run_test_session_with_tier`. The new seam's call path does not carry `tier` through, so the run executes at the `Tier::Novice` default. At Novice the L4 gate forbids the **Exec** capability every MCP tool call requires, so `fs__read_text_file` is denied with `CapabilityViolation { Exec }` — even though the maintainer is Promoted. This silently breaks the M08.8.C / TD-036 tracked-tier pickup for *every* Tester run, not just MCP. Direction is fail-safe (drops to the more-restrictive tier) — a functional regression, not a privilege escalation.
-2. **UI v2 (DESIGN.md).** The Tester `Expand` affordance grows the modal/canvas whitespace instead of the watch frame; the Tester results section has no progressive disclosure; settings disclosure covers only the budget section.
+The iteration-1 re-IRL surfaced a denial the phase doc misdiagnosed:
+1. **The MCP dispatcher's enforcer is never wired (🔴).** `try_mcp_dispatch` (`agent_sdk.rs:884`) checks the **`McpDispatcher`'s own** `CapabilityEnforcer` (`dispatch.rs:192`), not the run-session enforcer. Both `build_test_mcp_dispatcher` (`commands.rs:1709`) and production `build_mcp_dispatcher` (`commands.rs:282`) build it as a bare `CapabilityEnforcer::new()` — default-Novice (`enforcer.rs:63/84`), no grants — a docstring-acknowledged stub (`commands.rs:255-266`; CODEOWNERS / Hard-Rule-8). `check()` runs **L4 first** (`enforcer.rs:220`): default-Novice → `Exec forbidden in tier Novice` at *any* user tier — the maintainer's exact error. Even tier-fixed, **L1** denies: `mcp_tool_capability` needs Exec/**Irreversible** (`dispatch.rs:74/87`) while `grant_framework_capabilities` produces Exec/**Pure** (`capability_map.rs:148`), and `subsumes` requires exact `side_effect_class` equality. The tier *already* threads to the run-session enforcer — the original "seam drops the tier" diagnosis was wrong (escalated, re-scoped). This gap is in **both** the Tester and production dispatcher construction (production is latent in v0.1 — only the no-tools smoke runs there — but real).
+2. **UI v2 (DESIGN.md).** The Tester `Expand` grows the modal/canvas whitespace not the watch frame; the results section has no progressive disclosure; settings disclosure covers only budget.
 
 ### D.fix2.2 Files to change
-**`<wire_signature_audit>` — the build pins exact file:line at red (the iteration-1 diff is local):**
-- `run_test_session_with_tools` (the iteration-1 seam) + its `test_framework` call site — confirm it does **not** thread `tier` (the regression), against `run_test_session_with_tier` / `run_test_session_with_skills` which *do* (the archetype to match).
-- `test_framework` (`commands.rs:1745`) — the tracked-tier read (`:1758`) and where it now routes through the new seam.
-- The L4 Exec gate (the enforcer) denying MCP-tool Exec at Novice — the behavior the regression test asserts *through the seam*.
-- **UI:** `src/components/builder/TesterModal.tsx` (the Expand handler + the watch-frame layout — what must grow vs the modal chrome; the results section); `src/components/SettingsPanel.tsx` (the section list to make uniformly collapsible); `DESIGN.md` (the disclosure / sizing principles).
+**`<wire_signature_audit>` — pin at red:**
+- `build_test_mcp_dispatcher` (`commands.rs:1699`, bare `CapabilityEnforcer::new()` @`:1709`) + production `build_mcp_dispatcher` (`:271`, @`:282`) — both replace the bare enforcer with `build_session_mcp_enforcer(framework, tier)`; thread `framework` + `tier` to each call site (`test_framework` holds the tracked tier; the production caller is `run_smoke_session`).
+- The new `build_session_mcp_enforcer(framework, tier) -> CapabilityEnforcer`.
+- `CapabilityEnforcer::grant(&mut self, agent, CapabilityDeclaration)` (`enforcer.rs:102`) + `set_tier` — build the enforcer **mut**, grant + set_tier, then `Arc::new` (grant takes `&mut`).
+- `mcp_tool_capability(server, tool) -> CapabilityDeclaration` (Exec/Irreversible, `dispatch.rs:74/87`) — the grant that L1-subsumes the dispatch requirement; the `server__tool` → (server, tool) split.
+- The dispatcher `check()` (`dispatch.rs:192`; L4-first `enforcer.rs:220`); `capability_map.rs:148` (the framework grant's Pure class — the contrast that explains why the generic grant doesn't subsume).
+- **UI:** `TesterModal.tsx` (Expand handler + watch-frame layout + results section); `SettingsPanel.tsx` (the sections); `DESIGN.md`.
 
-Files: the new seam's tier-threading (Rust — the 🔴 commit); the regression-pin test; `TesterModal.tsx` (Expand-frame + results disclosure); `SettingsPanel.tsx` (all-section disclosure); their tests; `docs/execution-status.md` (the slice row, flipped on the re-IRL).
+Files: `build_session_mcp_enforcer` + both dispatcher call sites (Rust — the 🔴 commit); its unit test; the assembled regression update; `TesterModal.tsx`; `SettingsPanel.tsx`; their tests; `docs/execution-status.md` (the ledger correction + the slice row, flipped on the re-IRL).
 
 ### D.fix2.3 Detailed changes
-1. **Thread the tracked tier through the new seam (the 🔴).** Add the `tier` parameter to `run_test_session_with_tools` (mirroring `run_test_session_with_tier`) and pass `test_framework`'s tracked `tier` (`commands.rs:1758`) through it to the run. No enforcer change — the enforcer already honors the tier; the fix is that the tier reaches it. Mutation **BLOCKING** (L4 tier enforcement).
-2. **Regression pin (mutant-killer).** A test driving the **`test_framework`-equivalent tracked-tier path** (not the seam called with an explicit tier): at Promoted the MCP tool's Exec is allowed (the tool runs); at Novice it is denied (`CapabilityViolation { Exec }`). This pins that the tracked tier reaches the enforcer *through the new seam* — the exact gap iteration-1 left.
-3. **UI v2 (DESIGN.md, separate commits).** `TesterModal` Expand grows the watch frame (canvas + OUTPUT + run-trace), not the modal chrome; the results section (PASS/FAIL card + trace) gets progressive disclosure; `SettingsPanel` makes **every** section collapsible. Each cites its DESIGN.md principle; each its own render/e2e test.
+1. **`build_session_mcp_enforcer(framework, tier)` (the 🔴).** Build a `CapabilityEnforcer`, `set_tier(tier)`, then for each agent, for each `allowed_tools` entry that is an MCP name (`server__tool`), `grant(agent.id, mcp_tool_capability(server, tool))`; return it (the caller `Arc`-wraps). Wire it into **both** `build_test_mcp_dispatcher` and `build_mcp_dispatcher`, replacing the bare `new()`. Granting `mcp_tool_capability` (the exact Exec/Irreversible declaration the dispatch requires) resolves the L1 subsume; `set_tier(Promoted)` resolves L4. No new transport, no dispatch-logic change, no schema change. Mutation **BLOCKING** (capability-enforcement construction).
+2. **Authored-only boundary (mutant-killer).** Grant only each agent's *own* `allowed_tools` MCP entries (per-agent `grant`) — an unauthored / other-agent tool stays denied. Pinned by a unit test.
+3. **UI v2 (DESIGN.md, separate commits).** `TesterModal` Expand grows the watch frame (canvas + OUTPUT + run-trace); the results section (PASS/FAIL card + trace) gets progressive disclosure; `SettingsPanel` makes **every** section collapsible. Each cites its DESIGN.md principle; each its own render/e2e test.
+4. **Ledger correction.** `docs/execution-status.md` "MCP dispatch executes" → qualify: dispatch was wired but the dispatcher enforcer was never framework-/tier-wired, so a real MCP tool is enforced-and-dispatched for the first time here; re-assert on the re-IRL.
 
 ### D.fix2.4 Tests
-The regression-pin (Rust, #2) is the core — it fails today (Exec denied at Promoted because the tier is dropped) and passes once the tier threads. Plus the three UI render/e2e tests (Expand-frame; results disclosure; all-section settings disclosure). No weakening of any M09 / iteration-1 test.
+The `build_session_mcp_enforcer` unit is the core: at **Promoted** an authored MCP tool's `mcp_tool_capability` is granted + tier-allowed → `check()` passes; at **Novice** → L4-denied; an **unauthored** tool → not granted → L1-denied (the authored-only boundary). Plus the assembled regression extended to run through the **real dispatcher enforcer** (Promoted ⇒ the MCP tool runs + the file lands; Novice ⇒ denied). Plus the three UI tests. No weakening of any prior test.
 
 ### D.fix2.5 construction_reachability_check
-`inputs_reachable="false"`: the maintainer's tracked Promoted tier is set (Settings + log) but **does not reach the run** through the new seam (defaults to Novice) → the MCP tool's Exec is denied → the slice can't complete. Iteration 2 inverts it: the seam threads the tracked tier. Verify by the regression-pin (Promoted ⇒ Exec allowed through the seam) + the maintainer re-IRL (a real `out/result.txt` lands at Promoted).
+`inputs_reachable="false"`: the dispatcher's enforcer is bare (default-Novice, no grants) → `try_mcp_dispatch`'s `check()` denies the authored MCP tool on L4 (Novice) and L1 (wrong grant class) at any user tier → the slice can't complete. Iteration 2 inverts it: `build_session_mcp_enforcer` sets the tier + grants `mcp_tool_capability` per authored tool, in both dispatchers. Verify by the unit (Promoted⇒allowed / Novice⇒denied / unauthored⇒denied), the assembled run, and the maintainer re-IRL.
 
 ### D.fix2.6 Close gate
-Strict v1.11 two-commit: write all failing tests (the tier regression-pin + the three UI tests), right-reason red, commit `test(M09.D.fix): …`, **surface red**; then implement as distinct commits untouching tests — the tier-threading [mutation **BLOCKING**] + the three UI fixes — red→impl test diff EMPTY (binary-crate variant via a scoped `#[cfg(test)]` diff if in-source). Full Rust (runtime-main/runtime-mcp ≥95) + frontend gates + both e2e legs. **The maintainer re-IRL is the authoritative close** — at Promoted, in a Tester whose content frame grows: a real `out/result.txt` lands in-scope, an out-of-scope write is denied, observable in-app. **Flip the execution-status row** on that. **ADR-0008 iteration 2 — if the re-IRL still fails, escalate (do not iterate a third time).**
+Strict v1.11 two-commit: write all failing tests (the `build_session_mcp_enforcer` unit + the assembled-through-the-real-enforcer regression + the three UI tests), right-reason red, commit `test(M09.D.fix): …`, **surface red**; then implement as distinct commits untouching tests — `build_session_mcp_enforcer` + both dispatcher wirings [mutation **BLOCKING**] + the three UI fixes — red→impl test diff EMPTY (binary-crate variant via a scoped `#[cfg(test)]` diff if in-source). Full Rust (runtime-main/runtime-mcp ≥95) + frontend gates + both e2e legs. **The maintainer re-IRL is the authoritative close** — Promoted, in a Tester whose content frame grows: a real `out/result.txt` lands in-scope, denied out-of-scope, observable in-app. **Flip the execution-status row** + apply the ledger correction. **ADR-0008 iteration 2 — if the re-IRL still fails, escalate (do not iterate a third time).**
 
 ### D.fix2.7 CLI prompt
 ```xml
 <work_stage_prompt id="M09.D.fix">
   <context>
-    M09.D.fix ITERATION 2 (ADR-0008 last iteration). Iteration-1 closed the original
-    wiring red (the MCP tool injected + called + dispatch reached — proven in the
-    re-IRL) but introduced a regression: the new run_test_session_with_tools seam
-    drops the tracked tier. test_framework reads Promoted (commands.rs:1758) yet the
-    run enforced Novice, so the MCP tool's Exec was denied though the maintainer is
-    Promoted (Settings + the request_tier_transition→Promoted log). Fail-safe
-    (over-restrictive, not an escalation) but it blocks the slice and silently breaks
-    the M08.8.C tracked-tier pickup for every Tester run. The gates missed it because
-    the assembled regression passes Promoted explicitly to the seam, bypassing the
-    test_framework→seam path. PRIMARY (red): thread the tracked tier through
-    run_test_session_with_tools exactly as run_test_session_with_tier / _with_skills
-    do; regression-pin via the test_framework-equivalent tracked-tier path (Promoted
-    ⇒ Exec allowed through the seam, Novice ⇒ denied) — its own mutation-BLOCKING
-    commit (L4). BUNDLED UI v2 (DESIGN.md, separate commits): Expand grows the watch
-    frame (canvas + OUTPUT + run-trace) not the modal chrome; Tester results
-    progressive disclosure; settings disclosure on EVERY section (iteration-1 did
-    budget only). Surface red first; no flip until the maintainer re-IRL. If the
-    re-IRL still fails, ESCALATE — do not iterate a third time.
+    M09.D.fix ITERATION 2 (ADR-0008 last; maintainer-approved Hard-Rule-8 plan).
+    Iteration-1 closed the original wiring red (the MCP tool injected + called +
+    dispatch reached). The re-IRL then FAILed at Novice though the maintainer is
+    Promoted — NOT because the seam drops the tier (it threads correctly). The real
+    denial is the MCP dispatcher's OWN enforcer: build_test_mcp_dispatcher
+    (commands.rs:1709) and production build_mcp_dispatcher (:282) build a bare
+    CapabilityEnforcer::new() (default-Novice, no grants) — a docstring-flagged stub
+    (commands.rs:255-266, "framework-/tier-wired by the loop that drives it";
+    CODEOWNERS/Hard-Rule-8), never wired because no real MCP tool dispatched until
+    M09. try_mcp_dispatch's check (dispatch.rs:192) denies on L4 (Novice, any user
+    tier) and, even tier-fixed, on L1 (mcp_tool_capability is Exec/Irreversible
+    dispatch.rs:74/87; the framework grant is Exec/Pure capability_map.rs:148;
+    subsumes needs exact side_effect_class equality). FIX (the red): a
+    build_session_mcp_enforcer(framework, tier) helper — set_tier(tier) +
+    grant(agent_id, mcp_tool_capability(server, tool)) per authored MCP tool per
+    agent (build mut, then Arc::new; grant is &mut self, enforcer.rs:102) — wired into
+    BOTH dispatchers, replacing the bare new(). Grant ONLY each agent's own
+    allowed_tools MCP entries (authored-only boundary; mutant-killer). Correct the
+    execution-status "MCP dispatch executes" claim. BUNDLED UI v2 (DESIGN.md, separate
+    commits): Expand grows the watch frame; Tester results disclosure; settings
+    disclosure on EVERY section. Surface red first; no flip until the maintainer
+    re-IRL. If the re-IRL still fails, ESCALATE — do not iterate a third time.
   </context>
   <read_first>
     <file>docs/build-prompts/M09-workbench-vertical-slice.md (Stage M09.D.fix — Iteration 2, D.fix2.1–D.fix2.6; and the iteration-1 section)</file>
-    <file>the iteration-1 diff (local): run_test_session_with_tools + its test_framework call site (PIN whether it threads tier); run_test_session_with_tier / run_test_session_with_skills (the tier/extra-arg archetypes to match); the test_framework tracked-tier read (commands.rs:1758)</file>
-    <file>crates/runtime-main/src/builder/tester.rs (the run-session seams + test_agent_config) + the L4 Exec enforcer (the gate denying MCP Exec at Novice) + crates/runtime-main/tests/capability_live_tool.rs (the assembled tier-path pattern — promoted_write_inside_scope_runs is the archetype)</file>
-    <file>DESIGN.md (progressive-disclosure / panel-sizing principles) + src/components/builder/TesterModal.tsx (Expand handler + watch-frame layout + results section) + src/components/SettingsPanel.tsx (the sections) + docs/adr/0021-* + docs/adr/0008-* (the 2-iteration cap) + CLAUDE.md §4 rule 11 / §5/§6/§8</file>
+    <file>src-tauri/src/commands.rs (build_test_mcp_dispatcher @1699 + the bare CapabilityEnforcer::new() @1709; build_mcp_dispatcher @271 + @282 + the docstring @255-266; the test_framework tracked-tier read; run_smoke_session as the build_mcp_dispatcher caller)</file>
+    <file>crates/runtime-mcp/src/dispatch.rs (mcp_tool_capability @74 / Irreversible @87; the check() path @192) + crates/runtime-main/src/capability/enforcer.rs (grant @102; set_tier; L4-first @220; new() default-Novice @63/84) + crates/runtime-main/src/capability/capability_map.rs:148 (the framework grant's Pure class — contrast)</file>
+    <file>crates/runtime-main/tests/capability_live_tool.rs (the assembled tier-path archetype) + crates/runtime-main/src/sdk/agent_sdk.rs (try_mcp_dispatch @884)</file>
+    <file>DESIGN.md (progressive-disclosure / panel-sizing) + src/components/builder/TesterModal.tsx (Expand handler + watch-frame layout + results section) + src/components/SettingsPanel.tsx + docs/execution-status.md (the ledger row) + docs/adr/0021-* + docs/adr/0008-* + CLAUDE.md §4 rule 8 + rule 11 / §5/§6/§8</file>
   </read_first>
-  <deliverable>run_test_session_with_tools threads the tracked tier (test_framework's Promoted reaches the run), pinned by a regression test driving the test_framework-equivalent tracked-tier path (Promoted ⇒ MCP Exec allowed through the seam, Novice ⇒ denied); plus the DESIGN.md UI v2 (Expand grows the watch frame; Tester results progressive disclosure; settings disclosure on every section). The tier fix is its own mutation-blocked commit. Closes M09.D on the maintainer re-IRL.</deliverable>
-  <tdd_discipline strict="true">Write all failing tests first (the tier regression-pin — Exec denied at Promoted today because the tier is dropped; the three UI render/e2e tests) → commit test(M09.D.fix): … (red) → SURFACE RED. Then implement as distinct commits untouching tests (tier-threading [mutation BLOCKING]; Expand-frame + results disclosure; settings all-section disclosure); git diff &lt;red&gt;..&lt;impl&gt; over test paths EMPTY (binary-crate variant via a scoped #[cfg(test)] diff if the Rust test is in-source). Net-new/mechanical test fixups in separate labelled follow-ups.</tdd_discipline>
-  <wire_signature_audit>PIN at red: run_test_session_with_tools signature + its test_framework call site (does it thread tier? — the regression); run_test_session_with_tier (commands.rs:1758 → tier) as the archetype; the L4 Exec gate that denies MCP Exec at Novice. UI: TesterModal Expand handler + watch-frame layout + results section; SettingsPanel sections; the DESIGN.md principle ids.</wire_signature_audit>
+  <deliverable>A build_session_mcp_enforcer(framework, tier) helper (set_tier + per-authored-tool, per-agent mcp_tool_capability grants) wired into BOTH build_test_mcp_dispatcher and build_mcp_dispatcher, replacing the bare CapabilityEnforcer::new() — so a canvas-authored MCP tool passes the dispatcher's L4 (tier) + L1 (grant) checks at Promoted and is denied at Novice / when unauthored. Unit-tested (Promoted⇒allowed / Novice⇒denied / unauthored⇒denied); the assembled regression runs through the real dispatcher enforcer (Promoted ⇒ the tool runs + the file lands). The execution-status "MCP dispatch executes" claim corrected. Plus the DESIGN.md UI v2 (Expand watch-frame; Tester results disclosure; settings all-section disclosure). The enforcer fix is its own mutation-blocked commit. Closes M09.D on the maintainer re-IRL.</deliverable>
+  <tdd_discipline strict="true">Write all failing tests first (the build_session_mcp_enforcer unit — Promoted⇒allowed/Novice⇒denied/unauthored⇒denied; the assembled-through-the-real-enforcer regression; the three UI render/e2e tests) → commit test(M09.D.fix): … (red) → SURFACE RED. Then implement as distinct commits untouching tests (build_session_mcp_enforcer + both dispatcher wirings [mutation BLOCKING]; Expand-frame + results disclosure; settings all-section disclosure); git diff &lt;red&gt;..&lt;impl&gt; over test paths EMPTY (binary-crate variant via a scoped #[cfg(test)] diff if the Rust test is in-source). Net-new/mechanical test fixups in separate labelled follow-ups.</tdd_discipline>
+  <wire_signature_audit>PIN at red: build_test_mcp_dispatcher (commands.rs:1709 bare new()) + build_mcp_dispatcher (:282) + their call sites (thread framework + tier); build_session_mcp_enforcer (new); CapabilityEnforcer::grant (enforcer.rs:102, &mut) + set_tier; mcp_tool_capability (dispatch.rs:74/87, Exec/Irreversible); the dispatcher check() (dispatch.rs:192) + L4-first (enforcer.rs:220); the server__tool split.</wire_signature_audit>
   <construction_reachability_check ref="docs/build-prompts/M09-workbench-vertical-slice.md" section="D.fix2.5"/>
   <execution_steps>
     <step name="ground_at_red" budget="1"/>
@@ -819,25 +827,25 @@ Strict v1.11 two-commit: write all failing tests (the tier regression-pin + the 
   </execution_steps>
   <close_gate>
     <real_app_irl>Maintainer (Promoted), in a Tester whose content frame grows: re-run the in-scope task — a real C:/…/out/result.txt lands from real MCP data; the out-of-scope write is denied (no file); the run + results are readable in-app. THE authoritative close (rule 11 / ADR-0021); licenses the flip.</real_app_irl>
-    <mutation_gate blocking="true">BLOCKING on the tier-threading branch (L4 enforcement — decides the run's tier). Advisory on the UI commits.</mutation_gate>
+    <mutation_gate blocking="true">BLOCKING on build_session_mcp_enforcer + the dispatcher enforcer wiring (capability-enforcement construction — decides whether the MCP tool runs). Advisory on the UI commits.</mutation_gate>
     <design_review>Expand grows the watch frame (not the chrome); the Tester results + every settings section follow the DESIGN.md disclosure principle.</design_review>
-    <cumulative_regression>the tier regression-pin + the three UI tests join the suites; the execution-status slice row flipped.</cumulative_regression>
+    <cumulative_regression>the build_session_mcp_enforcer unit + the assembled-through-the-real-enforcer regression + the three UI tests join the suites; the execution-status row flipped + the ledger correction applied.</cumulative_regression>
   </close_gate>
   <approval_surface>
     <item>cross-machine state + the red→impl diff over test paths (EMPTY), distinct commits</item>
-    <item>the tier-threading root cause confirmed (the seam dropped tier; file:line) + the blocking mutation result + the regression-pin (Promoted ⇒ Exec allowed through the seam)</item>
-    <item>Rust + frontend gates + both e2e legs; the Expand-frame + disclosure design-review</item>
+    <item>the dispatcher-enforcer root cause confirmed (bare new() in both; file:line) + the blocking mutation result + the unit (Promoted⇒allowed/Novice⇒denied/unauthored⇒denied)</item>
+    <item>Rust + frontend gates + both e2e legs; the Expand-frame + disclosure design-review; the ledger correction</item>
     <item>explicit: "M09.D.fix iteration 2 is ready. I will not commit until you approve; the flip waits on your re-IRL. If the re-IRL fails I escalate, not iterate."</item>
   </approval_surface>
   <scope_locks>
-    <lock>The red is tier-threading only — add tier to the new seam + pass test_framework's tracked tier; no enforcer/dispatch/transport/schema change.</lock>
-    <lock>UI v2 is DESIGN.md-grounded, separate commits behind the red; do not fold UI into the tier commit.</lock>
+    <lock>The red is the dispatcher-enforcer wiring only — build_session_mcp_enforcer (set_tier + per-authored-tool mcp_tool_capability grants) in both dispatchers; no dispatch-logic/transport/schema change; grant only each agent's OWN allowed_tools MCP entries.</lock>
+    <lock>UI v2 is DESIGN.md-grounded, separate commits behind the red; do not fold UI into the enforcer commit.</lock>
     <lock>The verdict-on-gap-suspend truthfulness gap stays OUT of scope (tech-debt / M10).</lock>
     <lock>ADR-0008 iteration 2 — the last; if the re-IRL still fails, escalate, do not iterate a third time. No flip on green alone.</lock>
   </scope_locks>
   <gates milestone="M08"/>
   <retrospective_requirements ref="docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md">
-    <special_log>That iteration-1's new seam dropped the tracked tier (a regression the explicit-tier assembled test couldn't catch — the test_framework→seam path was the gap); the regression-pin that now covers it; the UI v2; the maintainer re-IRL result; that this was iteration 2 (the ADR-0008 cap).</special_log>
+    <special_log>That the original D.fix.9 diagnosis (seam drops tier) was wrong (the tier threads); the real cause was the dispatcher's bare enforcer (both Tester + prod) — escalated per Hard Rule 8 before burning the iteration; the L4 + L1 layers; the build_session_mcp_enforcer fix + the authored-only boundary; the ledger correction; the re-IRL result; that this was iteration 2 (the ADR-0008 cap).</special_log>
   </retrospective_requirements>
   <commit_protocol ref="CLAUDE.md" section="8. PR + commit workflow (CRITICAL — read carefully)"/>
   <commit_message ref="docs/build-prompts/M09-workbench-vertical-slice.md" section="Stage M09.D.fix — Iteration 2"/>
@@ -846,19 +854,21 @@ Strict v1.11 two-commit: write all failing tests (the tier regression-pin + the 
 
 ### D.fix2.8 Commit messages
 ```
-test(M09.D.fix): failing tier-threading regression pin + UI-v2 tests (red)
+test(M09.D.fix): failing dispatcher-enforcer + UI-v2 tests (red)
 
-fix(M09.D.fix): thread the tracked tier through run_test_session_with_tools
+fix(M09.D.fix): wire the MCP dispatcher's enforcer (tier + per-tool grants)
 
-Iteration-1 added run_test_session_with_tools to inject the MCP tool defs but
-did not thread the tracked tier, so the run defaulted to Novice: the re-IRL
-enforced Novice and denied the MCP tool's Exec though the maintainer is
-Promoted (commands.rs:1758 reads Promoted; the seam dropped it). Add the tier
-param to the new seam and pass test_framework's tracked tier through it,
-mirroring run_test_session_with_tier. Regression pin drives the
-test_framework-equivalent tracked-tier path (Promoted -> Exec allowed through
-the seam; Novice -> denied) so the gap can't recur. Fail-safe regression
-(over-restrictive), no enforcer change. Mutation-blocking (L4).
+The iteration-1 re-IRL FAILed at Novice though the maintainer was Promoted.
+Root cause (escalated per Hard Rule 8, the seam-drops-tier diagnosis was
+wrong): try_mcp_dispatch checks the McpDispatcher's OWN enforcer, which
+build_test_mcp_dispatcher / build_mcp_dispatcher built as a bare
+CapabilityEnforcer::new() (default-Novice, no grants) — never framework-/tier-
+wired. It denied L4 (Novice, any tier) and, even tier-fixed, L1
+(mcp_tool_capability is Exec/Irreversible; the framework grant is Exec/Pure;
+subsumes needs exact equality). Add build_session_mcp_enforcer(framework, tier)
+(set_tier + per-authored-tool, per-agent mcp_tool_capability grants) and wire
+it into both dispatchers, replacing the bare new(). Grant only each agent's own
+allowed_tools MCP entries (authored-only boundary). Mutation-blocking.
 
 feat(M09.D.fix): Tester Expand grows the watch frame + results disclosure
 
