@@ -25,21 +25,23 @@ A chatbot wrapper. A framework. A general-purpose terminal. A low-code tool for 
 - **Persistence:** SQLite (WAL mode) via `rusqlite`
 - **IPC:** Tauri typed IPC (renderer ↔ main); Unix socket / Windows named pipe with framed JSON (main ↔ drone)
 
-Stack rationale: [ADR-0002](docs/adr/0002-tauri-rust-over-electron.md).
+Stack rationale: [ADR-0002](docs/adr/0002-tauri-over-electron.md).
 
 ## Status
 
-In flight. Per [`docs/MVP-v0.1.md`](docs/MVP-v0.1.md):
+In flight. [`CHANGELOG.md`](CHANGELOG.md) and [`docs/MVP-v0.1.md`](docs/MVP-v0.1.md) are authoritative; per-milestone summaries live in [`docs/build-prompts/retrospectives/`](docs/build-prompts/retrospectives/).
 
-- [x] **M01 Foundation** — Cargo workspace + 5 crates + typify codegen + drone Phase 1 + Tauri 2.x shell + React skeleton
-- [x] **M02 Event Pipeline** — `LLMProvider` trait + `AnthropicProvider` + IPC + OS keychain + smoke session against live Anthropic
-- [x] **M03 Live Graph** — React Flow v12 + 11 node types + SQL inspector + cold-start replay + dagre layout
-- [x] **M04 Plan / Verify / HITL / Budget** — Plan FSM + Verify hooks + Rails + HITL (3 UI variants × 9 triggers) + Budget enforcer + Recovery
-- [x] **M04.5 Protocol Iteration** — `docs/gotchas.md` graduations + ADR-0007 (in-process HITL seam) + STAGE-PROMPT-PROTOCOL v1.4
-- [ ] **M05 Gap + Capability** — §4b gap detection + capability enforcer (L1–L5) + sandbox subprocess + tier system + audit log + GapPanel *(next)*
-- [ ] **M06–M11** — MCP basic, Registry import, Workbench Builder Canvas, Generators, First-run + polish, Signed installer *(planned)*
+- [x] **M01 Foundation** — Cargo workspace + crates + typify codegen + drone Phase 1 + Tauri 2.x shell + React skeleton
+- [x] **M02 Event Pipeline** — `LLMProvider` + `AnthropicProvider` + IPC + OS keychain + live-Anthropic smoke session
+- [x] **M03 Live Graph** — React Flow v12 + node types + SQL inspector + cold-start replay + dagre layout
+- [x] **M04 Plan / Verify / HITL / Budget** — Plan FSM + Verify hooks + Rails + HITL + Budget enforcer + Recovery
+- [x] **M05 Gap + Capability** — §4b gap detection + capability enforcer (L1–L5) + sandbox subprocess + tier system + audit log
+- [x] **M06 MCP** — MCP client + stdio/HTTP transports + server registry (incl. M06.5 IRL fix + resilience)
+- [x] **M07 Registry import** — artifact import + validate/commit lifecycle + SSRF egress hardening + tier gate
+- [x] **M08 Workbench** — Builder Canvas + Tester + design-workbench passes (M08.5–M08.8)
+- [ ] **M09–M11** — Generators, first-run + polish, signed installer *(planned)*
 
-The runtime binary builds; M04 acceptance criteria are met end-to-end. See [`CHANGELOG.md`](CHANGELOG.md) for milestone-by-milestone history.
+The runtime binary builds and runs sessions end-to-end against the live Anthropic API. See [`CHANGELOG.md`](CHANGELOG.md) for the full milestone history.
 
 ## Quick start
 
@@ -63,11 +65,12 @@ For a full IRL feature walkthrough (50+ manual test cases covering M01→M04): [
 | [`agent-runtime-spec.md`](agent-runtime-spec.md) | The contract. Capability matrix (§0a), scope matrix (§0d), all phases. |
 | [`docs/MVP-v0.1.md`](docs/MVP-v0.1.md) | v0.1 milestone breakdown + acceptance criteria. |
 | [`CLAUDE.md`](CLAUDE.md) | Working agreement for AI-assisted development: hard rules, TDD discipline, quality gates, PR workflow. |
-| [`docs/adr/`](docs/adr/) | Architecture decision records (currently 0001–0007). |
-| [`docs/gotchas.md`](docs/gotchas.md) | 65 named traps surfaced during M01–M04 build. |
+| [`docs/adr/`](docs/adr/) | Architecture decision records (0001–0029). |
+| [`docs/gotchas.md`](docs/gotchas.md) | Named traps surfaced during the build. |
 | [`docs/gap-analysis.md`](docs/gap-analysis.md) | Cumulative product↔spec audit, per-milestone, append-only. |
-| [`STAGE-PROMPT-PROTOCOL.md`](STAGE-PROMPT-PROTOCOL.md) | XML schema for milestone stage prompts (v1.4). |
+| [`STAGE-PROMPT-PROTOCOL.md`](STAGE-PROMPT-PROTOCOL.md) | XML schema for milestone stage prompts (v1.8). |
 | [`SECURITY.md`](SECURITY.md) | Vulnerability disclosure process. |
+| [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model — assets, trust boundaries, L1–L5 defenses. |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contributing guide + DCO sign-off. |
 
 ## ARIA — reference framework
@@ -82,7 +85,7 @@ None. The runtime collects nothing about the user — no analytics, no crash rep
 
 ## License + contributing
 
-Apache 2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+Apache 2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). The code license does not grant rights to the project name or logo — see [`TRADEMARKS.md`](TRADEMARKS.md).
 
 Contributions accepted via PR with DCO sign-off (`git commit -s`). See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the engineering charter (TDD, quality gates, schema-as-source-of-truth, ADRs for capability / IPC / schema changes).
 

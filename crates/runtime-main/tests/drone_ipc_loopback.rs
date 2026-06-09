@@ -86,7 +86,13 @@ impl DroneFixture {
 
     async fn connect(&self) -> DroneClient {
         let addr = socket_to_addr(&self.socket);
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        // 30s (not 5s): under heavy parallel CI load on windows-latest the
+        // drone subprocess's named-pipe creation can be CPU-starved well past
+        // 5s, intermittently tripping this connect with os error 2 ("the
+        // system cannot find the file specified") before the pipe exists. The
+        // drone is healthy — it's slow to come up under contention — so widen
+        // the retry window rather than fail a flaky connect.
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
         loop {
             match DroneClient::connect(&addr).await {
                 Ok(c) => return c,
