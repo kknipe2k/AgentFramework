@@ -1317,3 +1317,179 @@ The metric cards ship and render (B.fix built the Result/Verify/Tokens/Spend gri
 ### Recommended approach (when addressed)
 
 Add an assertion to `design_conformance.e2e.ts:96` that a `[data-testid="tester-metrics"]` (or a `[data-testid^="metric-"]` card) element is displayed inside the opened Tester modal, so the metric cards join the real-app regression suite. ~10 min; fold into any Tester-modal e2e touch.
+
+---
+
+<!--
+TD-050 … TD-057 are NOT the usual 🟢 "noted, not blocking" Stage-V debt. They are
+the eight Critical (🔴) findings of the 2026-06-09 maintainer-commissioned external
+review (`docs/code-design-review-2026-06-09.md`), logged here at the maintainer's
+request as the orchestrator's actionable pickup queue for the turns after the
+current fix cycle. Severity is stated per entry. They share a root cause: the
+review found the product's *internal* security model strong but its *perimeter*
+trust boundaries weak — adversarial inputs, local IPC endpoints, renderer/model
+paths, network failure modes, and a documented-but-absent gate — exactly the
+surface the IRL/happy-path verification culture does not exercise. Treat as
+fix-backlog, not benign debt. Each "Why it's debt not a bug" field states the
+honest current-risk bound (rule 11), not a claim that the code is correct.
+-->
+
+## TD-050 — WebView CSP is `null`; all four Zustand stores exposed on `window` unconditionally
+
+**Date logged:** 2026-06-09
+**Found by:** manual external review 2026-06-09 (Critical C1)
+**Pass that surfaced it:** N/A (static review — assembled app NOT run)
+**Category:** structural (security — perimeter trust boundary). **Severity: 🔴**
+**Resolution status:** open
+
+### Description
+
+`src-tauri/tauri.conf.json:23` sets `"csp": null` — the WebView enforces no Content-Security-Policy. Separately, `src/App.tsx:77-82` assigns `window.__graphStore`, `window.__builderStore`, `window.__testGraphStore`, `window.__toastStore` at module load with no `import.meta.env.DEV` gate (the comment marks it intentional). Together: any script that reaches the WebView runs unrestricted and gets a typed, direct write path into runtime state — including fabricating `AgentEvent`s the `graphStore.applyEvent` reducer trusts.
+
+### Why it's debt not a bug (current-risk bound)
+
+This is a latent security gap, not benign debt. Today's reachability is narrow: local-only app, no remote content, no `dangerouslySetInnerHTML` anywhere in `src/`, model output rendered only into `<pre>`/text nodes. So there is no *known* live injection vector at M08.9. The risk grows monotonically as M09–M13 render more model-generated content; it directly contradicts Tauri 2 hardening guidance.
+
+### Recommended approach (when addressed)
+
+Set a restrictive CSP in `tauri.conf.json` (`default-src 'self'`; explicit `style-src` allowance for the token CSS; no `unsafe-inline` for scripts). Gate the four `window.__*Store` assignments behind `import.meta.env.DEV`. Evaluate Tauri's isolation pattern for the IPC layer. ~1–2 hrs incl. verifying the dev-tools/e2e harnesses that rely on the window stores still work (they likely run in DEV, so the gate is safe). Land before M09 merges.
+
+## TD-051 — Renderer-supplied filesystem paths reach `fs` unconfined (`save_framework`/`load_framework`/`import_artifact`)
+
+**Date logged:** 2026-06-09
+**Found by:** manual external review 2026-06-09 (Critical C2)
+**Pass that surfaced it:** N/A (static review)
+**Category:** structural (security — path traversal / perimeter). **Severity: 🔴**
+**Resolution status:** open
+
+### Description
+
+`src-tauri/src/commands.rs:1508-1538` — `save_framework`/`load_framework` take a raw `dir: String` from the renderer and pass it to `Path::new(&dir)` with no containment check. `commands.rs:1333-1350` — `import_artifact` with `source_kind == "file"` passes `location` straight to `ImportSource::File`. The OS file dialog (`dialog:allow-open`) is a UX affordance; nothing stops a direct `invoke("save_framework", {dir: "../../etc", ...})`.
+
+### Why it's debt not a bug (current-risk bound)
+
+Latent traversal vector, not benign debt. It is not independently exploitable today — it requires a renderer-side foothold (which TD-050's null CSP makes cheaper, so the two compound). The import path's L3 sandbox + schema validation mitigate *consequences* of a hostile import but not the *origin* path.
+
+### Recommended approach (when addressed)
+
+Confine renderer-supplied paths: prefer returning a validated handle/path from the Tauri dialog plugin and accepting only those, or canonicalize and require containment under an allow-listed root (`app_local_data_dir`, user home). Apply uniformly to all three commands. ~2–3 hrs incl. tests for the rejection path. Pairs with TD-050; land before M09.
+
+## TD-052 — Built-in `Read`/`Write` never canonicalize the model-supplied path before the capability check or the IO
+
+**Date logged:** 2026-06-09
+**Found by:** manual external review 2026-06-09 (Critical C3)
+**Pass that surfaced it:** N/A (static review)
+**Category:** structural (security — undermines the capability model). **Severity: 🔴**
+**Resolution status:** open
+
+### Description
+
+`crates/runtime-main/src/sdk/builtin_tools.rs:98,119` — the raw LLM-provided path string is used for BOTH the capability scope check (`PathPattern` glob match) AND the real `std::fs::read_to_string`/`std::fs::write`. No `canonicalize`. With grant `read: /workdir/**`, a symlink `/workdir/link → /etc/passwd` passes the glob but reads outside the granted scope; unnormalized `..` segments are the simpler variant.
+
+### Why it's debt not a bug (current-risk bound)
+
+This is a real bypass of the capability scope check — the product's central promise — for the two built-ins that already "execute — observed" (E-01/E-02). Bounded today only because v0.1 grants are typically exact-path and the agent has to be induced to traverse; it is not spec-correct.
+
+### Recommended approach (when addressed)
+
+`std::fs::canonicalize` the path once, run the capability check against the canonicalized path, and perform the IO on the canonicalized path (decide and document the symlink policy explicitly — reject symlinks crossing the scope boundary, or resolve-then-check). Add `..`-traversal and symlink-escape cases to the E-02 eval (`capability_live_tool.rs`) so the regression is encoded. ~2–3 hrs. Land before M09 (M09 writes a real file at the enforced tier — this is the gate that makes that claim true).
+
+## TD-053 — Unbounded `LinesCodec` on all three IPC layers; drone Unix socket world-connectable; Windows pipe DACL still deferred
+
+**Date logged:** 2026-06-09
+**Found by:** manual external review 2026-06-09 (Critical C4)
+**Pass that surfaced it:** N/A (static review)
+**Category:** structural (security + DoS — local IPC perimeter). **Severity: 🔴**
+**Resolution status:** open
+
+### Description
+
+13 call sites use `LinesCodec::new()` (default `max_length == usize::MAX`): `runtime-drone/src/ipc.rs`, `runtime-sandbox/src/ipc.rs`, `runtime-main/src/{drone_ipc,sandbox_ipc}/connection.rs`. A peer (or a corrupted pipe) writing bytes with no newline buffers unbounded memory → OOM-DoS of the drone/sandbox. Separately `runtime-drone/src/ipc.rs:82` binds the Unix socket with no `set_permissions` (umask-dependent → typically `0755`, world-connectable); any local user can then send `QuerySessionDb` (read the session DB), `SnapshotNow`, or `GracefulShutdown`. The Windows named-pipe DACL is marked deferred "to M05" (`ipc.rs:28`) — and v0.1 is Windows-first, so the pipe is the *production* surface.
+
+### Why it's debt not a bug (current-risk bound)
+
+Two real local-perimeter gaps. The `MaxLineLengthExceeded` error arms already exist in both `From` impls — they are just unreachable because no limit is set. Bounded today by "attacker must already have local code execution," but the drone speaks to a DB of session data and accepts a shutdown command.
+
+### Recommended approach (when addressed)
+
+`LinesCodec::new_with_max_length(4 * 1024 * 1024)` at all 13 sites (one generously-large constant). After `UnixListener::bind`, `std::fs::set_permissions(path, PermissionsExt::from_mode(0o600))`. Set an explicit DACL (owner-only) on the Windows `ServerOptions` pipe — this is the Windows-first production path and should not wait. ~3–4 hrs incl. an over-size-frame rejection test and a socket-permission assertion. Land before M09.
+
+## TD-054 — No timeout on the provider HTTP/SSE path; no retry/backoff on 429/500/529
+
+**Date logged:** 2026-06-09
+**Found by:** manual external review 2026-06-09 (Critical C5)
+**Pass that surfaced it:** N/A (static review)
+**Category:** structural (robustness — liveness + resilience). **Severity: 🔴**
+**Resolution status:** open
+
+### Description
+
+`crates/runtime-main/src/providers/anthropic.rs:55-58` builds the `reqwest::Client` with only `pool_max_idle_per_host(2)` — no `connect_timeout`, no `read_timeout`. There is no `tokio::time::timeout` around `stream.next()` in the SSE run loop. A stalled connection (proxy idle-close, partition, server hang) parks the session task forever — an unkillable session. Separately: 429 is mapped to `ProviderError::RateLimit{retry_after}` but never auto-retried; 500/529 (`overloaded_error`) map to `ProviderError::Api` with no backoff and no distinct `Overloaded` variant.
+
+### Why it's debt not a bug (current-risk bound)
+
+Real liveness gap. It directly undercuts a headline product claim ("suspends cleanly") — a network stall produces a hang, not a clean suspend. No live incident is recorded because IRL sessions ran on healthy networks; the failure mode is exactly the one IRL does not exercise.
+
+### Recommended approach (when addressed)
+
+Add `connect_timeout` (~10s) and a per-read idle timeout (60–120s) on the SSE stream (wrap `stream.next()` in `tokio::time::timeout`, surfacing a typed `ProviderError::IdleTimeout`). Add `ProviderError::Overloaded` and a provider-layer bounded retry (3 attempts, exponential backoff + jitter) honoring `retry-after` on 429/500/529 — at the provider boundary, not each call site. ~4–6 hrs incl. wiremock tests for stall + 529-then-success. Land before M09 if M09 runs unattended; otherwise early M10.
+
+## TD-055 — seccomp allowlist permits `AF_INET`/`AF_INET6` sockets (no arg filter) — exfil channel + M12 `Execute` blocker
+
+**Date logged:** 2026-06-09
+**Found by:** manual external review 2026-06-09 (Critical C6)
+**Pass that surfaced it:** N/A (static review)
+**Category:** structural (security — sandbox completeness). **Severity: 🔴 (blocker for M12; 🟡 today)**
+**Resolution status:** open
+
+### Description
+
+`crates/runtime-sandbox/src/seccomp.rs:104-117` allows `socket`, `bind`, `sendto`, `recvfrom`, `recvmsg`, `sendmsg`, etc. with no BPF argument filtering. The comment at `:103` states "Unix domain sockets for IPC" but the rules permit all address families. `connect` is absent (partial mitigation — no client TCP initiation), but `bind`+`sendto` on an `AF_INET SOCK_DGRAM` socket is a reachable UDP exfiltration path, and landlock does not restrict network.
+
+### Why it's debt not a bug (current-risk bound)
+
+Today the sandbox only runs the in-process validator (no untrusted code executes inside it yet), so the exfil channel is not reachable by hostile code — hence 🟡 now. It becomes a hard 🔴 blocker the moment M12 lands `SandboxRequest::Execute` and runs `bash verify.sh` inside the fence.
+
+### Recommended approach (when addressed)
+
+Add libseccomp argument-conditional rules (`ScmpArgCompare` / `add_rule_conditional`) restricting `socket`/`bind`/`sendto` first arg to `AF_UNIX`, with a reasoning comment (the project's unsafe-discipline analog even though libseccomp is safe Rust). Add a forbidden-`AF_INET` test alongside the existing forbidden-syscall tests; also add `clone` (not just `clone3`) to the forbidden-syscall assertion for documentation completeness. Owned by the M12 H-sub-ladder ADR; do NOT remove the existing `!Execute` landlock assertion when adding the controlled-exec profile.
+
+## TD-056 — Process integrity: CLAUDE.md §5 claims a nightly `cargo-mutants` gate that does not exist in CI
+
+**Date logged:** 2026-06-09
+**Found by:** manual external review 2026-06-09 (Critical C7)
+**Pass that surfaced it:** N/A (static review of `.github/workflows/` + lefthook)
+**Category:** other (process integrity — claim↔reality drift). **Severity: 🔴 (by the project's own grounded-claims + CI-parity rules)**
+**Resolution status:** open
+
+### Description
+
+CLAUDE.md §5 states "`cargo-mutants` runs nightly on `main`" and defines a blocking mutation gate at cluster-close on execution-wiring + critical modules. `.github/workflows/` contains only `ci.yml`, `fuzz-nightly.yml`, `release.yml`; there is no `mutants` reference in any workflow or in `lefthook.yml`. The documented gate has no implementation.
+
+### Why it's debt not a bug (current-risk bound)
+
+Nothing is *broken* at runtime — but per CLAUDE.md §4 rule 11 (grounded claims) and §6 (CI-parity is a hard rule), a documented gate that does not run is precisely the "green that did not exercise the claim" pattern the project treats as its most damaging failure class. The cost is false confidence: cluster-close decisions cite a gate that isn't enforced.
+
+### Recommended approach (when addressed)
+
+Either (a) add a `mutants-nightly.yml` workflow (mirroring `fuzz-nightly.yml`) running `cargo-mutants` scoped to the §6 critical modules, and wire the cluster-close blocking check; or (b) amend CLAUDE.md §5 to state the gate is manual / run-at-cluster-close-only and remove the "runs nightly" claim. Decide which is true and make the doc and CI agree. ~2 hrs for (a) scaffold or ~15 min for (b). This is a decision for the maintainer/orchestrator, not a pure code fix.
+
+## TD-057 — Prompt injection is absent from the threat model (no spec/ADR/SECURITY coverage); MCP tool descriptions flow through untrusted
+
+**Date logged:** 2026-06-09
+**Found by:** manual external review 2026-06-09 (Critical C8)
+**Pass that surfaced it:** N/A (design-layer review)
+**Category:** other (design — threat-model gap). **Severity: 🔴 (design); goes live at M09**
+**Resolution status:** open
+
+### Description
+
+No spec section, ADR, or `docs/SECURITY.md` content addresses prompt injection — the dominant 2026 attack vector for tool-wielding agents: attacker-controlled content (a fetched web page, an MCP tool *result* or *description*) steering the agent into misusing its *granted* capabilities. `crates/runtime-mcp/src/transport/mod.rs:148-152` passes server-supplied tool descriptions into the agent's tool list with no sanitization, length cap, or documented injection note.
+
+### Why it's debt not a bug (current-risk bound)
+
+Capability enforcement (L1–L5) bounds the blast radius but is NOT a defense against injection: an injected agent can still do anything *within* its grants — e.g. read a file it's allowed to read and exfiltrate it through any network tool it's allowed to call. The surface is not live until M09 wires a real MCP tool + file write; after M09 it is.
+
+### Recommended approach (when addressed)
+
+Author a threat-model addendum (in `docs/SECURITY.md` and/or the M12 H-sub-ladder security ADR that ADR-0032 already requires but which is not yet written) that: (1) names prompt injection explicitly and states what is and is NOT defended under the semi-trusted threat model; (2) specifies concrete mitigations — MCP tool-description length cap + sanitization, source/provenance display in the UI for tool descriptions and fetched content, injection-aware HITL prompts before sensitive capability use; (3) marks the MCP description passthrough with a SECURITY note so future reviewers see the signal. Design-first item; owned with the M12 ADR but the threat-model statement should land earlier (with M09's first real MCP tool).
