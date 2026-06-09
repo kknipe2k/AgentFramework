@@ -285,7 +285,7 @@ pub async fn run_smoke_session_with<P: LLMProvider + 'static>(
 ///
 /// `try_mcp_dispatch` checks the `McpDispatcher`'s OWN enforcer (not the
 /// run-session enforcer). Both dispatcher builders previously constructed a
-/// bare [`CapabilityEnforcer::new`] (default-Novice, no grants) — the
+/// bare `CapabilityEnforcer::new()` (default-Novice, no grants) — the
 /// docstring-acknowledged stub that denied every authored MCP tool on L4
 /// (tier, any user tier) and, even tier-fixed, on L1 (the framework's
 /// `tools_called` grant is Exec/`Pure`, while `mcp_tool_capability` requires
