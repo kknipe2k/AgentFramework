@@ -181,7 +181,17 @@ pub async fn run_smoke_session(
             let audit = app
                 .try_state::<Arc<runtime_main::audit::AuditWriter>>()
                 .map(|w| w.inner().clone());
-            build_mcp_dispatcher(client.inner().clone(), audit, &session_id)
+            // M09.D.fix iter2: the no-tools smoke has no candidate framework /
+            // tracked tier — pass an empty framework + the default Novice tier
+            // (no grants; behaviorally identical to the prior bare enforcer;
+            // latent — the smoke drives no MCP tool). Hard-Rule-8: surfaced.
+            build_mcp_dispatcher(
+                client.inner().clone(),
+                audit,
+                &session_id,
+                &empty_smoke_framework(),
+                Tier::Novice,
+            )
         });
     let result = run_smoke_session_with(
         provider,
@@ -270,18 +280,76 @@ pub async fn run_smoke_session_with<P: LLMProvider + 'static>(
 /// `CapabilityEnforcer` construction is CODEOWNERS-flagged (Hard Rule
 /// 8); the M07.D1 construction-reachability map + this function are the
 /// surfaced plan.
+/// Build the MCP dispatcher's capability enforcer, framework-/tier-wired
+/// (M09.D.fix iteration 2; CODEOWNERS / Hard-Rule-8).
+///
+/// `try_mcp_dispatch` checks the `McpDispatcher`'s OWN enforcer (not the
+/// run-session enforcer). Both dispatcher builders previously constructed a
+/// bare [`CapabilityEnforcer::new`] (default-Novice, no grants) — the
+/// docstring-acknowledged stub that denied every authored MCP tool on L4
+/// (tier, any user tier) and, even tier-fixed, on L1 (the framework's
+/// `tools_called` grant is Exec/`Pure`, while `mcp_tool_capability` requires
+/// Exec/`Irreversible` and `subsumes` needs exact `side_effect_class`
+/// equality). This sets the tracked `tier` and grants each agent the exact
+/// [`mcp_tool_capability`](runtime_mcp::mcp_tool_capability) declaration the
+/// dispatch requires, for each of **that agent's own** `allowed_tools` MCP
+/// (`server__tool`) entries — an unauthored or other-agent tool stays denied
+/// (the authored-only boundary). Built `mut` (grant takes `&mut self`,
+/// `enforcer.rs`); the caller `Arc`-wraps.
+fn build_session_mcp_enforcer(
+    framework: &Framework,
+    tier: Tier,
+) -> runtime_main::capability::CapabilityEnforcer {
+    use runtime_main::capability::CapabilityEnforcer;
+    use runtime_mcp::mcp_tool_capability;
+
+    let mut enforcer = CapabilityEnforcer::new();
+    enforcer.set_tier(tier);
+    for agent in &framework.agents {
+        if let FrameworkAgentsItem::Agent(a) = agent {
+            for tool in &a.allowed_tools {
+                if let Some((server, name)) = tool.split_once("__") {
+                    enforcer.grant(a.id.as_str(), mcp_tool_capability(server, name));
+                }
+            }
+        }
+    }
+    enforcer
+}
+
+/// An empty framework for the no-tools smoke session (M09.D.fix iter2). The
+/// smoke runs no MCP tool, so its dispatcher enforcer carries no grants at the
+/// default Novice tier — behaviorally identical to the prior bare enforcer;
+/// routing it through [`build_session_mcp_enforcer`] keeps both dispatchers
+/// uniform. Production `build_mcp_dispatcher` is latent in v0.1 (only the
+/// no-tools smoke drives it).
+fn empty_smoke_framework() -> Framework {
+    serde_json::from_value(serde_json::json!({
+        "name": "smoke",
+        "version": "0.1.0",
+        "description": "no-tools smoke session",
+        "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+        "agents": [],
+        "tools": [],
+        "skills": [],
+        "session_root_agent": ""
+    }))
+    .expect("the empty smoke framework round-trips")
+}
+
 fn build_mcp_dispatcher(
     mcp_client: Arc<McpClient>,
     audit: Option<Arc<runtime_main::audit::AuditWriter>>,
     session_id: &SessionId,
+    framework: &Framework,
+    tier: Tier,
 ) -> Arc<dyn McpToolDispatch> {
-    use runtime_main::capability::CapabilityEnforcer;
     use runtime_mcp::{ConnectionResolver, McpDispatcher, NamespaceResolver};
     use std::collections::BTreeMap;
     use tokio::sync::RwLock;
 
     let resolver = Arc::new(RwLock::new(NamespaceResolver::new(BTreeMap::new())));
-    let enforcer = Arc::new(CapabilityEnforcer::new());
+    let enforcer = Arc::new(build_session_mcp_enforcer(framework, tier));
     let connections: Arc<dyn ConnectionResolver> = mcp_client;
     Arc::new(McpDispatcher::new(
         resolver,
@@ -1788,14 +1856,18 @@ fn framework_mcp_servers(framework: &Framework) -> Vec<String> {
 fn build_test_mcp_dispatcher(
     mcp_client: Arc<McpClient>,
     session_id: &SessionId,
+    framework: &Framework,
+    tier: Tier,
 ) -> Arc<McpDispatcher> {
-    use runtime_main::capability::CapabilityEnforcer;
     use runtime_mcp::{ConnectionResolver, NamespaceResolver};
     use std::collections::BTreeMap;
     use tokio::sync::RwLock;
 
     let resolver = Arc::new(RwLock::new(NamespaceResolver::new(BTreeMap::new())));
-    let enforcer = Arc::new(CapabilityEnforcer::new());
+    // M09.D.fix iter2: framework-/tier-wired so an authored MCP tool passes
+    // the dispatcher's L4 (tier) + L1 (grant) check — the bare new() denied
+    // every MCP tool (the iteration-1 re-IRL bug).
+    let enforcer = Arc::new(build_session_mcp_enforcer(framework, tier));
     let connections: Arc<dyn ConnectionResolver> = mcp_client;
     Arc::new(McpDispatcher::new(
         resolver,
@@ -1858,7 +1930,7 @@ pub async fn test_framework(
     let mcp_client = app.try_state::<Arc<McpClient>>().map(|c| c.inner().clone());
     let dispatcher = mcp_client
         .as_ref()
-        .map(|client| build_test_mcp_dispatcher(client.clone(), &session_id));
+        .map(|client| build_test_mcp_dispatcher(client.clone(), &session_id, &framework_doc, tier));
     let mut mcp_dispatch: Option<Arc<dyn McpToolDispatch>> = None;
     let mut mcp_tool_defs: Vec<ToolDef> = Vec::new();
     if let Some(ref dispatcher) = dispatcher {
@@ -2399,7 +2471,13 @@ mod tests {
         // returns `Some(Invoked)` — so `None` here proves it is the
         // real concrete impl threaded through, not a stand-in.
         let (_dir, client) = mcp_client_over_tempdir();
-        let dispatcher = build_mcp_dispatcher(client, None, &SessionId::new());
+        let dispatcher = build_mcp_dispatcher(
+            client,
+            None,
+            &SessionId::new(),
+            &empty_smoke_framework(),
+            Tier::Novice,
+        );
         let outcome = dispatcher
             .dispatch_if_mcp(
                 "worker",
@@ -2424,7 +2502,13 @@ mod tests {
         // is what exercises it) — but construction + threading must not
         // break the existing smoke path.
         let (_dir, client) = mcp_client_over_tempdir();
-        let dispatcher = build_mcp_dispatcher(client, None, &SessionId::new());
+        let dispatcher = build_mcp_dispatcher(
+            client,
+            None,
+            &SessionId::new(),
+            &empty_smoke_framework(),
+            Tier::Novice,
+        );
         let (tx, mut rx) = mpsc::channel(8);
         let drone = Arc::new(DroneClient::noop());
         run_smoke_session_with(
