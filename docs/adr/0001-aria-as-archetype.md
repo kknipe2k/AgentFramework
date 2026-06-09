@@ -1,6 +1,6 @@
 # ADR-0001: ARIA as Archetype, Not Built-In Default
 
-**Status:** Accepted
+**Status:** Accepted — positioning **amended by ADR-0033** (2026-06-09: ARIA demoted from raison-d'être/headline MVP success criterion to a conformance suite; the technical decision below — generic platform, ARIA reconstructed-not-bundled, zero built-in frameworks — is unchanged).
 **Date:** 2026-04-18
 **Deciders:** @kknipe2k (with Claude review and recommendation)
 **Tags:** scope, positioning, schema
