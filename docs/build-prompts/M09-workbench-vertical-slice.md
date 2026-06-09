@@ -737,18 +737,133 @@ feat(M09.D.fix): Tester expand/resize per DESIGN.md disclosure
 feat(M09.D.fix): settings progressive disclosure per DESIGN.md
 ```
 
-### D.fix.9 — Iteration 2 (re-IRL findings; ADR-0008 last iteration)
+---
 
-The iteration-1 re-IRL (maintainer, real app) proved the **wiring works** — the run shows `fs__read_text_file` injected, the model calling it, the server connected, and `try_mcp_dispatch` reached (the Exec capability check fired). But it surfaced two issues that keep M09.D open:
+## Stage M09.D.fix — Iteration 2 (tier-threading regression + DESIGN.md UI v2)
 
-**🔴 Tier regression (the new seam drops the tracked tier).** The run enforced **Novice** (`capability Exec forbidden in tier Novice`) although the maintainer is **Promoted** (Settings shows Promoted; the log shows `request_tier_transition … target=Promoted` then `tier transition complete target_tier=Promoted`). `test_framework` reads the tracked tier (`commands.rs:1758`), but iteration-1's new `run_test_session_with_tools` seam does not thread it through — the run defaults to Novice, so every Promoted-only path (here the MCP tool's Exec) is wrongly denied. Iteration-1's gates missed it because the assembled `mcp_tool_injection_execution.rs` passes Promoted *explicitly* to the seam, bypassing the `test_framework → seam` tracked-tier path. **Fail-safe note:** it dropped *to* Novice (over-restrictive), not over-permissive — a functional regression, not a privilege escalation; still blocks the slice. **Fix:** thread the tracked tier through `run_test_session_with_tools` exactly as `run_test_session_with_tier` / `…_with_skills` already do. **Regression pin (mutant-killer):** a test asserting the **tracked tier reaches the enforcer through the new seam** — the MCP tool's Exec allowed at Promoted, denied at Novice, via the `test_framework`-equivalent threading (not merely the seam called with an explicit tier). Mutation **BLOCKING** (L4 tier enforcement).
+> **The iteration-1 re-IRL closed the original 🔴 but exposed a regression iteration-1 introduced.** Maintainer, real app: the run showed `fs__read_text_file` **injected, called by the model, the server connected, `try_mcp_dispatch` reached** — conditions 1+2 proven end-to-end (the wiring works). But it **FAILed at Novice** (`capability Exec forbidden in tier Novice for agent agent-1`) although the maintainer is **Promoted** (Settings: "Current tier: Promoted"; log: `request_tier_transition … target=Promoted` → `tier transition complete target_tier=Promoted`). Iteration-1's new `run_test_session_with_tools` seam **drops the tracked tier** — `test_framework` reads Promoted (`commands.rs:1758`) but the seam defaults the run to `Tier::Novice`, so the MCP tool's Exec is wrongly denied. Fail-safe (over-restrictive, not a privilege escalation), but it blocks the slice and silently breaks the M08.8.C / TD-036 tracked-tier pickup for *every* Tester run. Plus two DESIGN.md UI gaps the re-IRL surfaced: the Tester **Expand** grew the modal whitespace not the watch frame, and **settings disclosure** shipped budget-only. **ADR-0008 iteration 2 — the last before escalation.** Reuses `id="M09.D.fix"` (the same D.fix, second pass); closes on the maintainer re-IRL; the flip waits on it.
 
-**UI pass v2 (DESIGN.md — iteration-1's UI under-delivered / missed).**
-- The Tester **Expand** grew the empty modal/canvas whitespace, **not** the watch frame — fix it to grow the **canvas + OUTPUT + run-trace** content (the maintainer IRL: "expands the blank surroundings, not the actual frame").
-- The Tester **results section** (the PASS/FAIL card + run trace) gains progressive disclosure.
-- **Settings** disclosure extends to **every** section (iteration-1 shipped budget only).
+### D.fix2.1 Problem statement
+Two issues from the iteration-1 re-IRL keep M09.D open:
+1. **Tier regression (🔴).** Iteration-1 added `run_test_session_with_tools` to thread the MCP tool defs. `test_framework` reads the tracked tier (`commands.rs:1758`, `let tier = *tier_state.lock().await;`) and previously passed it to `run_test_session_with_tier`. The new seam's call path does not carry `tier` through, so the run executes at the `Tier::Novice` default. At Novice the L4 gate forbids the **Exec** capability every MCP tool call requires, so `fs__read_text_file` is denied with `CapabilityViolation { Exec }` — even though the maintainer is Promoted. This silently breaks the M08.8.C / TD-036 tracked-tier pickup for *every* Tester run, not just MCP. Direction is fail-safe (drops to the more-restrictive tier) — a functional regression, not a privilege escalation.
+2. **UI v2 (DESIGN.md).** The Tester `Expand` affordance grows the modal/canvas whitespace instead of the watch frame; the Tester results section has no progressive disclosure; settings disclosure covers only the budget section.
 
-**Discipline:** the `<work_stage_prompt id="M09.D.fix">` (D.fix.7) governs — strict red-first, distinct commits (the tier 🔴 + its regression-pin as their own mutation-blocked commit; the three UI fixes separate), red→impl test diff EMPTY, full gates + both e2e legs. **This is ADR-0008 iteration 2 — the last before escalation; it must close on the maintainer re-IRL** (a real `out/result.txt` in-scope at Promoted, denied out-of-scope, in a Tester whose content frame actually grows). Only then the execution-status flip.
+### D.fix2.2 Files to change
+**`<wire_signature_audit>` — the build pins exact file:line at red (the iteration-1 diff is local):**
+- `run_test_session_with_tools` (the iteration-1 seam) + its `test_framework` call site — confirm it does **not** thread `tier` (the regression), against `run_test_session_with_tier` / `run_test_session_with_skills` which *do* (the archetype to match).
+- `test_framework` (`commands.rs:1745`) — the tracked-tier read (`:1758`) and where it now routes through the new seam.
+- The L4 Exec gate (the enforcer) denying MCP-tool Exec at Novice — the behavior the regression test asserts *through the seam*.
+- **UI:** `src/components/builder/TesterModal.tsx` (the Expand handler + the watch-frame layout — what must grow vs the modal chrome; the results section); `src/components/SettingsPanel.tsx` (the section list to make uniformly collapsible); `DESIGN.md` (the disclosure / sizing principles).
+
+Files: the new seam's tier-threading (Rust — the 🔴 commit); the regression-pin test; `TesterModal.tsx` (Expand-frame + results disclosure); `SettingsPanel.tsx` (all-section disclosure); their tests; `docs/execution-status.md` (the slice row, flipped on the re-IRL).
+
+### D.fix2.3 Detailed changes
+1. **Thread the tracked tier through the new seam (the 🔴).** Add the `tier` parameter to `run_test_session_with_tools` (mirroring `run_test_session_with_tier`) and pass `test_framework`'s tracked `tier` (`commands.rs:1758`) through it to the run. No enforcer change — the enforcer already honors the tier; the fix is that the tier reaches it. Mutation **BLOCKING** (L4 tier enforcement).
+2. **Regression pin (mutant-killer).** A test driving the **`test_framework`-equivalent tracked-tier path** (not the seam called with an explicit tier): at Promoted the MCP tool's Exec is allowed (the tool runs); at Novice it is denied (`CapabilityViolation { Exec }`). This pins that the tracked tier reaches the enforcer *through the new seam* — the exact gap iteration-1 left.
+3. **UI v2 (DESIGN.md, separate commits).** `TesterModal` Expand grows the watch frame (canvas + OUTPUT + run-trace), not the modal chrome; the results section (PASS/FAIL card + trace) gets progressive disclosure; `SettingsPanel` makes **every** section collapsible. Each cites its DESIGN.md principle; each its own render/e2e test.
+
+### D.fix2.4 Tests
+The regression-pin (Rust, #2) is the core — it fails today (Exec denied at Promoted because the tier is dropped) and passes once the tier threads. Plus the three UI render/e2e tests (Expand-frame; results disclosure; all-section settings disclosure). No weakening of any M09 / iteration-1 test.
+
+### D.fix2.5 construction_reachability_check
+`inputs_reachable="false"`: the maintainer's tracked Promoted tier is set (Settings + log) but **does not reach the run** through the new seam (defaults to Novice) → the MCP tool's Exec is denied → the slice can't complete. Iteration 2 inverts it: the seam threads the tracked tier. Verify by the regression-pin (Promoted ⇒ Exec allowed through the seam) + the maintainer re-IRL (a real `out/result.txt` lands at Promoted).
+
+### D.fix2.6 Close gate
+Strict v1.11 two-commit: write all failing tests (the tier regression-pin + the three UI tests), right-reason red, commit `test(M09.D.fix): …`, **surface red**; then implement as distinct commits untouching tests — the tier-threading [mutation **BLOCKING**] + the three UI fixes — red→impl test diff EMPTY (binary-crate variant via a scoped `#[cfg(test)]` diff if in-source). Full Rust (runtime-main/runtime-mcp ≥95) + frontend gates + both e2e legs. **The maintainer re-IRL is the authoritative close** — at Promoted, in a Tester whose content frame grows: a real `out/result.txt` lands in-scope, an out-of-scope write is denied, observable in-app. **Flip the execution-status row** on that. **ADR-0008 iteration 2 — if the re-IRL still fails, escalate (do not iterate a third time).**
+
+### D.fix2.7 CLI prompt
+```xml
+<work_stage_prompt id="M09.D.fix">
+  <context>
+    M09.D.fix ITERATION 2 (ADR-0008 last iteration). Iteration-1 closed the original
+    wiring red (the MCP tool injected + called + dispatch reached — proven in the
+    re-IRL) but introduced a regression: the new run_test_session_with_tools seam
+    drops the tracked tier. test_framework reads Promoted (commands.rs:1758) yet the
+    run enforced Novice, so the MCP tool's Exec was denied though the maintainer is
+    Promoted (Settings + the request_tier_transition→Promoted log). Fail-safe
+    (over-restrictive, not an escalation) but it blocks the slice and silently breaks
+    the M08.8.C tracked-tier pickup for every Tester run. The gates missed it because
+    the assembled regression passes Promoted explicitly to the seam, bypassing the
+    test_framework→seam path. PRIMARY (red): thread the tracked tier through
+    run_test_session_with_tools exactly as run_test_session_with_tier / _with_skills
+    do; regression-pin via the test_framework-equivalent tracked-tier path (Promoted
+    ⇒ Exec allowed through the seam, Novice ⇒ denied) — its own mutation-BLOCKING
+    commit (L4). BUNDLED UI v2 (DESIGN.md, separate commits): Expand grows the watch
+    frame (canvas + OUTPUT + run-trace) not the modal chrome; Tester results
+    progressive disclosure; settings disclosure on EVERY section (iteration-1 did
+    budget only). Surface red first; no flip until the maintainer re-IRL. If the
+    re-IRL still fails, ESCALATE — do not iterate a third time.
+  </context>
+  <read_first>
+    <file>docs/build-prompts/M09-workbench-vertical-slice.md (Stage M09.D.fix — Iteration 2, D.fix2.1–D.fix2.6; and the iteration-1 section)</file>
+    <file>the iteration-1 diff (local): run_test_session_with_tools + its test_framework call site (PIN whether it threads tier); run_test_session_with_tier / run_test_session_with_skills (the tier/extra-arg archetypes to match); the test_framework tracked-tier read (commands.rs:1758)</file>
+    <file>crates/runtime-main/src/builder/tester.rs (the run-session seams + test_agent_config) + the L4 Exec enforcer (the gate denying MCP Exec at Novice) + crates/runtime-main/tests/capability_live_tool.rs (the assembled tier-path pattern — promoted_write_inside_scope_runs is the archetype)</file>
+    <file>DESIGN.md (progressive-disclosure / panel-sizing principles) + src/components/builder/TesterModal.tsx (Expand handler + watch-frame layout + results section) + src/components/SettingsPanel.tsx (the sections) + docs/adr/0021-* + docs/adr/0008-* (the 2-iteration cap) + CLAUDE.md §4 rule 11 / §5/§6/§8</file>
+  </read_first>
+  <deliverable>run_test_session_with_tools threads the tracked tier (test_framework's Promoted reaches the run), pinned by a regression test driving the test_framework-equivalent tracked-tier path (Promoted ⇒ MCP Exec allowed through the seam, Novice ⇒ denied); plus the DESIGN.md UI v2 (Expand grows the watch frame; Tester results progressive disclosure; settings disclosure on every section). The tier fix is its own mutation-blocked commit. Closes M09.D on the maintainer re-IRL.</deliverable>
+  <tdd_discipline strict="true">Write all failing tests first (the tier regression-pin — Exec denied at Promoted today because the tier is dropped; the three UI render/e2e tests) → commit test(M09.D.fix): … (red) → SURFACE RED. Then implement as distinct commits untouching tests (tier-threading [mutation BLOCKING]; Expand-frame + results disclosure; settings all-section disclosure); git diff &lt;red&gt;..&lt;impl&gt; over test paths EMPTY (binary-crate variant via a scoped #[cfg(test)] diff if the Rust test is in-source). Net-new/mechanical test fixups in separate labelled follow-ups.</tdd_discipline>
+  <wire_signature_audit>PIN at red: run_test_session_with_tools signature + its test_framework call site (does it thread tier? — the regression); run_test_session_with_tier (commands.rs:1758 → tier) as the archetype; the L4 Exec gate that denies MCP Exec at Novice. UI: TesterModal Expand handler + watch-frame layout + results section; SettingsPanel sections; the DESIGN.md principle ids.</wire_signature_audit>
+  <construction_reachability_check ref="docs/build-prompts/M09-workbench-vertical-slice.md" section="D.fix2.5"/>
+  <execution_steps>
+    <step name="ground_at_red" budget="1"/>
+    <step name="write_failing_tests" budget="1"/>
+    <step name="red_phase_commit" budget="1"/>
+    <step name="surface_for_red_approval"/>
+    <step name="implement" budget="3"/>
+    <step name="verify_gates" budget_iterations="3">Rust ≥95 (runtime-main/runtime-mcp) + frontend gates + BOTH e2e legs (test:e2e + test:e2e:tauri). No schema change.</step>
+    <step name="mutation_gate" blocking="true"/>
+    <step name="green_phase_commit" budget="3"/>
+    <step name="assembled_run_irl"/>
+    <step name="surface_for_final_approval"/>
+    <step name="fill_retrospective"/>
+  </execution_steps>
+  <close_gate>
+    <real_app_irl>Maintainer (Promoted), in a Tester whose content frame grows: re-run the in-scope task — a real C:/…/out/result.txt lands from real MCP data; the out-of-scope write is denied (no file); the run + results are readable in-app. THE authoritative close (rule 11 / ADR-0021); licenses the flip.</real_app_irl>
+    <mutation_gate blocking="true">BLOCKING on the tier-threading branch (L4 enforcement — decides the run's tier). Advisory on the UI commits.</mutation_gate>
+    <design_review>Expand grows the watch frame (not the chrome); the Tester results + every settings section follow the DESIGN.md disclosure principle.</design_review>
+    <cumulative_regression>the tier regression-pin + the three UI tests join the suites; the execution-status slice row flipped.</cumulative_regression>
+  </close_gate>
+  <approval_surface>
+    <item>cross-machine state + the red→impl diff over test paths (EMPTY), distinct commits</item>
+    <item>the tier-threading root cause confirmed (the seam dropped tier; file:line) + the blocking mutation result + the regression-pin (Promoted ⇒ Exec allowed through the seam)</item>
+    <item>Rust + frontend gates + both e2e legs; the Expand-frame + disclosure design-review</item>
+    <item>explicit: "M09.D.fix iteration 2 is ready. I will not commit until you approve; the flip waits on your re-IRL. If the re-IRL fails I escalate, not iterate."</item>
+  </approval_surface>
+  <scope_locks>
+    <lock>The red is tier-threading only — add tier to the new seam + pass test_framework's tracked tier; no enforcer/dispatch/transport/schema change.</lock>
+    <lock>UI v2 is DESIGN.md-grounded, separate commits behind the red; do not fold UI into the tier commit.</lock>
+    <lock>The verdict-on-gap-suspend truthfulness gap stays OUT of scope (tech-debt / M10).</lock>
+    <lock>ADR-0008 iteration 2 — the last; if the re-IRL still fails, escalate, do not iterate a third time. No flip on green alone.</lock>
+  </scope_locks>
+  <gates milestone="M08"/>
+  <retrospective_requirements ref="docs/build-prompts/retrospectives/RETROSPECTIVE-TEMPLATE.md">
+    <special_log>That iteration-1's new seam dropped the tracked tier (a regression the explicit-tier assembled test couldn't catch — the test_framework→seam path was the gap); the regression-pin that now covers it; the UI v2; the maintainer re-IRL result; that this was iteration 2 (the ADR-0008 cap).</special_log>
+  </retrospective_requirements>
+  <commit_protocol ref="CLAUDE.md" section="8. PR + commit workflow (CRITICAL — read carefully)"/>
+  <commit_message ref="docs/build-prompts/M09-workbench-vertical-slice.md" section="Stage M09.D.fix — Iteration 2"/>
+</work_stage_prompt>
+```
+
+### D.fix2.8 Commit messages
+```
+test(M09.D.fix): failing tier-threading regression pin + UI-v2 tests (red)
+
+fix(M09.D.fix): thread the tracked tier through run_test_session_with_tools
+
+Iteration-1 added run_test_session_with_tools to inject the MCP tool defs but
+did not thread the tracked tier, so the run defaulted to Novice: the re-IRL
+enforced Novice and denied the MCP tool's Exec though the maintainer is
+Promoted (commands.rs:1758 reads Promoted; the seam dropped it). Add the tier
+param to the new seam and pass test_framework's tracked tier through it,
+mirroring run_test_session_with_tier. Regression pin drives the
+test_framework-equivalent tracked-tier path (Promoted -> Exec allowed through
+the seam; Novice -> denied) so the gap can't recur. Fail-safe regression
+(over-restrictive), no enforcer change. Mutation-blocking (L4).
+
+feat(M09.D.fix): Tester Expand grows the watch frame + results disclosure
+
+feat(M09.D.fix): settings progressive disclosure across all sections
+```
 
 ---
 
