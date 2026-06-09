@@ -15,7 +15,9 @@ import { test, expect, type Page } from '@playwright/test';
 
 interface TestOutcome {
   passed: boolean;
+  verdict: 'pass' | 'fail' | 'tier_limited';
   capability_failures: { agent_id: string; needed: string; reason: string }[];
+  tier_blocks: { agent_id: string; kind: string; attempted_action: string }[];
   token_spend: { input: number; output: number; total: number };
   timing: { secs: number; nanos: number };
   vdr: unknown;
@@ -37,7 +39,9 @@ const AGENT_SPAWNED = {
 
 const PASS_OUTCOME: TestOutcome = {
   passed: true,
+  verdict: 'pass',
   capability_failures: [],
+  tier_blocks: [],
   token_spend: { input: 120, output: 45, total: 165 },
   timing: { secs: 1, nanos: 250_000_000 },
   vdr: { decision: 'ok' },
@@ -46,6 +50,7 @@ const PASS_OUTCOME: TestOutcome = {
 
 const FAIL_OUTCOME: TestOutcome = {
   passed: false,
+  verdict: 'fail',
   capability_failures: [
     {
       agent_id: 'worker',
@@ -53,6 +58,7 @@ const FAIL_OUTCOME: TestOutcome = {
       reason: 'requested `read /etc/passwd` — declared scope `none`',
     },
   ],
+  tier_blocks: [],
   token_spend: { input: 80, output: 10, total: 90 },
   timing: { secs: 0, nanos: 500_000_000 },
   vdr: null,
@@ -155,7 +161,9 @@ test.describe('M08.F2 Builder Tester modal', () => {
     await openTesterModal(page);
     await runTask(page, 'summarize the input');
     await expect(page.getByTestId('tester-result')).toBeVisible();
-    await page.getByTestId('tester-close').click();
+    // M08.8.B.fix — the Tester migrated onto the Modal primitive (TD-043);
+    // close via Modal's aria-labelled × (the hand-rolled tester-close is gone).
+    await page.getByRole('button', { name: 'Close' }).click();
     await expect(page.getByTestId('tester-modal')).toHaveCount(0);
     // Discard-on-close: the test run never wrote into the live runtime
     // graph (the load-bearing F2 scoping invariant).

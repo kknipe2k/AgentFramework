@@ -128,6 +128,16 @@ describe('Builder loads ARIA archetype — M08.6.D (real-app regression)', () =>
     // loaded framework's `allowed_skills` / `allowed_tools` / `spawns`
     // relationships. ARIA's orchestrator spawns sub-agents + allows
     // tools / skills, so the projection produces at least one edge.
+    //
+    // React Flow projects edges AFTER it measures node geometry; a cold
+    // `$$('.react-flow__edge')` read races that measure→project pass
+    // (M08.8.B.fix's node-resize — 22px glyph, 1px border — shifted the
+    // timing enough to expose the race). Wait for the projection to land,
+    // mirroring the node waitUntil @94.
+    await browser.waitUntil(async () => (await $$('.react-flow__edge').length) > 0, {
+      timeout: 10_000,
+      timeoutMsg: 'expected ≥1 projected edge after loading examples/aria/',
+    });
     const edgeCount = await $$('.react-flow__edge').length;
     expect(
       edgeCount,

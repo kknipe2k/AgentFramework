@@ -417,6 +417,102 @@ where
     Ok(())
 }
 
+/// SELECT that finds the most-recent session that actually wrote signals.
+/// Ordered by `(timestamp, id)` to match the drone's `ReadSignals`
+/// ordering (`vdr.rs`); the freshly-spawned drone seeds only a `sessions`
+/// row for its own id (no `signals`), so a prior session's rows win.
+const LATEST_SESSION_WITH_SIGNALS_SQL: &str =
+    "SELECT session_id FROM signals ORDER BY timestamp DESC, id DESC LIMIT 1";
+
+/// Reconstruct the most-recent persisted session's graph — the
+/// reload-after-restart fallback for [`replay_session`] (closes TD-044).
+///
+/// The renderer's `lastSessionId` (localStorage) survives a soft reload
+/// but NOT a full app restart: a relaunched `WebView` comes up on a fresh
+/// profile that wipes localStorage, so the only record of the prior
+/// session id is gone. Each app launch also mints a fresh drone session
+/// id, so the backend cannot infer the prior session from its own
+/// startup state — it must read it back from the persisted signal log,
+/// the single source of truth that DOES survive a restart. This command
+/// finds the latest session WITH signals and replays it through the same
+/// `agent_event` channel.
+///
+/// Resolves the replayed session id, or `None` when no prior session has
+/// persisted any signal (a first-ever launch).
+///
+/// # Errors
+///
+/// - [`CmdError::Drone`] if the IPC fails after retry exhaustion.
+#[tauri::command]
+pub async fn replay_latest_session(
+    app: AppHandle,
+    drone: tauri::State<'_, Arc<DroneClient>>,
+) -> Result<Option<String>, CmdError> {
+    let drone = Arc::clone(&drone);
+    let query_drone = Arc::clone(&drone);
+    replay_latest_session_with(
+        move |sql| {
+            let drone = Arc::clone(&query_drone);
+            async move {
+                drone
+                    .query_session_db(sql)
+                    .await
+                    .map_err(|e| CmdError::drone(e.to_string()))
+            }
+        },
+        move |id| {
+            let drone = Arc::clone(&drone);
+            async move {
+                drone
+                    .read_signals(id)
+                    .await
+                    .map_err(|e| CmdError::drone(e.to_string()))
+            }
+        },
+        |event| {
+            let _ = app.emit("agent_event", &event);
+            Ok::<(), CmdError>(())
+        },
+    )
+    .await
+}
+
+/// Test-seam for [`replay_latest_session`] (CLAUDE.md §5 `*_with`
+/// archetype). Accepts an injectable latest-session query, signal-reader,
+/// and emitter so unit tests exercise the find → read → translate → emit
+/// pipeline without a real drone or Tauri `AppHandle`. Reuses
+/// [`replay_session_with`] once the latest session id is resolved.
+///
+/// # Errors
+///
+/// Surfaces whatever `query` or the inner [`replay_session_with`] returns.
+pub async fn replay_latest_session_with<Q, QFut, F, Fut, Emit>(
+    query: Q,
+    read_signals: F,
+    emit: Emit,
+) -> Result<Option<String>, CmdError>
+where
+    Q: FnOnce(String) -> QFut,
+    QFut: std::future::Future<Output = Result<Vec<Value>, CmdError>>,
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<Value>, CmdError>>,
+    Emit: FnMut(AgentEvent) -> Result<(), CmdError>,
+{
+    let rows = query(LATEST_SESSION_WITH_SIGNALS_SQL.to_string()).await?;
+    let Some(session_id) = rows
+        .first()
+        .and_then(|r| r.get("session_id"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    else {
+        tracing::info!("replay_latest_session: no prior session with signals");
+        return Ok(None);
+    };
+    tracing::info!(session_id, "replay_latest_session resolved latest session");
+    replay_session_with(session_id.clone(), read_signals, emit).await?;
+    Ok(Some(session_id))
+}
+
 /// Resolve the in-process [`ApprovalSeam`] with `Approved` for `plan_id`.
 ///
 /// Production wrapper: pulls the [`Arc<ApprovalSeam>`] from Tauri-managed
@@ -1542,14 +1638,23 @@ pub async fn disconnect_test_session_mcp(dispatcher: &McpDispatcher, servers: &[
 
 /// Test-seam for [`test_framework`] (CLAUDE.md §5 `*_with`).
 ///
-/// Delegates to [`runtime_main::builder::run_test_session_with`] and maps
-/// a `TesterError` onto the wire-format [`CmdError`]. A *failed test* is
-/// `Ok(TestOutcome { passed: false, .. })`, not an `Err`.
+/// Delegates to [`runtime_main::builder::run_test_session_with_tier`],
+/// threading the caller-supplied `tier` into the run-loop enforcer
+/// (M08.8.C / TD-036), and maps a `TesterError` onto the wire-format
+/// [`CmdError`]. A *failed test* is `Ok(TestOutcome { passed: false, .. })`,
+/// not an `Err`.
+///
+/// The `tier` is the user's tracked tier (read from [`CurrentTierState`] by
+/// the production [`test_framework`] wrapper). Per ADR-0030, the Tester runs
+/// at the user's actual tier so a test result faithfully predicts a live
+/// run's capability behavior (ADR-0019) — at Promoted an out-of-scope Write
+/// reaches the L1 scope gate; at Novice the L4 tier gate denies it first.
 ///
 /// # Errors
 ///
 /// [`CmdError::Internal`] wrapping a `TesterError` (infrastructure
 /// failure — drone spawn / temp-DB setup).
+#[allow(clippy::too_many_arguments)] // reason: mirrors run_test_session_with_tier's 8-arg Tester seam (M08.8.C tier wire); arg-struct refactor deferred
 pub async fn test_framework_with<P: LLMProvider + 'static>(
     framework_doc: &Framework,
     task: &str,
@@ -1558,8 +1663,9 @@ pub async fn test_framework_with<P: LLMProvider + 'static>(
     drone: Arc<DroneClient>,
     mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
     session_id: SessionId,
+    tier: Tier,
 ) -> Result<TestOutcome, CmdError> {
-    runtime_main::builder::run_test_session_with(
+    runtime_main::builder::run_test_session_with_tier(
         framework_doc,
         task,
         db_path,
@@ -1567,6 +1673,7 @@ pub async fn test_framework_with<P: LLMProvider + 'static>(
         drone,
         mcp_dispatch,
         session_id,
+        tier,
     )
     .await
     .map_err(|e| CmdError::internal(e.to_string()))
@@ -1620,6 +1727,14 @@ fn build_test_mcp_dispatcher(
 /// Phase 9 "does NOT need to save first"). The throwaway DB + the
 /// test-session drone are torn down before returning.
 ///
+/// The session runs at the user's **tracked tier**, read from
+/// [`CurrentTierState`] at invocation (M08.8.C / TD-036; ADR-0030). A fresh
+/// enforcer is built per run and the tier read each time, so a tier
+/// transition between runs is picked up automatically — no mid-run
+/// re-application is needed because each Tester run is its own session.
+/// This is also the root fix for #19 (the Settings tier display no longer
+/// desyncs from the enforced tier — the run now enforces what the UI shows).
+///
 /// # Errors
 ///
 /// - [`CmdError::SetupRequired`] if no API key is in the keychain.
@@ -1631,10 +1746,16 @@ pub async fn test_framework(
     app: AppHandle,
     framework_doc: Framework,
     task: String,
+    tier_state: tauri::State<'_, CurrentTierState>,
 ) -> Result<TestOutcome, CmdError> {
     let api_key = read_api_key()?;
     let provider = AnthropicProvider::new(api_key.clone());
     let db_path = throwaway_test_db_path();
+
+    // The user's tracked tier gates this run (TD-036). Read at invocation
+    // so a transition since the last run is reflected without any mid-run
+    // re-application — each Tester run is a fresh isolated session.
+    let tier = *tier_state.lock().await;
 
     // Spawn the test-session drone against the THROWAWAY db (ADR-0019) —
     // never the user session DB.
@@ -1666,6 +1787,7 @@ pub async fn test_framework(
         Arc::clone(&lifecycle.client),
         mcp_dispatch,
         session_id,
+        tier,
     )
     .await;
 
@@ -2361,16 +2483,35 @@ mod tests {
         assert!(matches!(result, Err(CmdError::Drone(_))));
     }
 
+    /// Build a drone signal-log row the replay pipeline consumes:
+    /// `payload_json` IS a serialized `AgentEvent` (the real on-disk shape
+    /// `vdr::signals_for_session` returns — M08.8.B.fix2 / TD-044).
+    fn signal_row(event: &AgentEvent) -> Value {
+        let mut row = serde_json::Map::new();
+        row.insert(
+            "payload_json".to_string(),
+            serde_json::to_value(event).expect("serialize AgentEvent"),
+        );
+        Value::Object(row)
+    }
+
     #[tokio::test]
     async fn replay_session_with_emits_translated_events() {
+        // payload_json IS a serialized AgentEvent (the real on-disk shape —
+        // M08.8.B.fix2 / TD-044); build the signal rows by serializing real
+        // events so the fixtures match production, not a fabricated shape.
         let signals = vec![
-            serde_json::json!({
-                "type": "session",
-                "payload_json": {"event": "start", "session_id": "s1", "framework": "aria", "model": "haiku"},
+            signal_row(&AgentEvent::SessionStart {
+                session_id: "s1".to_string(),
+                framework: "aria".to_string(),
+                model: "haiku".to_string(),
             }),
-            serde_json::json!({
-                "type": "agent",
-                "payload_json": {"event": "spawned", "agent_id": "a1", "agent_name": "n", "session_id": "s1"},
+            signal_row(&AgentEvent::AgentSpawned {
+                agent_id: "a1".to_string(),
+                agent_name: "n".to_string(),
+                parent_id: None,
+                session_id: "s1".to_string(),
+                narrowed_from: Vec::new(),
             }),
         ];
         let mut emitted: Vec<AgentEvent> = Vec::new();
@@ -2406,13 +2547,19 @@ mod tests {
     #[tokio::test]
     async fn replay_session_with_swallows_emit_errors_and_continues() {
         let signals = vec![
-            serde_json::json!({
-                "type": "agent",
-                "payload_json": {"event": "spawned", "agent_id": "a1", "agent_name": "n", "session_id": "s1"},
+            signal_row(&AgentEvent::AgentSpawned {
+                agent_id: "a1".to_string(),
+                agent_name: "n".to_string(),
+                parent_id: None,
+                session_id: "s1".to_string(),
+                narrowed_from: Vec::new(),
             }),
-            serde_json::json!({
-                "type": "agent",
-                "payload_json": {"event": "spawned", "agent_id": "a2", "agent_name": "n", "session_id": "s1"},
+            signal_row(&AgentEvent::AgentSpawned {
+                agent_id: "a2".to_string(),
+                agent_name: "n".to_string(),
+                parent_id: None,
+                session_id: "s1".to_string(),
+                narrowed_from: Vec::new(),
             }),
         ];
         let mut count = 0;
@@ -2427,6 +2574,90 @@ mod tests {
         .await
         .expect("replay must not surface emit errors");
         assert_eq!(count, 2, "emit must be invoked for every translated event");
+    }
+
+    #[tokio::test]
+    async fn replay_latest_session_with_finds_and_replays_latest_session() {
+        // The query seam must receive the latest-session-with-signals
+        // SELECT (the contract that survives an app restart — TD-044), and
+        // its returned session_id must drive read_signals → translate →
+        // emit, resolving Some(id).
+        let signals = vec![signal_row(&AgentEvent::AgentSpawned {
+            agent_id: "a1".to_string(),
+            agent_name: "n".to_string(),
+            parent_id: None,
+            session_id: "s1".to_string(),
+            narrowed_from: Vec::new(),
+        })];
+        let mut emitted: Vec<AgentEvent> = Vec::new();
+        let replayed = replay_latest_session_with(
+            |sql| async move {
+                assert_eq!(sql, LATEST_SESSION_WITH_SIGNALS_SQL);
+                Ok(vec![serde_json::json!({ "session_id": "s1" })])
+            },
+            move |id| async move {
+                assert_eq!(id, "s1");
+                Ok(signals)
+            },
+            |event| {
+                emitted.push(event);
+                Ok(())
+            },
+        )
+        .await
+        .expect("replay latest");
+        assert_eq!(replayed.as_deref(), Some("s1"));
+        assert_eq!(emitted.len(), 1);
+        assert!(matches!(emitted[0], AgentEvent::AgentSpawned { .. }));
+    }
+
+    #[tokio::test]
+    async fn replay_latest_session_with_returns_none_when_no_prior_signals() {
+        // First-ever launch: the signals table is empty, so the query
+        // returns no rows. No read, no emit, Ok(None) — not an error.
+        let mut read_called = false;
+        let mut emit_called = false;
+        let replayed = replay_latest_session_with(
+            |_sql| async move { Ok(Vec::new()) },
+            |_id| async {
+                read_called = true;
+                Ok(Vec::new())
+            },
+            |_event| {
+                emit_called = true;
+                Ok(())
+            },
+        )
+        .await
+        .expect("no prior session is not an error");
+        assert!(replayed.is_none());
+        assert!(!read_called, "read_signals must not run without a session");
+        assert!(!emit_called, "emit must not run without a session");
+    }
+
+    #[tokio::test]
+    async fn replay_latest_session_with_returns_none_when_row_lacks_session_id() {
+        // Defensive: a malformed query row (no `session_id` column) yields
+        // None rather than replaying an empty/garbage id.
+        let replayed = replay_latest_session_with(
+            |_sql| async move { Ok(vec![serde_json::json!({ "other": "x" })]) },
+            |_id| async move { Ok(Vec::new()) },
+            |_event| Ok::<(), CmdError>(()),
+        )
+        .await
+        .expect("malformed row is not an error");
+        assert!(replayed.is_none());
+    }
+
+    #[tokio::test]
+    async fn replay_latest_session_with_propagates_query_error() {
+        let result = replay_latest_session_with(
+            |_sql| async move { Err(CmdError::drone("boom")) },
+            |_id| async move { Ok(Vec::new()) },
+            |_event| Ok::<(), CmdError>(()),
+        )
+        .await;
+        assert!(matches!(result, Err(CmdError::Drone(_))));
     }
 
     #[test]
@@ -3035,10 +3266,267 @@ mod tests {
                 Arc::new(DroneClient::noop()),
                 None,
                 SessionId::new(),
+                // M08.8.C: the seam now threads a tier; Novice preserves
+                // this pre-existing clean-run test's exact prior semantics
+                // (a tool-free run is tier-agnostic).
+                Tier::Novice,
             )
             .await
             .expect("the Tester seam returns Ok(TestOutcome) for a clean run");
             assert!(outcome.passed, "a clean tool-free run passes");
+        }
+
+        // ── M08.8.C — the tier-into-the-run-loop production wire (TD-036) ──
+        //
+        // The existing `capability_live_tool.rs` rung-2 tests prove the
+        // *seam* `run_test_session_with_tier(.., Tier::Promoted)`. What was
+        // NOT proven is the *production wire*: that `test_framework_with`
+        // (the Tauri command seam) THREADS the tracked tier into the
+        // run-loop enforcer instead of pinning Novice. These two assembled
+        // tests pin exactly that — the SAME out-of-scope Write reaches the
+        // L1 SCOPE gate at Promoted but is denied at the L4 TIER gate at
+        // Novice, which is only possible if `test_framework_with` reads the
+        // tier rather than hardcoding one. Grounded-claims (CLAUDE.md rule
+        // 11 / gotcha #66): the file never appears on disk on a denial.
+
+        use runtime_core::event::CapabilityKindRef;
+
+        /// Forward-slash a path so the same string is a valid `std::fs`
+        /// argument (Windows accepts `/`) and a stable `globset` target.
+        fn fwd(p: &std::path::Path) -> String {
+            p.to_string_lossy().replace('\\', "/")
+        }
+
+        /// A schema-valid one-agent framework whose `worker` declares the
+        /// given `file_access.write` globs + `allowed_tools: ["Write"]`;
+        /// `session_root_agent` is `worker`. Mirrors the rung-2 fixture.
+        fn write_scoped_framework(write: &[&str]) -> Framework {
+            serde_json::from_value(serde_json::json!({
+                "name": "m08-8-c-tier-wire",
+                "version": "1.0.0",
+                "description": "M08.8.C tier-in-the-run-loop production-wire fixture",
+                "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+                "agents": [{
+                    "id": "worker",
+                    "role": "worker",
+                    "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+                    "capabilities": {
+                        "tools_called": [],
+                        "skills_loaded": [],
+                        "file_access": { "read": [], "write": write },
+                        "network": [],
+                        "shell": false,
+                        "spawn_agents": []
+                    },
+                    "allowed_tools": ["Write"],
+                    "allowed_skills": [],
+                    "spawns": []
+                }],
+                "tools": [],
+                "skills": [],
+                "session_root_agent": "worker",
+            }))
+            .expect("the tier-wire fixture framework round-trips through the schema")
+        }
+
+        /// A provider stub emitting one scripted `Write` `ToolUse` on turn 1,
+        /// then stopping — the only stub in the assembled
+        /// `test_framework_with` path (the executor, enforcer, and the
+        /// multi-turn loop are all real).
+        struct WriteToolStub {
+            path: String,
+            turn: std::sync::Mutex<usize>,
+        }
+
+        impl WriteToolStub {
+            fn new(path: String) -> Self {
+                Self {
+                    path,
+                    turn: std::sync::Mutex::new(0),
+                }
+            }
+        }
+
+        #[async_trait]
+        impl LLMProvider for WriteToolStub {
+            fn name(&self) -> &'static str {
+                "m08-8-c-write-stub"
+            }
+            fn supports(&self) -> ProviderSupport {
+                ProviderSupport {
+                    tool_use: true,
+                    streaming: true,
+                    thinking: false,
+                }
+            }
+            async fn stream(
+                &self,
+                _config: AgentConfig,
+            ) -> Result<BoxStream<'_, ProviderEvent>, ProviderError> {
+                let n = {
+                    let mut t = self.turn.lock().expect("turn lock");
+                    let n = *t;
+                    *t += 1;
+                    n
+                };
+                if n == 0 {
+                    return Ok(Box::pin(futures::stream::iter(vec![
+                        ProviderEvent::ToolUse {
+                            id: "tu-1".to_string(),
+                            name: "Write".to_string(),
+                            input: serde_json::json!({
+                                "path": self.path,
+                                "content": "should-not-be-written",
+                            }),
+                        },
+                    ])));
+                }
+                Ok(Box::pin(futures::stream::iter(vec![
+                    ProviderEvent::TextDelta {
+                        text: "ok".to_string(),
+                    },
+                    ProviderEvent::MessageStop {
+                        stop_reason: "end_turn".to_string(),
+                        total_tokens: None,
+                    },
+                ])))
+            }
+            async fn count_tokens(&self, _m: &[Message]) -> Result<u64, ProviderError> {
+                Ok(0)
+            }
+            async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+                Ok(Vec::new())
+            }
+            fn estimate_cost(&self, _b: &CostBreakdown, _m: &str) -> f64 {
+                0.0
+            }
+        }
+
+        /// The first `CapabilityViolation`'s kind in the trace. Does NOT
+        /// match `TierViolation` — a `Some` discriminates a SCOPE denial
+        /// from a tier denial.
+        fn first_scope_violation(trace: &[AgentEvent]) -> Option<CapabilityKindRef> {
+            trace.iter().find_map(|e| match e {
+                AgentEvent::CapabilityViolation {
+                    capability_kind, ..
+                } => Some(*capability_kind),
+                _ => None,
+            })
+        }
+
+        #[tokio::test]
+        async fn test_framework_with_at_promoted_threads_the_tier_so_a_write_reaches_the_scope_gate(
+        ) {
+            // At Promoted the L4 tier gate is a pass-through, so an
+            // out-of-scope Write reaches the L1 SCOPE gate and is denied
+            // THERE (`CapabilityViolation { capability_kind: Write }`), NOT
+            // at the tier gate. Observable only if `test_framework_with`
+            // threads the tracked tier into the run-loop enforcer.
+            let dir = tempfile::tempdir().expect("tempdir");
+            let target = dir.path().join("secret.txt");
+            let path_arg = format!("{}/secret.txt", fwd(dir.path()));
+            let db_path = dir.path().join("runtime-tester.sqlite");
+
+            // The write grant covers a DIFFERENT subtree — the request path
+            // is outside it, so the SCOPE gate must reject it.
+            let fw = write_scoped_framework(&["allowed/**"]);
+            let outcome = test_framework_with(
+                &fw,
+                "write the secret file",
+                &db_path,
+                WriteToolStub::new(path_arg),
+                Arc::new(DroneClient::noop()),
+                None,
+                SessionId::new(),
+                Tier::Promoted,
+            )
+            .await
+            .expect("the assembled run completes (a denial is a failed test, not Err)");
+
+            assert_eq!(
+                first_scope_violation(&outcome.trace),
+                Some(CapabilityKindRef::Write),
+                "at Promoted the out-of-scope Write must reach the L1 SCOPE gate; trace={:?}",
+                outcome.trace
+            );
+            assert!(
+                !outcome
+                    .trace
+                    .iter()
+                    .any(|e| matches!(e, AgentEvent::TierViolation { .. })),
+                "at Promoted the Write must NOT be tier-denied — the tier was threaded; trace={:?}",
+                outcome.trace
+            );
+            assert!(
+                !target.exists(),
+                "a scope-denied write must create no file on disk (the executor never ran)"
+            );
+            assert!(
+                !outcome.passed,
+                "a capability violation fails the test outcome"
+            );
+        }
+
+        #[tokio::test]
+        async fn test_framework_with_at_novice_threads_the_tier_so_the_same_write_tier_denies() {
+            // The contrast that proves `test_framework_with` READS the tier
+            // rather than hardcoding one: the SAME out-of-scope Write that
+            // reached the SCOPE gate at Promoted is denied at the L4 TIER
+            // gate at Novice (Novice forbids every Write before scope is
+            // consulted). A `TierViolation` in the trace is the
+            // discriminator (builtin_tool_execution.rs:385).
+            let dir = tempfile::tempdir().expect("tempdir");
+            let target = dir.path().join("secret.txt");
+            let path_arg = format!("{}/secret.txt", fwd(dir.path()));
+            let db_path = dir.path().join("runtime-tester.sqlite");
+
+            let fw = write_scoped_framework(&["allowed/**"]);
+            let outcome = test_framework_with(
+                &fw,
+                "write the secret file",
+                &db_path,
+                WriteToolStub::new(path_arg),
+                Arc::new(DroneClient::noop()),
+                None,
+                SessionId::new(),
+                Tier::Novice,
+            )
+            .await
+            .expect("the assembled run completes");
+
+            assert!(
+                outcome
+                    .trace
+                    .iter()
+                    .any(|e| matches!(e, AgentEvent::TierViolation { .. })),
+                "at Novice the Write must be denied at the L4 TIER gate; trace={:?}",
+                outcome.trace
+            );
+            assert!(
+                !outcome
+                    .trace
+                    .iter()
+                    .any(|e| matches!(e, AgentEvent::CapabilityViolation { .. })),
+                "at Novice the tier gate denies first — the SCOPE gate is never reached; trace={:?}",
+                outcome.trace
+            );
+            assert!(
+                !target.exists(),
+                "a tier-denied write must create no file on disk"
+            );
+            // fold_outcome (tester.rs:122-156) folds only an L1
+            // CapabilityViolation into capability_failures; an L4
+            // TierViolation does NOT fail the outcome — the framework is
+            // well-authored, the user's tier is simply too low. So a
+            // Novice tier-denied run reports passed = true with the
+            // TierViolation visible in the trace. (Contrast: the Promoted
+            // SCOPE violation above DOES fold and forces passed = false —
+            // which sharpens the proof that the tier is actually threaded.)
+            assert!(
+                outcome.passed,
+                "a tier-denied run is not a test failure — only an L1 scope violation is; trace={:?}",
+                outcome.trace
+            );
         }
 
         #[test]

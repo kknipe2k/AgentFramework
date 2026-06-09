@@ -521,6 +521,87 @@ History is immutable (a measurement true for M0X stays true for M0X).
   existing M07.G `transport/mod.rs` carry-forward (87.50% line below
   per-file aspiration; runtime-mcp aggregate holds ≥95) — pattern is
   durable, not novel.
+- **M08.7 (closeout — Stage G)** — **no §C entry was appended at M08.7**:
+  rungs 1–5 added four new modules to the existing **runtime-main ≥95**
+  package gate (`builtin_tools.rs`/`load_skill.rs`/`request_capability.rs`
+  + the `agent_sdk.rs` dispatch branches) all INSIDE the gate, NOT new
+  `--package` gates and NOT excluded; no threshold or
+  `--ignore-filename-regex` value moved (`runtime-main` 96.23% line ≥ 95;
+  workspace 92.12% ≥ 80). The four canonical mirrors were byte-consistent
+  as-is. Recorded here for the audit trail (the M08.7 sign-off stated "no
+  §C entry required").
+- **M08.8 (closeout `<coverage_policy_reconciliation>` — Stage G)** —
+  **no threshold and no `--ignore-filename-regex` value changed anywhere
+  in M08.8.** M08.8 is overwhelmingly renderer/CSS (Stages A, B, B.fix,
+  B.fix2-renderer-half, C.fix) — the Vitest renderer gate (≥80% on `src/`)
+  held every stage (B 93.58% → C.fix 93.47% line). The only `crates/**` /
+  gated `src-tauri/src/` touches:
+  - **M08.8.C (tier in the run loop)** — the wire threaded the tracked
+    tier through `src-tauri/src/commands.rs` (`test_framework` reads
+    `CurrentTierState`; `test_framework_with` delegates to
+    `run_test_session_with_tier`) + reused the existing `tester.rs`
+    `run_test_session_with_tier` seam (no `tester.rs` change). The
+    `test_framework` tier read is an OS-touching command wrapper
+    (needs an `AppHandle` — the **§D tauri-shell patch-gate** surface,
+    target 50%): `commands.rs` measured **67.62% line ≥ 50** at C. The
+    `test_framework_with` tier-threading IS covered by the 3 assembled
+    tests (`commands.rs::test_framework_with_at_promoted_…` /
+    `…_at_novice_…`). `runtime-main` aggregate **96.27% line ≥ 95**
+    (unchanged — no `runtime-main` source moved; the seam pre-existed).
+    **No new exclusion, no new `--package` gate, no `codecov.yml`
+    change** — exactly the M08.F1 `tester.rs` precedent (non-wrapper
+    logic lives in the gated seam; the OS wrapper is the §D patch-gate
+    surface). The §D note's "work adding **non-wrapper** logic to
+    `src-tauri/src/` must re-evaluate the 50% target" was considered:
+    the new `test_framework` lines are a one-call tier read + a delegate
+    (wrapper-class), not new non-wrapper logic, so the 50% target stays
+    appropriate (67.62% clears it). No `src-tauri/**` exclusion exists to
+    move.
+  - **M08.8.B.fix2 (reload-reconstruct)** — touched
+    `crates/runtime-main/src/sdk/replay.rs` (serde round-trip rewrite,
+    INSIDE the runtime-main ≥95 gate, 97.27% per-file) + a new
+    `src-tauri/src/commands.rs` `replay_latest_session` command (the §D
+    patch-gate wrapper). `runtime-main` aggregate 96.27% ≥ 95; workspace
+    91.92% ≥ 80. **No exclusion or threshold change.**
+  The M08.8.G reconciliation appends this §C entry and **no new §B
+  baseline** (no module entered a gate; the M08-era `runtime-main
+  builder` row stands). The four canonical mirrors — CLAUDE.md §5
+  exclusion-category list, CLAUDE.md §6 `cargo llvm-cov` commands,
+  `codecov.yml`, and §A above — were **unchanged by M08.8** and are
+  verified byte-consistent as of M08.8.G. No drift found.
+- **M08.9 (closeout `<coverage_policy_reconciliation>` — Stage G)** —
+  **no threshold and no `--ignore-filename-regex` value changed anywhere
+  in M08.9** (the honest-Tester milestone: A truthful verdict, B run
+  drill-down, V verifier, D.fix e2e teardown). The only gated `crates/**`
+  touch:
+  - **M08.9.A (truthful verdict)** — grew
+    `crates/runtime-main/src/builder/tester.rs` (the new `TierBlock`
+    struct + `TestVerdict` enum + the `fold_outcome` `TierViolation`
+    match arm + the derived-verdict computation + the two new
+    `TestOutcome` fields) **INSIDE the existing runtime-main ≥95 package
+    gate** — NOT a new `--package` gate, NOT excluded. Every new line is
+    exercised by the producer-driven fold units (a serialized real
+    `AgentEvent::TierViolation` → `fold_outcome` → `tier_blocks` /
+    `verdict=TierLimited` / `passed` still true; the both-tier-and-
+    capability `Fail`-with-tier_blocks case). `runtime-main` aggregate
+    **95.03% line ≥ 95** (measured at A, exit 0). No exclusion, no
+    threshold, no `--package` gate moved.
+  - **M08.9.B (run drill-down)** — renderer-only
+    (`src/components/builder/{TesterModal,TraceDrilldown}.tsx` +
+    `src/lib/formatPayload.ts` + `src/components/RawDisclosure.tsx` + the
+    `InspectorPanel`/`ValidationCard` delegations); the Vitest renderer
+    gate (≥80% on `src/`) held — global lines **93.54%**, exit 0;
+    `TraceDrilldown.tsx` 97.67%. No `crates/**` coverage change.
+  - **M08.9.D.fix (e2e teardown)** — test-harness-only
+    (`tests/e2e-tauri/*.e2e.ts`, +26/-0); no source file changed, no
+    `cargo llvm-cov` / `vitest --coverage` gate moved.
+  The M08.9.G reconciliation appends this §C entry and **no new §B
+  baseline** (no module entered a gate; the M08-era `runtime-main
+  builder` row stands — `tester.rs` was already inside it from M08.8).
+  The four canonical mirrors — CLAUDE.md §5 exclusion-category list,
+  CLAUDE.md §6 `cargo llvm-cov` commands, `codecov.yml`, and §A above —
+  were **unchanged by M08.9** and are verified byte-consistent as of
+  M08.9.G. No drift found.
 
 ---
 

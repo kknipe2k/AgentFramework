@@ -92,16 +92,34 @@ const REQUIRED_BY_ROOT = {
 //   <wire_signature_audit>             (children: <wrapper>)
 //   <wire_trace_vs_adr_reconcile>      (children: <trace>)
 //   <phase_doc_inventory_audit shape=> (optional attr on type="store_slot")
-// This comment is the v1.8 "registration" — documentation, not logic. The
-// only version-gated REQUIRED-tag enforcement remains <simplify_pass> (v1.6).
+// This comment is the v1.8 "registration" — documentation, not logic.
+// Version-gated enforcement: <simplify_pass> (v1.6, closeout) + the v1.11
+// <tdd_discipline strict> → two-commit <execution_steps> cross-check (below).
 
 // Required tags that apply only when the phase doc's `**Protocol version:**`
 // banner is at or above the listed version. M05 and earlier closeouts predate
 // `<simplify_pass>`; v1.6 makes it required for M06+ closeouts only. See
 // STAGE-PROMPT-PROTOCOL.md §15 v1.6 changelog item #18.
 const VERSION_GATED_REQUIRED = {
-  closeout_stage_prompt: [{ tag: 'simplify_pass', minVersion: 1.6 }],
+  closeout_stage_prompt: [{ tag: 'simplify_pass', minVersion: 106 }], // 106 = v1.6 (encoded)
 };
+
+// v1.11: the v1.7 `<tdd_discipline strict="true">` → two-commit
+// `<execution_steps>` coupling, PROMOTED from authoring-discipline (lean
+// pass-through) to an enforced cross-check — the promotion the v1.7 changelog
+// item #4 deferred ("to v1.8+ once 2+ milestones show clean signal"); M06–M08.8
+// supplied the signal, the M08.9.B red-surface miss the trigger. Gated at v1.11
+// (encoded 111) so M08.9 (v1.8) + all prior docs are grandfathered. When a work
+// stage declares strict TDD, its `<execution_steps>` MUST carry the explicit
+// two-commit step sequence — the collapsed single-surface form is what let
+// M08.9.B skip the red-phase surface.
+const STRICT_TDD_MIN_VERSION = 111;
+const STRICT_TDD_REQUIRED_STEPS = [
+  'red_phase_commit',
+  'surface_for_red_approval',
+  'green_phase_commit',
+  'surface_for_final_approval',
+];
 
 // Parses the phase doc's `**Protocol version:** vX.Y` banner into a numeric
 // value (e.g. 1.6) for comparison against `VERSION_GATED_REQUIRED.minVersion`.
@@ -112,7 +130,15 @@ function detectProtocolVersion(content) {
   if (!match) return null;
   const major = Number.parseInt(match[1], 10);
   const minor = Number.parseInt(match[2], 10);
-  return major + minor / 10;
+  // Encode as major*100 + minor so two-digit minors order correctly
+  // (v1.10 → 110, v1.11 → 111). The earlier `major + minor / 10` collapsed
+  // v1.10 → 2.0 / v1.11 → 2.1, breaking any v1.10+ version gate.
+  return major * 100 + minor;
+}
+
+// Render an encoded version (major*100 + minor) back to `vM.m` for messages.
+function formatVersion(encoded) {
+  return `v${Math.floor(encoded / 100)}.${encoded % 100}`;
 }
 
 function extractBlocks(content) {
@@ -178,6 +204,27 @@ function checkVerifierBiasGuard(xml, idLabel) {
   return errors;
 }
 
+// v1.11 cross-check (STAGE-PROMPT-PROTOCOL.md §7/§11/§13): a work stage that
+// declares `<tdd_discipline strict="true">` MUST carry the explicit two-commit
+// `<execution_steps>` sequence. Gated at v1.11 (STRICT_TDD_MIN_VERSION) so all
+// prior phase docs are grandfathered.
+function checkStrictTddTwoCommit(xml, tag, idLabel, protocolVersion) {
+  if (tag !== 'work_stage_prompt') return [];
+  if (protocolVersion === null || protocolVersion < STRICT_TDD_MIN_VERSION) return [];
+  if (!/<tdd_discipline\b[^>]*\bstrict\s*=\s*["']true["']/i.test(xml)) return [];
+  const stepsMatch = xml.match(/<execution_steps>([\s\S]*?)<\/execution_steps>/i);
+  const stepsBody = stepsMatch ? stepsMatch[1] : '';
+  const missing = STRICT_TDD_REQUIRED_STEPS.filter((step) => !stepsBody.includes(step));
+  if (missing.length === 0) return [];
+  return [
+    `<work_stage_prompt ${idLabel}> declares <tdd_discipline strict="true"> but its ` +
+      `<execution_steps> omits the two-commit step(s): ${missing.join(', ')}. Strict TDD ` +
+      `requires the explicit red-gate sequence (red_phase_commit → surface_for_red_approval → ` +
+      `green_phase_commit → surface_for_final_approval) — the collapsed single-surface form is ` +
+      `what let M08.9.B skip the red-phase surface (STAGE-PROMPT-PROTOCOL.md §7/§13, enforced v1.11+).`,
+  ];
+}
+
 function validateBlock(block, protocolVersion) {
   const errors = [];
   const { tag, idAttr } = detectRoot(block.xml);
@@ -213,7 +260,7 @@ function validateBlock(block, protocolVersion) {
     if (!hasTag(block.xml, requiredTag)) {
       errors.push(
         `<${tag} ${idLabel}> missing required <${requiredTag}> ` +
-          `(phase doc Protocol version v${protocolVersion.toFixed(1)} ≥ v${minVersion.toFixed(1)})`,
+          `(phase doc Protocol version ${formatVersion(protocolVersion)} ≥ ${formatVersion(minVersion)})`,
       );
     }
   }
@@ -221,6 +268,8 @@ function validateBlock(block, protocolVersion) {
   if (tag === 'verifier_stage_prompt') {
     errors.push(...checkVerifierBiasGuard(block.xml, idLabel));
   }
+
+  errors.push(...checkStrictTddTwoCommit(block.xml, tag, idLabel, protocolVersion));
 
   return { errors, skip: false };
 }

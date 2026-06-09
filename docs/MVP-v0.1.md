@@ -7,6 +7,19 @@
 
 ---
 
+> ## ⚠️ Re-cut by ADR-0031 (2026-06-05) — read this first
+>
+> The post-M08 roadmap is **re-cut around author-and-run**. The authoritative,
+> file-grounded detailed roadmap is now **`docs/workbench-delivery-plan.md`**;
+> this doc is the milestone **index**.
+>
+> - **M1–M7**: shipped, historical, unchanged.
+> - **M8** (Workbench): in progress — A/B/B.fix/C shipped; **D/E/F superseded** by the re-cut.
+> - **M9–M11** below (Generators / First-run / Ship): **SUPERSEDED** — their numbers are reassigned to the new spine; the old content is relocated (Generators → v1.0; First-run + Ship → the v0.1 *Release* milestone). The detail sections are kept for history, each prefixed with a superseded note.
+> - **New spine (ADR-0032 — re-verticalized):** **M09** vertical slice · **M10** HITL-steers-the-run (gap resolve→resume + plans) · **M11** sub-agents (sequential) · **M12** the verify loop (hooks/rails + shell exec) · **M13** industrialize + ship. **v0.1 = M09 + M10 + M11 + M12 + M13** (execution breadth is *in* v0.1); **v1.0 = parallel multi-agent (P2–P4) + the ML/data framework + the microVM sandbox upgrade + Generators.** See ADR-0032 + `docs/workbench-delivery-plan.md` §4/§5. (ADR-0031 introduced this spine; ADR-0032 re-verticalized M10–M13.)
+
+---
+
 ## Purpose
 
 This document is the **build checklist** that turns §0d release scope into actionable phases. Every milestone has:
@@ -30,12 +43,30 @@ The MVP succeeds when **both** §0d MVP success-criterion paths (novice and expe
 | **M5** | Gap detection + Capability enforcement | 9–10 | §4b + §8.security L1 + L2a + L3 + L4 (Novice + Promoted) + L5 basic | request_capability fires GapNode; capability_violation blocks; Promoted auto-accepts validated |
 | **M6** | MCP basic | 11–12 | Phase 5 add/connect/list + per-server auth | Connect a real MCP server, agent uses its tools |
 | **M7** | Registry import | 13 | Phase 7 import-by-URL + import-by-file + skills.lock | Paste GitHub raw URL of a skill.md → installed and loadable |
-| **M8** | Workbench (Builder Canvas) | 14–17 | Phase 9 palette + drag-drop + JSON preview + Tester | Build a simple framework via canvas, save, reload, run |
-| **M9** | Generators | 18–20 | Phase 8a/8b/8c with Novice review + Promoted auto-accept | Generate a tool, skill, agent via natural-language prompt; install |
-| **M10** | First-run + polish | 21–22 | §14 onboarding + Settings + Help | Fresh user installs and reaches first session in <10 minutes |
-| **M11** | Ship prep | 23–24 | Signed .msi + README + release artifact | Two-path success criterion (novice + experienced) on fresh Windows VM |
+| **M8** | Workbench (Builder Canvas) | 14–17 | Phase 9 palette + drag-drop + JSON preview + Tester | **In progress** — A/B/B.fix/C shipped; D/E/F superseded (ADR-0031) |
+| **M9** | Workbench vertical slice *(ADR-0031/0032)* | — | Author one agent from scratch + file_access + a real MCP tool; run it (pure skeleton) | A from-scratch agent writes a real file from real MCP data, at the enforced tier |
+| **M10** | HITL steers the run *(ADR-0032)* | — | Gap resolve→resume + plan-approval + plan task execution (single-agent tasks) | A plan runs task-by-task on approval; a suspended gap resumes on grant |
+| **M11** | Sub-agents, sequential *(ADR-0032)* | — | Orchestrator spawns a child (narrowed grants) → child runs, returns; `max_concurrent:1` | A two-agent framework (research-agent → PRD-writer) runs to completion |
+| **M12** | The verify loop *(ADR-0032 — now v0.1)* | — | Hooks/rails firing engine + controlled shell exec (H); green→next / red→rollback | A post-task `bash verify.sh` gate runs the tests; a `dont_touch` edit is blocked |
+| **M13** | Industrialize + ship *(ADR-0032 — now v0.1)* | — | MCP data-source catalog + validated import/export + save-path + first-run + `.msi` | The full research→…→verify loop builds, runs, and ships on a fresh Windows VM |
 
-Total: ~24 weeks elapsed at sustained pace. Compresses with parallel work; expands with rework.
+Total: ~24 weeks elapsed at sustained pace. Compresses with parallel work; expands with rework. *(Pre-re-cut estimate; the ADR-0031 spine's estimates are TBD — `docs/workbench-delivery-plan.md` carries the current sequencing.)*
+
+---
+
+## Post-M08 re-cut (ADR-0031 → ADR-0032) — the vertical author-and-run spine
+
+The detailed, file-grounded roadmap is **`docs/workbench-delivery-plan.md`** (§4/§5, rewritten for ADR-0032). This table is the index:
+
+| Milestone | Goal | Phase doc | Version |
+|---|---|---|---|
+| **M09 — Vertical slice** | Author one agent from scratch + `file_access` + a real MCP tool; run it; write a real file at the enforced tier (pure skeleton). | `docs/build-prompts/M09-workbench-vertical-slice.md` | v0.1 |
+| **M10 — HITL steers the run** | Gap resolve→resume (ADR-0029) + plan-approval + plan task execution (ADR-0026; single-agent tasks). | (TBA) | v0.1 |
+| **M11 — Sub-agents (sequential)** | Orchestrator → child (narrowed grants) → child runs, returns; `max_concurrent:1` (rung 6). | (TBA) | v0.1 |
+| **M12 — The verify loop** | Hooks/rails firing engine (rung 8) + controlled shell exec (H, OS-native sandbox); green→next / red→rollback. | (TBA) | **v0.1** |
+| **M13 — Industrialize + ship** | MCP data-source catalog + validated import/export + save-path + first-run + `.msi` + the rewritten two-path success criterion. | (TBA) | **v0.1** |
+
+**Scope line (ADR-0032):** **v0.1 = M09 + M10 + M11 + M12 + M13** — execution breadth is *in* v0.1. **v1.0 = parallel/P2–P4 multi-agent + the ML/data framework + the microVM sandbox upgrade + Generators** (the old M9) + the remainder of §0d's v1.0 column. The old generator-centric **success criterion is superseded** — the v0.1 criterion is the author-and-run + verify-loop IRL (seeded at M09.D, completed at M13).
 
 ---
 
@@ -231,6 +262,8 @@ Total: ~24 weeks elapsed at sustained pace. Compresses with parallel work; expan
 
 ## M8 — Workbench (Builder Canvas) (weeks 14–17)
 
+> **Status (ADR-0031):** in progress on `claude/m08.8-design-workbench`. M08.8 A/B/B.fix/C shipped (+ the C.fix tier-display fix); **D (budget-visible) / E (gap-resume) / F (save-polish) are superseded** by the re-cut and fold into M11 / M13 — reconciled at the M08.8 closeout. The criteria below describe the original M08 canvas; the re-cut spine (M09+) extends it to author-and-run.
+
 **Deliverable**
 - Phase 9 Visual Canvas at three-panel layout per spec §9
 - Palette (left): Tools / Skills / Agents / HITL / Hooks tabs; filterable; drag-drop
@@ -260,6 +293,8 @@ Total: ~24 weeks elapsed at sustained pace. Compresses with parallel work; expan
 
 ## M9 — Generators (weeks 18–20)
 
+> **SUPERSEDED by ADR-0031 — relocated to v1.0.** The **M9 number is reassigned** to the **vertical slice** (see "Post-M08 re-cut" + `docs/workbench-delivery-plan.md`). Generators remain a real **v1.0** deliverable; this section is kept as their v1.0 spec.
+
 **Deliverable**
 - Phase 8a Tool Writer — generate `tool.md` with `mcp_binding` (against an installed MCP server's tool schema) or `inline_implementation` (declarative decision table); never `shell_binding` in v0.1 generated output
 - Phase 8b Skill Writer — generate `skill.md` instruction-set markdown with frontmatter (capabilities, mode_variants, triggers)
@@ -286,6 +321,8 @@ Total: ~24 weeks elapsed at sustained pace. Compresses with parallel work; expan
 ---
 
 ## M10 — First-run + polish (weeks 21–22)
+
+> **SUPERSEDED by ADR-0031 — relocated to the v0.1 Release milestone.** The **M10 number is reassigned** to **author-anything**. This first-run / onboarding content is the seed for the v0.1 **Release** milestone.
 
 **Deliverable**
 - §14 First-Run state machine: Welcome → API key → Import or skip → First session prompt → Running session
@@ -316,6 +353,8 @@ Total: ~24 weeks elapsed at sustained pace. Compresses with parallel work; expan
 ---
 
 ## M11 — Ship prep (weeks 23–24)
+
+> **SUPERSEDED by ADR-0031 — relocated to the v0.1 Release milestone.** The **M11 number is reassigned** to **real-data**. The ship mechanics here seed the **Release** milestone; the **two-path success criterion below is superseded** — it becomes author-and-run (a from-scratch agent + MCP data writes a real file), rewritten at Release.
 
 **Deliverable**
 - `examples/aria/` stripped to v0.1-compatible (mode hardcoded to STANDARD, no MCP-dependent tools by default — but loadable into v0.1)

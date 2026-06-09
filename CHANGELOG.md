@@ -31,6 +31,161 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   discussion" contact link (no community Q&A channel during the build
   phase; Discussions stays disabled).
 
+### Added — M08.9 (honest, drill-able Tester — TD-047; ADR-0031 trust prerequisite for M09)
+
+- **`crates/runtime-main/src/builder/tester.rs`** — the Tester verdict
+  is now **truthful** (closes **TD-047**). `fold_outcome` previously
+  dropped `AgentEvent::TierViolation` at the `_ => {}` arm, so a
+  tier-blocked run returned `passed=true` with an empty failures list and
+  `TesterModal` rendered a green **PASS** — the maintainer hit this live
+  (a Novice run "said passed" and wrote no file). The `TierViolation`
+  signal was already sitting in `outcome.trace`; M08.9.A **folds** it
+  (it did not detect anything new) into a new
+  `TestOutcome.tier_blocks: Vec<TierBlock>` and derives a 3-state
+  `verdict: TestVerdict` (`Pass` / `Fail` / `TierLimited`): a framework
+  defect (L2 capability / integrity) ⇒ `Fail`; else a tier block ⇒
+  `TierLimited`; else `Pass`. `passed` is **unchanged** — a tier block is
+  the user's tier setting, **not** a framework defect (ADR-0030), so a
+  tier-limited run is `passed=true, verdict=TierLimited`.
+- **`src/lib/ipc.ts`** — the hand-written `TestOutcome` TS mirror gains a
+  `TierBlock` interface, a `TestVerdict` (`'pass' | 'fail' |
+  'tier_limited'`) type, and the `tier_blocks` + `verdict` fields,
+  byte-aligned with the Rust `snake_case` serde (gotcha #94 — the mirror
+  is producer-driven; no `schemas/` change, no ADR).
+- **`src/components/builder/TesterModal.tsx`** — renders the 3-state
+  verdict badge keyed on `outcome.verdict` instead of the binary
+  `outcome.passed ? 'PASS' : 'FAIL'`. A Novice tier-blocked run reads
+  **TIER-LIMITED** with the blocked action(s) + a "Promote?" affordance,
+  never a clean PASS (DESIGN.md principle 8 — labels-true).
+- **`src/components/builder/TraceDrilldown.tsx` (new)** — M08.9.B makes
+  the run **drill-able**: `TesterModal` renders `outcome.trace` as
+  verdict → per-tool-call (input/result) → raw. The drill-down reuses the
+  existing disclosure primitives via two behavior-preserving
+  lift-to-shared extractions — `src/lib/formatPayload.ts` (the M08.8.A
+  Output-rail payload formatter, lifted from `InspectorPanel`) and
+  `src/components/RawDisclosure.tsx` (the Show-raw disclosure, lifted from
+  `ValidationCard`, which now delegates to it with DOM/testids preserved
+  so its tests pass untouched). Tier-limited / capability rows are
+  visually distinct and link to their explainer. Renderer-only — no
+  backend or schema change.
+- Tests: producer-driven Rust fold units (a serialized real
+  `AgentEvent::TierViolation` → `fold_outcome` → assert `tier_blocks` +
+  `verdict=TierLimited` + `passed` still `true`; a both-tier-and-capability
+  run reads `Fail` with `tier_blocks` retained) + vitest verdict/drill-down
+  units + the assembled-modal wiring test +
+  `tests/e2e-tauri/tester_verdict.e2e.ts` and `tester_drilldown.e2e.ts`
+  (the real-app `tauri-driver` regressions, ADR-0021). M08.9.V's 5th
+  assembled-execution pass drove the real Tauri binary and **observed**
+  TD-047 closed: a Novice Write run reads TIER-LIMITED + writes no file; a
+  Read run drills a tool call → input/result → raw. The maintainer
+  real-app IRL is the authoritative close (rule 11).
+
+### Fixed — M08.9.D.fix (V 🔴 #1 — the committed Tester e2e regression never executed its assertion)
+
+- **`tests/e2e-tauri/tester_verdict.e2e.ts` + `tester_drilldown.e2e.ts`**
+  — both specs share one app session per `describe`; Test 1 opened the
+  Tester modal via `openBuilderTester` and never closed it, so Test 2's
+  view-switch click was intercepted by the modal scrim — the substantive
+  case crashed (suite 10/2, exit 1 with an Anthropic key; `this.skip()` on
+  CI, so the merge gate was green while the assertion never executed).
+  Added an `afterEach` to each `describe` that calls `closeTester()` and
+  waits for `[data-testid="tester-modal"]` to disappear (`reverse`).
+  **Test-harness only** — 26 insertions, 0 deletions; no product / `src/`
+  / Rust / schema change, assertions intact. The modal-scrim root cause
+  was the hypothesis the green run disproved: with a key + `tauri-driver`
+  the full suite is **12/12, exit 0** with the TIER-LIMITED + drill-down
+  cases now executing. Graduated as **gotcha #95** (an `e2e-tauri` helper
+  that opens a modal must close it in `afterEach`).
+
+### Fixed — M08.8.C.fix (tier UI display half — M08.6-IRL #19 desync + #20 feedback)
+
+- **`src/App.tsx`** — the App mount now **seeds `currentTier` from the
+  backend** (`get_current_tier`) so the Settings display matches the
+  **enforced** tier across a restart. The renderer defaulted `currentTier` to
+  `'novice'` and wrote it ONLY from `tier_transition` events, so after a
+  restart with a Promoted backend (`tier.json`) the display read Novice while
+  the run enforced Promoted — the **#19 desync**. C wired the enforcement half
+  but never touched the display layer (Hard Rule 11 — enforcement-observed ≠
+  display-fixed). The seed mirrors the `invokeHasApiKey` startup read; a
+  defensive `TierRef` guard keeps a malformed bridge payload from corrupting
+  the slot that drives the topbar chip + the SettingsPanel toggle.
+- **`src/App.tsx`** — a `tier_transition` event now pushes a feedback **toast**
+  naming the new tier (M08.6-IRL **#20** / DESIGN.md principle 1 — feedback).
+- **`src/lib/ipc.ts`** — new `getCurrentTier()` wrapper over the EXISTING
+  `get_current_tier` command (zero args; serde-lowercase `TierRef`, direct).
+- **`src/lib/graphStore.ts`** — new `setCurrentTier` store action (seeds the
+  slot; reflects the enforced tier, never widens it).
+- **Frontend-only** — no backend / enforcer / `SettingsPanel` change: the
+  idempotent no-op (`commands.rs:717–720`) is correct (a no-op is not a
+  transition). Once seeded, `SettingsPanel`'s target/label are correct.
+- Tests: 5 vitest units (the wrapper, the action, the App-mount seed, the
+  tier-transition toast) + `tests/e2e-tauri/tier_display.e2e.ts` — the
+  assembled-app reload regression: a reloaded renderer over the same Promoted
+  backend must read "Demote" (the seed); on `main` pre-fix it reverts to
+  "Promote" (the #19 desync). Key-independent (runs in CI). The maintainer
+  re-IRL WITH a restart is the authoritative close (rule 11) and also
+  completes parent C (tier execution-status "observed in app" + TD-036).
+
+### Added — M08.8.C (tier in the run loop — TD-036; ADR-0030)
+
+- **`src-tauri/src/commands.rs`** — the Builder Tester now runs at the user's
+  **tracked tier** (TD-036). `test_framework` reads `CurrentTierState` at
+  invocation and threads it through `test_framework_with` →
+  `run_test_session_with_tier` (`set_tier` before dispatch); the tier is read
+  per-invocation, so a transition between runs is reflected without any
+  mid-run re-application (each Tester run is a fresh isolated session). No
+  production path called `set_tier` before — every real-app run was pinned to
+  Novice (`enforcer.rs:64`), so the Promoted scope-gate was unreachable in-app
+  **and** the Settings tier display desynced from the enforced tier
+  (M08.6-IRL **#19**, root-fixed here: the run now enforces what the UI shows).
+- **`src/components/SettingsPanel.tsx`** — the tier-transition button reads a
+  truthful **"Promote" / "Demote"** (M08.6-IRL **#20** / DESIGN.md principle 8
+  labels-true), not the redundant "Promote to Promoted".
+- **Smoke is intentionally not wired** (ADR-0030): `run_smoke_session_with`
+  uses `AgentSdk::new` (no enforcer) on a no-tool prompt, so a tier gates
+  nothing there; adding one would widen the capability surface for no effect.
+  The Tester is the observable, enforcement-bearing path.
+- **`docs/adr/0030-tester-runs-at-tracked-tier.md`** (Proposed) — refines
+  ADR-0019 (the isolated-session model stands; only the enforcer's tier
+  changes from default-Novice to the user's tracked tier). ADR-0019 carries a
+  "Refined by ADR-0030" backnote.
+- Tests: two assembled production-wire tests (`commands.rs::tester_backend`)
+  prove the Promoted-vs-Novice contrast — a Promoted out-of-scope Write
+  reaches the L1 **scope** gate (`CapabilityViolation{Write}`, no file on
+  disk); the same Write at Novice is L4 **tier**-denied (`TierViolation`,
+  scope never reached). Exact-`textContent` label asserts in
+  `SettingsPanel.test.tsx`; `tests/e2e-tauri/tier_enforcement.e2e.ts` for the
+  real-app UI-truth close (ADR-0021). Blocking mutation gate: cargo-mutants
+  finds 2 unviable mutants; a hand-mutant (ignore the threaded tier) fails the
+  Promoted test — the wire is behaviorally pinned. The real-app IRL (a
+  Promoted run enforces Promoted) is the authoritative close (rule 11).
+
+### Fixed — M08.8.B.fix2 (TD-044: reload reconstructs the graph from persisted signals)
+
+- **`crates/runtime-main/src/sdk/replay.rs`** — the signal→`AgentEvent`
+  translator was hand-rolled and read invented field names
+  (`payload_json.event`) the real persisted signal log never carried (the
+  discriminator is `payload_json.type`), so it produced **zero** events
+  against real data — `replay_session` was always broken in the assembled
+  app. Replaced the ~170-line field-by-field translator with a direct
+  `serde_json::from_value::<AgentEvent>` (the `payload_json` IS a serialized
+  `AgentEvent`), and replaced the fabricated `{event:"spawned"}` fixtures
+  (in-source + `tests/sdk_replay.rs`) with real serialized-event round-trips
+  (§5 behavior-not-tautology).
+- **`src-tauri/src/commands.rs`** — added `replay_latest_session`
+  (+ `replay_latest_session_with` seam): reads the most-recent session WITH
+  signals from the persisted log and replays it. The renderer's
+  `localStorage.lastSessionId` does not survive a full app restart
+  (a relaunched WebView comes up on a fresh profile), so the backend — which
+  owns persistence — supplies the session to reconstruct.
+- **`src/App.tsx`** — registers the `agent_event` listener (awaited) BEFORE
+  firing replay (closes an emit-before-listen race on the reconstruct path),
+  and falls back to `replay_latest_session` when no `lastSessionId` is
+  stashed. **`src/lib/ipc.ts`** — `invokeReplayLatestSession` wrapper.
+- Verified on the real app: `tests/e2e-tauri/smoke.e2e.ts` reload leg
+  **5/5** consecutive green + full `test:e2e:tauri` **8/8**. Closes TD-044;
+  logs TD-045 (sweep for other fabricated-fixture hand-rolled translators).
+
 ### Changed — M08.7 Closeout (summary, immutable gap-analysis, simplify pass, coverage reconciliation, ADR flips)
 
 - **`docs/adr/0028-builtin-tool-execution-contract.md`** — filed at this

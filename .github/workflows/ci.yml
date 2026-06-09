@@ -20,6 +20,32 @@ jobs:
   # Always-on jobs — run regardless of whether code has landed yet
   # ────────────────────────────────────────────────────────────────────────
 
+  dco:
+    name: DCO sign-off
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify Signed-off-by on every PR commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=0
+          for sha in $(git rev-list --no-merges "$BASE_SHA..$HEAD_SHA"); do
+            if ! git log -1 --format='%B' "$sha" | grep -qiE '^Signed-off-by: .+ <.+@.+>'; then
+              echo "::error::commit $sha is missing a Signed-off-by line — $(git log -1 --format=%s "$sha")"
+              missing=$((missing + 1))
+            fi
+          done
+          if [ "$missing" -gt 0 ]; then
+            echo "$missing commit(s) missing a DCO sign-off. Add 'Signed-off-by: Name <email>' with 'git commit -s'."
+            exit 1
+          fi
+          echo "All PR commits carry a DCO sign-off."
+
   schema-validate:
     name: Schema validation
     runs-on: ubuntu-latest
@@ -155,45 +181,6 @@ jobs:
 
       - name: Validate stage-prompt XML schemas
         run: node bin/validate-stage-prompts.mjs
-
-  # Developer Certificate of Origin gate. CONTRIBUTING.md requires every
-  # commit to carry a `Signed-off-by:` trailer (added by `git commit -s`)
-  # as the project's contributor-IP hygiene mechanism (DCO in lieu of a
-  # CLA). Without this gate it was honor-system only. Self-contained — no
-  # third-party action, matching the inline gitleaks + append-only checks.
-  # Runs on PRs only (you cannot retroactively sign an already-pushed
-  # commit on `main`); always-on, not gated on code_changed, since DCO
-  # applies to docs-only PRs too.
-  dco:
-    name: DCO sign-off
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Verify every commit is signed off
-        run: |
-          set -euo pipefail
-          base="${{ github.event.pull_request.base.sha }}"
-          head="${{ github.event.pull_request.head.sha }}"
-          echo "Checking DCO sign-off across ${base}..${head}"
-          missing=0
-          for sha in $(git rev-list --no-merges "${base}..${head}"); do
-            subject=$(git show -s --format='%s' "$sha")
-            if git show -s --format='%B' "$sha" \
-                 | grep -qiE '^Signed-off-by: .+ <.+@.+\..+>[[:space:]]*$'; then
-              echo "OK    $sha  $subject"
-            else
-              echo "::error::Missing or malformed Signed-off-by on $sha ($subject)"
-              missing=1
-            fi
-          done
-          if [ "$missing" -ne 0 ]; then
-            echo "::error::One or more commits lack a DCO sign-off. Amend with 'git commit -s' (see CONTRIBUTING.md, 'Sign-off (DCO)')."
-            exit 1
-          fi
-          echo "All non-merge commits carry a valid DCO sign-off."
 
   # ────────────────────────────────────────────────────────────────────────
   # Code jobs — gated on Cargo workspace existing.

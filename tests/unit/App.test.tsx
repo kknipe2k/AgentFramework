@@ -19,6 +19,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from '../../src/App';
 import { useGraphStore } from '../../src/lib/graphStore';
+import { useToastStore } from '../../src/lib/toastStore';
 import type { AgentEvent } from '../../src/types/agent_event';
 
 describe('App (renderer-level state machine)', () => {
@@ -250,6 +251,73 @@ describe('App (renderer-level state machine)', () => {
   // handleSmoke clears `error` at run start; the banner is bound to the
   // same App `error` slot and no racing handler re-sets it. A stale
   // banner from a prior failed run is gone before the next run begins.
+
+  // ---- M08.8.C.fix: tier display seed (#19) + tier-change toast (#20) ----
+  // The renderer never seeded currentTier from the backend: it defaulted
+  // 'novice' and was written ONLY by the tier_transition reducer. After a
+  // restart with a Promoted backend the Settings display read Novice while
+  // the run enforced Promoted (the #19 desync). App now reads
+  // get_current_tier on mount and seeds the store; a tier_transition event
+  // pushes a feedback toast (#20).
+
+  it('app_seeds_current_tier_from_get_current_tier_on_mount', async () => {
+    // Force a clean Novice baseline so the seed-to-Promoted flip is the
+    // observed effect (clear() preserves currentTier — a prior test could
+    // leave it promoted).
+    act(() => {
+      useGraphStore.setState({ currentTier: 'novice' });
+    });
+    listenMock.mockImplementation(async () => () => undefined);
+    invokeMock.mockImplementation(async (...args: unknown[]) =>
+      args[0] === 'get_current_tier' ? 'promoted' : undefined,
+    );
+    render(<App />);
+    await waitFor(() => {
+      const calls = invokeMock.mock.calls.map((c) => String(c[0]));
+      expect(calls).toContain('get_current_tier');
+    });
+    // The seed reflects the enforced tier — without it the store stays at
+    // its 'novice' default (the #19 desync).
+    await waitFor(() => expect(useGraphStore.getState().currentTier).toBe('promoted'));
+  });
+
+  it('tier_transition_event_pushes_a_feedback_toast', async () => {
+    act(() => {
+      useToastStore.setState({ toasts: [] });
+    });
+    let registeredHandler: ((e: { payload: AgentEvent }) => void) | undefined;
+    listenMock.mockImplementation(
+      async (_channel: string, cb: (e: { payload: AgentEvent }) => void): Promise<() => void> => {
+        registeredHandler = cb;
+        return () => undefined;
+      },
+    );
+    invokeMock.mockResolvedValue(undefined);
+    render(<App />);
+    await waitFor(() => expect(registeredHandler).toBeDefined());
+
+    act(() => {
+      registeredHandler!({
+        payload: {
+          type: 'tier_transition',
+          previous: 'novice',
+          current: 'promoted',
+          reason: 'user requested promoted via Settings',
+        },
+      });
+    });
+
+    // DESIGN.md principle 1 (feedback): the tier change surfaces a toast
+    // that names the new tier.
+    await waitFor(() => {
+      const toasts = useToastStore.getState().toasts;
+      expect(toasts.length).toBeGreaterThan(0);
+      expect(toasts.some((t) => t.title.toLowerCase().includes('promoted'))).toBe(true);
+    });
+    act(() => {
+      useToastStore.setState({ toasts: [] });
+    });
+  });
 
   it('smoke_error_banner_cleared_when_new_run_starts', async () => {
     listenMock.mockImplementation(async () => () => undefined);
