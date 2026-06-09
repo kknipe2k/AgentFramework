@@ -3398,7 +3398,7 @@ mod tests {
         use runtime_mcp::mcp_tool_capability;
 
         /// A canvas-authored framework whose `agent-1` declares the MCP tool
-        /// `fs__read` (matching the MockTransport tool `read` on server `fs`)
+        /// `fs__read` (matching the `MockTransport` tool `read` on server `fs`)
         /// + the built-in `Write`; `session_root_agent` is `agent-1`.
         fn canvas_fw_with_mcp_tool() -> Framework {
             serde_json::from_value(serde_json::json!({
