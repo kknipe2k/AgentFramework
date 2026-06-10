@@ -231,6 +231,49 @@ fn confine_rejects_symlink_escape_from_root() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn confine_rejects_parentdir_surviving_into_a_nonexistent_remainder() {
+    // The ParentDir-in-remainder rejection arm. On unix, a nonexistent
+    // intermediate (`ghost`) means `ghost/../sibling` cannot be
+    // canonicalized, and the `..` survives the nearest-existing-ancestor
+    // walk into the re-joined remainder — where it is rejected outright
+    // (the filesystem could not normalize it away). On Windows the OS
+    // collapses `..` lexically before the resolver sees it, so this arm
+    // is unix-shaped (it is the platform where the `..` actually survives).
+    let root = tempdir().expect("tempdir");
+    let surviving = root.path().join("ghost").join("..").join("sibling");
+
+    let roots = vec![root.path().to_path_buf()];
+    let err = confine(&surviving, &roots)
+        .expect_err("a .. that survives into the remainder must be refused");
+    assert!(
+        matches!(err, ConfineError::NotPermitted(_)),
+        "surviving .. must surface as NotPermitted, got {err:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn confine_rejects_relative_path_with_no_existing_ancestor() {
+    // The filesystem-root guard: a relative path whose ancestors never
+    // exist walks up to an empty parent and then to `None` without ever
+    // finding an existing ancestor — nothing legitimate resolves there,
+    // so it is refused. (On unix `/` always exists, so an absolute path
+    // never reaches this arm; a relative path with no real ancestor does.)
+    let orphan = std::path::Path::new("nonexistent-rel-xyz-9f3a/deeper/leaf");
+
+    // A real registered root exists, but the orphan resolves under none.
+    let root = tempdir().expect("tempdir");
+    let roots = vec![root.path().to_path_buf()];
+    let err = confine(orphan, &roots)
+        .expect_err("a relative path with no existing ancestor must be refused");
+    assert!(
+        matches!(err, ConfineError::NotPermitted(_)),
+        "no-existing-ancestor must surface as NotPermitted, got {err:?}"
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn confine_rejects_backslash_dotdot_escape() {

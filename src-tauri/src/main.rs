@@ -57,11 +57,11 @@ fn main() {
     // same archetype as the persisted tier). `tauri-driver` spawns the
     // built binary as a child that inherits the runner's env, so
     // wdio.conf.ts exporting the env reaches the app process.
-    if std::env::var("AGENT_RUNTIME_E2E").is_ok() {
+    if let Some(script) = e2e_seam_script(std::env::var("AGENT_RUNTIME_E2E").is_ok()) {
         tracing::warn!("AGENT_RUNTIME_E2E set — exposing window stores for the e2e harness");
         builder = builder.plugin(
             tauri::plugin::Builder::<tauri::Wry>::new("e2e-seam")
-                .js_init_script("window.__E2E__ = true;".to_string())
+                .js_init_script(script.to_string())
                 .build(),
         );
     }
@@ -430,4 +430,46 @@ fn init_tracing() {
         .with_thread_names(false)
         .compact()
         .init();
+}
+
+/// Decide the store-exposure test-mode seam from the `AGENT_RUNTIME_E2E`
+/// env presence (M09.5.A / TD-050 — shell-resolves-the-decision
+/// archetype; the renderer never reads the env).
+///
+/// Returns the initialization-script body to inject (`window.__E2E__ =
+/// true;`) when the env is present, so the e2e harness can drive the
+/// `window.__*Store` exposure App.tsx gates on; `None` on a normal
+/// (production) launch, so nothing is injected and the stores stay
+/// absent. Pulled out of `main` so the bare-launch branch is unit-
+/// testable without booting the shell (the assembled bare-launch claim
+/// rests on this branch test PLUS the maintainer IRL console check —
+/// rule 11).
+const fn e2e_seam_script(env_present: bool) -> Option<&'static str> {
+    if env_present {
+        Some("window.__E2E__ = true;")
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::e2e_seam_script;
+
+    #[test]
+    fn no_seam_injected_on_a_bare_launch() {
+        // Production launch: AGENT_RUNTIME_E2E absent → the e2e-seam
+        // plugin is NOT registered, so window.__E2E__ is never set and
+        // App.tsx's shouldExposeStores(DEV=false, undefined) leaves the
+        // stores absent.
+        assert_eq!(e2e_seam_script(false), None);
+    }
+
+    #[test]
+    fn seam_injects_the_flag_when_the_env_is_present() {
+        // Harness launch: AGENT_RUNTIME_E2E=1 → the init script sets the
+        // flag the renderer gates on. The exact body is the contract the
+        // wdio harness depends on.
+        assert_eq!(e2e_seam_script(true), Some("window.__E2E__ = true;"));
+    }
 }
