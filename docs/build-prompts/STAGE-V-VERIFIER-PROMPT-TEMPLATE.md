@@ -14,6 +14,7 @@
    - `{{primitives-list}}` — semicolon-separated list of public primitives V will exercise (e.g. `framework_loader; request_capability meta-tool; capability enforcer; tier system`)
    - `{{multi-call-surface}}` — semicolon-separated list of methods/commands that must survive sequential-call (e.g. `query_session_db; read_signals; recover_session; respond_hitl; respond_uncertainty`)
    - `{{behavior-targets}}` — semicolon-separated list of user-observable primitives that need runtime-render or DOM/state inspection (e.g. `GapPanel renders; CapabilityBadge shows tier; audit-log file written`)
+   - `{{adversarial-targets}}` — semicolon-separated list of trust-boundary surfaces the milestone added/touched, each with its hostile case (e.g. `save_framework dir containment vs ../ traversal; IPC frame cap vs 5MiB no-newline frame; SSE stream vs mid-stream stall`)
 3. **Strip** any pass-specific items that don't apply to the milestone (e.g. an all-backend milestone may drop the Behavior pass's DOM targets — but should NOT drop the pass entirely; replace with IPC/state-observation targets).
 4. **Surface** the parameterized prompt for user review before the V session runs (per CLAUDE.md §4 Hard Rule 1).
 
@@ -43,13 +44,13 @@ This is the load-bearing discipline. The build agent + per-stage retro agent + c
     Run with empty session memory — you have NOT seen the work-stage retros,
     the milestone summary, or any prior gap-analysis entries. Your job is to
     ask whether the code does what the spec said, when actually exercised.
-    Five passes in order: Inventory → Wire → Behavior → Multi-call invariants → Assembled-execution.
+    Six passes in order: Inventory → Wire → Behavior → Multi-call invariants → Assembled-execution → Adversarial.
     Findings are tagged 🔴 (block merge), 🟡 (carry forward), 🟢 (tech debt).
     Maximum 2 D.fix iterations before maintainer escalation.
   </context>
 
   <read_first>
-    <file>STAGE-PROMPT-PROTOCOL.md §14 (the verifier schema you are running under — v1.9: five passes)</file>
+    <file>STAGE-PROMPT-PROTOCOL.md §14 (the verifier schema you are running under — v1.12: six passes)</file>
     <file>docs/adr/0008-milestone-stage-v-verifier.md (design rationale + the original four passes + the bias guard)</file>
     <file>docs/cluster-pattern.md (the cluster-gate close discipline — basis of the v1.9 fifth pass, assembled_execution) + CLAUDE.md §4 rule 11 (grounded-claims: a "Sound" verdict that did NOT run the assembled path is forbidden)</file>
     <file>docs/build-prompts/{{MNN}}-{{milestone-short-title}}.md (the phase doc — Background, every X.1 problem statement, every X.2 files-to-change table, every X.3 detailed changes, every X.4 tests, section V (this stage's parameters), AND every per-stage `<scope_change>` block in the embedded `<work_stage_prompt>` XML — `<descope>` and `<expand>` children declare authorized in-stage carry-forwards visible to V's bias-guarded read but not to the per-stage retros V is forbidden to read; treat them as source-of-truth for "what V should NOT flag as missing")</file>
@@ -152,6 +153,32 @@ This is the load-bearing discipline. The build agent + per-stage retro agent + c
       silent skip, and NOT grounds for a "Sound" verdict. Per CLAUDE.md §4
       rule 11: a "Sound" that did not run the assembled path is forbidden;
       the verdict states explicitly what was NOT exercised.
+    </pass>
+    <pass name="adversarial">
+      THE 6th PASS (v1.12 — standing; origin: the 2026-06-09 external
+      review's meta-finding that an IRL-driven culture verifies the happy
+      path really runs and exercises nothing hostile — TD-050…057 all
+      lived in that blind spot). Scope: the trust-boundary surfaces this
+      milestone ADDED or TOUCHED — {{adversarial-targets}} — not a
+      whole-app pentest. For each target, actively ATTEMPT the hostile
+      case and OBSERVE the rejection/containment:
+      (a) boundary escape — `..` traversal, symlink escape, scope-glob
+          bypass, renderer-supplied params no UI sends (direct invoke);
+      (b) malformed input — oversized / no-delimiter frames, truncated
+          streams, invalid JSON where a schema is assumed;
+      (c) failure injection — stalls and timeouts (does it hang or
+          suspend cleanly?), mid-stream disconnects, every error arm;
+      (d) granted-authority abuse (the injection lens) — can
+          attacker-shaped CONTENT steer a granted capability beyond
+          intent (docs/SECURITY.md "Prompt injection — posture")?
+      Assertions are on the OBSERVED rejection + the ABSENT side effect
+      (no file outside scope, no unbounded buffer growth, no hang) —
+      never on an error event alone. A hostile case not actually run →
+      HYPOTHESIS, labeled (rule 11). An unrunnable case → 🟡 naming the
+      blocker, never a silent skip. Severity: a reachable escape/hang on
+      a shipped surface → 🔴; reachable only behind a precondition the
+      milestone doesn't ship → 🟡 (precondition named); hardening
+      polish → 🟢.
     </pass>
   </verification_passes>
 
@@ -257,6 +284,26 @@ For each public surface, write the assertion as "call the method twice; both mus
 
 If a surface has known concurrency requirements (e.g., two callers hitting the same Tauri command from different renderer tabs), add a concurrent variant — but only after the sequential variant is in place.
 
+### Choosing `{{adversarial-targets}}` — the Pass 6 inputs (v1.12)
+
+Scope to the trust-boundary surfaces the milestone ADDED or TOUCHED — not a
+whole-app pentest. Derive from the milestone's X.2 tables filtered to boundary
+code (IPC framing, path handling, renderer-supplied parameters,
+network/provider failure paths, sandbox policy), cross-referenced against
+`docs/SECURITY.md`'s trust-boundary table. Each target needs (1) the hostile
+case to attempt, (2) the observed rejection that counts as a pass — which is
+the ABSENT side effect (no file outside the root, no hang, no unbounded
+buffer), and (3) the harness that drives it. Don't pad: a milestone that adds
+no boundary surface declares that explicitly (`{{adversarial-targets}}:
+none added — pass scoped to regression of prior-hardened surfaces`) rather
+than inventing targets.
+
+| Adversarial target | Hostile case | Pass = observed |
+|---|---|---|
+| `save_framework` dir containment | direct `invoke` with `dir: "../../x"` | typed rejection; no write outside the root |
+| IPC frame length cap | 5 MiB frame with no newline | `MaxLineLengthExceeded` surfaces; process alive |
+| provider SSE stream | wiremock stalls mid-stream | typed idle-timeout; session suspends cleanly, no hang |
+
 ### Choosing `{{spec-sections}}` — the Pass 2 inputs
 
 Pull the spec sections the milestone's Phase doc claims to implement. Cross-reference against `docs/MVP-v0.1.md` §{{MNN}} (the acceptance criteria). Each section becomes one or more wire-trace inputs for Pass 2.
@@ -286,6 +333,8 @@ per-pass summary:
   Wire:           N spec claims traced / N broke / N ambiguous
   Behavior:       N primitives exercised / N passed / N failed at runtime
   Multi-call:     N surfaces tested / N two-call-sequential-pass / N broke on second call
+  Assembled:      N primitives driven in the real app / N observed / N not exercised (named)
+  Adversarial:    N hostile cases attempted / N rejected-as-expected / N escapes-or-hangs
 
 findings:
   🔴 #1 — <pass>: <primitive> — observed: <X>; expected: <Y>; action: open D.fix

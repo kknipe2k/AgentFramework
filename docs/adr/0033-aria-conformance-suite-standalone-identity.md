@@ -1,6 +1,6 @@
 # ADR-0033: ARIA demoted from archetype-as-raison-d'être to conformance suite; standalone product identity stated
 
-**Status:** Proposed (flips to Accepted in the introducing PR, per §11)
+**Status:** Accepted (2026-06-10 — flipped in the spec-reconciliation pass this ADR's Related section named as outstanding; the introducing PR #131 merged without applying the in-PR flip)
 **Date:** 2026-06-09
 **Deciders:** @kknipe2k (maintainer / product owner; Claude review + external-review recommendation)
 **Tags:** scope, positioning, product, market

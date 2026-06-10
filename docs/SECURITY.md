@@ -51,6 +51,14 @@ executes untrusted input; that always goes through the sandbox.
 - **Malicious model output.** A prompt-injected or adversarial model emits a
   trojan artifact (a skill/tool/agent whose declared behavior hides a capability
   grab). The primary in-scope adversary.
+- **Prompt injection via attacker-controlled content.** The dominant vector for
+  tool-wielding agents: content the agent *reads* — a fetched page, a file, an
+  MCP tool **result**, or an MCP server-supplied tool **description** — embeds
+  instructions that steer the agent into misusing capabilities it was
+  *legitimately granted* (read an allowed file, then exfiltrate it through an
+  allowed network tool). Distinct from the trojan-artifact vector above:
+  nothing malicious installs; the granted envelope itself is abused. Posture:
+  see "Prompt injection" below.
 - **Compromised / poisoned registry.** An upstream source serves a tampered
   artifact, or a man-in-the-middle swaps one in transit.
 - **Malicious MCP server.** A user installs a third-party MCP server that behaves
@@ -95,6 +103,31 @@ between an artifact and the user's machine:
 - **Secret leakage to disk** → the key lives only in the OS keychain; audit logs
   are the user's and are never transmitted (no telemetry, per spec §13).
 
+## Prompt injection — posture (TD-057; full mitigations owned by the M12 security ADR)
+
+Stated honestly per the grounded-claims rule (CLAUDE.md §4 rule 11) — what is
+and is NOT defended today:
+
+- **Defended today.** Capability enforcement (L1–L5) bounds the *blast
+  radius*: an injected agent can act only within its declared, tier-gated
+  envelope, and L2 narrowing bounds any child it spawns; HITL triggers gate
+  capability violations and tier review. This is containment, not detection.
+- **NOT defended today.** There is no content-level injection detection or
+  sanitization. MCP tool descriptions pass through to the model verbatim
+  (`crates/runtime-mcp/src/transport/mod.rs::rmcp_tool_to_mcp_tool`, flagged
+  with an in-code SECURITY note); tool results and fetched content carry no
+  length caps, no provenance labeling in the UI, and no screening. Nothing
+  distinguishes "the user asked for this" from "a tool result asked for this."
+  An agent granted a broad envelope can be steered to use all of it.
+- **Planned (the M12 H-ladder security ADR, alongside controlled shell-exec):**
+  tool-description length caps + sanitization; provenance display for
+  server-supplied text and fetched content; injection-aware HITL prompts
+  before sensitive capability use; an explicit statement of the residual,
+  undefended surface.
+- **Until then**, the practical mitigations are the standing ones: install MCP
+  servers you trust, grant minimal capability envelopes, and treat every tool
+  result as untrusted input — because the runtime currently does not screen it.
+
 ## Non-goals (explicitly NOT defended)
 
 Mirrors [`SECURITY.md`](../SECURITY.md) §Scope and spec §8.security:
@@ -106,8 +139,10 @@ Mirrors [`SECURITY.md`](../SECURITY.md) §Scope and spec §8.security:
   code. Report MCP-server vulns upstream.
 - **Anthropic API** vulnerabilities (report to Anthropic).
 - **Local malware or physical access** to an unlocked, logged-in device.
-- **Cross-agent prompt injection** as a process-wide concern: the mitigation is
-  capability-bounding the *next* agent, not detecting injection in model text.
+- **Detecting prompt injection in model or tool text** — the mitigation is
+  capability-bounding the blast radius (see "Prompt injection — posture"
+  above), not content screening; the concrete mitigation set is owned by the
+  M12 security ADR.
 
 ## Residual risk & user responsibilities
 

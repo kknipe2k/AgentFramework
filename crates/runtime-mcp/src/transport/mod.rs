@@ -142,6 +142,13 @@ pub trait Transport: Send + Sync {
 /// internal [`McpTool`]. Shared by every [`Transport`] impl — the
 /// rmcp `Tool` shape is the same regardless of stdio vs HTTP, so this
 /// lives once at the transport-module root rather than per transport.
+///
+/// SECURITY (TD-057): `description` is server-supplied text passed to the
+/// model VERBATIM — no length cap, no sanitization, no provenance label. A
+/// hostile server can use it as a prompt-injection channel; capability
+/// enforcement bounds the blast radius but nothing screens the content.
+/// Posture + planned mitigations: docs/SECURITY.md "Prompt injection —
+/// posture" (owned by the M12 security ADR).
 fn rmcp_tool_to_mcp_tool(tool: rmcp::model::Tool) -> McpTool {
     let input_schema = serde_json::to_value(&*tool.input_schema).unwrap_or(Value::Null);
     McpTool {
