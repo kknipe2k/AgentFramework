@@ -40,16 +40,22 @@ const ESCAPED_TARGET = resolve(tmpdir(), 'agent-runtime-escaped');
 // One invoke wrapper shape for all refusal cases: resolve with the
 // outcome instead of throwing across the WebDriver boundary, so the
 // assertion can distinguish "accepted" (the pre-fix hole) from
-// "refused with the typed error" (the contract).
+// "refused with the typed error" (the contract). The caught error is
+// flattened to plain primitives (errorType / errorMessage) BEFORE the
+// return — returning the raw Tauri error object trips WebView2's
+// execute/sync structured-clone serializer ("WebDriverError: [object
+// Object]"), masking the assertion.
 function invokeOutcomeScript(command: string): string {
   return `
     return (async () => {
       const args = arguments[0];
       try {
         await window.__TAURI_INTERNALS__.invoke('${command}', args);
-        return { outcome: 'accepted', error: null };
+        return { outcome: 'accepted', errorType: null, errorMessage: null };
       } catch (e) {
-        return { outcome: 'refused', error: e };
+        const t = e && typeof e === 'object' ? e.type : null;
+        const m = e && typeof e === 'object' ? String(e.message) : String(e);
+        return { outcome: 'refused', errorType: t === undefined ? null : t, errorMessage: m };
       }
     })();
   `;
@@ -57,7 +63,8 @@ function invokeOutcomeScript(command: string): string {
 
 interface InvokeOutcome {
   outcome: 'accepted' | 'refused';
-  error: { type?: string; message?: string } | null;
+  errorType: string | null;
+  errorMessage: string | null;
 }
 
 describe('Shell perimeter rejects what no UI ever sends (M09.5.A real-app)', () => {
@@ -84,9 +91,11 @@ describe('Shell perimeter rejects what no UI ever sends (M09.5.A real-app)', () 
             framework: framework,
             companions: [],
           });
-          return { outcome: 'accepted', error: null };
+          return { outcome: 'accepted', errorType: null, errorMessage: null };
         } catch (e) {
-          return { outcome: 'refused', error: e };
+          const t = e && typeof e === 'object' ? e.type : null;
+          const m = e && typeof e === 'object' ? String(e.message) : String(e);
+          return { outcome: 'refused', errorType: t === undefined ? null : t, errorMessage: m };
         }
       })();
       `,
@@ -94,7 +103,7 @@ describe('Shell perimeter rejects what no UI ever sends (M09.5.A real-app)', () 
     );
 
     expect(result.outcome, 'a traversal save dir must be refused').to.equal('refused');
-    expect(result.error?.type, 'the refusal must be the typed path_not_permitted error').to.equal(
+    expect(result.errorType, 'the refusal must be the typed path_not_permitted error').to.equal(
       'path_not_permitted',
     );
     expect(
@@ -110,7 +119,7 @@ describe('Shell perimeter rejects what no UI ever sends (M09.5.A real-app)', () 
     );
 
     expect(result.outcome, 'a traversal load dir must be refused').to.equal('refused');
-    expect(result.error?.type, 'the refusal must be the typed path_not_permitted error').to.equal(
+    expect(result.errorType, 'the refusal must be the typed path_not_permitted error').to.equal(
       'path_not_permitted',
     );
   });
@@ -127,7 +136,7 @@ describe('Shell perimeter rejects what no UI ever sends (M09.5.A real-app)', () 
 
     expect(result.outcome, 'an out-of-roots file import must be refused').to.equal('refused');
     expect(
-      result.error?.type,
+      result.errorType,
       'the refusal must be the typed path_not_permitted error (confinement BEFORE any IO)',
     ).to.equal('path_not_permitted');
   });
