@@ -127,12 +127,12 @@ A/B/C/D ran well under estimate (the authoring surfaces were genuinely small —
 
 ### M10 stage prompts — known constraints to encode
 
-- **M10 owns TD-051** (the gap-suspend-reads-PASS truthfulness gap — `tester.rs::fold_outcome` has no suspend arm) — already routed via the M09.D.fix `<scope_locks>` and now ledgered. M10's gap resolve→resume slice should derive a distinct `Suspended` verdict/state.
+- **M10 owns TD-059** (the gap-suspend-reads-PASS truthfulness gap — `tester.rs::fold_outcome` has no suspend arm) — already routed via the M09.D.fix `<scope_locks>` and now ledgered. M10's gap resolve→resume slice should derive a distinct `Suspended` verdict/state.
 - **M10 inherits the budget-visible surface** (ADR-0032 — HITL steers) and plan-approval + plan task execution.
 
 ### Open issues filed
 
-- None opened as GitHub issues. Tracked in `docs/tech-debt.md`: the two Stage-V 🟢 findings (**TD-050** weak `vertical_slice.e2e.ts` run-assertion; **TD-051** gap-suspend reads PASS → M10) + four **maintainer real-app IRL UX findings** the walkthrough surfaced (**TD-052** MCP "Add server" modal doesn't reflect a just-created server → M13; **TD-053** stale error-toast → M10; **TD-054** MCP palette label-wrap → M13; **TD-055** no canvas node-delete/undo → a future ADR-0032 authoring slice / M11). All six are in the immutable M09 gap-analysis fix-backlog with routing; none blocked the slice's functional close.
+- None opened as GitHub issues. Tracked in `docs/tech-debt.md`: the two Stage-V 🟢 findings (**TD-058** weak `vertical_slice.e2e.ts` run-assertion; **TD-059** gap-suspend reads PASS → M10) + four **maintainer real-app IRL UX findings** the walkthrough surfaced (**TD-060** MCP "Add server" modal doesn't reflect a just-created server → M13; **TD-061** stale error-toast → M10; **TD-062** MCP palette label-wrap → M13; **TD-063** no canvas node-delete/undo → a future ADR-0032 authoring slice / M11). All six are in the immutable M09 gap-analysis fix-backlog with routing; none blocked the slice's functional close.
 
 ---
 

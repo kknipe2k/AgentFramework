@@ -92,8 +92,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   real-app IRL (2026-06-09, Promoted) is the authoritative close (rule 11).
   **No schema change; no ADR filed or flipped** (ADR-0032 was accepted in
   the re-cut PR; M09 implements it). Two 🟢 logged to `docs/tech-debt.md`
-  (**TD-050** the `vertical_slice.e2e.ts` run-assertion is deliberately
-  weak; **TD-051** a gap-suspended run still folds to verdict `Pass`,
+  (**TD-058** the `vertical_slice.e2e.ts` run-assertion is deliberately
+  weak; **TD-059** a gap-suspended run still folds to verdict `Pass`,
   routed to M10).
 
 ### Added — M08.9 (honest, drill-able Tester — TD-047; ADR-0031 trust prerequisite for M09)

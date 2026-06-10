@@ -1318,7 +1318,7 @@ The metric cards ship and render (B.fix built the Result/Verify/Tokens/Spend gri
 
 Add an assertion to `design_conformance.e2e.ts:96` that a `[data-testid="tester-metrics"]` (or a `[data-testid^="metric-"]` card) element is displayed inside the opened Tester modal, so the metric cards join the real-app regression suite. ~10 min; fold into any Tester-modal e2e touch.
 
-## TD-050 — `vertical_slice.e2e.ts` run-test asserts only verdict-text-non-empty (weak regression guard)
+## TD-058 — `vertical_slice.e2e.ts` run-test asserts only verdict-text-non-empty (weak regression guard)
 
 **Date logged:** 2026-06-09
 **Found by:** Stage V verifier run M09.V (finding 🟢 #1 — Behavior / assembled_execution pass)
@@ -1339,7 +1339,7 @@ The on-disk effect IS regression-guarded — at the assembled-Rust granularity b
 
 When a Promoted-capable hermetic e2e path exists (or by relaxing the Novice seed for this one spec), tighten the assertion to `verdict ∈ {PASS, TIER_LIMITED}` (never `FAIL` for a well-authored framework), and ideally assert the in-scope file on disk + the out-of-scope denial in the real app. ~15–30 min; fold into any `vertical_slice.e2e.ts` touch.
 
-## TD-051 — Tester `fold_outcome` reports a gap-suspended run as verdict `Pass` (verdict-truthfulness; route to M10)
+## TD-059 — Tester `fold_outcome` reports a gap-suspended run as verdict `Pass` (verdict-truthfulness; route to M10)
 
 **Date logged:** 2026-06-09
 **Found by:** Stage V verifier run M09.V (finding 🟢 #2 — Behavior pass)
@@ -1360,7 +1360,7 @@ The pass/fail bit is defensible — a gap-suspend is not a framework defect (the
 
 In M10 (gap resolve→resume, ADR-0029), derive a distinct verdict/state for a suspended run — e.g. a `TestVerdict::Suspended` (or a `suspended: bool` / the gap kinds on `TestOutcome`) computed from the suspend signal in the trace, rendered in `TesterModal` as "Suspended — resolve the gap to resume" rather than a green PASS. Pairs with the resolve→resume UI that M10 introduces. No change to `fold_outcome`'s pass/fail bit. ~30–60 min within M10's Tester surface.
 
-## TD-052 — MCP "Add server" modal doesn't reflect a just-created server (install-UX staleness; route to M13)
+## TD-060 — MCP "Add server" modal doesn't reflect a just-created server (install-UX staleness; route to M13)
 
 **Date logged:** 2026-06-09
 **Found by:** M09 maintainer real-app IRL (during the M09.C/D canvas attach-an-MCP-tool walkthrough)
@@ -1381,7 +1381,7 @@ M09's vertical slice attaches an **already-installed** server's tool — the sli
 
 In M13's MCP-server surface, re-derive the modal/server-list + the Palette `mcp` source from a store signal that invalidates on the create/install mutation (or refetch on modal-open), so a just-created server appears without a reload. Pairs with the credentials UX + the data-source catalog.
 
-## TD-053 — Stale error-toast persists after the error condition clears (toast-lifecycle UX; route to M10)
+## TD-061 — Stale error-toast persists after the error condition clears (toast-lifecycle UX; route to M10)
 
 **Date logged:** 2026-06-09
 **Found by:** M09 maintainer real-app IRL (M09.D / D.fix Tester walkthrough)
@@ -1402,7 +1402,7 @@ Cosmetic-adjacent and non-blocking — it does not affect the run, the enforceme
 
 Give toasts a lifecycle: auto-expire after a timeout and/or supersede the prior error toast when the same surface's next action succeeds (key toasts by source so a success clears its matching error). Fold into M10's run-observability / HITL-steer toast surface; ~30–60 min.
 
-## TD-054 — MCP palette item label wraps (`server · tool` overflows the palette item width) (cosmetic; route to M13)
+## TD-062 — MCP palette item label wraps (`server · tool` overflows the palette item width) (cosmetic; route to M13)
 
 **Date logged:** 2026-06-09
 **Found by:** M09 maintainer real-app IRL (M09.C palette walkthrough)
@@ -1423,7 +1423,7 @@ Purely cosmetic — the item is still draggable and the attach path works (the s
 
 Truncate the `server · tool` label with `text-overflow: ellipsis` + `white-space: nowrap` and a `title` tooltip carrying the full id (the existing palette-item CSS register). Fold into M13's MCP palette styling pass; ~15 min.
 
-## TD-055 — No canvas node-delete / undo (a mis-dropped node can't be removed) (authoring polish; route to a future ADR-0032 slice)
+## TD-063 — No canvas node-delete / undo (a mis-dropped node can't be removed) (authoring polish; route to a future ADR-0032 slice)
 
 **Date logged:** 2026-06-09
 **Found by:** M09 maintainer real-app IRL (M09.A/B/C authoring walkthrough)
