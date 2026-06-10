@@ -65,10 +65,10 @@ For a full IRL feature walkthrough (50+ manual test cases covering M01→M04): [
 | [`agent-runtime-spec.md`](agent-runtime-spec.md) | The contract. Capability matrix (§0a), scope matrix (§0d), all phases. |
 | [`docs/MVP-v0.1.md`](docs/MVP-v0.1.md) | v0.1 milestone breakdown + acceptance criteria. |
 | [`CLAUDE.md`](CLAUDE.md) | Working agreement for AI-assisted development: hard rules, TDD discipline, quality gates, PR workflow. |
-| [`docs/adr/`](docs/adr/) | Architecture decision records (0001–0029). |
+| [`docs/adr/`](docs/adr/) | Architecture decision records (0001–0033). |
 | [`docs/gotchas.md`](docs/gotchas.md) | Named traps surfaced during the build. |
 | [`docs/gap-analysis.md`](docs/gap-analysis.md) | Cumulative product↔spec audit, per-milestone, append-only. |
-| [`STAGE-PROMPT-PROTOCOL.md`](STAGE-PROMPT-PROTOCOL.md) | XML schema for milestone stage prompts (v1.8). |
+| [`STAGE-PROMPT-PROTOCOL.md`](STAGE-PROMPT-PROTOCOL.md) | XML schema for milestone stage prompts (v1.12). |
 | [`SECURITY.md`](SECURITY.md) | Vulnerability disclosure process. |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model — assets, trust boundaries, L1–L5 defenses. |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contributing guide + DCO sign-off. |

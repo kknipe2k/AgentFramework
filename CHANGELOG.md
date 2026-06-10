@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed — ADR-0033 spec reconciliation + the standing adversarial pass (orchestrator docs pass)
+
+- **`agent-runtime-spec.md` §0/§0a/§0d** — ARIA demoted to **conformance
+  suite** per ADR-0033 (the §0a matrix retained verbatim as the regression
+  contract); the v0.1 success criterion restated around the **ADR-0032
+  lighthouse** (author-and-run dev loop; `bash verify.sh` as the objective
+  verify gate) with ARIA-row reconstructibility kept as the regression gate;
+  §0d gains the ADR-0032 re-amendment note (five vertical slices M09–M13;
+  execution breadth back in v0.1; Generators + parallel multi-agent v1.0).
+- **ADR-0033 → Accepted** — its introducing PR (#131) merged without the
+  in-PR flip its Status line promised; flipped here. (ADR-0032 was already
+  flipped Accepted in the M09 merge.)
+- **CLAUDE.md §1 Status** — the five-milestones-stale snapshot ("M3 next")
+  replaced with live-source pointers per §3's own rule (the 2026-06-09
+  external review's process 🔴); §19 updated to the six-pass verifier.
+- **Stage V gains a standing ADVERSARIAL pass (protocol v1.12)** —
+  `STAGE-PROMPT-PROTOCOL.md` §14/§15 + `STAGE-V-VERIFIER-PROMPT-TEMPLATE.md`:
+  trust boundaries, malformed input, failure injection, granted-authority
+  abuse on each milestone's NEW/touched surfaces (the review's meta-finding:
+  the IRL culture verifies the happy path only — TD-050…057 all lived in that
+  blind spot). Documented-additive; no validator change.
+- **`docs/SECURITY.md` — prompt-injection posture (TD-057)** — names the
+  content-mediated injection adversary; states what is and is NOT defended
+  today (rule 11); plans the M12-ADR mitigations; the MCP tool-description
+  passthrough gains an in-code SECURITY note
+  (`crates/runtime-mcp/src/transport/mod.rs`).
+- **README** — ADR range 0001–0033; stage-prompt protocol v1.12.
+
 ### Added — M09 (workbench vertical slice — author one real agent, run it on real data; the first ADR-0032 vertical slice)
 
 - **The workbench now builds AND runs a real single-agent, MCP-data

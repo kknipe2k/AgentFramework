@@ -15,6 +15,8 @@ Built on the Anthropic SDK natively. MCP manager built in. Claude family first, 
 ## §0 Project Positioning & Relationship to ARIA
 
 > **Locked decision (2026-04-18).** Supersedes any contrary statement elsewhere in this spec.
+>
+> **Amended by ADR-0033 (2026-06-09; spec pass 2026-06-10).** ARIA is demoted from raison-d'être / headline success criterion to the project's **conformance suite**. The organizing v0.1 deliverable is the **ADR-0032 lighthouse**: the maintainer's own software-development loop, authored on the canvas and run for real under enforced capability contracts, with `bash verify.sh` as the objective verify gate. The technical decision in this section — generic platform; ARIA reconstructed inside the runtime, not bundled — is unchanged. The §0a matrix is retained as the conformance/regression contract.
 
 ### What this runtime is
 
@@ -22,17 +24,20 @@ A **generic agent-building, maintenance, and runtime-management platform**. It s
 
 Frameworks are how you compose those primitives into a product. The runtime ships zero built-in frameworks.
 
+**The standalone identity (ADR-0033):** *a local desktop runtime where agentic workflows are authored, executed under enforced capability contracts, watched live as a graph, and suspended cleanly when they hit a capability they don't have — with first-class cost control and no telemetry.* Every primitive earns its place against that sentence, not against ARIA-reconstructibility. The target market is the two adjacent audiences who build the same way on the canvas — low-code / less-experienced-but-technical builders who want structure and guardrails, and well-versed users who want visibility, structure, and cost control — explicitly **not** truly non-technical users.
+
 ### What ARIA is, in this project
 
-**ARIA is the reference archetype**, not a built-in. The existing `.aria/` shell codebase (engine, skills, Ralph loop, dashboard, offline RL, hooks, ~13K LOC) is reference material that defines what an agentic system *should* be capable of. We do not port it, wrap it, or replace it.
+**ARIA is the conformance suite** (per ADR-0033 — the project's *TodoMVC*), not a built-in and not the product thesis: a fixed, representative reference workload that proves the primitives compose into a real framework and guards against capability-matrix regressions. The existing `.aria/` shell codebase (engine, skills, Ralph loop, dashboard, offline RL, hooks, ~13K LOC) is reference material that defines what the archetype must do. We do not port it, wrap it, or replace it.
 
-The runtime ships an `examples/aria/` directory containing a framework JSON + bundled tools/skills that **reconstruct ARIA's capabilities using only the runtime's primitives**. This is a worked example, not a default.
+The runtime ships an `examples/aria/` directory containing a framework JSON + bundled tools/skills that **reconstruct ARIA's capabilities using only the runtime's primitives**. This is a conformance proof, not a default and not the reason the product exists.
 
-### MVP success criterion
+### v0.1 success criterion (the lighthouse) + the conformance gate
 
-v1 ships when a user can reconstruct every row of the **ARIA Archetype Capability Matrix** (§0a) inside the runtime using only framework JSON + primitives, **without modifying runtime source**. If a row cannot be reconstructed, either the matrix row is wrong or a primitive is missing — both block v1.
+Restated by ADR-0033 (superseding the reconstruct-every-row criterion that stood here from 2026-04-18):
 
-`examples/aria/` is the executable proof of this criterion.
+1. **The lighthouse (organizing deliverable, per ADR-0032):** v0.1 ships when the maintainer's software-development loop — research → PRD → plan → implement → **verify** — can be authored on the canvas and **run for real** under enforced capability contracts: plan tasks execute with HITL approval, a gap suspends cleanly and resumes on Grant, a `dont_touch` rail blocks a forbidden edit, and the post-task verify hook literally runs `bash verify.sh` (green → next; red → rollback + retry). §0d carries the demonstrable end-to-end form.
+2. **The conformance gate (regression contract, retained):** every §0a matrix row remains reconstructible inside the runtime using only framework JSON + primitives, **without modifying runtime source**, per its §0d release column. A row that stops being reconstructible is a regression — either the row is wrong or a primitive broke — and blocks the release. `examples/aria/` (and `examples/ralph/` for the rows its §0d column covers) is the executable proof.
 
 ### Per-subsystem fate of `.aria/`
 
@@ -58,7 +63,7 @@ Users who prefer the shell experience can keep using `.aria/` as-is. The runtime
 
 ### Cross-references
 
-- §0a — **ARIA Archetype Capability Matrix** (MVP done-criterion)
+- §0a — **ARIA Archetype Capability Matrix** (the conformance/regression contract, per ADR-0033)
 - Phase 6 — Framework JSON Loader: the schema below is extended by every primitive (hooks, rails, plan, mode, HITL, budget). Phase 6's example must show `examples/aria/framework.json` end-to-end.
 - The phrase "Aria ships as the built-in default framework" elsewhere in this spec is **superseded** by this section. ARIA ships in `examples/`, not as a built-in default.
 
@@ -66,7 +71,7 @@ Users who prefer the shell experience can keep using `.aria/` as-is. The runtime
 
 ## §0a ARIA Archetype Capability Matrix
 
-> **MVP done-criterion.** Every row must be reconstructible inside the runtime using framework JSON + primitives. If a row's primitive is not in the runtime, v1 is not done.
+> **Conformance contract — amended by ADR-0033 (2026-06-09).** Formerly the headline MVP done-criterion; now the **regression gate**: every row must remain reconstructible inside the runtime using framework JSON + primitives, per its §0d release column. A row that cannot be reconstructed is a regression — either the matrix row is wrong or a primitive is missing/broken — and blocks the release. The matrix is the conformance suite proving the primitives compose; the product's organizing success criterion is the ADR-0032 lighthouse (§0, §0d).
 
 | # | ARIA Capability | Runtime Primitive Required | Driving WI |
 |---|---|---|---|
@@ -327,9 +332,11 @@ Framework JSON files live in `examples/`. Edit a file, hit "Reload framework" in
 
 > **Locked (2026-04-18, OSS shipping plan; revised after workbench-MVP discussion).** What's in v0.1.0 Windows Preview, v1.0, and v2.0+. Pulls every "deferred to v2" / "v1.1" / "stretch goal" note from elsewhere in the spec into one consolidated table. The release scope is the contract; scope-creep means redating, not silently adding.
 >
-> **MVP framing:** v0.1 is a **workbench**, not a runtime spectator. A novice must be able to build an agentic process from scratch using the Builder Canvas and the three Generators (no JSON editing required). An experienced user must be able to build something complex and useful (canvas + JSON view + Tester + import-by-URL). Both share one workbench.
+> **MVP framing (amended by ADR-0031/0032/0033):** v0.1 is a **workbench**, not a runtime spectator. A builder ("novice" = low-code-capable and technically literate per ADR-0033, not non-technical) must be able to author an agentic process from scratch on the Builder Canvas and **run it for real** at the enforced tier; an experienced user must be able to build something complex and useful (canvas + JSON view + Tester + import-by-URL). Both share one workbench. The three Generators are v1.0 (ADR-0031) — v0.1 authoring is canvas + palette + config, no LLM build-assist.
 >
 > **Amended by ADR-0031 (2026-06-05).** The post-M08 v0.1 scope is re-cut around **author-and-run**: the workbench builds *and runs* single-agent, MCP-data workflows from scratch (M09 vertical slice → M10 author-anything → M11 real-data → the v0.1 release). **Generators (Phase 8a/b/c) and multi-agent / plan / hook *execution* move to v1.0** (M12 execution-breadth, M13 hardening); the v0.1 success criterion changes from generator-centric to author-and-run. The rows below for **Generators** and **plan/hook execution** have their v0.1/v1.0 columns superseded to v1.0 by this ADR. Detailed roadmap: `docs/workbench-delivery-plan.md`; milestone index: `docs/MVP-v0.1.md`.
+>
+> **Re-amended by ADR-0032 (2026-06-07; spec pass 2026-06-10).** ADR-0031's horizontal M10–M12 structure and its v0.1/v1.0 line are **withdrawn** (M09 retained); v0.1 is five **vertical slices** — M09 walking skeleton, **M10 HITL steers the run** (gap resolve→resume per ADR-0029; plan-approval + plan task execution per ADR-0026), **M11 sub-agents (sequential)**, **M12 the verify loop** (hooks/rails firing + controlled shell-exec as an OS-native sandbox under an explicit semi-trusted threat model, gated by its own Hard-Rule-8 ADR), **M13 industrialize + ship**. **Execution breadth (plan / sub-agent / hook execution) returns to v0.1** — those rows' printed v0.1 ✅ stand; **Generators stay v1.0** (their v0.1 column remains superseded per ADR-0031), along with parallel multi-agent and the microVM sandbox upgrade. A new capability-matrix-class primitive — controlled shell execution via `SandboxRequest::Execute` — enters v0.1 at M12, gated by its own ADR. The MVP-framing note above and the success criterion below are restated accordingly (ADR-0032/0033); detailed roadmap: `docs/workbench-delivery-plan.md`.
 
 | Capability | v0.1.0 Windows Preview | v1.0 (multi-OS, full) | v2.0+ (deferred) |
 |---|:---:|:---:|:---:|
@@ -387,14 +394,14 @@ Framework JSON files live in `examples/`. Edit a file, hit "Reload framework" in
 | examples/aria/ (full archetype) | ✅ loadable as starting template (no §3b mode router; mode locked to STANDARD) | ✅ all four modes work | ✅ |
 | examples/ralph/ (continuous loop) | ❌ (continuous loop is v1.0) | ✅ | ✅ |
 
-### MVP success criterion
+### v0.1 success criterion (restated by ADR-0032 + ADR-0033)
 
-v0.1.0 Windows Preview ships when **both of these are true**, demonstrated end-to-end on a fresh Windows VM that has never seen the codebase:
+v0.1.0 Windows Preview ships when **both of these are true**, demonstrated end-to-end on a fresh Windows machine that has never seen the codebase:
 
-1. **Novice path:** an end user with no prior knowledge installs the .msi, gets through First-Run UX, opens an empty canvas, generates one Tool + one Skill via the workbench, wires them to an Agent, runs a Test session, and sees the Tester report a pass — all without editing JSON or reading the spec.
-2. **Experienced path:** a user imports `examples/aria/framework.json` and any third skill/tool from a `skill.md` URL pasted into the import dialog, runs a real session against their own codebase, hits a `request_capability` gap, generates the missing Tool inline (Promoted tier auto-installs), resumes, and completes the session.
+1. **The lighthouse path (author-and-run, per ADR-0032):** a technically-literate builder installs the .msi, gets through First-Run UX, and authors the software-development loop on the canvas — research → PRD → plan → implement → **verify** — as a multi-agent workflow (sequential sub-agents, a plan with HITL approval, hooks + rails), then **runs it for real**: plan tasks execute on the agent loop, a `request_capability` gap suspends cleanly and **resumes after Grant**, a `dont_touch` rail blocks a forbidden edit, and the post-task verify hook runs `bash verify.sh` — green proceeds, red rolls back and retries. No JSON editing required on the canvas path; no runtime-source modification ever.
+2. **The conformance path (regression gate, per ADR-0033):** `examples/aria/framework.json` imports, loads, and validates, and every §0a matrix row remains reconstructible per its §0d column — including the M09-class authored slice (author an agent + `file_access` + a real MCP tool from scratch; run it; a real file lands within scope and is denied outside it).
 
-If either path fails on a fresh machine, MVP is not done.
+If either path fails on a fresh machine, v0.1 is not done. (The pre-ADR-0031 generator-centric criterion — generate a Tool + a Skill in the workbench; generate-inline at a gap — moves to v1.0 with the Generators.)
 
 ### Scope-control rule
 

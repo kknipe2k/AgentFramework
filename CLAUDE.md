@@ -31,7 +31,7 @@ Stack rationale lives in **ADR-0002**.
 
 **License:** Apache 2.0. Contributions via DCO sign-off (`git commit -s`). See `CONTRIBUTING.md`.
 
-**Status:** in flight. M1 Foundation (PR #34) and M2 Event Pipeline (PR #42 + #45 hotfix) merged; the runtime binary builds, smoke-tests against the live Anthropic API, and the M02 acceptance criteria are met end-to-end. M3 (Live Graph) is the next deliverable — see `docs/MVP-v0.1.md` §M3 and `docs/build-prompts/M03-live-graph.md`.
+**Status:** in flight — and per §3's own rule this line carries **no per-milestone snapshot** (it once said "M3 is next" five milestones late; the 2026-06-09 external review flagged it). Live state: `docs/MVP-v0.1.md` (milestone index) · `docs/execution-status.md` (what executes, observed) · `docs/build-prompts/retrospectives/` (latest `M[NN]-summary.md` = what shipped) · `CHANGELOG.md` `[Unreleased]` · `git log --oneline main`. The active roadmap is ADR-0032's five vertical slices (M09–M13).
 
 ---
 
@@ -799,7 +799,7 @@ Full protocol (per-stage workflow steps, scoring rubric, threshold gates, outcom
 
 ### Stage V (Verifier) — fresh-context contract-fidelity check (M05+, per ADR-0008)
 
-Between the last work stage and closeout, every milestone M05+ runs a **Stage V** verifier: a fresh CLI session that deliberately omits prior retros / summary / gap-analysis from its read-list (the bias guard) and runs four passes (Inventory + Wire + Behavior + Multi-call invariants) against the deliverables. Its job is the **implementation-tests-green, contract-tests-missing** bug class (M04 shipped five). Schema `<verifier_stage_prompt>` (`STAGE-PROMPT-PROTOCOL.md` §14); prompt template `docs/build-prompts/STAGE-V-VERIFIER-PROMPT-TEMPLATE.md`; retro shape `VERIFIER-RETROSPECTIVE-TEMPLATE.md`. `merge_gate` outcomes (ADR-0008): 🔴 blocks → scoped D.fix (max 2 iterations); 🟡 → next milestone Stage A; 🟢 → `docs/tech-debt.md`; interpretation disputes → build agent files an ADR-class waiver, maintainer adjudicates. Grandfathering, the M04 retroactive run, and full pass mechanics: ADR-0008 + `STAGE-PROMPT-PROTOCOL.md` §14.
+Between the last work stage and closeout, every milestone M05+ runs a **Stage V** verifier: a fresh CLI session that deliberately omits prior retros / summary / gap-analysis from its read-list (the bias guard) and runs six passes (Inventory + Wire + Behavior + Multi-call invariants + Assembled-execution + Adversarial — the v1.9 fifth per `docs/cluster-pattern.md`; the v1.12 sixth per the 2026-06-09 external review's happy-path-only meta-finding) against the deliverables. Its job is the **implementation-tests-green, contract-tests-missing** bug class (M04 shipped five). Schema `<verifier_stage_prompt>` (`STAGE-PROMPT-PROTOCOL.md` §14); prompt template `docs/build-prompts/STAGE-V-VERIFIER-PROMPT-TEMPLATE.md`; retro shape `VERIFIER-RETROSPECTIVE-TEMPLATE.md`. `merge_gate` outcomes (ADR-0008): 🔴 blocks → scoped D.fix (max 2 iterations); 🟡 → next milestone Stage A; 🟢 → `docs/tech-debt.md`; interpretation disputes → build agent files an ADR-class waiver, maintainer adjudicates. Grandfathering, the M04 retroactive run, and full pass mechanics: ADR-0008 + `STAGE-PROMPT-PROTOCOL.md` §14.
 
 ---
 
