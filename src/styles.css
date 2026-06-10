@@ -9,12 +9,12 @@
    of :root so the existing node/panel CSS repaints to light rename-free.
    ===================================================================== */
 
-/* The Google-Fonts @import is WebView2-CSP-blockable, so the instrument
-   typography is NOT guaranteed from it alone (M08.8.B.fix). It stays as an
-   online enhancement; the local @font-face rules below vendor the woff2
-   from src/assets and, declared later in source order, win even offline. */
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
-
+/* The instrument typography is vendored entirely from the local woff2 in
+   src/assets (the @font-face rules below). The earlier Google-Fonts
+   @import was removed at M09.5.A: it pinged Google on every launch of a
+   no-telemetry product (and the restrictive CSP blocked it anyway), while
+   the bundled fonts have served the UI since M08.8 (design_conformance
+   asserts the bundled Plex). */
 @font-face {
   font-family: 'IBM Plex Sans';
   font-style: normal;
