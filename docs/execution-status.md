@@ -105,7 +105,7 @@ budget surface is deferred to M08.8. The remaining rows (2 sub-agents,
 | Primitive | v0.1 target behavior | Status | Durable eval | Grounding (code cite) |
 |---|---|---|---|---|
 | **Provider streaming** (single-agent multi-turn) | An agent streams multi-turn until a turn dispatches no tool (or `MAX_AGENT_TURNS`) | `executes` (cited) — durable eval E-?? pending rung 0 baseline | rung 0 (smoke baseline) | `AgentSdk::run_agent` runs the prelude then `provider.stream` → `drive_stream` per turn (`agent_sdk.rs:256`,`:261`) |
-| **MCP tool dispatch** | An MCP tool executes and its result feeds back into the next turn | `executes` (cited) — modulo M08.6 #23 Windows `npx`; durable eval E-?? pending rung 9 | rung 9 (fix #23) | `try_mcp_dispatch` calls the `McpToolDispatch` seam, emits `ToolInvoked`/`ToolResult`, returns a `DispatchedTool` the loop feeds back (`agent_sdk.rs:576`,`:269-294`) |
+| **MCP tool dispatch** | An MCP tool executes and its result feeds back into the next turn | `executes` (cited) — modulo M08.6 #23 Windows `npx`; durable eval E-?? pending rung 9. ⚠️ **M09.D.fix correction (rule 11):** the `try_mcp_dispatch` *seam* was wired, but the `McpDispatcher`'s OWN `CapabilityEnforcer` (built by `build_test_mcp_dispatcher` / `build_mcp_dispatcher`) was a bare `CapabilityEnforcer::new()` — default-Novice, no grants — never framework-/tier-wired, so a real authored MCP tool was **denied** (L4 tier, then L1 grant-class) and **never actually dispatched end-to-end**. Latent until M09 (only the no-tools smoke drove it). M09.D.fix (iteration 2) wires the dispatcher enforcer (`build_session_mcp_enforcer`); the **first enforced-and-dispatched real MCP tool** is M09's vertical slice — re-asserted on the maintainer re-IRL (not on green; the canvas-authored-slice row flips there). | rung 9 (fix #23) | `try_mcp_dispatch` calls the `McpToolDispatch` seam, emits `ToolInvoked`/`ToolResult`, returns a `DispatchedTool` the loop feeds back (`agent_sdk.rs:576`,`:269-294`); the dispatcher enforcer wiring corrected at M09.D.fix (`commands.rs::build_session_mcp_enforcer`) |
 
 > Code citations above establish *current execution*, but per rule 11 a
 > **durable** `executes — observed` status still requires the ladder's
@@ -154,6 +154,30 @@ budget surface is deferred to M08.8. The remaining rows (2 sub-agents,
 > driving resolution, gap node → banner → Grant) are out-of-scope absences,
 > not findings. They route to **M11 / M13** (ADR-0031). The transport shell +
 > run banner shipped at B; their budget/gap *behaviors* did not.
+
+---
+
+## Observed in app — the M09 vertical slice (ADR-0032)
+
+> **What this bar adds (M09).** The first **canvas-authored** workflow that
+> **builds AND runs** end-to-end in the app: a from-scratch agent + a
+> `file_access.write` scope + an installed MCP server's tool, run in the
+> Tester at the enforced tier, writing a **real file** from **real MCP data**.
+> Closed on the **maintainer real-app re-IRL** (rule 11 / ADR-0021), not on
+> green. M09 took **two D.fix iterations** to close the run path: iter-1 wired
+> the MCP tool's *definition* injection (the model could see + call the tool)
+> + the `session_root_agent` composition glue + the `framework_mcp_servers`
+> connect derivation; iter-2 wired the **MCP dispatcher's own
+> `CapabilityEnforcer`** (`build_session_mcp_enforcer` — `set_tier` +
+> per-authored-tool `mcp_tool_capability` grants, in **both** the Tester and
+> production dispatchers), which a bare default-Novice `new()` had been
+> silently denying (L4 then L1). The "MCP dispatch executes" row above is
+> qualified accordingly — M09's slice is the **first enforced-and-dispatched
+> real MCP tool** end-to-end.
+
+| Surface (M09 stage) | Real-app E2E + assembled evals | Observed in the running app | Grounding |
+|---|---|---|---|
+| **Canvas-authored single-agent + MCP tool + `file_access` slice** — a from-scratch agent (M09.A) granted a `file_access.write` scope (M09.B) with an installed MCP server's tool attached (M09.C), run in the Tester at the enforced tier (M09.D / D.fix iter1+2) | `tests/e2e-tauri/vertical_slice.e2e.ts` (2/2 — the canvas-authored→serialized→runnable `framework_doc` + the run reaches `test_framework`) + `crates/runtime-main/tests/mcp_tool_injection_execution.rs` (the authored MCP tool reaches the model's tool list; dispatch→`Write` lands the file; authored-only) + the `build_session_mcp_enforcer` unit (`commands.rs` — Promoted⇒MCP Exec allowed / Novice⇒tier-denied / unauthored⇒L1-denied) + the real-`McpDispatcher` regression (Invoked/Blocked through the actual `check()`) | At **Promoted**: a canvas-authored agent called the MCP `read_text_file` tool → pulled **real data** → the built-in `Write` landed a **real `out/result.txt`** within the granted scope; an **ungranted** Write was **denied** (no file). The run + results are observable in-app (Output rail / nodes / the grown-frame Tester). The on-disk side effect, not an event (rule 11). | **grounded-by-real-app, live session (maintainer re-IRL 2026-06-09, Promoted)** |
 
 ---
 

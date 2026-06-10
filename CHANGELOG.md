@@ -6,6 +6,96 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — M09 (workbench vertical slice — author one real agent, run it on real data; the first ADR-0032 vertical slice)
+
+- **The workbench now builds AND runs a real single-agent, MCP-data
+  workflow from scratch.** Drag a **new** agent onto an empty canvas,
+  grant it a **`file_access`** scope, attach a **real MCP server's tool**,
+  hit Run, and watch it pull real data and write a real file — at the
+  tracked tier, enforced. The substrate already executed (single-agent
+  streaming, built-in Read/Write, MCP dispatch, capability + tier
+  enforcement); M09 closed the **authoring** gap (three small surfaces) +
+  one read-only command, then two real run-path holes the maintainer
+  real-app IRL surfaced.
+- **`src/lib/builderStore.ts` + `src/components/builder/Palette.tsx`
+  (M09.A — blank-create an agent).** A `source:'builtin'` **"+ New agent"**
+  Palette item (Agents tab) drags a fresh-id agent onto the canvas through
+  the existing `addNode`→`applyDrop`→`builderAgent` mint; an exported pure
+  `nextAgentRef(framework)` returns the first free `agent-N` (matching
+  `agent.v1.json` `^[a-z][a-z0-9-]*$`, skipping existing ids so the
+  `${kind}:${ref}` idempotence guard never collides). Palette-only — no
+  drop-handler or store-core change.
+- **`src/lib/builderStore.ts` + `src/components/builder/NodeConfigPanel.tsx`
+  (M09.B — file_access editor).** `builderAgent` now initializes a
+  minimal-valid `Capabilities` (so a created agent is schema-valid once it
+  has a `role`); a `FileAccessEditor` adds Read/Write glob-list editors
+  over `capabilities.file_access` writing via `updateNode(id,
+  {capabilities})`. **Declaration-only** — the L2 enforcer (unchanged)
+  consumes the grant at run time. `file_access` is the M09 surface; the
+  rest of `Capabilities` (network/shell/spawn_agents) widens per ADR-0032
+  slice.
+- **`src-tauri/src/commands.rs` +
+  `crates/runtime-mcp/src/client/connection_resolver.rs` + `src/lib/ipc.ts`
+  + `src/components/builder/Palette.tsx` (M09.C — attach a real MCP tool).**
+  A new read-only `mcp_list_server_tools(name) -> Vec<McpTool>` Tauri
+  command over a `list_server_tools(name)` client seam (reusing the
+  registry→transport→`list_tools` path), an `mcpListServerTools` ipc
+  wrapper, and `source:'mcp'` Palette Tools-tab items (fetched on mount,
+  best-effort per server). A drop + Agent→Tool edge records `allowed_tools`
+  + mirrors `capabilities.tools_called`. **No `test_framework` change** —
+  the dispatcher + tracked tier were already injected
+  (`commands.rs:1769-1775`/`:1758`); C added no execution-wiring.
+- **`crates/runtime-main/src/builder/{tester.rs,mod.rs}` +
+  `src-tauri/src/commands.rs` (M09.D + D.fix — the run path closed on the
+  IRL).** The assembled `tests/e2e-tauri/vertical_slice.e2e.ts` proved the
+  canvas-authored framework serializes across IPC into a runnable
+  `framework_doc` and reaches `test_framework`; the maintainer real-app
+  IRL then disproved the slice **twice**, each a real execution hole no
+  green test reached. **iter1:** the authored MCP tool was dispatch-wired
+  but its *definition* was never injected into the model's tool list (the
+  model reported "no read tool", wrote nothing, yet the verdict read PASS)
+  — `build_session_mcp_tool_defs` + the `run_test_session_with_tools` seam
+  inject the connected server's `list_tools` schema, named `server__tool`
+  to route through `try_mcp_dispatch`. **iter2** (after a Hard-Rule-8
+  escalation that corrected a phase-doc misdiagnosis pre-impl): the
+  `McpDispatcher`'s **own** enforcer was a bare `CapabilityEnforcer::new()`
+  (default-Novice, no grants), denying the authored tool on L4 (tier) then
+  L1 (`mcp_tool_capability` Exec/Irreversible vs the framework grant's
+  Exec/Pure; `subsumes` needs exact equality) at any user tier —
+  `build_session_mcp_enforcer(framework, tier)` (set_tier + per-authored-
+  tool, per-agent grants; **authored-only** boundary) wired into **both**
+  `build_test_mcp_dispatcher` + production `build_mcp_dispatcher` closes
+  it. Mutation-blocking (capability-enforcement construction).
+- **`src/components/builder/TesterModal.tsx` +
+  `src/components/SettingsPanel.tsx` (M09.D.fix — DESIGN.md UI v2).** The
+  Tester `Expand` grows the watch frame (canvas + OUTPUT + run-trace) not
+  the chrome; the results section gains progressive disclosure; every
+  Settings section is collapsible. Each cites its DESIGN.md
+  progressive-disclosure / panel-sizing principle.
+- **`docs/execution-status.md`** — a new **"Observed in app — the M09
+  vertical slice"** row: a canvas-authored single-agent + `file_access` +
+  MCP-tool slice, **observed end-to-end at Promoted on the maintainer
+  real-app re-IRL (2026-06-09)** — a real `out/result.txt` from real MCP
+  data within scope, denied outside it (the on-disk effect, not an event —
+  rule 11). The "MCP dispatch executes" claim is **corrected**: the
+  dispatch *seam* was wired but the dispatcher's own enforcer was never
+  framework-/tier-wired, so M09's slice is the **first
+  enforced-and-dispatched real MCP tool**.
+- Tests: `tests/e2e-tauri/{builder_create_agent,builder_file_access,builder_mcp_tool,vertical_slice,tester_expand_frame,tester_resize}.e2e.ts`
+  (the real-app `tauri-driver` regressions, ADR-0021) +
+  `crates/runtime-main/tests/mcp_tool_injection_execution.rs` (the authored
+  MCP tool reaches the model's tool list; dispatch→`Write` lands the file;
+  authored-only + causality guard) + the `build_session_mcp_enforcer` unit
+  (Promoted⇒allowed / Novice⇒denied / unauthored⇒denied) + the
+  `list_server_tools` Rust unit + the vitest units. M09.V's 5th
+  assembled-execution pass drove the real Tauri binary; the maintainer
+  real-app IRL (2026-06-09, Promoted) is the authoritative close (rule 11).
+  **No schema change; no ADR filed or flipped** (ADR-0032 was accepted in
+  the re-cut PR; M09 implements it). Two 🟢 logged to `docs/tech-debt.md`
+  (**TD-058** the `vertical_slice.e2e.ts` run-assertion is deliberately
+  weak; **TD-059** a gap-suspended run still folds to verdict `Pass`,
+  routed to M10).
+
 ### Security / Governance — open-source protection hardening
 
 - **`SECURITY.md` + `CODE_OF_CONDUCT.md`** — replaced placeholder contacts

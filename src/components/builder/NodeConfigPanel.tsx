@@ -144,6 +144,55 @@ export function NodeConfigPanel(): JSX.Element | null {
         items={agent.allowed_skills}
         onChange={(next) => updateNode(selectedNodeId, { allowed_skills: next })}
       />
+      <FileAccessEditor
+        capabilities={agent.capabilities}
+        onChange={(capabilities) => updateNode(selectedNodeId, { capabilities })}
+      />
+    </div>
+  );
+}
+
+interface FileAccessEditorProps {
+  capabilities: Agent['capabilities'];
+  onChange: (next: Agent['capabilities']) => void;
+}
+
+/**
+ * The file_access grant editor (M09.B). Two glob lists — Read and Write —
+ * over `capabilities.file_access.{read,write}` (the L2 enforcer's scope;
+ * E-02 `capability_live_tool.rs`). Each edit recomputes the FULL
+ * `Capabilities` immutably (the other required fields — tools_called /
+ * network / shell / … — carried through untouched) and writes it via
+ * `updateNode`'s `{ capabilities }` patch. Declaration-only: this writes
+ * the agent's grant in the document; the enforcer (unchanged) consumes it
+ * at run time, and the *enforced* write lands at M09.D. M09 scopes to
+ * file_access; the rest of the Capabilities surface widens per the
+ * ADR-0032 slice that executes it (spawn_agents→M11, shell→M12,
+ * network→M13; tools_called via M09.C).
+ */
+function FileAccessEditor({ capabilities, onChange }: FileAccessEditorProps): JSX.Element {
+  const fa = capabilities.file_access;
+  return (
+    <div className="builder-node-config__field" data-testid="node-config-file-access">
+      <span>File access</span>
+      <AllowedList
+        label="Read (globs)"
+        testId="node-config-fa-read"
+        removeTestIdPrefix="node-config-fa-read-remove"
+        addInputTestId="node-config-add-fa-read-input"
+        addButtonTestId="node-config-add-fa-read"
+        items={fa.read}
+        onChange={(read) => onChange({ ...capabilities, file_access: { ...fa, read } })}
+      />
+      <AllowedList
+        label="Write (globs)"
+        testId="node-config-fa-write"
+        removeTestIdPrefix="node-config-fa-write-remove"
+        addInputTestId="node-config-add-fa-write-input"
+        addButtonTestId="node-config-add-fa-write"
+        items={fa.write}
+        onChange={(write) => onChange({ ...capabilities, file_access: { ...fa, write } })}
+      />
     </div>
   );
 }

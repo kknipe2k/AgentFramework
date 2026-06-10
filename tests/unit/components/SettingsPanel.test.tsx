@@ -106,12 +106,16 @@ describe('SettingsPanel (M08.G)', () => {
   it('budget_control_input_reflects_globalBudgetCap_slot', () => {
     useGraphStore.setState({ globalBudgetCap: 25 });
     render(<SettingsPanel />);
+    // M09.D.fix: the budget section now defaults collapsed (DESIGN.md
+    // disclosure) — expand it before asserting on its input.
+    fireEvent.click(screen.getByTestId('settings-section-toggle-budget'));
     expect(screen.getByTestId('budget-cap-input')).toHaveValue(25);
   });
 
   it('clicking_save_cap_calls_invokeSetGlobalBudget_with_parsed_value', async () => {
     const user = userEvent.setup();
     render(<SettingsPanel />);
+    fireEvent.click(screen.getByTestId('settings-section-toggle-budget'));
     fireEvent.change(screen.getByTestId('budget-cap-input'), { target: { value: '40' } });
     await user.click(screen.getByTestId('budget-save-button'));
     await waitFor(() => expect(invokeSetGlobalBudget).toHaveBeenCalledWith(40));
@@ -120,6 +124,7 @@ describe('SettingsPanel (M08.G)', () => {
   it('saving_cap_updates_globalBudgetCap_slot_so_input_reflects_it', async () => {
     const user = userEvent.setup();
     render(<SettingsPanel />);
+    fireEvent.click(screen.getByTestId('settings-section-toggle-budget'));
     fireEvent.change(screen.getByTestId('budget-cap-input'), { target: { value: '40' } });
     await user.click(screen.getByTestId('budget-save-button'));
     // The 🟡-4 contract: the configured cap persists into the slot so a
@@ -131,6 +136,7 @@ describe('SettingsPanel (M08.G)', () => {
   it('budget_control_rejects_negative_input_without_calling_command', async () => {
     const user = userEvent.setup();
     render(<SettingsPanel />);
+    fireEvent.click(screen.getByTestId('settings-section-toggle-budget'));
     fireEvent.change(screen.getByTestId('budget-cap-input'), { target: { value: '-5' } });
     await user.click(screen.getByTestId('budget-save-button'));
     expect(invokeSetGlobalBudget).not.toHaveBeenCalled();
@@ -141,6 +147,7 @@ describe('SettingsPanel (M08.G)', () => {
     const user = userEvent.setup();
     invokeSetGlobalBudget.mockRejectedValueOnce({ type: 'internal', message: 'cap write failed' });
     render(<SettingsPanel />);
+    fireEvent.click(screen.getByTestId('settings-section-toggle-budget'));
     fireEvent.change(screen.getByTestId('budget-cap-input'), { target: { value: '40' } });
     await user.click(screen.getByTestId('budget-save-button'));
     const err = await screen.findByTestId('budget-error');

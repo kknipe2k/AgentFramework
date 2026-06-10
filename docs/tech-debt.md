@@ -1493,3 +1493,129 @@ Capability enforcement (L1–L5) bounds the blast radius but is NOT a defense ag
 ### Recommended approach (when addressed)
 
 Author a threat-model addendum (in `docs/SECURITY.md` and/or the M12 H-sub-ladder security ADR that ADR-0032 already requires but which is not yet written) that: (1) names prompt injection explicitly and states what is and is NOT defended under the semi-trusted threat model; (2) specifies concrete mitigations — MCP tool-description length cap + sanitization, source/provenance display in the UI for tool descriptions and fetched content, injection-aware HITL prompts before sensitive capability use; (3) marks the MCP description passthrough with a SECURITY note so future reviewers see the signal. Design-first item; owned with the M12 ADR but the threat-model statement should land earlier (with M09's first real MCP tool).
+
+## TD-058 — `vertical_slice.e2e.ts` run-test asserts only verdict-text-non-empty (weak regression guard)
+
+**Date logged:** 2026-06-09
+**Found by:** Stage V verifier run M09.V (finding 🟢 #1 — Behavior / assembled_execution pass)
+**Pass that surfaced it:** Behavior / assembled_execution
+**Category:** observability (test-assertion completeness — a regression-guard gap)
+
+**Resolution status:** open (owner: any future `vertical_slice.e2e.ts` touch — tighten the verdict assertion once a Promoted-capable hermetic e2e path exists)
+
+### Description
+
+`tests/e2e-tauri/vertical_slice.e2e.ts:244–246` (`the_authored_framework_runs_through_the_assembled_tester`) asserts only `(await verdict.getText()).trim().length > 0` — it passes on `PASS`, `FAIL`, or `TIER-LIMITED` alike. The M09.V 5th pass drove the real Tauri binary with a key (loaded via `.env.local`); because `wdio.conf.ts::beforeSession` calls `seedNoviceTier()` for hermeticity, the authored Write is L4 tier-limited and the verdict came back **TIER-LIMITED** — and the test passed. So this spec confirms the authored framework *reaches* `test_framework` and returns *a* verdict, but does not guard *which* verdict, and no `tests/e2e-tauri/` spec asserts the on-disk file effect.
+
+### Why it's debt not bug
+
+The on-disk effect IS regression-guarded — at the assembled-Rust granularity by `crates/runtime-main/tests/mcp_tool_injection_execution.rs` (the in-scope Write lands with MCP-sourced content + the causality guard + the authored-only boundary) and by the `commands.rs::test_framework_with_at_{promoted,novice}_…` tier-contrast tests (no file on a denial). The Promoted on-disk close is intentionally the maintainer real-app IRL (2026-06-09), because the e2e harness is hermetic-Novice and CI has no live model / MCP server (rule 11 / ADR-0021). The debt is purely that the e2e's run-assertion is weaker than its name implies — same class as [[TD-049]].
+
+### Recommended approach (when addressed)
+
+When a Promoted-capable hermetic e2e path exists (or by relaxing the Novice seed for this one spec), tighten the assertion to `verdict ∈ {PASS, TIER_LIMITED}` (never `FAIL` for a well-authored framework), and ideally assert the in-scope file on disk + the out-of-scope denial in the real app. ~15–30 min; fold into any `vertical_slice.e2e.ts` touch.
+
+## TD-059 — Tester `fold_outcome` reports a gap-suspended run as verdict `Pass` (verdict-truthfulness; route to M10)
+
+**Date logged:** 2026-06-09
+**Found by:** Stage V verifier run M09.V (finding 🟢 #2 — Behavior pass)
+**Pass that surfaced it:** Behavior
+**Category:** observability (Tester results UX — a cleanly-suspended run is not distinguished from a clean pass)
+
+**Resolution status:** open (owner: M10 — the gap resolve→resume slice, ADR-0029; explicitly deferred by the M09.D.fix `<scope_locks>`)
+
+### Description
+
+`crates/runtime-main/src/builder/tester.rs::fold_outcome` (`:184`) has no arm for a clean **gap-suspend**. A `request_capability` gap that suspends the session cleanly (M09 ships "suspends cleanly" / E-04) emits neither `CapabilityViolation` nor `TierViolation`, so `fold_outcome` computes `passed = true` and `verdict = TestVerdict::Pass` — the suspended run reads as a clean PASS. `TestVerdict::TierLimited` ([[TD-047]], resolved) covers only L4 tier blocks, not gap-suspends. This is exactly the truthfulness gap the M09.D.fix iteration-1 IRL flagged ("the verdict still read PASS" when the agent requested a missing capability and wrote nothing).
+
+### Why it's debt not bug
+
+The pass/fail bit is defensible — a gap-suspend is not a framework defect (the framework is correct; it simply needs a capability granted), so `passed = true` is the right call for that bit, mirroring the [[TD-047]] tier-limit reasoning. The gap is purely **observability**: the outcome surfaces no distinct "this run suspended on a gap; resolve and resume" signal versus a clean pass. The M09.D.fix `<scope_locks>` explicitly held this OUT of scope ("note it; do not change verdict logic") and routed it to M10 — it is correctly deferred, just not previously ledgered.
+
+### Recommended approach (when addressed)
+
+In M10 (gap resolve→resume, ADR-0029), derive a distinct verdict/state for a suspended run — e.g. a `TestVerdict::Suspended` (or a `suspended: bool` / the gap kinds on `TestOutcome`) computed from the suspend signal in the trace, rendered in `TesterModal` as "Suspended — resolve the gap to resume" rather than a green PASS. Pairs with the resolve→resume UI that M10 introduces. No change to `fold_outcome`'s pass/fail bit. ~30–60 min within M10's Tester surface.
+
+## TD-060 — MCP "Add server" modal doesn't reflect a just-created server (install-UX staleness; route to M13)
+
+**Date logged:** 2026-06-09
+**Found by:** M09 maintainer real-app IRL (during the M09.C/D canvas attach-an-MCP-tool walkthrough)
+**Pass that surfaced it:** maintainer real-app IRL (not Stage V — V was 0🔴/0🟡/2🟢)
+**Category:** MCP install/registry UX (renderer state not re-derived after a registry mutation)
+
+**Resolution status:** open (owner: **M13** — MCP-server-as-first-class-canvas-citizen + the data-source catalog + credentials UX, per ADR-0032)
+
+### Description
+
+In the real app, after creating/installing an MCP server, the "Add server" modal (and/or the server list it drives) does not reflect the newly-created server until a reload — the modal's view of installed servers is fetched once and not re-derived after the create mutation. The Palette's `source:'mcp'` tool fetch is `mcp_list_servers`-on-mount (M09.C), so a server added mid-session is invisible to the author until remount. Functional, not cosmetic: the just-created server can't be reached without a reload.
+
+### Why it's debt not bug (for M09 scope)
+
+M09's vertical slice attaches an **already-installed** server's tool — the slice closed on the maintainer IRL (2026-06-09) with a pre-installed server, so the create-then-immediately-attach path was not on the slice's critical close path. The MCP install/management UX (server-as-canvas-citizen + credentials) is explicitly **M13** per ADR-0032's out-of-scope list. This is the install-side companion to that surface, surfaced early by the IRL.
+
+### Recommended approach (when addressed)
+
+In M13's MCP-server surface, re-derive the modal/server-list + the Palette `mcp` source from a store signal that invalidates on the create/install mutation (or refetch on modal-open), so a just-created server appears without a reload. Pairs with the credentials UX + the data-source catalog.
+
+## TD-061 — Stale error-toast persists after the error condition clears (toast-lifecycle UX; route to M10)
+
+**Date logged:** 2026-06-09
+**Found by:** M09 maintainer real-app IRL (M09.D / D.fix Tester walkthrough)
+**Pass that surfaced it:** maintainer real-app IRL
+**Category:** renderer notification/toast lifecycle (a toast is not dismissed/superseded when its condition resolves)
+
+**Resolution status:** open (owner: **M10** — the HITL-steers renderer milestone; the toast/notification lifecycle lands with the resolve→resume + run-observability surface)
+
+### Description
+
+In the real app an error toast remained visible after the underlying error condition had cleared (a subsequent successful action did not dismiss or supersede the prior error toast), so the user saw a stale error alongside a now-correct state. The toast has no auto-expire / supersede-on-next-action lifecycle tied to the action that raised it.
+
+### Why it's debt not bug (for M09 scope)
+
+Cosmetic-adjacent and non-blocking — it does not affect the run, the enforcement, or the on-disk effect (the slice closed correctly on the IRL). It is a renderer notification-lifecycle gap, not a runtime defect. M09 added no toast logic; the stale toast is pre-existing UX surfaced by the IRL.
+
+### Recommended approach (when addressed)
+
+Give toasts a lifecycle: auto-expire after a timeout and/or supersede the prior error toast when the same surface's next action succeeds (key toasts by source so a success clears its matching error). Fold into M10's run-observability / HITL-steer toast surface; ~30–60 min.
+
+## TD-062 — MCP palette item label wraps (`server · tool` overflows the palette item width) (cosmetic; route to M13)
+
+**Date logged:** 2026-06-09
+**Found by:** M09 maintainer real-app IRL (M09.C palette walkthrough)
+**Pass that surfaced it:** maintainer real-app IRL
+**Category:** cosmetic / DESIGN.md palette layout (a long `source:'mcp'` label wraps rather than truncating)
+
+**Resolution status:** open (owner: **M13** — the MCP palette surface, with the data-source catalog + the `source:'mcp'` item styling)
+
+### Description
+
+The M09.C `source:'mcp'` Palette items are labelled `server · tool` (e.g. `filesystem · read_text_file`); a long server or tool name wraps to a second line inside the palette item rather than truncating with an ellipsis + title tooltip, breaking the palette item's single-line register (DESIGN.md palette-item style).
+
+### Why it's debt not bug (for M09 scope)
+
+Purely cosmetic — the item is still draggable and the attach path works (the slice closed). The label-wrap does not affect the `{kind:'tool', ref:'server__tool'}` drag payload or the dispatch. M09 scoped the palette `mcp` source to *functional* attach, not its final styling (the data-source catalog + MCP-as-node styling is M13).
+
+### Recommended approach (when addressed)
+
+Truncate the `server · tool` label with `text-overflow: ellipsis` + `white-space: nowrap` and a `title` tooltip carrying the full id (the existing palette-item CSS register). Fold into M13's MCP palette styling pass; ~15 min.
+
+## TD-063 — No canvas node-delete / undo (a mis-dropped node can't be removed) (authoring polish; route to a future ADR-0032 slice)
+
+**Date logged:** 2026-06-09
+**Found by:** M09 maintainer real-app IRL (M09.A/B/C authoring walkthrough)
+**Pass that surfaced it:** maintainer real-app IRL
+**Category:** generic authoring polish (no delete-node / undo affordance on the canvas)
+
+**Resolution status:** open (owner: **a future ADR-0032 slice** — generic authoring polish "lands with the slice that consumes it"; node-delete + id-rename are named in the M09 phase-doc out-of-scope list. Candidate M11 alongside the spawn/sub-agent authoring surface)
+
+### Description
+
+The canvas has no affordance to delete a node or undo a drop: once an agent/tool/skill node is dropped (M09.A/B/C), there is no delete-key / context-menu remove and no undo, so a mis-dropped or unwanted node can only be cleared by editing the JSON or starting a fresh project. `addNode` mints; there is no `removeNode` on the canvas surface.
+
+### Why it's debt not bug (for M09 scope)
+
+The M09 phase-doc `<scope_locks>` explicitly defer "the remaining generic authoring polish — config for every node kind, **node delete**, id-rename, the rest of the Capabilities surface (network)" to "the slice that consumes it (ADR-0032 verticals), not a separate author-anything layer." M09's slice is author-one-agent-and-run; delete/undo was correctly out of scope. Surfaced by the IRL as the most-felt authoring friction.
+
+### Recommended approach (when addressed)
+
+Add a `removeNode(nodeId)` store reducer + a canvas delete affordance (Delete-key on a selected node + a node context-menu Remove), removing the node from `framework` + `nodePositions` and any incident edges (mirror `addNode`/`applyDrop`'s inverse), with continuous validation re-deriving. Undo can ride React Flow's selection + a store history stack later. Land with the next ADR-0032 authoring slice (candidate M11); ~1–2 h.

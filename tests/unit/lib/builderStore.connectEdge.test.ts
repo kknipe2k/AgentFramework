@@ -72,6 +72,32 @@ describe('builderStore.connectEdge — the four spec edge types + the reject pat
     expect(soleAgent().allowed_tools).toEqual(['Read']);
   });
 
+  it('connect_agent_to_tool_also_records_capabilities_tools_called', () => {
+    // M09.C — wiring an agent to a tool records BOTH the offered tool
+    // (allowed_tools) AND the declared capability (capabilities.tools_called
+    // = "tools this artifact may invoke", common.v1.json). An MCP tool's
+    // canonical `<server>__<tool>` ref lands in both so the authored agent's
+    // capability declaration is complete the moment the edge is drawn.
+    const store = useBuilderStore.getState();
+    store.addNode('agent', 'planner', { x: 0, y: 0 });
+    store.addNode('tool', 'fs__read_file', { x: 0, y: 0 });
+    store.connectEdge('agent:planner', 'tool:fs__read_file');
+    expect(soleAgent().allowed_tools).toEqual(['fs__read_file']);
+    expect(soleAgent().capabilities.tools_called).toEqual(['fs__read_file']);
+  });
+
+  it('connect_agent_to_tool_twice_does_not_duplicate_tools_called', () => {
+    // Idempotent on both lists — re-drawing the same Agent→Tool edge does
+    // not append a duplicate tools_called entry.
+    const store = useBuilderStore.getState();
+    store.addNode('agent', 'planner', { x: 0, y: 0 });
+    store.addNode('tool', 'fs__read_file', { x: 0, y: 0 });
+    store.connectEdge('agent:planner', 'tool:fs__read_file');
+    store.connectEdge('agent:planner', 'tool:fs__read_file');
+    expect(soleAgent().allowed_tools).toEqual(['fs__read_file']);
+    expect(soleAgent().capabilities.tools_called).toEqual(['fs__read_file']);
+  });
+
   it('connect_agent_to_agent_pushes_child_id_to_spawns', () => {
     const store = useBuilderStore.getState();
     store.addNode('agent', 'planner', { x: 0, y: 0 });

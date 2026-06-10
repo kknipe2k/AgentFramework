@@ -38,7 +38,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use runtime_core::event::AgentEvent;
-use runtime_core::generated::framework::Framework;
+use runtime_core::generated::framework::{Framework, FrameworkAgentsItem};
 use runtime_core::CmdError;
 use runtime_main::builder::{
     Companion, FrameworkValidationReport, InstalledArtifact, LoadedFramework, TestOutcome,
@@ -52,7 +52,9 @@ use runtime_main::import::{
 };
 use runtime_main::key_store::{read_api_key, write_api_key, KeyStoreError};
 use runtime_main::providers::anthropic::AnthropicProvider;
-use runtime_main::providers::{AgentConfig, ContentBlock, LLMProvider, Message, MessageRole};
+use runtime_main::providers::{
+    AgentConfig, ContentBlock, LLMProvider, Message, MessageRole, ToolDef,
+};
 use runtime_main::recovery::{
     request_resume_with, respond_uncertainty_with, ResumeError, ResumePlan, UncertaintyError,
     UncertaintyResolution,
@@ -179,7 +181,17 @@ pub async fn run_smoke_session(
             let audit = app
                 .try_state::<Arc<runtime_main::audit::AuditWriter>>()
                 .map(|w| w.inner().clone());
-            build_mcp_dispatcher(client.inner().clone(), audit, &session_id)
+            // M09.D.fix iter2: the no-tools smoke has no candidate framework /
+            // tracked tier — pass an empty framework + the default Novice tier
+            // (no grants; behaviorally identical to the prior bare enforcer;
+            // latent — the smoke drives no MCP tool). Hard-Rule-8: surfaced.
+            build_mcp_dispatcher(
+                client.inner().clone(),
+                audit,
+                &session_id,
+                &empty_smoke_framework(),
+                Tier::Novice,
+            )
         });
     let result = run_smoke_session_with(
         provider,
@@ -268,18 +280,76 @@ pub async fn run_smoke_session_with<P: LLMProvider + 'static>(
 /// `CapabilityEnforcer` construction is CODEOWNERS-flagged (Hard Rule
 /// 8); the M07.D1 construction-reachability map + this function are the
 /// surfaced plan.
+/// Build the MCP dispatcher's capability enforcer, framework-/tier-wired
+/// (M09.D.fix iteration 2; CODEOWNERS / Hard-Rule-8).
+///
+/// `try_mcp_dispatch` checks the `McpDispatcher`'s OWN enforcer (not the
+/// run-session enforcer). Both dispatcher builders previously constructed a
+/// bare `CapabilityEnforcer::new()` (default-Novice, no grants) — the
+/// docstring-acknowledged stub that denied every authored MCP tool on L4
+/// (tier, any user tier) and, even tier-fixed, on L1 (the framework's
+/// `tools_called` grant is Exec/`Pure`, while `mcp_tool_capability` requires
+/// Exec/`Irreversible` and `subsumes` needs exact `side_effect_class`
+/// equality). This sets the tracked `tier` and grants each agent the exact
+/// [`mcp_tool_capability`](runtime_mcp::mcp_tool_capability) declaration the
+/// dispatch requires, for each of **that agent's own** `allowed_tools` MCP
+/// (`server__tool`) entries — an unauthored or other-agent tool stays denied
+/// (the authored-only boundary). Built `mut` (grant takes `&mut self`,
+/// `enforcer.rs`); the caller `Arc`-wraps.
+fn build_session_mcp_enforcer(
+    framework: &Framework,
+    tier: Tier,
+) -> runtime_main::capability::CapabilityEnforcer {
+    use runtime_main::capability::CapabilityEnforcer;
+    use runtime_mcp::mcp_tool_capability;
+
+    let mut enforcer = CapabilityEnforcer::new();
+    enforcer.set_tier(tier);
+    for agent in &framework.agents {
+        if let FrameworkAgentsItem::Agent(a) = agent {
+            for tool in &a.allowed_tools {
+                if let Some((server, name)) = tool.split_once("__") {
+                    enforcer.grant(a.id.as_str(), mcp_tool_capability(server, name));
+                }
+            }
+        }
+    }
+    enforcer
+}
+
+/// An empty framework for the no-tools smoke session (M09.D.fix iter2). The
+/// smoke runs no MCP tool, so its dispatcher enforcer carries no grants at the
+/// default Novice tier — behaviorally identical to the prior bare enforcer;
+/// routing it through [`build_session_mcp_enforcer`] keeps both dispatchers
+/// uniform. Production `build_mcp_dispatcher` is latent in v0.1 (only the
+/// no-tools smoke drives it).
+fn empty_smoke_framework() -> Framework {
+    serde_json::from_value(serde_json::json!({
+        "name": "smoke",
+        "version": "0.1.0",
+        "description": "no-tools smoke session",
+        "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+        "agents": [],
+        "tools": [],
+        "skills": [],
+        "session_root_agent": ""
+    }))
+    .expect("the empty smoke framework round-trips")
+}
+
 fn build_mcp_dispatcher(
     mcp_client: Arc<McpClient>,
     audit: Option<Arc<runtime_main::audit::AuditWriter>>,
     session_id: &SessionId,
+    framework: &Framework,
+    tier: Tier,
 ) -> Arc<dyn McpToolDispatch> {
-    use runtime_main::capability::CapabilityEnforcer;
     use runtime_mcp::{ConnectionResolver, McpDispatcher, NamespaceResolver};
     use std::collections::BTreeMap;
     use tokio::sync::RwLock;
 
     let resolver = Arc::new(RwLock::new(NamespaceResolver::new(BTreeMap::new())));
-    let enforcer = Arc::new(CapabilityEnforcer::new());
+    let enforcer = Arc::new(build_session_mcp_enforcer(framework, tier));
     let connections: Arc<dyn ConnectionResolver> = mcp_client;
     Arc::new(McpDispatcher::new(
         resolver,
@@ -1099,6 +1169,39 @@ pub async fn mcp_list_servers_with(client: &McpClient) -> Result<Vec<McpServerSu
         .map_err(|e| CmdError::internal(format!("mcp_list_servers: {e}")))
 }
 
+/// List a *registered* MCP server's tools by name (M09.C — the Palette's
+/// "attach an installed server's tool" source). Read-only: resolves the
+/// server through the registry + lists its tools, reusing the dispatcher's
+/// connection path. No new transport, no persistence.
+///
+/// # Errors
+///
+/// - [`CmdError::Internal`] when the name is not a registered server or the
+///   connect / `list_tools` handshake fails.
+#[tauri::command]
+pub async fn mcp_list_server_tools(
+    name: String,
+    client: tauri::State<'_, Arc<McpClient>>,
+) -> Result<Vec<McpTool>, CmdError> {
+    mcp_list_server_tools_with(name, client.inner().as_ref()).await
+}
+
+/// Test-seam for [`mcp_list_server_tools`].
+///
+/// # Errors
+///
+/// See [`mcp_list_server_tools`].
+pub async fn mcp_list_server_tools_with(
+    name: String,
+    client: &McpClient,
+) -> Result<Vec<McpTool>, CmdError> {
+    tracing::info!(%name, "mcp_list_server_tools invoked");
+    client
+        .list_server_tools(&name)
+        .await
+        .map_err(|e| CmdError::internal(format!("mcp_list_server_tools: {e}")))
+}
+
 /// Shared resolve-and-log helper for the three approval-flow commands.
 /// Treats `ApprovalError::NotFound` as soft-Ok with a warn-log per the
 /// no-pending-await rationale on [`approve_plan`].
@@ -1650,11 +1753,17 @@ pub async fn disconnect_test_session_mcp(dispatcher: &McpDispatcher, servers: &[
 /// run's capability behavior (ADR-0019) — at Promoted an out-of-scope Write
 /// reaches the L1 scope gate; at Novice the L4 tier gate denies it first.
 ///
+/// `mcp_tool_defs` are the connected MCP servers' `list_tools` schemas mapped
+/// to the canonical `<server>__<tool>` id (built by
+/// [`build_session_mcp_tool_defs`]); threading them is what surfaces a
+/// canvas-authored MCP tool to the model so it can call it and
+/// `try_mcp_dispatch` executes it (M09.D.fix).
+///
 /// # Errors
 ///
 /// [`CmdError::Internal`] wrapping a `TesterError` (infrastructure
 /// failure — drone spawn / temp-DB setup).
-#[allow(clippy::too_many_arguments)] // reason: mirrors run_test_session_with_tier's 8-arg Tester seam (M08.8.C tier wire); arg-struct refactor deferred
+#[allow(clippy::too_many_arguments)] // reason: mirrors run_test_session_with_tools' 9-arg Tester seam (tier + injected MCP tool defs); arg-struct refactor deferred
 pub async fn test_framework_with<P: LLMProvider + 'static>(
     framework_doc: &Framework,
     task: &str,
@@ -1664,8 +1773,9 @@ pub async fn test_framework_with<P: LLMProvider + 'static>(
     mcp_dispatch: Option<Arc<dyn McpToolDispatch>>,
     session_id: SessionId,
     tier: Tier,
+    mcp_tool_defs: Vec<ToolDef>,
 ) -> Result<TestOutcome, CmdError> {
-    runtime_main::builder::run_test_session_with_tier(
+    runtime_main::builder::run_test_session_with_tools(
         framework_doc,
         task,
         db_path,
@@ -1674,9 +1784,39 @@ pub async fn test_framework_with<P: LLMProvider + 'static>(
         mcp_dispatch,
         session_id,
         tier,
+        mcp_tool_defs,
     )
     .await
     .map_err(|e| CmdError::internal(e.to_string()))
+}
+
+/// Build the model-facing tool definitions for the test session's connected
+/// MCP servers (M09.D.fix). For each connected server, fetch its `list_tools`
+/// schema (reusing the M09.C [`mcp_list_server_tools`] path) and map every
+/// tool to a [`ToolDef`] named with the canonical `<server>__<tool>` id
+/// `try_mcp_dispatch` resolves — so an authored MCP tool reaches the model's
+/// tool list. A server whose `list_tools` fails is skipped (best-effort, like
+/// the connect path) so one offline server never blanks the run.
+async fn build_session_mcp_tool_defs(client: &McpClient, servers: &[String]) -> Vec<ToolDef> {
+    let mut defs = Vec::new();
+    for server in servers {
+        match client.list_server_tools(server).await {
+            Ok(tools) => {
+                for tool in tools {
+                    defs.push(ToolDef {
+                        name: format!("{server}__{}", tool.name),
+                        description: tool.description.unwrap_or_default(),
+                        input_schema: tool.input_schema,
+                    });
+                }
+            }
+            Err(e) => tracing::warn!(
+                %server, error = %e,
+                "test session list_tools failed; the server's tools are not surfaced to the model"
+            ),
+        }
+    }
+    defs
 }
 
 /// The MCP server names the candidate framework references via its
@@ -1688,6 +1828,23 @@ fn framework_mcp_servers(framework: &Framework) -> Vec<String> {
         .filter_map(|canonical| canonical.split("__").next())
         .map(str::to_string)
         .collect();
+    // M09.D.fix: a canvas-authored framework sets NO `mcp_aliases` — its MCP
+    // tools are named canonically (`server__tool`) straight in each inline
+    // agent's `allowed_tools` (M09.C). Derive the servers to connect from
+    // those too, so the authored server actually connects + its tools resolve
+    // at dispatch. A built-in (Read/Write/Bash) carries no `__`, so
+    // `split_once` excludes it; an unregistered server no-ops at connect
+    // (best-effort, logged). Without this the server never connects and the
+    // injected tool def is inert — the IRL second condition.
+    for agent in &framework.agents {
+        if let FrameworkAgentsItem::Agent(a) = agent {
+            for tool in &a.allowed_tools {
+                if let Some((server, _)) = tool.split_once("__") {
+                    servers.push(server.to_string());
+                }
+            }
+        }
+    }
     servers.sort();
     servers.dedup();
     servers
@@ -1699,14 +1856,18 @@ fn framework_mcp_servers(framework: &Framework) -> Vec<String> {
 fn build_test_mcp_dispatcher(
     mcp_client: Arc<McpClient>,
     session_id: &SessionId,
+    framework: &Framework,
+    tier: Tier,
 ) -> Arc<McpDispatcher> {
-    use runtime_main::capability::CapabilityEnforcer;
     use runtime_mcp::{ConnectionResolver, NamespaceResolver};
     use std::collections::BTreeMap;
     use tokio::sync::RwLock;
 
     let resolver = Arc::new(RwLock::new(NamespaceResolver::new(BTreeMap::new())));
-    let enforcer = Arc::new(CapabilityEnforcer::new());
+    // M09.D.fix iter2: framework-/tier-wired so an authored MCP tool passes
+    // the dispatcher's L4 (tier) + L1 (grant) check — the bare new() denied
+    // every MCP tool (the iteration-1 re-IRL bug).
+    let enforcer = Arc::new(build_session_mcp_enforcer(framework, tier));
     let connections: Arc<dyn ConnectionResolver> = mcp_client;
     Arc::new(McpDispatcher::new(
         resolver,
@@ -1766,13 +1927,23 @@ pub async fn test_framework(
     // the concrete dispatcher, drive the §5a connect handler for the
     // candidate framework's servers, and thread it into the run.
     let mcp_servers = framework_mcp_servers(&framework_doc);
-    let dispatcher = app
-        .try_state::<Arc<McpClient>>()
-        .map(|client| build_test_mcp_dispatcher(client.inner().clone(), &session_id));
+    let mcp_client = app.try_state::<Arc<McpClient>>().map(|c| c.inner().clone());
+    let dispatcher = mcp_client
+        .as_ref()
+        .map(|client| build_test_mcp_dispatcher(client.clone(), &session_id, &framework_doc, tier));
     let mut mcp_dispatch: Option<Arc<dyn McpToolDispatch>> = None;
+    let mut mcp_tool_defs: Vec<ToolDef> = Vec::new();
     if let Some(ref dispatcher) = dispatcher {
         match connect_test_session_mcp(dispatcher, &mcp_servers).await {
-            Ok(_) => mcp_dispatch = Some(Arc::clone(dispatcher) as Arc<dyn McpToolDispatch>),
+            Ok(_) => {
+                mcp_dispatch = Some(Arc::clone(dispatcher) as Arc<dyn McpToolDispatch>);
+                // M09.D.fix: surface the connected servers' tools to the model
+                // so an authored MCP tool can be called — else the model runs
+                // tool-blind (the M09.D IRL).
+                if let Some(ref client) = mcp_client {
+                    mcp_tool_defs = build_session_mcp_tool_defs(client, &mcp_servers).await;
+                }
+            }
             Err(e) => {
                 tracing::warn!(error = %e, "test session MCP connect failed; running tool-free");
             }
@@ -1788,6 +1959,7 @@ pub async fn test_framework(
         mcp_dispatch,
         session_id,
         tier,
+        mcp_tool_defs,
     )
     .await;
 
@@ -2299,7 +2471,13 @@ mod tests {
         // returns `Some(Invoked)` — so `None` here proves it is the
         // real concrete impl threaded through, not a stand-in.
         let (_dir, client) = mcp_client_over_tempdir();
-        let dispatcher = build_mcp_dispatcher(client, None, &SessionId::new());
+        let dispatcher = build_mcp_dispatcher(
+            client,
+            None,
+            &SessionId::new(),
+            &empty_smoke_framework(),
+            Tier::Novice,
+        );
         let outcome = dispatcher
             .dispatch_if_mcp(
                 "worker",
@@ -2324,7 +2502,13 @@ mod tests {
         // is what exercises it) — but construction + threading must not
         // break the existing smoke path.
         let (_dir, client) = mcp_client_over_tempdir();
-        let dispatcher = build_mcp_dispatcher(client, None, &SessionId::new());
+        let dispatcher = build_mcp_dispatcher(
+            client,
+            None,
+            &SessionId::new(),
+            &empty_smoke_framework(),
+            Tier::Novice,
+        );
         let (tx, mut rx) = mpsc::channel(8);
         let drone = Arc::new(DroneClient::noop());
         run_smoke_session_with(
@@ -2344,6 +2528,23 @@ mod tests {
         assert!(
             !events.is_empty(),
             "the no-tools smoke still produces its events with the dispatcher threaded"
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_list_server_tools_with_unregistered_name_errs() {
+        // M09.C — the read-only enumeration command behind the Palette's
+        // "attach an installed server's tool" source. An unknown server name
+        // has no registry row, so the command surfaces the error rather than
+        // a silent empty list (the palette distinguishes "no tools" from "no
+        // such server"). The happy path (a registered server's tools
+        // enumerate) is unit-tested in runtime-mcp's connection_resolver and
+        // observed end-to-end via the e2e + maintainer IRL with a real server.
+        let (_dir, client) = mcp_client_over_tempdir();
+        let result = mcp_list_server_tools_with("ghost".to_string(), &client).await;
+        assert!(
+            result.is_err(),
+            "an unregistered server name must error, not return an empty tool list"
         );
     }
 
@@ -3191,8 +3392,163 @@ mod tests {
             )
         }
 
+        // ── M09.D.fix iteration 2 — the MCP dispatcher's enforcer wiring ──
+        use runtime_main::capability::CapabilityError;
+        use runtime_main::sdk::{McpDispatchError, McpDispatchOutcome};
+        use runtime_mcp::mcp_tool_capability;
+
+        /// A canvas-authored framework whose `agent-1` declares the MCP tool
+        /// `fs__read` (matching the `MockTransport` tool `read` on server `fs`)
+        /// + the built-in `Write`; `session_root_agent` is `agent-1`.
+        fn canvas_fw_with_mcp_tool() -> Framework {
+            serde_json::from_value(serde_json::json!({
+                "name": "m09-d-fix2-canvas",
+                "version": "1.0.0",
+                "description": "canvas-authored MCP-tool framework",
+                "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+                "agents": [{
+                    "id": "agent-1",
+                    "role": "writer",
+                    "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+                    "capabilities": {
+                        "tools_called": ["fs__read"],
+                        "skills_loaded": [],
+                        "file_access": { "read": [], "write": ["out/**"] },
+                        "network": [], "shell": false, "spawn_agents": []
+                    },
+                    "allowed_tools": ["fs__read", "Write"],
+                    "allowed_skills": [],
+                    "spawns": []
+                }],
+                "tools": [],
+                "skills": [],
+                "session_root_agent": "agent-1",
+            }))
+            .expect("the canvas fixture round-trips")
+        }
+
+        #[test]
+        fn build_session_mcp_enforcer_grants_authored_promoted_denies_novice_and_unauthored() {
+            // The MCP dispatcher's enforcer must be framework-/tier-wired so a
+            // canvas-authored MCP tool passes the dispatcher's L4 (tier) + L1
+            // (grant) check (M09.D.fix iter2 — the iteration-1 re-IRL bug was a
+            // bare default-Novice, no-grant enforcer).
+            let fw = canvas_fw_with_mcp_tool();
+            let need = mcp_tool_capability("fs", "read");
+
+            // Promoted + authored → allowed (L4 passes; the granted
+            // mcp_tool_capability L1-subsumes the dispatch requirement).
+            build_session_mcp_enforcer(&fw, Tier::Promoted)
+                .check("agent-1", &need)
+                .expect("Promoted: an authored MCP tool's Exec is granted + tier-allowed");
+
+            // Novice → L4 tier-denied (the maintainer's exact error class).
+            let at_novice = build_session_mcp_enforcer(&fw, Tier::Novice).check("agent-1", &need);
+            assert!(
+                matches!(at_novice, Err(CapabilityError::TierForbidden { .. })),
+                "Novice tier-denies MCP Exec; got {at_novice:?}"
+            );
+
+            // An UNAUTHORED tool at Promoted → L1-denied (the authored-only
+            // boundary: only each agent's own allowed_tools MCP entries are
+            // granted).
+            let unauthored = build_session_mcp_enforcer(&fw, Tier::Promoted)
+                .check("agent-1", &mcp_tool_capability("fs", "delete"));
+            assert!(
+                matches!(unauthored, Err(CapabilityError::Denied { .. })),
+                "an unauthored MCP tool is L1-denied even at Promoted; got {unauthored:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn mcp_dispatch_through_the_real_dispatcher_enforcer_honors_tier() {
+            // The assembled proof: a REAL McpDispatcher whose enforcer is built
+            // by build_session_mcp_enforcer dispatches the authored MCP tool at
+            // Promoted (Invoked) and denies it at Novice (Blocked) — through the
+            // real check() path, not a stub.
+            async fn outcome(tier: Tier) -> Option<Result<McpDispatchOutcome, McpDispatchError>> {
+                let fw = canvas_fw_with_mcp_tool();
+                let transport = MockTransport::new()
+                    .with_tool("read", None, serde_json::json!({ "type": "object" }))
+                    .with_tool_result("read", serde_json::json!({ "ok": true }));
+                let dispatcher = McpDispatcher::new(
+                    Arc::new(RwLock::new(NamespaceResolver::new(BTreeMap::new()))),
+                    Arc::new(build_session_mcp_enforcer(&fw, tier)),
+                    Arc::new(MockConnResolver { transport }),
+                    None,
+                    "m09-d-fix2",
+                );
+                dispatcher
+                    .on_server_connected("fs")
+                    .await
+                    .expect("connect the mock fs server");
+                dispatcher
+                    .dispatch_if_mcp(
+                        "agent-1",
+                        "fs__read",
+                        serde_json::json!({}),
+                        &BTreeMap::new(),
+                    )
+                    .await
+            }
+
+            assert!(
+                matches!(
+                    outcome(Tier::Promoted).await,
+                    Some(Ok(McpDispatchOutcome::Invoked { .. }))
+                ),
+                "Promoted: the authored MCP tool dispatches through the real enforcer"
+            );
+            assert!(
+                matches!(
+                    outcome(Tier::Novice).await,
+                    Some(Ok(McpDispatchOutcome::Blocked { .. }))
+                ),
+                "Novice: the real dispatcher enforcer denies the MCP tool"
+            );
+        }
+
         fn f1_framework() -> Framework {
             serde_json::from_value(builder_seam_framework()).expect("fixture framework")
+        }
+
+        #[test]
+        fn framework_mcp_servers_derives_servers_from_canvas_authored_allowed_tools() {
+            // M09.D.fix second condition: a canvas-authored framework sets NO
+            // mcp_aliases — the MCP tool is named canonically straight in the
+            // agent's allowed_tools (M09.C). The server to connect must be
+            // derived from there, else on_server_connected is never called,
+            // the resolver stays empty, and dispatch (+ the injected def) is
+            // inert. A built-in (Write) carries no `__` and is excluded.
+            let framework: Framework = serde_json::from_value(serde_json::json!({
+                "name": "m09-d-fix-canvas",
+                "version": "1.0.0",
+                "description": "canvas-authored, no mcp_aliases",
+                "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+                "agents": [{
+                    "id": "agent-1",
+                    "role": "writer",
+                    "model": { "provider": "anthropic", "id": "claude-haiku-4-5" },
+                    "capabilities": {
+                        "tools_called": ["fs__read_text_file"],
+                        "skills_loaded": [],
+                        "file_access": { "read": [], "write": ["out/**"] },
+                        "network": [], "shell": false, "spawn_agents": []
+                    },
+                    "allowed_tools": ["fs__read_text_file", "Write"],
+                    "allowed_skills": [],
+                    "spawns": []
+                }],
+                "tools": [],
+                "skills": [],
+                "session_root_agent": "agent-1",
+            }))
+            .expect("the canvas-authored fixture round-trips");
+            assert_eq!(
+                framework_mcp_servers(&framework),
+                vec!["fs".to_string()],
+                "the server is derived from the canonical allowed_tools name; the built-in Write is excluded"
+            );
         }
 
         #[tokio::test]
@@ -3270,6 +3626,7 @@ mod tests {
                 // this pre-existing clean-run test's exact prior semantics
                 // (a tool-free run is tier-agnostic).
                 Tier::Novice,
+                Vec::new(),
             )
             .await
             .expect("the Tester seam returns Ok(TestOutcome) for a clean run");
@@ -3439,6 +3796,7 @@ mod tests {
                 None,
                 SessionId::new(),
                 Tier::Promoted,
+                Vec::new(),
             )
             .await
             .expect("the assembled run completes (a denial is a failed test, not Err)");
@@ -3490,6 +3848,7 @@ mod tests {
                 None,
                 SessionId::new(),
                 Tier::Novice,
+                Vec::new(),
             )
             .await
             .expect("the assembled run completes");

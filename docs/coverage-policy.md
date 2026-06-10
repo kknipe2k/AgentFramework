@@ -602,6 +602,48 @@ History is immutable (a measurement true for M0X stays true for M0X).
   CLAUDE.md §6 `cargo llvm-cov` commands, `codecov.yml`, and §A above —
   were **unchanged by M08.9** and are verified byte-consistent as of
   M08.9.G. No drift found.
+- **M09 (closeout `<coverage_policy_reconciliation>` — Stage G)** — **no
+  threshold and no `--ignore-filename-regex` value changed anywhere in
+  M09** (the first ADR-0032 vertical slice: A blank-create, B file_access
+  editor, C attach an MCP tool, D the assembled IRL + two D.fix
+  iterations, V the verifier). The gated `crates/**` touches all landed
+  **inside existing package gates** — none excluded, none a new
+  `--package` gate:
+  - **M09.C (attach an MCP tool)** — added `mcp_list_server_tools` to
+    `src-tauri/src/commands.rs` (the §D `tauri-shell` 50% patch-gate
+    wrapper) over a new `list_server_tools(name)` seam in
+    `crates/runtime-mcp/src/client/connection_resolver.rs` **INSIDE the
+    existing runtime-mcp ≥95 gate**. The command is a **thin read-only
+    OS/network wrapper paired with the unit-tested seam** — the
+    seam-vs-wrapper split (a §5 named exclusion category) holds, so **no
+    new exclusion** is needed (the seam carries the coverage; the
+    `src-tauri` command rides the existing `tauri-shell` patch gate).
+    `runtime-mcp` 96.00% line ≥ 95 (`connection_resolver.rs` 95.74%).
+  - **M09.D + D.fix (the run-path injection + the dispatcher enforcer)** —
+    grew `crates/runtime-main/src/builder/tester.rs` + `…/builder/mod.rs`
+    (the `build_session_mcp_tool_defs` + `run_test_session_with_tools`
+    model-facing injection) and added `build_session_mcp_enforcer` +
+    both-dispatcher wiring in `src-tauri/src/commands.rs`, **INSIDE the
+    existing runtime-main ≥95 gate** (the `src-tauri` enforcer/dispatcher
+    construction rides the `tauri-shell` patch gate). Every new line is
+    exercised by `mcp_tool_injection_execution.rs` (the tool reaches the
+    model's list; dispatch→`Write` lands the file; authored-only) + the
+    `build_session_mcp_enforcer` unit (Promoted⇒allowed / Novice⇒denied /
+    unauthored⇒denied) + the real-`McpDispatcher` regression.
+    `runtime-main` aggregate **96.32% line ≥ 95** (measured at D.fix
+    iter2, exit 0).
+  - **M09.A / M09.B + the D.fix UI v2** — renderer-only (`builderStore.ts`,
+    `Palette.tsx`, `NodeConfigPanel.tsx`, `TesterModal.tsx`,
+    `SettingsPanel.tsx` + CSS); the Vitest renderer gate (≥80% on `src/`)
+    held — global lines **93.4%**, exit 0. No `crates/**` coverage change.
+  The M09.G reconciliation appends this §C entry and **no new §B
+  baseline** (no module entered a gate; the M08-era `runtime-main builder`
+  + `runtime-mcp client` rows stand — `tester.rs`/`mod.rs` and
+  `connection_resolver.rs` were already inside their package gates). The
+  four canonical mirrors — CLAUDE.md §5 exclusion-category list, CLAUDE.md
+  §6 `cargo llvm-cov` commands, `codecov.yml`, and §A above — were
+  **unchanged by M09** and are verified byte-consistent as of M09.G. No
+  drift found.
 
 ---
 

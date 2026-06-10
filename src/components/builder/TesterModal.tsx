@@ -59,6 +59,10 @@ function TesterResult({
   onPromote: () => void;
 }): JSX.Element {
   const verdict = VERDICT_PRESENTATION[outcome.verdict];
+  // M09.D.fix iter2 (DESIGN.md principle 3): the verdict + metrics stay
+  // visible; the detail (trace drill-down + tokens + VDR) collapses behind a
+  // disclosure toggle. Default-open after a run.
+  const [detailOpen, setDetailOpen] = useState(true);
   return (
     <section
       className={`tester-result tester-result--${verdict.modifier}`}
@@ -127,17 +131,33 @@ function TesterResult({
           ))}
         </ul>
       )}
-      {/* The run drill-down (M08.9.B): verdict → per-tool-call input/result
-          → raw, over outcome.trace. Pure disclosure — reuses the M08.8.A
-          payload formatter + the shared Show-raw disclosure. */}
-      <TraceDrilldown trace={outcome.trace} />
-      <div className="tester-result__tokens" data-testid="tester-result-tokens">
-        in {outcome.token_spend.input} · out {outcome.token_spend.output} · total{' '}
-        {outcome.token_spend.total} · {formatTiming(outcome.timing)}
-      </div>
-      <pre className="tester-result__vdr" data-testid="tester-result-vdr">
-        {JSON.stringify(outcome.vdr, null, 2)}
-      </pre>
+      {/* M09.D.fix iter2: the results DETAIL (drill-down + tokens + VDR)
+          collapses behind a disclosure toggle (DESIGN.md principle 3) — the
+          verdict + metrics above stay visible. */}
+      <button
+        type="button"
+        className="tester-result__toggle"
+        data-testid="tester-result-toggle"
+        aria-expanded={detailOpen}
+        onClick={() => setDetailOpen((open) => !open)}
+      >
+        {detailOpen ? 'Hide run detail' : 'Show run detail'}
+      </button>
+      {detailOpen && (
+        <div className="tester-result__detail" data-testid="tester-result-detail">
+          {/* The run drill-down (M08.9.B): verdict → per-tool-call
+              input/result → raw, over outcome.trace. Pure disclosure — reuses
+              the M08.8.A payload formatter + the shared Show-raw disclosure. */}
+          <TraceDrilldown trace={outcome.trace} />
+          <div className="tester-result__tokens" data-testid="tester-result-tokens">
+            in {outcome.token_spend.input} · out {outcome.token_spend.output} · total{' '}
+            {outcome.token_spend.total} · {formatTiming(outcome.timing)}
+          </div>
+          <pre className="tester-result__vdr" data-testid="tester-result-vdr">
+            {JSON.stringify(outcome.vdr, null, 2)}
+          </pre>
+        </div>
+      )}
       <div className="tester-result__actions">
         <button
           type="button"
@@ -174,6 +194,10 @@ export function TesterModal(): JSX.Element | null {
   const [outcome, setOutcome] = useState<TestOutcome | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // M09.D.fix: the watch pane is expandable so a run is observable in a usable
+  // window (DESIGN.md Modals: content scrolls within a bounded height; the
+  // M09.D IRL re-verify needs the run pane growable).
+  const [watchExpanded, setWatchExpanded] = useState(false);
 
   // Stage E ships `openTester`; F2 renders the modal on that state.
   if (!isOpen) {
@@ -216,6 +240,7 @@ export function TesterModal(): JSX.Element | null {
     setOutcome(null);
     setTask('');
     setError(null);
+    setWatchExpanded(false);
     closeTester();
   };
 
@@ -268,8 +293,23 @@ export function TesterModal(): JSX.Element | null {
         {/* The smaller graph pane — scoped to the test session — beside
             the Output/Inspector rail bound to the SAME scoped store
             (M08.8.A: a Tester run's agent text + tool payloads are
-            observable in-app, not only via RUST_LOG). */}
-        <div className="tester-modal__watch">
+            observable in-app, not only via RUST_LOG). M09.D.fix: an expand
+            toggle grows the pane for a usable re-verify window. */}
+        <div className="tester-modal__watch-bar">
+          <button
+            type="button"
+            className="tester-modal__expand"
+            data-testid="tester-expand"
+            aria-pressed={watchExpanded}
+            onClick={() => setWatchExpanded((expanded) => !expanded)}
+          >
+            {watchExpanded ? 'Collapse run view' : 'Expand run view'}
+          </button>
+        </div>
+        <div
+          className={`tester-modal__watch${watchExpanded ? ' tester-modal__watch--expanded' : ''}`}
+          data-testid="tester-watch"
+        >
           <TesterGraphPane />
           <InspectorPanel store={useTestGraphStore} />
         </div>
