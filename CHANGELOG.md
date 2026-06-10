@@ -96,6 +96,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   weak; **TD-059** a gap-suspended run still folds to verdict `Pass`,
   routed to M10).
 
+### Security / Governance — open-source protection hardening
+
+- **`SECURITY.md` + `CODE_OF_CONDUCT.md`** — replaced placeholder contacts
+  with a monitored reporting address (`ardenagentic+security@gmail.com` /
+  `+conduct@gmail.com`); the conduct policy previously pointed at a dead
+  placeholder, leaving no working confidential channel on a public repo.
+- **`.github/workflows/ci.yml`** — new `dco` job enforcing Developer
+  Certificate of Origin sign-off on every pull-request commit. The DCO was
+  documented as the contributor-IP mechanism but was honor-system only
+  (no gate). Self-contained check; no third-party action.
+- **`docs/SECURITY.md`** — new threat model (assets, trust boundaries,
+  L1–L5 defenses, non-goals); resolves the previously-dangling reference in
+  `SECURITY.md`.
+- **`TRADEMARKS.md`** — new naming/trademark policy documenting the
+  Apache 2.0 §6 mark reservation and nominative-use boundaries.
+- **`README.md`** — fixed the broken ADR-0002 link; corrected the ADR range
+  (0001–0029) and stage-protocol version (v1.8); refreshed the milestone
+  status (M01–M08 landed; M09 next); de-numbered the gotchas reference;
+  linked the threat model + trademark policy.
+- **`CONTRIBUTING.md`** — corrected the safety-primitive coverage threshold
+  (95%, matching CLAUDE.md §5/§6, was 100%).
+- **`.github/ISSUE_TEMPLATE/config.yml`** — removed the "Question /
+  discussion" contact link (no community Q&A channel during the build
+  phase; Discussions stays disabled).
+
 ### Added — M08.9 (honest, drill-able Tester — TD-047; ADR-0031 trust prerequisite for M09)
 
 - **`crates/runtime-main/src/builder/tester.rs`** — the Tester verdict

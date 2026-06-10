@@ -7,7 +7,7 @@
 Instead, use one of these private channels:
 
 - **GitHub Security Advisories** (preferred): https://github.com/kknipe2k/AgentFramework/security/advisories/new
-- **Private email** to the maintainer contact: *(replace with real email at v0.1 publication; placeholder until then)*
+- **Private email** to the maintainer contact: ardenagentic+security@gmail.com
 
 Please include:
 - Affected version(s) (commit SHA or release tag)
@@ -94,4 +94,6 @@ Do not include:
 
 ## Maintainer contact
 
-*(To be filled in at v0.1 publication. Until then, security reports go through GitHub Security Advisories on this repository.)*
+Security reports: **ardenagentic+security@gmail.com**, or — preferred — GitHub
+Security Advisories (link at the top of this file). Monitored by the project
+maintainer.

@@ -9,10 +9,14 @@ This file describes the **runtime** project (Tauri + Rust desktop runtime for ag
 ## 1. Project identity
 
 **What this is**
-A local Tauri desktop runtime for agentic AI workflows. Live graph of agent execution, capability sandboxing, gap detection that suspends the session cleanly when an agent needs something it doesn't have, and a workbench where novices and experienced users build agentic processes the same way.
+A local desktop runtime where agentic workflows are authored, executed under enforced capability contracts, watched live as a graph, and suspended cleanly when they hit a capability they don't have — with first-class cost control and no telemetry. A low-code / node-based workbench where novices and experienced users build agentic processes the same way ("novice" = low-code-capable and technically literate, not non-technical). Live graph of agent execution, capability sandboxing, gap detection that suspends the session cleanly when an agent needs something it doesn't have.
+
+**Target market** (per ADR-0033): the two adjacent audiences who build the same way on the canvas — (a) **low-code / less-experienced-but-technical builders** who want structure and guardrails over a blank terminal, and (b) **well-versed users** who want **visibility** (live graph + drill-able trace), **structure** (enforced capability contracts, tiers, plans), and **better cost control** (budget enforcer + per-run spend) than an unstructured agent harness gives. **Not** for truly non-technical users — the underlying concepts (capabilities, tiers, MCP, gap/resume) will lose them.
+
+**ARIA's role** (per ADR-0033, amending ADR-0001): ARIA is the project's **conformance suite** (its *TodoMVC*) — a fixed reference workload proving the primitives compose and guarding capability-matrix regressions — **not** the product's raison d'être. The organizing deliverable is the ADR-0032 lighthouse (the author-and-run dev loop with `bash verify.sh` as the objective verify gate). `examples/aria/` + `examples/ralph/` stay as the regression contract; the spec §0/§0a/§0d framing pass to match this is orchestrator-owned and outstanding.
 
 **What this isn't**
-A chatbot wrapper. A framework. A general-purpose terminal. A low-code tool for non-technical users in v1. The runtime executes what exists; it doesn't modify itself mid-run.
+A chatbot wrapper. A framework. A general-purpose terminal. A tool for *truly* non-technical users (low-code/no-code authoring is a goal, but the audience is technically literate — see Target market). The runtime executes what exists; it doesn't modify itself mid-run.
 
 **Stack (locked)**
 - **Shell:** Tauri 2.x (uses OS webview)
