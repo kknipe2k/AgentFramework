@@ -178,6 +178,79 @@ impl LLMProvider for WriteToolStub {
     }
 }
 
+/// A provider stub that emits one scripted `Read` `ToolUse` on turn 1 and
+/// stops on every later turn — the M09.5.B sibling of [`WriteToolStub`]
+/// for the symlink-read adversarial cases (TD-052). `cfg(unix)` because
+/// its only consumers are the unix symlink cases.
+#[cfg(unix)]
+struct ReadToolStub {
+    path: String,
+    turn: Mutex<usize>,
+}
+
+#[cfg(unix)]
+impl ReadToolStub {
+    fn new(path: String) -> Self {
+        Self {
+            path,
+            turn: Mutex::new(0),
+        }
+    }
+}
+
+#[cfg(unix)]
+#[async_trait]
+impl LLMProvider for ReadToolStub {
+    fn name(&self) -> &'static str {
+        "m09-5-b-read-stub"
+    }
+    fn supports(&self) -> ProviderSupport {
+        ProviderSupport {
+            tool_use: true,
+            streaming: true,
+            thinking: false,
+        }
+    }
+    async fn stream(
+        &self,
+        _config: AgentConfig,
+    ) -> Result<BoxStream<'_, ProviderEvent>, ProviderError> {
+        let n = {
+            let mut t = self.turn.lock().expect("turn lock");
+            let n = *t;
+            *t += 1;
+            n
+        };
+        if n == 0 {
+            return Ok(Box::pin(futures::stream::iter(vec![
+                ProviderEvent::ToolUse {
+                    id: "tu-read-1".to_string(),
+                    name: "Read".to_string(),
+                    input: json!({ "path": self.path }),
+                },
+            ])));
+        }
+        Ok(Box::pin(futures::stream::iter(vec![
+            ProviderEvent::TextDelta {
+                text: "ok".to_string(),
+            },
+            ProviderEvent::MessageStop {
+                stop_reason: "end_turn".to_string(),
+                total_tokens: None,
+            },
+        ])))
+    }
+    async fn count_tokens(&self, _m: &[Message]) -> Result<u64, ProviderError> {
+        Ok(0)
+    }
+    async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+        Ok(Vec::new())
+    }
+    fn estimate_cost(&self, _b: &CostBreakdown, _m: &str) -> f64 {
+        0.0
+    }
+}
+
 // ── B.4.1 — Promoted out-of-scope Write denies on SCOPE (not tier) ────────
 
 /// Scenario: A write outside `file_access` scope does not run.
@@ -339,5 +412,348 @@ async fn promoted_scope_violation_folds_into_capability_failures_unattended() {
     assert!(
         !outcome.passed,
         "a capability failure forces passed = false"
+    );
+}
+
+// ── M09.5.B — TD-052 adversarial extension (review C3) ────────────────────
+//
+// The file scope means the RESOLVED file, not the typed string. Pre-fix,
+// `execute_builtin` fed the raw model-supplied path to both the L1 glob
+// check and the IO: globset treats `..` as an ordinary literal component
+// (so `{tmp}/out/**` matches `{tmp}/out/../escape.txt`) and never follows
+// links, so a `..` traversal or an in-grant symlink/junction escaped the
+// granted scope. Each case asserts the post-fix contract: the violation
+// surfaces exactly as today's denial arm (CapabilityViolation, no new
+// shape) AND no side effect lands outside the grant. Red-phase: (a)/(e)/(f)
+// FAIL on this Windows box by the escape SUCCEEDING; (b)/(c) are
+// cfg(unix) — authored red, first executed on CI post-impl.
+
+/// B.3.5(a) — `..` traversal cannot write outside the grant.
+///
+/// Grant `{tmp}/out/**`; Write targets `{tmp}/out/../escape.txt`. The
+/// resolved target is `{tmp}/escape.txt` — outside the grant — so the op
+/// is denied with the existing violation surface and NO file lands
+/// anywhere (both the resolved escape target and the literal-string
+/// location are asserted absent).
+#[tokio::test]
+async fn promoted_write_with_dotdot_traversal_outside_scope_denies_and_writes_nothing() {
+    let dir = TempDir::new().expect("tempdir");
+    std::fs::create_dir(dir.path().join("out")).expect("create granted subdir");
+    let dir_glob = format!("{}/out/**", fwd(dir.path()));
+    let path_arg = format!("{}/out/../escape.txt", fwd(dir.path()));
+
+    let fw = one_agent_fw(&[], &[&dir_glob], &["Write"]);
+    let provider = WriteToolStub::new(path_arg, "escaped");
+
+    let db_path = dir.path().join("runtime-tester.sqlite");
+    let outcome = run_test_session_with_tier(
+        &fw,
+        "write escape.txt via ..",
+        &db_path,
+        provider,
+        Arc::new(DroneClient::noop()),
+        None,
+        SessionId::new(),
+        Tier::Promoted,
+    )
+    .await
+    .expect("the assembled run completes");
+
+    let (kind, _action) = first_violation(&outcome.trace)
+        .expect("a ..-traversal Write resolving outside the grant must emit CapabilityViolation");
+    assert_eq!(
+        kind,
+        CapabilityKindRef::Write,
+        "the denial is the Write scope gate"
+    );
+    assert!(
+        !dir.path().join("escape.txt").exists(),
+        "the resolved escape target must not exist — the traversal escaped the grant pre-fix"
+    );
+    assert!(
+        !dir.path().join("out").join("escape.txt").exists(),
+        "no file may land at the literal-string location either"
+    );
+    assert!(
+        !outcome.passed,
+        "a capability violation fails the test outcome"
+    );
+}
+
+/// B.3.5(b) — a symlink inside the grant cannot READ outside it
+/// (resolve-then-check: the escaping link is denied).
+///
+/// cfg(unix): authored red on the Windows build machine, first executed
+/// on CI Linux/macOS post-impl — its red-reason rests on the audited
+/// facts plus the locally-proven siblings (a)/(e)/(f).
+#[cfg(unix)]
+#[tokio::test]
+async fn promoted_read_through_symlink_escaping_grant_denies_and_returns_no_content() {
+    let dir = TempDir::new().expect("tempdir");
+    std::fs::create_dir(dir.path().join("granted")).expect("create granted dir");
+    std::fs::create_dir(dir.path().join("outside")).expect("create outside dir");
+    std::fs::write(dir.path().join("outside/secret.txt"), "TOP-SECRET-M095B")
+        .expect("seed the out-of-scope secret");
+    std::os::unix::fs::symlink(
+        dir.path().join("outside/secret.txt"),
+        dir.path().join("granted/link"),
+    )
+    .expect("create the escaping symlink");
+    let dir_glob = format!("{}/granted/**", fwd(dir.path()));
+    let path_arg = format!("{}/granted/link", fwd(dir.path()));
+
+    let fw = one_agent_fw(&[&dir_glob], &[], &["Read"]);
+    let provider = ReadToolStub::new(path_arg);
+
+    let db_path = dir.path().join("runtime-tester.sqlite");
+    let outcome = run_test_session_with_tier(
+        &fw,
+        "read the linked file",
+        &db_path,
+        provider,
+        Arc::new(DroneClient::noop()),
+        None,
+        SessionId::new(),
+        Tier::Promoted,
+    )
+    .await
+    .expect("the assembled run completes");
+
+    let (kind, _action) = first_violation(&outcome.trace)
+        .expect("a Read through a grant-escaping symlink must emit CapabilityViolation");
+    assert_eq!(
+        kind,
+        CapabilityKindRef::Read,
+        "the denial is the Read scope gate"
+    );
+    assert!(
+        !outcome
+            .trace
+            .iter()
+            .any(|e| matches!(e, AgentEvent::ToolResult { .. })),
+        "a denied read feeds nothing back — no ToolResult; trace={:?}",
+        outcome.trace
+    );
+    assert!(
+        !format!("{:?}", outcome.trace).contains("TOP-SECRET-M095B"),
+        "the out-of-scope secret content must never appear anywhere in the trace"
+    );
+    assert!(
+        !outcome.passed,
+        "a capability violation fails the test outcome"
+    );
+}
+
+/// B.3.5(c) — a symlink inside the grant cannot WRITE outside it; the
+/// out-of-scope target is untouched. cfg(unix) — same CI-pending red
+/// status as (b).
+#[cfg(unix)]
+#[tokio::test]
+async fn promoted_write_through_symlink_escaping_grant_denies_and_target_untouched() {
+    let dir = TempDir::new().expect("tempdir");
+    std::fs::create_dir(dir.path().join("granted")).expect("create granted dir");
+    std::fs::create_dir(dir.path().join("outside")).expect("create outside dir");
+    let target = dir.path().join("outside/target.txt");
+    std::fs::write(&target, "original-content").expect("seed the out-of-scope target");
+    std::os::unix::fs::symlink(&target, dir.path().join("granted/link"))
+        .expect("create the escaping symlink");
+    let dir_glob = format!("{}/granted/**", fwd(dir.path()));
+    let path_arg = format!("{}/granted/link", fwd(dir.path()));
+
+    let fw = one_agent_fw(&[], &[&dir_glob], &["Write"]);
+    let provider = WriteToolStub::new(path_arg, "pwned");
+
+    let db_path = dir.path().join("runtime-tester.sqlite");
+    let outcome = run_test_session_with_tier(
+        &fw,
+        "write through the link",
+        &db_path,
+        provider,
+        Arc::new(DroneClient::noop()),
+        None,
+        SessionId::new(),
+        Tier::Promoted,
+    )
+    .await
+    .expect("the assembled run completes");
+
+    let (kind, _action) = first_violation(&outcome.trace)
+        .expect("a Write through a grant-escaping symlink must emit CapabilityViolation");
+    assert_eq!(
+        kind,
+        CapabilityKindRef::Write,
+        "the denial is the Write scope gate"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&target).expect("the out-of-scope target still exists"),
+        "original-content",
+        "the out-of-scope target must be untouched — the escaping link was denied"
+    );
+    assert!(
+        !outcome.passed,
+        "a capability violation fails the test outcome"
+    );
+}
+
+/// B.3.5(d) — harmless normalization still works: an internal `..` that
+/// RESOLVES INSIDE the grant is allowed and lands at its resolved
+/// location. The fix narrows escapes only, not normalization.
+///
+/// Red-phase note (recorded honestly): pre-fix this may already pass on
+/// Windows (Win32 normalizes `sub/..` lexically before the filesystem
+/// sees it) while failing on unix (openat requires `sub` to exist). It
+/// is the over-narrowing guard, not an escape prover.
+#[tokio::test]
+async fn promoted_write_with_internal_dotdot_resolving_inside_scope_lands() {
+    let dir = TempDir::new().expect("tempdir");
+    std::fs::create_dir(dir.path().join("out")).expect("create granted subdir");
+    let dir_glob = format!("{}/out/**", fwd(dir.path()));
+    // `sub/` is deliberately NOT created — the lexical resolution must
+    // land the write at out/in-scope.txt regardless.
+    let path_arg = format!("{}/out/sub/../in-scope.txt", fwd(dir.path()));
+
+    let fw = one_agent_fw(&[], &[&dir_glob], &["Write"]);
+    let provider = WriteToolStub::new(path_arg, "normalized-ok");
+
+    let db_path = dir.path().join("runtime-tester.sqlite");
+    let outcome = run_test_session_with_tier(
+        &fw,
+        "write in-scope.txt via sub/..",
+        &db_path,
+        provider,
+        Arc::new(DroneClient::noop()),
+        None,
+        SessionId::new(),
+        Tier::Promoted,
+    )
+    .await
+    .expect("the assembled run completes");
+
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("out").join("in-scope.txt"))
+            .expect("the in-scope normalized write produced the file"),
+        "normalized-ok",
+        "an internal .. resolving inside the grant lands at its resolved location"
+    );
+    assert!(
+        first_violation(&outcome.trace).is_none(),
+        "an in-scope normalized write is no violation; trace={:?}",
+        outcome.trace
+    );
+    assert!(outcome.passed, "an in-scope write passes the test outcome");
+}
+
+/// B.3.5(e) — the Windows `..\` traversal variant is denied. globset
+/// normalizes `\` to `/` in match candidates on Windows, so pre-fix the
+/// fully-backslashed form matched the forward-slash grant glob AND Win32
+/// resolved the `..` at the IO — a live escape, locally red-provable.
+#[cfg(windows)]
+#[tokio::test]
+async fn promoted_write_backslash_dotdot_traversal_denies_and_writes_nothing() {
+    let dir = TempDir::new().expect("tempdir");
+    std::fs::create_dir(dir.path().join("out")).expect("create granted subdir");
+    let dir_glob = format!("{}/out/**", fwd(dir.path()));
+    let path_arg = format!("{}\\out\\..\\escape.txt", dir.path().display());
+
+    let fw = one_agent_fw(&[], &[&dir_glob], &["Write"]);
+    let provider = WriteToolStub::new(path_arg, "escaped");
+
+    let db_path = dir.path().join("runtime-tester.sqlite");
+    let outcome = run_test_session_with_tier(
+        &fw,
+        "write escape.txt via ..\\",
+        &db_path,
+        provider,
+        Arc::new(DroneClient::noop()),
+        None,
+        SessionId::new(),
+        Tier::Promoted,
+    )
+    .await
+    .expect("the assembled run completes");
+
+    let (kind, _action) = first_violation(&outcome.trace).expect(
+        "a backslash ..-traversal Write resolving outside the grant must emit CapabilityViolation",
+    );
+    assert_eq!(
+        kind,
+        CapabilityKindRef::Write,
+        "the denial is the Write scope gate"
+    );
+    assert!(
+        !dir.path().join("escape.txt").exists(),
+        "the resolved escape target must not exist"
+    );
+    assert!(
+        !dir.path().join("out").join("escape.txt").exists(),
+        "no file may land at the literal-string location either"
+    );
+    assert!(
+        !outcome.passed,
+        "a capability violation fails the test outcome"
+    );
+}
+
+/// B.3.5 junction variant (plan rider 4) — a directory junction inside
+/// the grant cannot WRITE outside it. Junctions are the Windows
+/// link-class escape creatable WITHOUT elevation (`mklink /J`), so this
+/// is the Windows-local red-provable prover for the symlink policy that
+/// (b)/(c) prove on unix. Junction creation is asserted loudly — a
+/// runner that cannot create junctions fails here visibly (no silent
+/// skip; CLAUDE.md §5).
+#[cfg(windows)]
+#[tokio::test]
+async fn promoted_write_through_junction_escaping_grant_denies_and_writes_nothing() {
+    let dir = TempDir::new().expect("tempdir");
+    std::fs::create_dir(dir.path().join("granted")).expect("create granted dir");
+    std::fs::create_dir(dir.path().join("outside")).expect("create outside dir");
+    let status = std::process::Command::new("cmd")
+        .args([
+            "/C",
+            "mklink",
+            "/J",
+            &dir.path().join("granted\\jdir").display().to_string(),
+            &dir.path().join("outside").display().to_string(),
+        ])
+        .status()
+        .expect("spawn cmd for mklink /J");
+    assert!(
+        status.success(),
+        "mklink /J must create the junction (no elevation needed); rider-4 probe failed"
+    );
+    let dir_glob = format!("{}/granted/**", fwd(dir.path()));
+    let path_arg = format!("{}/granted/jdir/escaped.txt", fwd(dir.path()));
+
+    let fw = one_agent_fw(&[], &[&dir_glob], &["Write"]);
+    let provider = WriteToolStub::new(path_arg, "pwned");
+
+    let db_path = dir.path().join("runtime-tester.sqlite");
+    let outcome = run_test_session_with_tier(
+        &fw,
+        "write through the junction",
+        &db_path,
+        provider,
+        Arc::new(DroneClient::noop()),
+        None,
+        SessionId::new(),
+        Tier::Promoted,
+    )
+    .await
+    .expect("the assembled run completes");
+
+    let (kind, _action) = first_violation(&outcome.trace)
+        .expect("a Write through a grant-escaping junction must emit CapabilityViolation");
+    assert_eq!(
+        kind,
+        CapabilityKindRef::Write,
+        "the denial is the Write scope gate"
+    );
+    assert!(
+        !dir.path().join("outside").join("escaped.txt").exists(),
+        "no file may land outside the grant — the junction escape must be denied"
+    );
+    assert!(
+        !outcome.passed,
+        "a capability violation fails the test outcome"
     );
 }
