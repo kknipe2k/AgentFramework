@@ -74,6 +74,14 @@ pub mod hooks;
 /// fetcher is the `src/import/fetch.rs` OS-call-holdout (CLAUDE.md §6).
 pub mod import;
 pub mod key_store;
+/// Renderer-supplied path containment — spec §10 / TD-051 (M09.5.A).
+///
+/// Pure canonicalize-then-contain helper: a path the renderer hands the
+/// shell (`save_framework` / `load_framework` / `import_artifact(file)`)
+/// is accepted only when it resolves strictly under one of the
+/// dialog-registered roots. No Tauri dependency (path-agnostic
+/// persistence archetype, `docs/style.md`); `tempfile`-tested.
+pub mod path_confine;
 /// Plan + Task primitive — spec §3a (M04 Stage B).
 pub mod plan;
 pub mod providers;

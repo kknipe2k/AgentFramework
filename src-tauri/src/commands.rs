@@ -34,7 +34,8 @@
 //! struct-variant enum here; M04 Stage A2 migrated to the generated
 //! tuple-variant shape (the wire format is unchanged).
 
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use runtime_core::event::AgentEvent;
@@ -51,6 +52,7 @@ use runtime_main::import::{
     SystemClock,
 };
 use runtime_main::key_store::{read_api_key, write_api_key, KeyStoreError};
+use runtime_main::path_confine::confine;
 use runtime_main::providers::anthropic::AnthropicProvider;
 use runtime_main::providers::{
     AgentConfig, ContentBlock, LLMProvider, Message, MessageRole, ToolDef,
@@ -71,8 +73,118 @@ use runtime_mcp::transport::McpTool;
 use runtime_mcp::{McpDispatcher, McpError};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_dialog::DialogExt;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
+
+/// Tauri-managed set of dialog-registered framework directories
+/// (M09.5.A / TD-051). [`pick_framework_dir`] inserts a directory the
+/// user picked through the native folder dialog; `save_framework` /
+/// `load_framework` / `import_artifact(file)` confine their incoming
+/// renderer-supplied path against this set ∪ the app's local data dir
+/// before any IO. The OS dialog is a UX affordance, not a boundary —
+/// this set IS the boundary.
+pub type RegisteredRoots = Mutex<HashSet<PathBuf>>;
+
+/// The directories a renderer-supplied path may resolve under: every
+/// dialog-registered root ∪ the app's local data dir (always permitted —
+/// it is the runtime's own scratch/config area, created at startup).
+async fn permitted_roots(app: &AppHandle, roots: &RegisteredRoots) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = roots.lock().await.iter().cloned().collect();
+    if let Ok(dir) = app.path().app_local_data_dir() {
+        out.push(dir);
+    }
+    out
+}
+
+/// Open the native folder picker, register the chosen directory as a
+/// permitted root, and return its path (M09.5.A / TD-051). Returns
+/// `Ok(None)` when the user cancels — a normal action, not an error.
+///
+/// The renderer's Save / Load flow calls this in place of the JS-side
+/// `@tauri-apps/plugin-dialog` directory picker so the chosen directory
+/// is registered before the subsequent `save_framework` / `load_framework`
+/// confines against it.
+///
+/// Under the shell-resolved `AGENT_RUNTIME_E2E` test mode (the same seam
+/// that gates the `window.__*Store` exposure), a caller-supplied
+/// `test_dir` is registered directly — `tauri-driver` cannot drive the
+/// native folder dialog, so the e2e harness registers the directory it
+/// is about to load. The production renderer never sets the env and
+/// never passes `test_dir`.
+///
+/// # Errors
+///
+/// [`CmdError::PathNotPermitted`] when `test_dir` is supplied without the
+/// `AGENT_RUNTIME_E2E` env set; [`CmdError::Internal`] when the picked
+/// `FilePath` cannot resolve to a local path.
+#[tauri::command]
+pub async fn pick_framework_dir(
+    app: AppHandle,
+    test_dir: Option<String>,
+    roots: tauri::State<'_, RegisteredRoots>,
+) -> Result<Option<String>, CmdError> {
+    if let Some(dir) = test_dir {
+        if std::env::var("AGENT_RUNTIME_E2E").is_err() {
+            return Err(CmdError::path_not_permitted(
+                "test_dir registration requires the AGENT_RUNTIME_E2E test-mode env",
+            ));
+        }
+        let path = PathBuf::from(&dir);
+        roots.lock().await.insert(path);
+        return Ok(Some(dir));
+    }
+
+    match app.dialog().file().blocking_pick_folder() {
+        Some(file_path) => {
+            let path = file_path
+                .into_path()
+                .map_err(|e| CmdError::internal(format!("resolve picked folder: {e}")))?;
+            let display = path.display().to_string();
+            roots.lock().await.insert(path);
+            Ok(Some(display))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Open the native file picker for a local artifact, register the
+/// chosen file's parent directory as a permitted root, and return the
+/// file path (M09.5.A / TD-051). Returns `Ok(None)` on cancel.
+///
+/// The Import panel's "Browse…" companion calls this in place of the
+/// JS-side picker so the subsequent `import_artifact("file", path, …)`
+/// confines successfully — the picked file's directory is now a
+/// registered root. A path no dialog returned is still refused at
+/// `import_artifact`.
+///
+/// # Errors
+///
+/// [`CmdError::Internal`] when the picked `FilePath` cannot resolve to a
+/// local path.
+#[tauri::command]
+pub async fn pick_artifact_file(
+    app: AppHandle,
+    roots: tauri::State<'_, RegisteredRoots>,
+) -> Result<Option<String>, CmdError> {
+    match app
+        .dialog()
+        .file()
+        .add_filter("Artifact", &["json", "md"])
+        .blocking_pick_file()
+    {
+        Some(file_path) => {
+            let path = file_path
+                .into_path()
+                .map_err(|e| CmdError::internal(format!("resolve picked file: {e}")))?;
+            if let Some(parent) = path.parent() {
+                roots.lock().await.insert(parent.to_path_buf());
+            }
+            Ok(Some(path.display().to_string()))
+        }
+        None => Ok(None),
+    }
+}
 
 /// Persist the Anthropic API key in the OS keychain.
 ///
@@ -1439,6 +1551,7 @@ pub async fn import_artifact(
     registry: tauri::State<'_, Arc<Registry>>,
     tier_state: tauri::State<'_, CurrentTierState>,
     pending: tauri::State<'_, PendingImportState>,
+    roots: tauri::State<'_, RegisteredRoots>,
 ) -> Result<ImportOutcome, CmdError> {
     let dir = app
         .path()
@@ -1448,7 +1561,17 @@ pub async fn import_artifact(
 
     let src = match source_kind.as_str() {
         "url" => ImportSource::Url(location),
-        "file" => ImportSource::File(location.into()),
+        "file" => {
+            // TD-051: a file-source import path is renderer-supplied —
+            // confine it to the dialog-registered roots ∪ app_local_data_dir
+            // before it reaches `ImportSource::File`. A URL source touches
+            // no local path and is unconfined here (its SSRF egress
+            // defense is unchanged).
+            let permitted = permitted_roots(&app, &roots).await;
+            let confined = confine(Path::new(&location), &permitted)
+                .map_err(|e| CmdError::path_not_permitted(e.to_string()))?;
+            ImportSource::File(confined)
+        }
         other => return Err(CmdError::internal(format!("unknown source_kind: {other}"))),
     };
     let kind = match artifact_kind.as_str() {
@@ -1609,11 +1732,20 @@ pub fn validate_framework_with(doc: &Value) -> FrameworkValidationReport {
 /// write failure.
 #[tauri::command]
 pub async fn save_framework(
+    app: AppHandle,
     dir: String,
     framework: Framework,
     companions: Vec<Companion>,
+    roots: tauri::State<'_, RegisteredRoots>,
 ) -> Result<(), CmdError> {
-    save_framework_with(Path::new(&dir), &framework, &companions)
+    // TD-051: confine the renderer-supplied path to the dialog-registered
+    // roots ∪ app_local_data_dir BEFORE any IO. A traversal `dir` no
+    // dialog ever returned is refused with a typed path_not_permitted and
+    // nothing is written.
+    let permitted = permitted_roots(&app, &roots).await;
+    let confined = confine(Path::new(&dir), &permitted)
+        .map_err(|e| CmdError::path_not_permitted(e.to_string()))?;
+    save_framework_with(&confined, &framework, &companions)
 }
 
 /// Test-seam for [`save_framework`] (CLAUDE.md §5 `*_with`).
@@ -1637,8 +1769,17 @@ pub fn save_framework_with(
 /// [`CmdError::Internal`] when `framework.json` is missing/unreadable or
 /// fails to parse.
 #[tauri::command]
-pub async fn load_framework(dir: String) -> Result<LoadedFramework, CmdError> {
-    load_framework_with(Path::new(&dir))
+pub async fn load_framework(
+    app: AppHandle,
+    dir: String,
+    roots: tauri::State<'_, RegisteredRoots>,
+) -> Result<LoadedFramework, CmdError> {
+    // TD-051: confine before reading framework.json — a traversal `dir`
+    // is refused with a typed path_not_permitted, never read.
+    let permitted = permitted_roots(&app, &roots).await;
+    let confined = confine(Path::new(&dir), &permitted)
+        .map_err(|e| CmdError::path_not_permitted(e.to_string()))?;
+    load_framework_with(&confined)
 }
 
 /// Test-seam for [`load_framework`] (CLAUDE.md §5 `*_with`).

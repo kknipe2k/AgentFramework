@@ -52,6 +52,19 @@ if (process.platform === 'darwin') {
   process.exit(0);
 }
 
+// M09.5.A (TD-050) — the store-exposure test-mode seam. The built
+// production binary gates `window.__*Store` on `window.__E2E__`, which
+// main.rs's e2e-seam plugin sets ONLY when launched with
+// AGENT_RUNTIME_E2E=1. Set it here at the top of the runner so it is in
+// `process.env` before onPrepare spawns tauri-driver: tauri-driver
+// inherits the runner env, and the app process tauri-driver launches
+// inherits tauri-driver's env in turn — so the flag reaches the app. The
+// 12 store-dependent e2e-tauri specs (and perimeter_paths' seam
+// assertion) depend on this; without it the production build exposes no
+// stores and they fail (the intended production behavior — see
+// perimeter_paths' bare-launch contract).
+process.env.AGENT_RUNTIME_E2E = '1';
+
 const TAURI_DRIVER_PORT = 4444;
 const APP_BIN_NAME = process.platform === 'win32' ? 'agent-runtime.exe' : 'agent-runtime';
 // `src-tauri` is a member of the Cargo workspace rooted at the repo root

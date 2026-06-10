@@ -16,7 +16,7 @@
 /**
  * Wire-format error envelope for Tauri renderer↔main IPC error responses. Mirrors the runtime-main `CmdError` enum's serde(tag = "type", rename_all = "snake_case") encoding. Used by src/lib/ipc.ts::unwrapCmdError.
  */
-export type CmdError = SetupRequired | Provider | Drone | KeyStore | Internal;
+export type CmdError = SetupRequired | Provider | Drone | KeyStore | Internal | PathNotPermitted;
 /**
  * Human-readable error message body. Non-empty per validation; not localized at v0.1.
  */
@@ -54,5 +54,12 @@ export interface KeyStore {
  */
 export interface Internal {
   type: "internal";
+  message: ErrorMessage;
+}
+/**
+ * A renderer-supplied filesystem path was refused because it resolves outside the dialog-registered roots (M09.5.A / TD-051). The shell confines save_framework/load_framework/import_artifact(file) before any IO; this variant is the typed refusal the renderer renders.
+ */
+export interface PathNotPermitted {
+  type: "path_not_permitted";
   message: ErrorMessage;
 }

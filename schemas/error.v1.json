@@ -63,6 +63,17 @@
       },
       "required": ["type", "message"],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "title": "PathNotPermitted",
+      "description": "A renderer-supplied filesystem path was refused because it resolves outside the dialog-registered roots (M09.5.A / TD-051). The shell confines save_framework/load_framework/import_artifact(file) before any IO; this variant is the typed refusal the renderer renders.",
+      "properties": {
+        "type": { "const": "path_not_permitted" },
+        "message": { "$ref": "#/$defs/ErrorMessage" }
+      },
+      "required": ["type", "message"],
+      "additionalProperties": false
     }
   ]
 }

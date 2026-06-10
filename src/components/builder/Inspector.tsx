@@ -1,8 +1,8 @@
-import { open } from '@tauri-apps/plugin-dialog';
 import { useCallback, useMemo, useState } from 'react';
 import { diffFramework } from '../../lib/frameworkDiff';
 import {
   loadFramework,
+  pickFrameworkDir,
   saveFramework,
   unwrapCmdError,
   validateFramework,
@@ -61,8 +61,10 @@ export function Inspector(): JSX.Element {
   // then record diskFramework so the disk diff zeroes after the save.
   const onSave = useCallback(async () => {
     try {
-      const dir = await open({ directory: true });
-      if (typeof dir !== 'string') {
+      // pickFrameworkDir registers the chosen directory as a permitted
+      // root (M09.5.A / TD-051) before saveFramework confines against it.
+      const dir = await pickFrameworkDir();
+      if (dir === null) {
         return; // a cancelled picker is a normal user action, not an error
       }
       await saveFramework(dir, framework);
@@ -82,8 +84,10 @@ export function Inspector(): JSX.Element {
   // builderStore.loadLayout.test.ts).
   const onLoad = useCallback(async () => {
     try {
-      const dir = await open({ directory: true });
-      if (typeof dir !== 'string') {
+      // pickFrameworkDir registers the chosen directory as a permitted
+      // root (M09.5.A / TD-051) before loadFramework confines against it.
+      const dir = await pickFrameworkDir();
+      if (dir === null) {
         return;
       }
       const loaded = await loadFramework(dir);

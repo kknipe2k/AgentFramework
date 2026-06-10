@@ -44,7 +44,29 @@ fn main() {
         "agent-runtime starting"
     );
 
-    let app = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // M09.5.A (TD-050) — the store-exposure test-mode seam. When the
+    // shell-resolved env AGENT_RUNTIME_E2E=1 is set, register a tiny
+    // plugin whose js_init_script sets `window.__E2E__ = true` BEFORE any
+    // page script runs (plugin init scripts precede the renderer's App
+    // module). App.tsx gates the four window.__*Store assignments on
+    // `shouldExposeStores(import.meta.env.DEV, window.__E2E__)`, so a
+    // production launch (no env, not DEV) exposes nothing. The renderer
+    // never reads the env itself — the decision is shell-resolved (the
+    // same archetype as the persisted tier). `tauri-driver` spawns the
+    // built binary as a child that inherits the runner's env, so
+    // wdio.conf.ts exporting the env reaches the app process.
+    if std::env::var("AGENT_RUNTIME_E2E").is_ok() {
+        tracing::warn!("AGENT_RUNTIME_E2E set — exposing window stores for the e2e harness");
+        builder = builder.plugin(
+            tauri::plugin::Builder::<tauri::Wry>::new("e2e-seam")
+                .js_init_script("window.__E2E__ = true;".to_string())
+                .build(),
+        );
+    }
+
+    let app = builder
         // M04 Stage E (spec §6a) — Tauri notification plugin powers the
         // `desktop` HITL notifier. Registered alongside the existing
         // invoke handlers; permission granted via
@@ -89,6 +111,11 @@ fn main() {
             commands::save_framework,
             commands::load_framework,
             commands::list_installed_artifacts,
+            // M09.5.A — TD-051 path confinement: the dialog commands that
+            // register a permitted root before the renderer-supplied path
+            // reaches save/load/import.
+            commands::pick_framework_dir,
+            commands::pick_artifact_file,
             // M08 Stage F1 — the Tester backend
             commands::test_framework,
         ])
@@ -121,6 +148,14 @@ fn main() {
             // managed unconditionally so the import command trio is
             // always wired even when MCP setup is unavailable.
             app_handle.manage(commands::PendingImportState::default());
+            // M09.5.A / TD-051: the set of dialog-registered framework
+            // directories. save_framework/load_framework/import_artifact
+            // confine renderer-supplied paths against this set ∪
+            // app_local_data_dir. Empty at startup — only a directory the
+            // user picked through pick_framework_dir/pick_artifact_file (or
+            // app_local_data_dir) is permitted.
+            let registered_roots: commands::RegisteredRoots = Mutex::new(std::collections::HashSet::new());
+            app_handle.manage(registered_roots);
             // M05 Stage D §8.security L4: load the persisted tier from
             // `<app_data_dir>/tier.json` (first-run default is Novice).
             // The CurrentTierState seam is the single source of truth

@@ -1,6 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { open } from '@tauri-apps/plugin-dialog';
 import type { AgentEvent, TierRef } from '../types/agent_event';
 import type { CapabilityDeclaration } from '../types/capability';
 import type { CmdError } from '../types/error';
@@ -705,20 +704,29 @@ export async function testFramework(framework: Framework, task: string): Promise
 }
 
 /**
- * Open the native file picker for a local artifact file (M07.V 🟡 #4 —
- * `@tauri-apps/plugin-dialog`). Returns the chosen absolute path, or
- * `null` when the user cancels — a cancel is a normal user action, not
- * an error, so the caller short-circuits on `null`. The caller passes
- * the path to `importArtifact('file', path, kind)`; the backend already
- * accepts `ImportSource::File` — only this renderer surface was missing.
+ * Open the native folder picker through the Rust-side `pick_framework_dir`
+ * command, which registers the chosen directory as a permitted root
+ * before returning it (M09.5.A / TD-051). Returns the path, or `null`
+ * when the user cancels.
+ *
+ * The Builder Save / Load flow calls this in place of the JS-side
+ * `@tauri-apps/plugin-dialog` directory picker so the subsequent
+ * `saveFramework` / `loadFramework` confines against the registered
+ * directory rather than refusing it.
+ */
+export async function pickFrameworkDir(): Promise<string | null> {
+  return await invoke<string | null>('pick_framework_dir', { testDir: null });
+}
+
+/**
+ * Open the native file picker for a local artifact file (M07.V 🟡 #4),
+ * migrated to the Rust-side `pick_artifact_file` command (M09.5.A /
+ * TD-051) so the chosen file's directory is registered as a permitted
+ * root before `importArtifact('file', path, kind)` confines against it.
+ * Returns the chosen path, or `null` when the user cancels.
  */
 export async function pickLocalArtifactFile(): Promise<string | null> {
-  const picked = await open({
-    multiple: false,
-    directory: false,
-    filters: [{ name: 'Artifact', extensions: ['json', 'md'] }],
-  });
-  return typeof picked === 'string' ? picked : null;
+  return await invoke<string | null>('pick_artifact_file');
 }
 
 export async function subscribeAgentEvents(
@@ -744,7 +752,8 @@ function isCmdError(value: unknown): value is CmdError {
     t === 'provider' ||
     t === 'drone' ||
     t === 'key_store' ||
-    t === 'internal'
+    t === 'internal' ||
+    t === 'path_not_permitted'
   );
 }
 
@@ -771,6 +780,9 @@ export function unwrapCmdError(e: unknown): string {
   if (isCmdError(e)) {
     if (e.type === 'setup_required') {
       return 'API key not set. Click "Save key" to set it (it stores in the OS keychain).';
+    }
+    if (e.type === 'path_not_permitted') {
+      return `That location is not permitted: ${e.message}. Choose a directory through the picker.`;
     }
     // Every non-unit variant carries a `message: ErrorMessage` (the
     // typify-generated `ErrorMessage` newtype validates `minLength: 1`,

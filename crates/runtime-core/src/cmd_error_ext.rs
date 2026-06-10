@@ -57,6 +57,15 @@ impl CmdError {
         Self::Internal(into_error_message(msg))
     }
 
+    /// Construct a [`CmdError::PathNotPermitted`] from any `Into<String>`.
+    ///
+    /// The typed refusal for a renderer-supplied filesystem path that
+    /// resolves outside the dialog-registered roots (M09.5.A / TD-051).
+    #[must_use]
+    pub fn path_not_permitted(msg: impl Into<String>) -> Self {
+        Self::PathNotPermitted(into_error_message(msg))
+    }
+
     /// The message body for variants that carry one.
     ///
     /// [`CmdError::SetupRequired`] is a unit variant and returns `None`.
@@ -64,9 +73,11 @@ impl CmdError {
     pub fn message(&self) -> Option<&str> {
         match self {
             Self::SetupRequired => None,
-            Self::Provider(m) | Self::Drone(m) | Self::KeyStore(m) | Self::Internal(m) => {
-                Some(m.as_str())
-            }
+            Self::Provider(m)
+            | Self::Drone(m)
+            | Self::KeyStore(m)
+            | Self::Internal(m)
+            | Self::PathNotPermitted(m) => Some(m.as_str()),
         }
     }
 }
@@ -79,6 +90,7 @@ impl fmt::Display for CmdError {
             Self::Drone(m) => write!(f, "drone IPC unavailable: {}", m.as_str()),
             Self::KeyStore(m) => write!(f, "key store: {}", m.as_str()),
             Self::Internal(m) => write!(f, "internal: {}", m.as_str()),
+            Self::PathNotPermitted(m) => write!(f, "path not permitted: {}", m.as_str()),
         }
     }
 }

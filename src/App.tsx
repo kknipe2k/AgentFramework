@@ -34,25 +34,31 @@ import {
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { useBuilderStore, useTestGraphStore } from './lib/builderStore';
 import { useGraphStore } from './lib/graphStore';
+import { shouldExposeStores } from './lib/testMode';
 import { useToastStore } from './lib/toastStore';
 import './styles.css';
 
 const LAST_SESSION_KEY = 'lastSessionId';
 
-// Renderer-level Playwright affordance — exposes the Zustand store on
-// `window.__graphStore` so `tests/e2e/plan_approval.spec.ts` can drive
-// graph state without spinning up an SDK + Anthropic. Module mocking
-// across the @tauri-apps/api ESM boundary doesn't work in Playwright
-// (Vitest covers the click→invoke linkage); this affordance lets the
-// E2E spec exercise the surface-on-state-change + dismiss-on-state-change
-// flow that only renders correctly inside a real browser layout.
+// Renderer-level test affordance — exposes the Zustand stores on
+// `window.__*Store` so the e2e harnesses can drive runtime state without
+// an SDK + Anthropic. Module mocking across the @tauri-apps/api ESM
+// boundary doesn't work in Playwright (Vitest covers the click→invoke
+// linkage); this affordance lets the E2E specs exercise surface-on-state
+// flows that only render correctly inside a real browser layout, and the
+// 12 e2e-tauri specs drive the BUILT binary through them.
 //
-// Exported unconditionally rather than gated on `import.meta.env.DEV` —
-// the store carries no secrets, the same data is already inspectable via
-// React DevTools, and CLAUDE.md §9 anti-patterns calls out feature-flag
-// shims that don't earn their cost.
+// M09.5.A (TD-050 / review C1): the exposure is a typed write path into
+// runtime state for any injected script, so it is GATED — exposed only
+// under the Vite dev server (`import.meta.env.DEV`) or the shell-resolved
+// e2e test mode (`window.__E2E__`, set by main.rs's js_init_script plugin
+// only when launched with AGENT_RUNTIME_E2E=1). A production launch
+// exposes nothing. See `shouldExposeStores` + src/lib/testMode.ts.
 declare global {
   interface Window {
+    // Set to `true` by the Tauri shell's e2e-seam plugin when the app is
+    // launched with AGENT_RUNTIME_E2E=1; `undefined` in production.
+    __E2E__?: boolean;
     __graphStore?: typeof useGraphStore;
     // M08.6.D — same expose pattern for the Builder store so
     // tests/e2e-tauri/builder_load_aria.e2e.ts can drive the
@@ -74,7 +80,7 @@ declare global {
     __toastStore?: typeof useToastStore;
   }
 }
-if (typeof window !== 'undefined') {
+if (typeof window !== 'undefined' && shouldExposeStores(import.meta.env.DEV, window.__E2E__)) {
   window.__graphStore = useGraphStore;
   window.__builderStore = useBuilderStore;
   window.__testGraphStore = useTestGraphStore;
