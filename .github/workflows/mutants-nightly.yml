@@ -1,0 +1,39 @@
+name: Mutants Nightly
+on:
+  schedule:
+    - cron: '30 3 * * *'  # 03:30 UTC daily
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# TD-056 (external review C7): CLAUDE.md §5 claims a nightly cargo-mutants
+# run on main; this workflow makes that claim true. Advisory by design
+# (§5 two-tier posture) — nightly-on-main only, NOT a PR gate; the
+# blocking mutation gate at cluster-close runs locally per cluster on the
+# execution-wiring + §6 critical modules. Mirrors fuzz-nightly.yml's
+# trigger + artifact shape.
+jobs:
+  mutants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-mutants --locked
+      - name: Mutate the §6 critical crates
+        # Scoped to the ≥95 safety-primitive crates (CLAUDE.md §5/§6):
+        # runtime-drone, runtime-sandbox, runtime-mcp, runtime-main. The
+        # generous timeout multiplier accommodates the IPC/subprocess
+        # tests. Advisory: surfaced in the artifact, never fails the job
+        # on surviving mutants (--in-place is omitted on CI — the Linux
+        # runner builds in a scratch dir without the Windows symlink-
+        # privilege issue, gotcha #92).
+        run: cargo mutants -p runtime-drone -p runtime-sandbox -p runtime-mcp -p runtime-main --timeout-multiplier 3
+      - name: Upload mutants.out
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-out
+          path: mutants.out
