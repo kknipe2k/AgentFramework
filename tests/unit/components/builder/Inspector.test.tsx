@@ -13,17 +13,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // never reach the real Tauri bridge. The ipc mock is partial
 // (importOriginal spread) so unwrapCmdError + diffFramework's siblings
 // stay real.
-const { validateFrameworkMock, saveFrameworkMock, loadFrameworkMock, openMock } = vi.hoisted(
-  () => ({
+// M09.5.A: the Save/Load flow migrated from the JS `@tauri-apps/plugin-
+// dialog` `open()` picker to the Rust-side `pickFrameworkDir` ipc wrapper
+// (it registers the chosen dir as a permitted root before save/load
+// confine against it — TD-051). Mock the ipc wrapper, not the JS dialog.
+const { validateFrameworkMock, saveFrameworkMock, loadFrameworkMock, pickFrameworkDirMock } =
+  vi.hoisted(() => ({
     validateFrameworkMock: vi.fn(),
     saveFrameworkMock: vi.fn(),
     loadFrameworkMock: vi.fn(),
-    openMock: vi.fn(),
-  }),
-);
-vi.mock('@tauri-apps/plugin-dialog', () => ({
-  open: (...args: unknown[]) => openMock(...args),
-}));
+    pickFrameworkDirMock: vi.fn(),
+  }));
 vi.mock('../../../../src/lib/ipc', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../../src/lib/ipc')>();
   return {
@@ -31,6 +31,7 @@ vi.mock('../../../../src/lib/ipc', async (importOriginal) => {
     validateFramework: validateFrameworkMock,
     saveFramework: saveFrameworkMock,
     loadFramework: loadFrameworkMock,
+    pickFrameworkDir: pickFrameworkDirMock,
   };
 });
 
@@ -70,7 +71,7 @@ describe('Inspector', () => {
     });
     saveFrameworkMock.mockReset().mockResolvedValue(undefined);
     loadFrameworkMock.mockReset();
-    openMock.mockReset();
+    pickFrameworkDirMock.mockReset();
     useBuilderStore.setState(useBuilderStore.getInitialState(), true);
   });
 
@@ -156,11 +157,11 @@ describe('Inspector', () => {
   });
 
   it('clicking_save_picks_a_directory_and_calls_saveFramework', async () => {
-    openMock.mockResolvedValue('C:/picked-dir');
+    pickFrameworkDirMock.mockResolvedValue('C:/picked-dir');
     render(<Inspector />);
     screen.getByRole('button', { name: 'Save' }).click();
     await waitFor(() => expect(saveFrameworkMock).toHaveBeenCalled());
-    expect(openMock).toHaveBeenCalledWith({ directory: true });
+    expect(pickFrameworkDirMock).toHaveBeenCalled();
     expect(saveFrameworkMock).toHaveBeenCalledWith(
       'C:/picked-dir',
       useBuilderStore.getState().framework,
@@ -170,15 +171,15 @@ describe('Inspector', () => {
   it('cancelling_the_save_picker_does_not_call_saveFramework', async () => {
     // A cancelled picker resolves null — a normal user action, not an
     // error; the Inspector short-circuits.
-    openMock.mockResolvedValue(null);
+    pickFrameworkDirMock.mockResolvedValue(null);
     render(<Inspector />);
     screen.getByRole('button', { name: 'Save' }).click();
-    await waitFor(() => expect(openMock).toHaveBeenCalled());
+    await waitFor(() => expect(pickFrameworkDirMock).toHaveBeenCalled());
     expect(saveFrameworkMock).not.toHaveBeenCalled();
   });
 
   it('clicking_load_picks_a_directory_loads_and_applies_the_framework', async () => {
-    openMock.mockResolvedValue('C:/load-dir');
+    pickFrameworkDirMock.mockResolvedValue('C:/load-dir');
     loadFrameworkMock.mockResolvedValue({
       framework: namedFramework('loaded-from-disk'),
       companions: [],
@@ -199,10 +200,10 @@ describe('Inspector', () => {
   });
 
   it('cancelling_the_load_picker_does_not_call_loadFramework', async () => {
-    openMock.mockResolvedValue(null);
+    pickFrameworkDirMock.mockResolvedValue(null);
     render(<Inspector />);
     screen.getByRole('button', { name: 'Load' }).click();
-    await waitFor(() => expect(openMock).toHaveBeenCalled());
+    await waitFor(() => expect(pickFrameworkDirMock).toHaveBeenCalled());
     expect(loadFrameworkMock).not.toHaveBeenCalled();
   });
 
@@ -216,7 +217,7 @@ describe('Inspector', () => {
   });
 
   it('a_failed_save_surfaces_the_error', async () => {
-    openMock.mockResolvedValue('C:/save-dir');
+    pickFrameworkDirMock.mockResolvedValue('C:/save-dir');
     saveFrameworkMock.mockRejectedValue(new Error('save bridge failure'));
     render(<Inspector />);
     screen.getByRole('button', { name: 'Save' }).click();
@@ -224,7 +225,7 @@ describe('Inspector', () => {
   });
 
   it('a_failed_load_surfaces_the_error', async () => {
-    openMock.mockResolvedValue('C:/load-dir');
+    pickFrameworkDirMock.mockResolvedValue('C:/load-dir');
     loadFrameworkMock.mockRejectedValue(new Error('load bridge failure'));
     render(<Inspector />);
     screen.getByRole('button', { name: 'Load' }).click();

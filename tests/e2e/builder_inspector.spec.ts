@@ -60,8 +60,11 @@ async function installTauriMock(page: Page): Promise<void> {
           if (command === 'validate_framework') return okReport;
           if (command === 'save_framework') return null;
           if (command === 'load_framework') return { framework: loadedFw, companions: [] };
-          // plugin-dialog's open() routes through invoke as this command.
-          if (command === 'plugin:dialog|open') return 'C:/picked-framework-dir';
+          // M09.5.A (TD-051): Save/Load migrated from plugin-dialog's
+          // open() to the Rust-side pick_framework_dir command (registers
+          // the chosen dir as a permitted root). The picked path now comes
+          // back from this invoke.
+          if (command === 'pick_framework_dir') return 'C:/picked-framework-dir';
           return undefined;
         },
       };

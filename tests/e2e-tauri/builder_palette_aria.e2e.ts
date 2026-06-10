@@ -67,6 +67,12 @@ describe('Builder Palette surfaces loaded-framework agents — M08.6.E (real-app
       `
       return (async () => {
         const dir = arguments[0];
+        // M09.5.A (TD-051): load_framework now confines its path to the
+        // dialog-registered roots. The OS picker is non-driveable, so
+        // register the dir through pick_framework_dir's test-mode arm
+        // (AGENT_RUNTIME_E2E is set by wdio.conf.ts) — the faithful
+        // register-then-load production flow minus the dialog click.
+        await window.__TAURI_INTERNALS__.invoke('pick_framework_dir', { testDir: dir });
         const loaded = await window.__TAURI_INTERNALS__.invoke('load_framework', { dir });
         window.__builderStore.getState().applyLoadedFramework(loaded.framework);
       })();

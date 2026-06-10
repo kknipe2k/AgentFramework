@@ -18,13 +18,12 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: (command: string, args?: unknown) => invokeMock(command, args),
 }));
 
-// M08.C — the @tauri-apps/plugin-dialog native file picker. `open`
-// resolves the chosen absolute path, or null when the user cancels.
-const openMock = vi.fn(async (..._args: unknown[]) => undefined as unknown);
-
-vi.mock('@tauri-apps/plugin-dialog', () => ({
-  open: (...args: unknown[]) => openMock(...args),
-}));
+// M09.5.A — the "Browse…" picker migrated from the JS
+// @tauri-apps/plugin-dialog `open()` to the Rust-side `pick_artifact_file`
+// command (it registers the chosen file's directory as a permitted root
+// so the subsequent import_artifact(file) confines against it — TD-051).
+// The picked path now flows through the same `invoke` mock; route
+// `pick_artifact_file` to control the chosen path / cancel.
 
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -339,7 +338,6 @@ describe('ImportPanel contrast (M07-IRL #3)', () => {
 describe('ImportPanel — file picker + skills.lock reload (M08.C)', () => {
   beforeEach(() => {
     invokeMock.mockReset();
-    openMock.mockReset();
     useGraphStore.setState({ imports: {} });
   });
   afterEach(() => {
@@ -370,10 +368,11 @@ describe('ImportPanel — file picker + skills.lock reload (M08.C)', () => {
   });
 
   it('clicking_browse_opens_the_picker_and_imports_the_chosen_file', async () => {
-    // M07.V 🟡 #4 — Browse → native picker → import_artifact('file', …).
-    openMock.mockResolvedValue('C:/tmp/demo-skill.json');
+    // M07.V 🟡 #4 / M09.5.A — Browse → pick_artifact_file (registers the
+    // dir) → import_artifact('file', …).
     invokeMock.mockImplementation(async (cmd: unknown) => {
       if (cmd === 'list_installed_artifacts') return [];
+      if (cmd === 'pick_artifact_file') return 'C:/tmp/demo-skill.json';
       return {
         status: 'installed',
         lock_key: 'demo-skill@1.0.0',
@@ -397,14 +396,14 @@ describe('ImportPanel — file picker + skills.lock reload (M08.C)', () => {
   it('cancelling_the_picker_does_not_call_importArtifact', async () => {
     // A cancelled picker resolves null — a normal user action, not an
     // error. import_artifact must not fire.
-    openMock.mockResolvedValue(null);
     invokeMock.mockImplementation(async (cmd: unknown) => {
+      if (cmd === 'pick_artifact_file') return null;
       if (cmd === 'list_installed_artifacts') return [];
       return undefined;
     });
     render(<ImportPanel />);
     await userEvent.click(screen.getByTestId('import-browse'));
-    await waitFor(() => expect(openMock).toHaveBeenCalled());
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('pick_artifact_file', undefined));
     const importCalls = invokeMock.mock.calls.filter((c) => c[0] === 'import_artifact');
     expect(importCalls).toHaveLength(0);
   });

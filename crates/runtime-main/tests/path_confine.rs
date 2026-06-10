@@ -169,6 +169,46 @@ fn confine_rejects_residual_dotdot_in_nonexistent_remainder() {
     );
 }
 
+#[test]
+fn confine_skips_a_root_that_does_not_canonicalize() {
+    // A registered root that no longer exists cannot contain anything —
+    // the canonicalize(root) Err arm is skipped, and a real root after it
+    // still decides containment. Exercises the skip branch.
+    let missing = tempdir().expect("tempdir");
+    let missing_root = missing.path().to_path_buf();
+    drop(missing); // delete the dir so canonicalize(root) fails
+
+    let real = tempdir().expect("real tempdir");
+    let under_real = real.path().join("fw");
+    fs::create_dir_all(&under_real).expect("create under real");
+
+    // Order matters: the dead root is tried first and skipped, then the
+    // real root matches.
+    let roots = vec![missing_root.clone(), real.path().to_path_buf()];
+    confine(&under_real, &roots).expect("a live root after a dead one must still permit");
+
+    // And a path under neither (only the dead root would have covered it)
+    // is refused.
+    let orphan = missing_root.join("fw");
+    let err = confine(&orphan, &roots).expect_err("a path only the dead root covered is refused");
+    assert!(matches!(err, ConfineError::NotPermitted(_)));
+}
+
+#[test]
+fn confine_allows_nonexistent_remainder_with_curdir_segment() {
+    // A `.` segment in the nonexistent remainder is a no-op (the CurDir
+    // match arm) and must not change containment.
+    let root = tempdir().expect("tempdir");
+    let with_curdir = root.path().join("ghost").join(".").join("leaf");
+
+    let roots = vec![root.path().to_path_buf()];
+    let confined =
+        confine(&with_curdir, &roots).expect("a `.` segment under the root must be allowed");
+    let canonical_root = fs::canonicalize(root.path()).expect("canonicalize root");
+    assert!(confined.starts_with(&canonical_root));
+    assert!(confined.ends_with(PathBuf::from("ghost").join("leaf")));
+}
+
 #[cfg(unix)]
 #[test]
 fn confine_rejects_symlink_escape_from_root() {
