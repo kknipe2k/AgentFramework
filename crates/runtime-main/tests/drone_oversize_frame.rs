@@ -66,7 +66,13 @@ impl DroneFixture {
             .arg("--ipc-socket")
             .arg(&socket)
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+            .stderr(std::process::Stdio::piped())
+            // On assert-failure the fixture's shutdown() is never
+            // reached; without this the orphaned drone inherits the
+            // test runner's stdout pipe handle on Windows and hangs
+            // the `cargo test | ...` pipeline (observed at this
+            // stage's red run).
+            .kill_on_drop(true);
         let child = cmd.spawn().expect("spawn drone");
         Self {
             child,

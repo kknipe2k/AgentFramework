@@ -434,6 +434,59 @@ mod tests {
     /// silent change to the production constant fails here. TD-053.
     const CAP: usize = 4 * 1024 * 1024;
 
+    /// Kills the `reconnect -> Ok(())` mutant (M09.5.C mutation gate) —
+    /// sister to `drone_ipc::connection::tests::
+    /// send_with_reconnect_reestablishes_transport_via_real_endpoint`;
+    /// see that test's doc for the rationale.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn send_with_reconnect_reestablishes_transport_via_real_endpoint() {
+        use tokio::io::AsyncBufReadExt;
+        let (line_tx, line_rx) = tokio::sync::oneshot::channel::<String>();
+
+        #[cfg(unix)]
+        let addr = {
+            let dir = tempfile::TempDir::new().expect("tempdir");
+            let path = dir.path().join("reconnect.sock");
+            std::mem::forget(dir);
+            let listener = tokio::net::UnixListener::bind(&path).expect("bind");
+            tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.expect("accept");
+                let mut reader = tokio::io::BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).await.expect("read");
+                let _ = line_tx.send(line);
+            });
+            path.to_string_lossy().into_owned()
+        };
+        #[cfg(windows)]
+        let addr = {
+            let addr = format!(r"\\.\pipe\sandbox-ipc-reconnect-{}", uuid::Uuid::new_v4());
+            let server = tokio::net::windows::named_pipe::ServerOptions::new()
+                .create(&addr)
+                .expect("create pipe");
+            tokio::spawn(async move {
+                server.connect().await.expect("pipe connect");
+                let mut reader = tokio::io::BufReader::new(server);
+                let mut line = String::new();
+                reader.read_line(&mut line).await.expect("read");
+                let _ = line_tx.send(line);
+            });
+            addr
+        };
+
+        let ((client_rd, client_wr), peer) = dyn_pair(8);
+        drop(peer);
+        let mut conn = Connection::from_streams(&addr, client_rd, client_wr);
+        conn.send_with_reconnect(validate_request())
+            .await
+            .expect("send must succeed once reconnect re-opens the real endpoint");
+        let line = tokio::time::timeout(Duration::from_secs(5), line_rx)
+            .await
+            .expect("server did not receive the request in time")
+            .expect("server task dropped");
+        assert!(line.contains("validate_artifact"), "got: {line}");
+    }
+
     /// TD-053 adversarial: a hostile/corrupted sandbox writing `CAP + 1`
     /// bytes with NO newline must surface the typed
     /// `SandboxIpcError::Codec` (the dead `MaxLineLengthExceeded` arm at

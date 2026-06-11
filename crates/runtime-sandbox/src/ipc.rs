@@ -453,7 +453,10 @@ mod tests {
         let (client, peer) = tokio::io::duplex(8);
         drop(peer);
         let (_rd, wr) = tokio::io::split(client);
-        let mut writer = FramedWrite::new(wr, LinesCodec::new());
+        // Fixture mirrors the production cap (C.2: production sites
+        // capped, the fixture follows) — zero bare LinesCodec::new()
+        // anywhere in the crate.
+        let mut writer = FramedWrite::new(wr, LinesCodec::new_with_max_length(MAX_IPC_FRAME_BYTES));
         let resp = SandboxResponse::Alert {
             level: AlertLevel::Warn,
             message: "x".repeat(256),
