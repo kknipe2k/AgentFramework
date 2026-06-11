@@ -30,7 +30,15 @@ jobs:
         # on surviving mutants (--in-place is omitted on CI — the Linux
         # runner builds in a scratch dir without the Windows symlink-
         # privilege issue, gotcha #92).
-        run: cargo mutants -p runtime-drone -p runtime-sandbox -p runtime-mcp -p runtime-main --timeout-multiplier 3
+        # --cap-lints true: workspace [lints] deny `unused`, which turns
+        # stub mutants (fn -> Ok(()) — the paints-not-executes class the
+        # gate exists for) into compile errors recorded as "unviable"
+        # instead of being TESTED. M09.5.B observed 8/16 mutants masked
+        # this way, including `confine_to_grant_anchor -> Ok(())`.
+        # --gitignore true: skip gitignored paths in the workspace copy
+        # (the src-tauri/target/release symlink breaks the copy without
+        # symlink privilege on Windows dev boxes; harmless + faster here).
+        run: cargo mutants -p runtime-drone -p runtime-sandbox -p runtime-mcp -p runtime-main --timeout-multiplier 3 --cap-lints true --gitignore true
       - name: Upload mutants.out
         if: always()
         uses: actions/upload-artifact@v4
