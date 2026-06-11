@@ -190,7 +190,7 @@ struct ReadToolStub {
 
 #[cfg(unix)]
 impl ReadToolStub {
-    fn new(path: String) -> Self {
+    const fn new(path: String) -> Self {
         Self {
             path,
             turn: Mutex::new(0),
