@@ -414,4 +414,92 @@ mod tests {
         let conn = Connection::from_streams("/x", rd, wr);
         assert!(!conn.is_noop());
     }
+
+    /// Mirrors `runtime_core::MAX_IPC_FRAME_BYTES` as a literal on
+    /// purpose: the tests pin the agreed 4 MiB boundary VALUE
+    /// (delimiter-exclusive per tokio-util 0.7.18 `LinesCodec`), so a
+    /// silent change to the production constant fails here. TD-053.
+    const CAP: usize = 4 * 1024 * 1024;
+
+    /// TD-053 adversarial: a hostile/corrupted sandbox writing `CAP + 1`
+    /// bytes with NO newline must surface the typed
+    /// `SandboxIpcError::Codec` (the dead `MaxLineLengthExceeded` arm at
+    /// the `From` impl goes live) instead of buffering unbounded.
+    ///
+    /// RED (pre-impl): `next_response` never returns (the uncapped codec
+    /// waits for a newline forever) and the timeout below fails. The
+    /// peer write half stays OPEN on purpose: at EOF `decode_eof` would
+    /// deliver the blob as a line and today's failure would be a Json
+    /// error, not the buffering bug.
+    #[tokio::test]
+    async fn next_response_surfaces_codec_error_on_oversize_unterminated_line() {
+        use tokio::io::AsyncWriteExt;
+        let ((client_rd, client_wr), (_peer_rd, mut peer_wr)) = dyn_pair(64 * 1024);
+        let mut conn = Connection::from_streams("/test", client_rd, client_wr);
+        let writer = tokio::spawn(async move {
+            let blob = vec![b'x'; CAP + 1];
+            peer_wr.write_all(&blob).await.expect("peer write");
+            peer_wr.flush().await.expect("peer flush");
+            peer_wr
+        });
+        let result = tokio::time::timeout(Duration::from_secs(5), conn.next_response())
+            .await
+            .expect(
+                "next_response hung on an oversize unterminated line — \
+                 the unbounded LinesCodec buffered it (TD-053)",
+            );
+        let err = result
+            .expect("expected Some(Err(..))")
+            .expect_err("an oversize line must error, not decode");
+        assert!(
+            matches!(&err, SandboxIpcError::Codec(m) if m.contains("max line length")),
+            "expected the typed max-length Codec error, got {err:?}"
+        );
+        let _ = writer.await;
+    }
+
+    /// PIN — green at red by design (rider 3): a response line of
+    /// EXACTLY `CAP` content bytes + `\n` decodes (delimiter-exclusive,
+    /// rider 2). Pins that the cap clips nothing legitimate.
+    #[tokio::test]
+    async fn next_response_decodes_a_line_at_exactly_the_cap() {
+        use tokio::io::AsyncWriteExt;
+        let ((client_rd, client_wr), (_peer_rd, mut peer_wr)) = dyn_pair(64 * 1024);
+        let mut conn = Connection::from_streams("/test", client_rd, client_wr);
+
+        let base = serde_json::to_string(&SandboxResponse::Alert {
+            level: runtime_sandbox::protocol::AlertLevel::Warn,
+            message: String::new(),
+        })
+        .expect("serialize base")
+        .len();
+        let pad = "x".repeat(CAP - base);
+        let resp = SandboxResponse::Alert {
+            level: runtime_sandbox::protocol::AlertLevel::Warn,
+            message: pad,
+        };
+        let line = serde_json::to_string(&resp).expect("serialize");
+        assert_eq!(line.len(), CAP, "fixture bug: line must be exactly CAP");
+
+        let writer = tokio::spawn(async move {
+            peer_wr
+                .write_all(format!("{line}\n").as_bytes())
+                .await
+                .expect("peer write");
+            peer_wr.flush().await.expect("peer flush");
+            peer_wr
+        });
+        let received = tokio::time::timeout(Duration::from_secs(10), conn.next_response())
+            .await
+            .expect("at-cap line did not decode within 10s")
+            .expect("some")
+            .expect("ok");
+        match received {
+            SandboxResponse::Alert { message, .. } => assert_eq!(message.len(), CAP - base),
+            other @ SandboxResponse::ValidationResult(_) => {
+                panic!("expected the at-cap Alert back, got {other:?}")
+            }
+        }
+        let _ = writer.await;
+    }
 }

@@ -444,4 +444,117 @@ mod tests {
         let result = send_response(&mut writer, &resp).await;
         assert!(result.is_err(), "send_response must surface BrokenPipe");
     }
+
+    /// Mirrors `runtime_core::MAX_IPC_FRAME_BYTES` as a literal on
+    /// purpose: the tests pin the agreed 4 MiB boundary VALUE
+    /// (delimiter-exclusive per tokio-util 0.7.18 `LinesCodec`), so a
+    /// silent change to the production constant fails here. TD-053.
+    const CAP: usize = 4 * 1024 * 1024;
+
+    /// TD-053 adversarial: a `CAP + 1` byte write with NO newline must
+    /// error the framed read so `handle_connection` returns `false`
+    /// (connection dropped, accept loop lives on).
+    ///
+    /// RED (pre-impl): the uncapped codec buffers forever — the handler
+    /// never returns and the timeout below fails. The peer halves stay
+    /// OPEN on purpose: at EOF `decode_eof` would deliver the blob as a
+    /// line and today's failure would be a serde error, not the
+    /// buffering bug.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn oversize_unterminated_frame_returns_false_and_does_not_hang() {
+        use tokio::io::AsyncWriteExt;
+        let (client, peer) = tokio::io::duplex(64 * 1024);
+        let (_peer_rd, mut peer_wr) = tokio::io::split(peer);
+        let (rd, wr) = tokio::io::split(client);
+        let handle = tokio::spawn(async move { handle_connection(rd, wr).await });
+
+        let blob = vec![b'x'; CAP + 1];
+        peer_wr.write_all(&blob).await.expect("peer write");
+        peer_wr.flush().await.expect("peer flush");
+
+        let result = timeout(Duration::from_secs(5), handle)
+            .await
+            .expect(
+                "handle_connection hung on an oversize unterminated frame — \
+                 the unbounded LinesCodec buffered it (TD-053)",
+            )
+            .expect("join");
+        assert!(!result, "an oversize frame must not read as Shutdown");
+        drop(peer_wr);
+    }
+
+    /// PIN — green at red by design (rider 3): a request line of EXACTLY
+    /// `CAP` content bytes (the codec's `\n` rides on top —
+    /// delimiter-exclusive, rider 2) decodes, validates, and the
+    /// response round-trips. Pins that the cap clips nothing legitimate.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn at_cap_frame_round_trips_a_validation() {
+        use tokio::io::AsyncWriteExt;
+        let (client, peer) = tokio::io::duplex(64 * 1024);
+        let (peer_rd, mut peer_wr) = tokio::io::split(peer);
+        let (rd, wr) = tokio::io::split(client);
+        let _handle = tokio::spawn(async move { handle_connection(rd, wr).await });
+
+        let base = serde_json::to_string(&SandboxRequest::ValidateArtifact {
+            artifact_code: String::new(),
+            declaration: sample_declaration(),
+        })
+        .expect("serialize base")
+        .len();
+        let pad = "x".repeat(CAP - base);
+        let req = SandboxRequest::ValidateArtifact {
+            artifact_code: pad,
+            declaration: sample_declaration(),
+        };
+        let line = serde_json::to_string(&req).expect("serialize");
+        assert_eq!(line.len(), CAP, "fixture bug: line must be exactly CAP");
+
+        let writer = tokio::spawn(async move {
+            peer_wr
+                .write_all(format!("{line}\n").as_bytes())
+                .await
+                .expect("peer write");
+            peer_wr.flush().await.expect("peer flush");
+            peer_wr
+        });
+        let mut reader = BufReader::new(peer_rd);
+        let mut resp_line = String::new();
+        timeout(Duration::from_secs(10), reader.read_line(&mut resp_line))
+            .await
+            .expect("at-cap frame did not round-trip within 10s")
+            .expect("read");
+        let parsed: SandboxResponse = serde_json::from_str(resp_line.trim()).expect("json");
+        assert!(
+            matches!(parsed, SandboxResponse::ValidationResult(_)),
+            "expected a ValidationResult for the at-cap request, got {parsed:?}"
+        );
+        let _ = writer.await;
+    }
+
+    /// TD-053: the Unix socket must be owner-only after bind. RED
+    /// (pre-impl): the bind is umask-default (typically 0o755).
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unix_socket_mode_is_0600_after_bind() {
+        use std::os::unix::fs::PermissionsExt;
+        let socket = temp_socket_path();
+        let socket_clone = socket.clone();
+        let server = tokio::spawn(async move { serve(socket_clone).await });
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !socket.exists() && std::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let mode = std::fs::metadata(&socket)
+            .expect("socket metadata")
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o777,
+            0o600,
+            "sandbox socket must be 0600 (owner-only), got {:o}",
+            mode & 0o777
+        );
+        server.abort();
+    }
 }

@@ -338,4 +338,142 @@ mod tests {
         assert!(got_alert, "malformed JSON should produce an Alert event");
         server.abort();
     }
+
+    /// Mirrors `runtime_core::MAX_IPC_FRAME_BYTES` as a literal on
+    /// purpose: the tests pin the agreed 4 MiB boundary VALUE
+    /// (delimiter-exclusive per tokio-util 0.7.18 `LinesCodec`), so a
+    /// silent change to the production constant fails here. TD-053.
+    const CAP: usize = 4 * 1024 * 1024;
+
+    /// TD-053 adversarial: a `CAP + 1` byte write with NO newline must
+    /// surface the max-length error as an `Alert` and drop the
+    /// connection (handler returns; daemon's accept loop lives on).
+    ///
+    /// RED (pre-impl): the uncapped codec buffers forever — no Alert
+    /// fires and the wait below times out. The peer halves stay OPEN on
+    /// purpose: at EOF `decode_eof` would deliver the blob as a line and
+    /// today's failure would be a serde error, not the buffering bug.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn oversize_unterminated_frame_emits_alert_and_drops_connection() {
+        use tokio::io::AsyncWriteExt;
+        let (client, peer) = tokio::io::duplex(64 * 1024);
+        let (_peer_rd, mut peer_wr) = tokio::io::split(peer);
+        let (rd, wr) = tokio::io::split(client);
+        let (cmd_tx, _cmd_rx) = mpsc::channel::<DroneCommand>(8);
+        let (event_tx, mut event_rx) = broadcast::channel::<DroneEvent>(8);
+        let handler = tokio::spawn(handle_connection(
+            rd,
+            wr,
+            cmd_tx,
+            event_tx.subscribe(),
+            event_tx.clone(),
+        ));
+
+        let blob = vec![b'x'; CAP + 1];
+        peer_wr.write_all(&blob).await.expect("peer write");
+        peer_wr.flush().await.expect("peer flush");
+
+        let message = timeout(Duration::from_secs(5), async {
+            loop {
+                match event_rx.recv().await {
+                    Ok(DroneEvent::Alert { message, .. }) => break message,
+                    Err(broadcast::error::RecvError::Closed) => {
+                        panic!("event channel closed without an Alert")
+                    }
+                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                }
+            }
+        })
+        .await
+        .expect("no Alert within 5s — the oversize unterminated frame was accepted (TD-053)");
+        assert!(
+            message.contains("max line length"),
+            "Alert must carry the length signal, got: {message}"
+        );
+
+        timeout(Duration::from_secs(2), handler)
+            .await
+            .expect("handle_connection did not return after the oversize frame")
+            .expect("join");
+        drop(peer_wr);
+    }
+
+    /// PIN — green at red by design (rider 3): a command line of EXACTLY
+    /// `CAP` content bytes (the codec's `\n` rides on top —
+    /// delimiter-exclusive, rider 2) decodes and reaches the command
+    /// channel. Pins that the cap clips nothing legitimate.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn at_cap_frame_decodes_to_the_command_channel() {
+        use tokio::io::AsyncWriteExt;
+        let (client, peer) = tokio::io::duplex(64 * 1024);
+        let (_peer_rd, mut peer_wr) = tokio::io::split(peer);
+        let (rd, wr) = tokio::io::split(client);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel::<DroneCommand>(8);
+        let (event_tx, _event_rx) = broadcast::channel::<DroneEvent>(8);
+        let _handler = tokio::spawn(handle_connection(
+            rd,
+            wr,
+            cmd_tx,
+            event_tx.subscribe(),
+            event_tx.clone(),
+        ));
+
+        let base = serde_json::to_string(&DroneCommand::SnapshotNow {
+            reason: "at-cap".to_string(),
+            state_json: serde_json::json!({"pad": ""}),
+        })
+        .expect("serialize base")
+        .len();
+        let pad = "x".repeat(CAP - base);
+        let cmd = DroneCommand::SnapshotNow {
+            reason: "at-cap".to_string(),
+            state_json: serde_json::json!({ "pad": pad }),
+        };
+        let line = serde_json::to_string(&cmd).expect("serialize");
+        assert_eq!(line.len(), CAP, "fixture bug: line must be exactly CAP");
+
+        let writer = tokio::spawn(async move {
+            peer_wr
+                .write_all(format!("{line}\n").as_bytes())
+                .await
+                .expect("peer write");
+            peer_wr.flush().await.expect("peer flush");
+            peer_wr
+        });
+        let received = timeout(Duration::from_secs(10), cmd_rx.recv())
+            .await
+            .expect("at-cap frame did not decode within 10s")
+            .expect("channel closed");
+        assert_eq!(received, cmd);
+        let _ = writer.await;
+    }
+
+    /// TD-053: the Unix socket must be owner-only after bind. RED
+    /// (pre-impl): the bind is umask-default (typically 0o755).
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unix_socket_mode_is_0600_after_bind() {
+        use std::os::unix::fs::PermissionsExt;
+        let socket = temp_socket_path();
+        let (cmd_tx, _cmd_rx) = mpsc::channel::<DroneCommand>(8);
+        let (event_tx, _event_rx) = broadcast::channel::<DroneEvent>(8);
+        let socket_clone = socket.clone();
+        let server = tokio::spawn(async move { serve(socket_clone, cmd_tx, event_tx).await });
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !socket.exists() && std::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let mode = std::fs::metadata(&socket)
+            .expect("socket metadata")
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o777,
+            0o600,
+            "drone socket must be 0600 (owner-only), got {:o}",
+            mode & 0o777
+        );
+        server.abort();
+    }
 }
