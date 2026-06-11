@@ -23,11 +23,12 @@
 //! feedback contract MCP uses, so built-in and MCP tools converge on one
 //! path.
 
+use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 
 use serde_json::{json, Value};
 
-use crate::capability::{CapabilityEnforcer, CapabilityError};
+use crate::capability::{subsumes, CapabilityEnforcer, CapabilityError, DenyReason};
 use crate::providers::ToolDef;
 
 use runtime_core::generated::capability::{
@@ -89,13 +90,18 @@ pub fn execute_builtin(
         .ok_or_else(|| BuiltinExecError::Op("built-in tool input missing 'path' string".into()))?;
     match tool_name {
         READ_TOOL => {
+            let lexical = normalize_lexical(path);
+            let decl = file_decl(CapabilityKind::Read, &lexical, SideEffectClass::Pure)?;
             enforcer
-                .check(
-                    agent_id,
-                    &file_decl(CapabilityKind::Read, path, SideEffectClass::Pure)?,
-                )
+                .check(agent_id, &decl)
                 .map_err(BuiltinExecError::Capability)?;
-            let content = std::fs::read_to_string(path)
+            // Resolution AFTER the lexical check passed — a missing or
+            // unresolvable out-of-scope path is denied above and leaks no
+            // existence information here.
+            let canonical = std::fs::canonicalize(Path::new(&lexical))
+                .map_err(|e| BuiltinExecError::Op(format!("read '{path}': {e}")))?;
+            confine_to_grant_anchor(enforcer, agent_id, &decl, &canonical)?;
+            let content = std::fs::read_to_string(&canonical)
                 .map_err(|e| BuiltinExecError::Op(format!("read '{path}': {e}")))?;
             Ok(json!({ "content": content }))
         }
@@ -106,23 +112,218 @@ pub fn execute_builtin(
                 .ok_or_else(|| {
                     BuiltinExecError::Op("Write input missing 'content' string".into())
                 })?;
+            let lexical = normalize_lexical(path);
+            let decl = file_decl(
+                CapabilityKind::Write,
+                &lexical,
+                SideEffectClass::FilesystemMutate,
+            )?;
             enforcer
-                .check(
-                    agent_id,
-                    &file_decl(
-                        CapabilityKind::Write,
-                        path,
-                        SideEffectClass::FilesystemMutate,
-                    )?,
-                )
+                .check(agent_id, &decl)
                 .map_err(BuiltinExecError::Capability)?;
-            std::fs::write(path, content)
+            let canonical = canonicalize_for_write(Path::new(&lexical))
+                .map_err(|e| BuiltinExecError::Op(format!("write '{path}': {e}")))?;
+            confine_to_grant_anchor(enforcer, agent_id, &decl, &canonical)?;
+            std::fs::write(&canonical, content)
                 .map_err(|e| BuiltinExecError::Op(format!("write '{path}': {e}")))?;
             Ok(json!({ "ok": true, "bytes_written": content.len() }))
         }
         other => Err(BuiltinExecError::Op(format!(
             "not an in-process built-in: {other}"
         ))),
+    }
+}
+
+// ── TD-052 path resolution (review C3) ────────────────────────────────────
+//
+// SYMLINK POLICY — resolve-then-check. The model-supplied path is reduced
+// to a lexically normalized form ONCE; that form feeds the L1 scope check
+// (grant space unchanged — authored globs keep their exact semantics for
+// in-scope paths). After the check passes, the path is resolved to its
+// canonical form (symlinks/junctions followed, `..` and short names
+// collapsed by the OS) and the IO runs on that canonical path ONLY IF it
+// is confined under the canonicalized LITERAL ANCHOR of a matching grant
+// (canonical-to-canonical comparison — both sides through
+// `fs::canonicalize`, so the Windows `\\?\` verbatim prefix, short-name
+// expansion, and macOS `/var → /private/var` never poison the match). A
+// symlink inside the grant pointing outside it is therefore DENIED; a
+// link resolving inside the grant is allowed.
+//
+// Residual, stated honestly (CLAUDE.md §4 rule 11): containment confines
+// resolved targets to the grant's LITERAL ANCHOR — equal to the full
+// scope for literal-prefix grants (`{dir}/**`, the v0.1 norm), COARSER
+// for metachar-bearing grants (under `{tmp}/*/out/**` a symlink can
+// still move laterally anywhere under `{tmp}/`), and VACUOUS for a bare
+// `**` grant by that grant's own semantics. The claim is "resolved
+// targets cannot escape the grant's literal anchor", never "symlinks
+// cannot escape the glob".
+//
+// Ordering invariant: layer 2 (containment) runs ONLY after layer 1 (the
+// enforcer's L4→L1 check) passes — denied-by-glob paths get the identical
+// denial surface as before and no existence information leaks. TOCTOU:
+// v0.1 holds no handle across check→use; an OS-level race between
+// resolution and IO remains and is accepted (documented, not solved).
+
+/// Lexically normalize a model-supplied path: `.` dropped, `..` resolved
+/// against preceding components (absolute paths cannot ascend past the
+/// root; a relative path's irreducible leading `..` is KEPT so the glob
+/// check denies it naturally), separators unified to `/`. Relative paths
+/// stay relative — the grant-match base is unchanged (TD-035 stays open).
+fn normalize_lexical(raw: &str) -> String {
+    let mut prefix: Option<String> = None;
+    let mut rooted = false;
+    let mut parts: Vec<String> = Vec::new();
+    for comp in Path::new(raw).components() {
+        match comp {
+            Component::Prefix(p) => {
+                prefix = Some(p.as_os_str().to_string_lossy().replace('\\', "/"));
+            }
+            Component::RootDir => rooted = true,
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if parts.last().is_some_and(|c| c != "..") {
+                    parts.pop();
+                } else if !rooted {
+                    parts.push("..".to_string());
+                }
+                // rooted with nothing to pop: `/..` is `/` — drop.
+            }
+            Component::Normal(s) => parts.push(s.to_string_lossy().into_owned()),
+        }
+    }
+    let mut out = prefix.unwrap_or_default();
+    if rooted {
+        out.push('/');
+    }
+    out.push_str(&parts.join("/"));
+    if out.is_empty() {
+        ".".to_string()
+    } else {
+        out
+    }
+}
+
+/// Canonicalize a Write target that may not exist yet: resolve the
+/// nearest existing ancestor via `fs::canonicalize` and re-join the
+/// non-existing remainder. A skipped component that exists for
+/// `symlink_metadata` but fails `canonicalize` is a dangling link — its
+/// target cannot be verified, so the Write is refused (resolve-then-check
+/// cannot vouch for it). Residual `..` in the remainder is rejected
+/// defensively (the lexical normalizer leaves none in absolute paths).
+fn canonicalize_for_write(lexical: &Path) -> std::io::Result<PathBuf> {
+    let mut existing = lexical.to_path_buf();
+    let mut remainder: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        match std::fs::canonicalize(&existing) {
+            Ok(canon) => {
+                let mut out = canon;
+                for part in remainder.iter().rev() {
+                    if part == ".." {
+                        return Err(std::io::Error::other(
+                            "residual '..' after lexical normalization",
+                        ));
+                    }
+                    out.push(part);
+                }
+                return Ok(out);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if std::fs::symlink_metadata(&existing).is_ok() {
+                    return Err(std::io::Error::other(format!(
+                        "'{}' is a dangling link — unresolvable target refused",
+                        existing.display()
+                    )));
+                }
+                let Some(name) = existing.file_name() else {
+                    return Err(e);
+                };
+                remainder.push(name.to_os_string());
+                let parent = existing.parent().unwrap_or_else(|| Path::new("."));
+                existing = if parent.as_os_str().is_empty() {
+                    PathBuf::from(".")
+                } else {
+                    parent.to_path_buf()
+                };
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Layer 2 of the TD-052 gate (see the policy comment above): the
+/// canonical resolved target must sit under the canonicalized literal
+/// anchor of at least one grant that subsumes the (lexical) request.
+/// Runs ONLY after `enforcer.check` passed.
+fn confine_to_grant_anchor(
+    enforcer: &CapabilityEnforcer,
+    agent_id: &str,
+    requested: &CapabilityDeclaration,
+    canonical_target: &Path,
+) -> Result<(), BuiltinExecError> {
+    for grant in enforcer
+        .grants_for(agent_id)
+        .iter()
+        .filter(|g| subsumes(g, requested))
+    {
+        match grant_literal_anchor(&grant.scope) {
+            // A pattern with no literal prefix (`**`) confines nothing by
+            // its own semantics — vacuous containment (see the residual
+            // note above).
+            None => return Ok(()),
+            // The ancestor-walk (not bare `canonicalize`) so a grant
+            // whose anchor directory does not exist YET still anchors —
+            // the IO then fails parent-missing as an `Op` error exactly
+            // as before this gate existed.
+            Some(anchor) => {
+                if let Ok(canon_anchor) = canonicalize_for_write(Path::new(&anchor)) {
+                    if canonical_target.starts_with(&canon_anchor) {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+    tracing::warn!(
+        agent_id,
+        requested = ?requested.scope,
+        resolved = %canonical_target.display(),
+        "TD-052 containment denial: the resolved target escapes every \
+         matching grant's literal anchor (symlink/junction or traversal)"
+    );
+    Err(BuiltinExecError::Capability(CapabilityError::Denied {
+        agent_id: agent_id.to_string(),
+        reason: DenyReason::NoMatchingGrant,
+    }))
+}
+
+/// The literal directory anchor of a grant scope: for a glob, the prefix
+/// before the first metachar (`*?[{`), trimmed to the last whole
+/// component; for a `Path` prefix grant, the entire string. `None` means
+/// the pattern has no literal prefix (it starts with a metachar — e.g. a
+/// bare `**`). Windows-authored backslash separators are unified first.
+fn grant_literal_anchor(scope: &CapabilityScope) -> Option<String> {
+    let pattern = match scope {
+        CapabilityScope::Glob(g) => {
+            let p = if cfg!(windows) {
+                g.replace('\\', "/")
+            } else {
+                g.to_string()
+            };
+            let cut = p.find(['*', '?', '[', '{']).unwrap_or(p.len());
+            let literal = &p[..cut];
+            // Cut AT the last separator (the partial trailing component is
+            // never part of the anchor); trailing separators trimmed.
+            literal[..literal.rfind('/').unwrap_or(0)]
+                .trim_end_matches('/')
+                .to_string()
+        }
+        CapabilityScope::Path(p) => p.trim_end_matches('/').to_string(),
+        CapabilityScope::Domain(_) => return None,
+    };
+    if pattern.is_empty() {
+        None
+    } else {
+        Some(pattern)
     }
 }
 
