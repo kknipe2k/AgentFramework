@@ -758,6 +758,18 @@ function isCmdError(value: unknown): value is CmdError {
 }
 
 /**
+ * Whether an unknown error thrown across the Tauri bridge is the
+ * `CmdError::SetupRequired` unit variant (`{"type":"setup_required"}`)
+ * — the backend's `read_api_key` resolved no key (env unset/empty AND
+ * no keychain entry). M09.5.F: the run handlers key the honest-chip
+ * flip on this discriminant — a run failing SetupRequired is the
+ * truest possible "no key" signal, truer than any separate probe.
+ */
+export function isSetupRequired(e: unknown): boolean {
+  return isCmdError(e) && e.type === 'setup_required';
+}
+
+/**
  * Unwrap an unknown error thrown across the Tauri bridge into a
  * user-facing string. Replaces `String(e)` which yields "[object Object]"
  * for serde-tagged enums (M02 Stage E friction; gotcha #30).

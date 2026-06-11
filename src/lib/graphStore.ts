@@ -524,6 +524,16 @@ interface GraphState {
    */
   currentTier: TierRef;
   /**
+   * M09.5.F (honest key chip — maintainer-IRL truthful-labels finding):
+   * whether an Anthropic API key is believed present. Drives the topbar
+   * key chip (`AppShell`). Written by the mount seed, `handleSetKey`,
+   * the run handlers' SetupRequired flip, and the settled-run re-poll.
+   * Preserved across `clear()` (key presence is install/user state, not
+   * per-session graph state — the `currentTier` pattern); test files
+   * reset it explicitly when they seed it.
+   */
+  hasKey: boolean;
+  /**
    * Spec §8.security L4 (M05 Stage D): per-agent most-recent
    * `tier_violation` state, keyed by `agent_id`. Renderer's
    * tier-violation modal reads this. Last-write-wins on repeat
@@ -642,6 +652,18 @@ interface GraphState {
    * startup. REFLECTS the enforced tier; never widens it.
    */
   setCurrentTier: (tier: TierRef) => void;
+
+  /**
+   * M09.5.F (honest key chip): write the topbar key-chip state. Seeded
+   * at App mount from `has_api_key`, set true after a successful
+   * `set_api_key`, flipped FALSE when a run fails `SetupRequired` (the
+   * run loop's own `read_api_key` is the truest signal), and refreshed
+   * by the settled-run re-poll (`lib/keyState.ts::refreshHasKey`).
+   * Lives here rather than App-local `useState` because the Tester's
+   * catch (TesterModal, mounted prop-less in BuilderShell) must flip it
+   * too — the `currentTier` precedent for topbar-chip state.
+   */
+  setHasKey: (present: boolean) => void;
 }
 
 const AGENT_X_STRIDE = 220;
@@ -814,6 +836,7 @@ const graphStoreInitializer: StateCreator<GraphState> = (set) => ({
   capabilityViolations: {},
   capabilityGrants: [],
   currentTier: 'novice',
+  hasKey: false,
   tierViolations: {},
   currentMcpServers: {},
   toolAliasWarnings: [],
@@ -1800,6 +1823,9 @@ const graphStoreInitializer: StateCreator<GraphState> = (set) => ({
       // session clears so the Settings toggle keeps its state.
       tierViolations: {},
       currentTier: state.currentTier,
+      // M09.5.F: key presence is install/user state (the currentTier
+      // pattern) — a new session does not change whether a key exists.
+      hasKey: state.hasKey,
       // currentMcpServers is registry-backed install state (like
       // currentTier), not per-session graph state — preserved across
       // session clears. toolAliasWarnings are per-session — cleared.
@@ -1826,6 +1852,8 @@ const graphStoreInitializer: StateCreator<GraphState> = (set) => ({
   setGlobalBudgetCap: (cap) => set({ globalBudgetCap: cap }),
 
   setCurrentTier: (tier) => set({ currentTier: tier }),
+
+  setHasKey: (present) => set({ hasKey: present }),
 
   recordUncertainInvocation: (invocation) =>
     set((state) => {

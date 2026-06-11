@@ -23,17 +23,18 @@ import { Transport } from './components/Transport';
 import { UncertaintyPrompt } from './components/UncertaintyPrompt';
 import {
   getCurrentTier,
-  invokeHasApiKey,
   invokeReplayLatestSession,
   invokeReplaySession,
   invokeRunSmokeSession,
   invokeSetApiKey,
+  isSetupRequired,
   subscribeAgentEvents,
   unwrapCmdError,
 } from './lib/ipc';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { useBuilderStore, useTestGraphStore } from './lib/builderStore';
 import { useGraphStore } from './lib/graphStore';
+import { refreshHasKey } from './lib/keyState';
 import { shouldExposeStores } from './lib/testMode';
 import { useToastStore } from './lib/toastStore';
 import './styles.css';
@@ -89,21 +90,20 @@ if (typeof window !== 'undefined' && shouldExposeStores(import.meta.env.DEV, win
 
 export function App(): JSX.Element {
   const [view, setView] = useState<AppView>('runtime');
-  const [hasKey, setHasKey] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tier = useGraphStore((s) => s.currentTier);
+  // M09.5.F (honest key chip): the chip state lives in graphStore — the
+  // currentTier precedent — so the Tester's prop-less catch can flip it
+  // too, not just the handlers in this component.
+  const hasKey = useGraphStore((s) => s.hasKey);
 
   useEffect(() => {
     // M07-IRL #7: seed `hasKey` from the OS keychain so a key entered in
     // a prior session survives an app restart. The root cause of the
     // finding was the absent startup read — `hasKey` was hardcoded false
     // and only flipped inside handleSetKey.
-    void invokeHasApiKey()
-      .then((present) => setHasKey(present))
-      .catch((e) => {
-        console.error('has_api_key error:', e);
-      });
+    void refreshHasKey();
 
     // M08.8.C.fix #19: seed `currentTier` from the backend's
     // persisted/enforced tier so the Settings display matches the
@@ -186,7 +186,7 @@ export function App(): JSX.Element {
   async function handleSetKey(key: string): Promise<void> {
     try {
       await invokeSetApiKey(key);
-      setHasKey(true);
+      useGraphStore.getState().setHasKey(true);
     } catch (e) {
       console.error('Set API key error:', e);
       setError(unwrapCmdError(e));
@@ -197,6 +197,15 @@ export function App(): JSX.Element {
     useGraphStore.getState().clear();
     setRunning(true);
     setError(null);
+    // M09.5.F (honest key chip): a run that fails SetupRequired flips the
+    // chip false off the run loop's own authoritative read, and that flip
+    // is STICKY — the settled-run re-poll is skipped, because a still-true
+    // has_api_key probe racing in afterwards would recreate the exact lie
+    // this stage kills (the vanish case: probe says present, the run
+    // resolved none). Every OTHER settled run re-polls so an out-of-band
+    // keychain change surfaces — including a non-key failure, where a
+    // provider error must not redden a good key.
+    let setupRequiredSeen = false;
     try {
       await invokeRunSmokeSession();
     } catch (e) {
@@ -205,8 +214,16 @@ export function App(): JSX.Element {
       // diagnostics (per docs/gotchas.md #29 keyring-stub case the renderer
       // alone showed "[object Object]" with no usable signal).
       console.error('Smoke test error:', e);
+      if (isSetupRequired(e)) {
+        setupRequiredSeen = true;
+        useGraphStore.getState().setHasKey(false);
+      }
       setError(unwrapCmdError(e));
       setRunning(false);
+    } finally {
+      if (!setupRequiredSeen) {
+        void refreshHasKey();
+      }
     }
   }
 

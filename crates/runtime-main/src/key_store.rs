@@ -72,16 +72,40 @@ impl From<KeyStoreError> for CmdError {
 /// the keychain path. The env-var path itself does not fail —
 /// `std::env::var` errors degrade gracefully to the keychain.
 pub fn read_api_key() -> Result<SecretString, KeyStoreError> {
+    // M09.5.F forensic trail (the unreproduced key-vanish): every
+    // resolution logs the SOURCE that answered (`env` | `keychain` |
+    // `none`) + `key_len` — NEVER the value, a prefix, or the
+    // `SecretString` (§13.5 dev-logging; the `set_api_key` `key_len`
+    // precedent). The next "the run says no key but Credential Manager
+    // shows one" is one terminal line away from a verdict.
     if let Ok(env_key) = std::env::var("ANTHROPIC_API_KEY") {
         if !env_key.is_empty() {
+            tracing::info!(source = "env", key_len = env_key.len(), "api key resolved");
             return Ok(SecretString::from(env_key));
         }
     }
     let entry = Entry::new(SERVICE, USER)?;
     match entry.get_password() {
-        Ok(s) => Ok(SecretString::from(s)),
-        Err(keyring::Error::NoEntry) => Err(KeyStoreError::NotFound),
-        Err(e) => Err(e.into()),
+        Ok(s) => {
+            tracing::info!(source = "keychain", key_len = s.len(), "api key resolved");
+            Ok(SecretString::from(s))
+        }
+        Err(keyring::Error::NoEntry) => {
+            tracing::info!(
+                source = "none",
+                "api key resolution: env unset/empty, keychain NoEntry"
+            );
+            Err(KeyStoreError::NotFound)
+        }
+        // The keyring error Display carries no credential material.
+        Err(e) => {
+            tracing::warn!(
+                source = "none",
+                error = %e,
+                "api key resolution: keychain backend error"
+            );
+            Err(e.into())
+        }
     }
 }
 

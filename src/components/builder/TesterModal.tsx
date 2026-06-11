@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useBuilderStore, useTestGraphStore } from '../../lib/builderStore';
 import { useGraphStore } from '../../lib/graphStore';
 import {
+  isSetupRequired,
   requestTierTransition,
   testFramework,
   unwrapCmdError,
@@ -9,6 +10,7 @@ import {
   type TestVerdict,
   type WireDuration,
 } from '../../lib/ipc';
+import { refreshHasKey } from '../../lib/keyState';
 import { InspectorPanel } from '../InspectorPanel';
 import { MetricCard } from '../MetricCard';
 import { Modal } from '../Modal';
@@ -211,6 +213,11 @@ export function TesterModal(): JSX.Element | null {
     // The scoped test-session graph is rebuilt per run — clear it so a
     // re-run does not stack onto the prior run's nodes.
     useTestGraphStore.getState().clear();
+    // M09.5.F (honest key chip): same contract as App.handleSmoke — a
+    // SetupRequired failure flips the shared chip state false off the
+    // run loop's own read, sticky (no re-poll may override it); every
+    // other settled run re-polls has_api_key.
+    let setupRequiredSeen = false;
     try {
       // The candidate framework crosses the wire straight from the
       // canvas (spec Phase 9 — "does NOT need to save first").
@@ -227,9 +234,16 @@ export function TesterModal(): JSX.Element | null {
     } catch (e) {
       // A test_framework infrastructure failure crosses as a
       // CmdError-shape object — unwrapCmdError renders it (gotcha #30).
+      if (isSetupRequired(e)) {
+        setupRequiredSeen = true;
+        useGraphStore.getState().setHasKey(false);
+      }
       setError(unwrapCmdError(e));
     } finally {
       setRunning(false);
+      if (!setupRequiredSeen) {
+        void refreshHasKey();
+      }
     }
   };
 
