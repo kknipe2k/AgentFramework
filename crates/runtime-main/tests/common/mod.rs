@@ -56,56 +56,58 @@ pub fn drone_binary() -> std::path::PathBuf {
     p
 }
 
-/// Build the `runtime-drone` fixture binary if absent. See module docs
-/// for the TD-005 / gotcha #56 rationale.
+/// Build the `runtime-drone` fixture binary. Always invokes `cargo
+/// build` — cargo no-ops in ~1s when the fixture is fresh, while an
+/// only-if-absent check goes stale after impl changes to the drone
+/// (M09.5.C: the assembled oversize test would have validated the OLD
+/// binary — a silent false-green). See module docs for the TD-005 /
+/// gotcha #56 rationale.
 pub fn ensure_drone_built() {
     let bin = drone_binary();
-    if !bin.exists() {
-        let target_dir = drone_fixture_target_dir();
-        let ws_manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("Cargo.toml");
-        let mut cmd = std::process::Command::new(env!("CARGO"));
-        // `-p runtime-drone` + explicit workspace `--manifest-path`:
-        // the test binary's CWD is the runtime-main package dir, where
-        // a bare `--bin runtime-drone` does not resolve ("no bin target
-        // named runtime-drone in default-run packages"). Pinning the
-        // package + workspace manifest makes the build CWD-independent.
-        cmd.args([
-            "build",
-            "--manifest-path",
-            &ws_manifest.to_string_lossy(),
-            "-p",
-            "runtime-drone",
-            "--bin",
-            "runtime-drone",
-        ]);
-        cmd.env("CARGO_TARGET_DIR", &target_dir);
-        for var in [
-            "RUSTFLAGS",
-            "RUSTDOCFLAGS",
-            "LLVM_PROFILE_FILE",
-            "CARGO_LLVM_COV",
-            "CARGO_LLVM_COV_SHOW_ENV",
-            "CARGO_LLVM_COV_TARGET_DIR",
-            "CARGO_LLVM_COV_BUILD_DIR",
-            "CARGO_INCREMENTAL",
-            "RUSTC_WORKSPACE_WRAPPER",
-            "RUSTC_WRAPPER",
-            "__CARGO_LLVM_COV_RUSTC_WRAPPER",
-            "__CARGO_LLVM_COV_RUSTC_WRAPPER_RUSTFLAGS",
-            "__CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES",
-        ] {
-            cmd.env_remove(var);
-        }
-        let out = cmd.output().expect("cargo build");
-        assert!(
-            out.status.success(),
-            "drone build failed:\n--- stdout ---\n{}\n--- stderr ---\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr),
-        );
+    let target_dir = drone_fixture_target_dir();
+    let ws_manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("Cargo.toml");
+    let mut cmd = std::process::Command::new(env!("CARGO"));
+    // `-p runtime-drone` + explicit workspace `--manifest-path`:
+    // the test binary's CWD is the runtime-main package dir, where
+    // a bare `--bin runtime-drone` does not resolve ("no bin target
+    // named runtime-drone in default-run packages"). Pinning the
+    // package + workspace manifest makes the build CWD-independent.
+    cmd.args([
+        "build",
+        "--manifest-path",
+        &ws_manifest.to_string_lossy(),
+        "-p",
+        "runtime-drone",
+        "--bin",
+        "runtime-drone",
+    ]);
+    cmd.env("CARGO_TARGET_DIR", &target_dir);
+    for var in [
+        "RUSTFLAGS",
+        "RUSTDOCFLAGS",
+        "LLVM_PROFILE_FILE",
+        "CARGO_LLVM_COV",
+        "CARGO_LLVM_COV_SHOW_ENV",
+        "CARGO_LLVM_COV_TARGET_DIR",
+        "CARGO_LLVM_COV_BUILD_DIR",
+        "CARGO_INCREMENTAL",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "RUSTC_WRAPPER",
+        "__CARGO_LLVM_COV_RUSTC_WRAPPER",
+        "__CARGO_LLVM_COV_RUSTC_WRAPPER_RUSTFLAGS",
+        "__CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES",
+    ] {
+        cmd.env_remove(var);
     }
+    let out = cmd.output().expect("cargo build");
+    assert!(
+        out.status.success(),
+        "drone build failed:\n--- stdout ---\n{}\n--- stderr ---\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
     assert!(bin.exists(), "drone binary missing at {}", bin.display());
 }
