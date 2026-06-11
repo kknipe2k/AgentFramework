@@ -14,12 +14,18 @@
 //! Bare backticks rather than intra-doc links because the named
 //! modules are cfg-gated per platform (gotcha #55).
 //!
-//! Isolation installs ONCE at sandbox subprocess startup, BEFORE
-//! `ipc::serve` binds the socket. The seccomp allowlist accommodates
-//! the syscalls `ipc::serve` needs for bind / accept / read / write
-//! (per `seccomp::ALLOWED_SYSCALLS` — bare backticks per gotcha #55
-//! because `seccomp` is cfg-gated to Linux); landlock's filesystem
-//! fence allows read+write under the socket's parent directory only.
+//! The socket binds — and tightens to owner-only — BEFORE isolation
+//! installs: bind + `chmod 0600` are pre-fence work (`chmod` is not in
+//! the seccomp allowlist; CI run #295 caught the chmod executing under
+//! the fence and killing the subprocess). Isolation then installs ONCE,
+//! and the accept loop runs under the fence on the pre-bound listener.
+//! The seccomp allowlist accommodates the syscalls the fenced accept
+//! loop needs for accept / read / write (per `seccomp::ALLOWED_SYSCALLS`
+//! — bare backticks per gotcha #55 because `seccomp` is cfg-gated to
+//! Linux); landlock's filesystem fence allows read+write under the
+//! socket's parent directory only, which remains sufficient (the fenced
+//! loop performs no broader path access than before — the rules got no
+//! wider).
 //!
 //! Subprocess lifetime is the app session (single subprocess spawned by
 //! the Tauri main process at startup; shut down at app exit). Per spec
@@ -52,9 +58,10 @@ use std::path::PathBuf;
 
 /// Run the sandbox subprocess until shutdown.
 ///
-/// Installs OS isolation, binds the IPC socket / pipe, accepts a
-/// connection from main, and loops handling requests until a
-/// [`SandboxRequest::Shutdown`] arrives or the connection drops.
+/// Binds the IPC socket / pipe (pre-fence — see the module doc),
+/// installs OS isolation, accepts a connection from main, and loops
+/// handling requests until a [`SandboxRequest::Shutdown`] arrives or
+/// the connection drops.
 ///
 /// # Errors
 ///
@@ -86,8 +93,13 @@ where
         path = %ipc_socket.display(),
         "sandbox starting"
     );
+    // Bind + chmod BEFORE the fence — socket setup is pre-fence work
+    // (chmod is not in the seccomp allowlist; CI run #295). The fence
+    // exists to confine validation, not socket setup; the accept loop
+    // then runs under it on the pre-bound listener.
+    let endpoint = ipc::bind(&ipc_socket)?;
     install_isolation(&ipc_socket)?;
-    let serve_fut = ipc::serve(ipc_socket);
+    let serve_fut = ipc::serve_bound(endpoint);
     tokio::select! {
         result = serve_fut => result.map_err(SandboxError::from),
         reason = shutdown_source => {

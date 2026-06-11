@@ -22,42 +22,109 @@ use crate::error::IpcError;
 use crate::protocol::{AlertLevel, SandboxRequest, SandboxResponse};
 use crate::validator::{self, Artifact};
 
+/// A bound, pre-fence IPC endpoint — the output of [`bind`], consumed
+/// by [`serve_bound`].
+///
+/// Socket setup is PRE-FENCE work: on Unix the bind + `chmod 0600`
+/// execute filesystem syscalls (`chmod` is not in the seccomp
+/// allowlist), so they must run BEFORE `install_isolation` — CI run
+/// #295 caught the chmod executing under the fence and killing the
+/// subprocess. On Windows there is no fence and no pre-bind work; the
+/// endpoint carries the pipe path for the accept loop's per-instance
+/// pipe creation.
+pub struct BoundEndpoint {
+    #[cfg(unix)]
+    listener: tokio::net::UnixListener,
+    #[cfg(windows)]
+    socket_path: PathBuf,
+}
+
+/// Bind the IPC endpoint — the pre-fence half of [`serve`].
+///
+/// Unix: removes a stale socket file, creates the parent directory,
+/// binds, and tightens the socket to owner-only. Windows: carries the
+/// pipe path unchanged (the named pipe is created per-instance inside
+/// the accept loop).
+///
+/// Must be called inside a tokio runtime (the Unix listener registers
+/// with the reactor).
+///
+/// # Errors
+///
+/// Returns [`IpcError::Io`] if the socket cannot be bound or its
+/// permissions cannot be set.
+pub fn bind(socket_path: &Path) -> Result<BoundEndpoint, IpcError> {
+    info!(path = %socket_path.display(), "sandbox ipc endpoint binding");
+    #[cfg(unix)]
+    {
+        if socket_path.exists() {
+            std::fs::remove_file(socket_path)?;
+        }
+        if let Some(parent) = socket_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        let listener = tokio::net::UnixListener::bind(socket_path)?;
+        // Owner-only (TD-053): the bind itself is umask-dependent. Honest
+        // race note: between bind and this chmod the socket briefly carries
+        // umask-default permissions — acceptable for v0.1 single-user; the
+        // v1.0 tightening is a restrictive-umask guard (or 0700 parent dir)
+        // before bind.
+        std::fs::set_permissions(
+            socket_path,
+            std::os::unix::fs::PermissionsExt::from_mode(0o600),
+        )?;
+        Ok(BoundEndpoint { listener })
+    }
+    #[cfg(windows)]
+    {
+        Ok(BoundEndpoint {
+            socket_path: socket_path.to_path_buf(),
+        })
+    }
+}
+
+/// Run the accept loop on a pre-bound endpoint — the fence-safe half
+/// of [`serve`].
+///
+/// Accepts connections from main and handles requests until a
+/// `Shutdown` request arrives. Returns only on a fatal accept error or
+/// `Shutdown`; abort the task externally to stop it.
+///
+/// # Errors
+///
+/// Returns [`IpcError::Io`] if accept (or, on Windows, per-instance
+/// pipe creation) fails.
+pub async fn serve_bound(endpoint: BoundEndpoint) -> Result<(), IpcError> {
+    #[cfg(unix)]
+    {
+        accept_loop(endpoint.listener).await
+    }
+    #[cfg(windows)]
+    {
+        accept_loop(&endpoint.socket_path).await
+    }
+}
+
 /// Run the IPC server: bind the socket / pipe at `socket_path`, accept a
 /// connection from main, and handle requests until the client closes
 /// the connection or a `Shutdown` request arrives.
 ///
-/// The function loops accepting new connections. Returns only on a fatal
-/// accept error or when a `Shutdown` request closes the server. Abort
-/// the task externally to stop it.
+/// Composes [`bind`] + [`serve_bound`] in one call — the form used by
+/// unfenced callers (tests). The production sandbox (`run_inner`) calls
+/// the two halves separately so the bind + chmod land BEFORE
+/// `install_isolation` and the accept loop runs under the fence.
 ///
 /// # Errors
 ///
 /// Returns [`IpcError::Io`] if the socket cannot be bound or accept fails.
 pub async fn serve(socket_path: PathBuf) -> Result<(), IpcError> {
-    info!(path = %socket_path.display(), "sandbox ipc server starting");
-    accept_loop(&socket_path).await
+    serve_bound(bind(&socket_path)?).await
 }
 
 #[cfg(unix)]
-async fn accept_loop(socket_path: &Path) -> Result<(), IpcError> {
-    if socket_path.exists() {
-        std::fs::remove_file(socket_path)?;
-    }
-    if let Some(parent) = socket_path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
-    }
-    let listener = tokio::net::UnixListener::bind(socket_path)?;
-    // Owner-only (TD-053): the bind itself is umask-dependent. Honest
-    // race note: between bind and this chmod the socket briefly carries
-    // umask-default permissions — acceptable for v0.1 single-user; the
-    // v1.0 tightening is a restrictive-umask guard (or 0700 parent dir)
-    // before bind.
-    std::fs::set_permissions(
-        socket_path,
-        std::os::unix::fs::PermissionsExt::from_mode(0o600),
-    )?;
+async fn accept_loop(listener: tokio::net::UnixListener) -> Result<(), IpcError> {
     loop {
         let (stream, _addr) = listener.accept().await?;
         let (rd, wr) = stream.into_split();
