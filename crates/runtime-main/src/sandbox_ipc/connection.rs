@@ -19,6 +19,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
+use runtime_core::MAX_IPC_FRAME_BYTES;
 use runtime_sandbox::protocol::{SandboxRequest, SandboxResponse};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -105,8 +106,14 @@ impl Connection {
     pub fn from_streams(addr: &str, rd: DynRead, wr: DynWrite) -> Self {
         Self {
             addr: addr.to_string(),
-            writer: Some(FramedWrite::new(wr, LinesCodec::new())),
-            reader: Some(FramedRead::new(rd, LinesCodec::new())),
+            writer: Some(FramedWrite::new(
+                wr,
+                LinesCodec::new_with_max_length(MAX_IPC_FRAME_BYTES),
+            )),
+            reader: Some(FramedRead::new(
+                rd,
+                LinesCodec::new_with_max_length(MAX_IPC_FRAME_BYTES),
+            )),
             mode: Mode::Active,
         }
     }
@@ -200,8 +207,14 @@ impl Connection {
 
     async fn reconnect(&mut self) -> Result<(), SandboxIpcError> {
         let (rd, wr) = open(&self.addr).await?;
-        self.writer = Some(FramedWrite::new(wr, LinesCodec::new()));
-        self.reader = Some(FramedRead::new(rd, LinesCodec::new()));
+        self.writer = Some(FramedWrite::new(
+            wr,
+            LinesCodec::new_with_max_length(MAX_IPC_FRAME_BYTES),
+        ));
+        self.reader = Some(FramedRead::new(
+            rd,
+            LinesCodec::new_with_max_length(MAX_IPC_FRAME_BYTES),
+        ));
         Ok(())
     }
 }

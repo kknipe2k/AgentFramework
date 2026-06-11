@@ -13,6 +13,7 @@ use std::time::Duration;
 use futures::stream::Stream;
 use futures::{SinkExt, StreamExt};
 use runtime_core::drone::{DroneCommand, DroneEvent};
+use runtime_core::MAX_IPC_FRAME_BYTES;
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::time::sleep;
@@ -99,8 +100,14 @@ impl Connection {
     pub fn from_streams(addr: &str, rd: DynRead, wr: DynWrite) -> Self {
         Self {
             addr: addr.to_string(),
-            writer: Some(FramedWrite::new(wr, LinesCodec::new())),
-            reader: Some(FramedRead::new(rd, LinesCodec::new())),
+            writer: Some(FramedWrite::new(
+                wr,
+                LinesCodec::new_with_max_length(MAX_IPC_FRAME_BYTES),
+            )),
+            reader: Some(FramedRead::new(
+                rd,
+                LinesCodec::new_with_max_length(MAX_IPC_FRAME_BYTES),
+            )),
             mode: Mode::Active,
         }
     }
@@ -233,8 +240,14 @@ impl Connection {
 
     async fn reconnect(&mut self) -> Result<(), DroneIpcError> {
         let (rd, wr) = open(&self.addr).await?;
-        self.writer = Some(FramedWrite::new(wr, LinesCodec::new()));
-        self.reader = Some(FramedRead::new(rd, LinesCodec::new()));
+        self.writer = Some(FramedWrite::new(
+            wr,
+            LinesCodec::new_with_max_length(MAX_IPC_FRAME_BYTES),
+        ));
+        self.reader = Some(FramedRead::new(
+            rd,
+            LinesCodec::new_with_max_length(MAX_IPC_FRAME_BYTES),
+        ));
         Ok(())
     }
 }

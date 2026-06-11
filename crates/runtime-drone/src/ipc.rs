@@ -21,16 +21,35 @@
 //!   verbatim.
 //!
 //! `ServerOptions` defaults are used (`PIPE_ACCESS_DUPLEX`, BYTE type,
-//! WAIT mode, instance count 255). The security descriptor defaults to
-//! "owner only" — the same SID as the creating process — which is
-//! sufficient for v0.1 single-user. Multi-session UX in M02+ passes a
-//! session-id-scoped pipe name so multiple drones can run concurrently
-//! without clashing. Hardened DACLs (deny Everyone, audit) land with M05
-//! sandboxing. **This note is the source for the post-M01 `docs(spec):`
-//! PR that folds Windows IPC details into `agent-runtime-spec.md` §1d.**
+//! WAIT mode, instance count 255), plus an explicit
+//! `reject_remote_clients(true)` (tokio's documented default, pinned in
+//! code against flag-clobbering regressions of the CVE-2023-22466
+//! class). Multi-session UX in M02+ passes a session-id-scoped pipe
+//! name so multiple drones can run concurrently without clashing.
+//!
+//! ## Pipe security descriptor — the verified default (TD-053)
+//!
+//! tokio's `ServerOptions::create` calls `CreateNamedPipe` with a null
+//! `lpSecurityAttributes`, so the pipe gets the DEFAULT security
+//! descriptor. Per Microsoft ("Named Pipe Security and Access Rights",
+//! <https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights>):
+//! full control to `LocalSystem`, administrators, and the creator owner;
+//! **read access to Everyone and the anonymous account**. (An earlier
+//! revision of this note claimed "owner only" — that was wrong.)
+//! Consequences:
+//!
+//! - **Command injection is blocked by the default**: issuing
+//!   `QuerySessionDb` / `GracefulShutdown` requires write access, which
+//!   only the owner, administrators, and SYSTEM hold.
+//! - **Residual: read-eavesdropping.** Any local principal can open the
+//!   pipe read-only and receive the `DroneEvent` broadcast (heartbeats,
+//!   alerts, and query/recovery payloads destined for main). Acceptable
+//!   for v0.1's single-user scope (§0d); an owner-only descriptor needs
+//!   `create_with_security_attributes_raw` (unsafe — barred from this
+//!   crate by Hard Rule 7) and is routed to the M12 security ADR.
 
 use futures::StreamExt;
-use runtime_core::{AlertLevel, DroneCommand, DroneEvent};
+use runtime_core::{AlertLevel, DroneCommand, DroneEvent, MAX_IPC_FRAME_BYTES};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -80,6 +99,15 @@ async fn accept_loop(
         }
     }
     let listener = tokio::net::UnixListener::bind(socket_path)?;
+    // Owner-only (TD-053): the bind itself is umask-dependent. Honest
+    // race note: between bind and this chmod the socket briefly carries
+    // umask-default permissions — acceptable for v0.1 single-user; the
+    // v1.0 tightening is a restrictive-umask guard (or 0700 parent dir)
+    // before bind.
+    std::fs::set_permissions(
+        socket_path,
+        std::os::unix::fs::PermissionsExt::from_mode(0o600),
+    )?;
     loop {
         let (stream, _addr) = listener.accept().await?;
         let cmd_tx = cmd_tx.clone();
@@ -102,12 +130,15 @@ async fn accept_loop(
     let pipe_name = derive_pipe_name(socket_path);
     let mut server = ServerOptions::new()
         .first_pipe_instance(true)
+        .reject_remote_clients(true)
         .create(&pipe_name)?;
     loop {
         server.connect().await?;
         let connected = server;
         // Pre-create the next instance so a new client can connect.
-        server = ServerOptions::new().create(&pipe_name)?;
+        server = ServerOptions::new()
+            .reject_remote_clients(true)
+            .create(&pipe_name)?;
         let cmd_tx = cmd_tx.clone();
         let event_rx = event_tx.subscribe();
         let event_tx_for_alerts = event_tx.clone();
@@ -141,7 +172,7 @@ async fn handle_connection<R, W>(
     R: AsyncRead + Unpin + Send + 'static,
     W: AsyncWrite + Unpin + Send + 'static,
 {
-    let mut reader = FramedRead::new(rd, LinesCodec::new());
+    let mut reader = FramedRead::new(rd, LinesCodec::new_with_max_length(MAX_IPC_FRAME_BYTES));
     let read_task = tokio::spawn(async move {
         while let Some(next) = reader.next().await {
             match next {
@@ -172,7 +203,7 @@ async fn handle_connection<R, W>(
     });
 
     let write_task = tokio::spawn(async move {
-        let mut writer = FramedWrite::new(wr, LinesCodec::new());
+        let mut writer = FramedWrite::new(wr, LinesCodec::new_with_max_length(MAX_IPC_FRAME_BYTES));
         loop {
             match event_rx.recv().await {
                 Ok(event) => match serde_json::to_string(&event) {

@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use futures::SinkExt;
 use futures::StreamExt;
+use runtime_core::MAX_IPC_FRAME_BYTES;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
 use tracing::{info, warn};
@@ -48,6 +49,15 @@ async fn accept_loop(socket_path: &Path) -> Result<(), IpcError> {
         }
     }
     let listener = tokio::net::UnixListener::bind(socket_path)?;
+    // Owner-only (TD-053): the bind itself is umask-dependent. Honest
+    // race note: between bind and this chmod the socket briefly carries
+    // umask-default permissions — acceptable for v0.1 single-user; the
+    // v1.0 tightening is a restrictive-umask guard (or 0700 parent dir)
+    // before bind.
+    std::fs::set_permissions(
+        socket_path,
+        std::os::unix::fs::PermissionsExt::from_mode(0o600),
+    )?;
     loop {
         let (stream, _addr) = listener.accept().await?;
         let (rd, wr) = stream.into_split();
@@ -62,14 +72,21 @@ async fn accept_loop(socket_path: &Path) -> Result<(), IpcError> {
 async fn accept_loop(socket_path: &Path) -> Result<(), IpcError> {
     use tokio::net::windows::named_pipe::ServerOptions;
     let pipe_name = derive_pipe_name(socket_path);
+    // Default (null) security descriptor + reject_remote_clients pinned —
+    // the verified-default rationale and the read-eavesdropping residual
+    // (M12-routed) are documented at `runtime_drone::ipc`'s module doc
+    // ("Pipe security descriptor — the verified default", TD-053).
     let mut server = ServerOptions::new()
         .first_pipe_instance(true)
+        .reject_remote_clients(true)
         .create(&pipe_name)?;
     loop {
         server.connect().await?;
         let connected = server;
         // Pre-create the next instance so a new client can connect.
-        server = ServerOptions::new().create(&pipe_name)?;
+        server = ServerOptions::new()
+            .reject_remote_clients(true)
+            .create(&pipe_name)?;
         let (rd, wr) = tokio::io::split(connected);
         if handle_connection(rd, wr).await {
             // Shutdown requested by client — exit the accept loop.
@@ -100,8 +117,8 @@ where
     R: AsyncRead + Unpin + Send + 'static,
     W: AsyncWrite + Unpin + Send + 'static,
 {
-    let mut reader = FramedRead::new(rd, LinesCodec::new());
-    let mut writer = FramedWrite::new(wr, LinesCodec::new());
+    let mut reader = FramedRead::new(rd, LinesCodec::new_with_max_length(MAX_IPC_FRAME_BYTES));
+    let mut writer = FramedWrite::new(wr, LinesCodec::new_with_max_length(MAX_IPC_FRAME_BYTES));
 
     while let Some(next) = reader.next().await {
         let line = match next {

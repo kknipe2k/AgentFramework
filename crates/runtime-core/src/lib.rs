@@ -18,6 +18,8 @@ pub mod error;
 pub mod event;
 /// Types generated from JSON schemas via typify.
 pub mod generated;
+/// Shared constants for the framed-JSON IPC channels (spec §1d).
+pub mod ipc;
 /// Signal Schema v2 — forensic event log types (spec §2b).
 pub mod signal;
 
@@ -27,6 +29,7 @@ pub use drone::{
 };
 pub use error::RuntimeError;
 pub use event::{AgentEvent, GapSeverityRef, GapSourceRef, ToolSource};
+pub use ipc::MAX_IPC_FRAME_BYTES;
 // Re-export only schema-derived modules whose names don't collide with the
 // hand-curated top-level modules above. `generated::event` and
 // `generated::error` (M04 Stage A1 codegen extensions) are reachable via
