@@ -135,6 +135,15 @@ function tierLimitedOutcome(): TestOutcome {
   };
 }
 
+/** The M09.5.F key-state slice on graphStore (the currentTier
+ *  precedent — preserved across `clear()`; the topbar chip + the run
+ *  handlers in App and TesterModal share it). Typed structurally here
+ *  so the red phase fails loudly at runtime rather than at compile. */
+interface KeyStateSlice {
+  hasKey: boolean;
+  setHasKey: (present: boolean) => void;
+}
+
 function openTester(): void {
   act(() => {
     useBuilderStore.getState().openTester();
@@ -320,6 +329,30 @@ describe('TesterModal', () => {
     const err = await screen.findByTestId('tester-error');
     expect(err).toHaveTextContent('drone spawn failed');
     expect(screen.queryByTestId('tester-result')).toBeNull();
+  });
+
+  it('tester_setup_required_failure_flips_graphstore_hasKey_false', async () => {
+    // M09.5.F honest key chip: the Tester's catch is prop-less (mounted
+    // bare in BuilderShell), so the topbar chip's state lives in
+    // graphStore (the currentTier precedent) for this run failure to
+    // flip it honest. Accessed structurally so the red phase fails at
+    // runtime (`setHasKey is not a function` — the §5 loud
+    // missing-export failure), not at compile time.
+    const keyState = useGraphStore.getState() as unknown as KeyStateSlice;
+    act(() => {
+      keyState.setHasKey(true);
+    });
+    testFrameworkMock.mockRejectedValue({ type: 'setup_required' });
+    render(<TesterModal />);
+    openTester();
+    typeTask('a task');
+    fireEvent.click(screen.getByTestId('tester-run'));
+    // The Tester run's own backend read resolved no key — the shared
+    // chip state must flip false, exactly like the smoke path.
+    await waitFor(() => {
+      const state = useGraphStore.getState() as unknown as KeyStateSlice;
+      expect(state.hasKey).toBe(false);
+    });
   });
 
   it('survives_repeated_open_close_cycles_with_a_fresh_run_each', async () => {

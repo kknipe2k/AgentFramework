@@ -22,6 +22,13 @@ import { useGraphStore } from '../../src/lib/graphStore';
 import { useToastStore } from '../../src/lib/toastStore';
 import type { AgentEvent } from '../../src/types/agent_event';
 
+// The serde wire form of `CmdError::SetupRequired` — the unit-variant
+// case serializes to `{"type":"setup_required"}` with no message key
+// (pinned by commands.rs::cmd_error_setup_required_serializes_with_type_tag_only).
+// Typed `unknown` because that IS the contract: the Tauri bridge rejects
+// with a plain tagged object, never an `Error` instance.
+const SETUP_REQUIRED_REJECTION: unknown = { type: 'setup_required' };
+
 describe('App (renderer-level state machine)', () => {
   beforeEach(() => {
     invokeMock.mockReset();
@@ -346,5 +353,89 @@ describe('App (renderer-level state machine)', () => {
     // A subsequent run clears the stale banner at run start.
     await user.click(runButton);
     await waitFor(() => expect(screen.queryByText(/first run boom/i)).toBeNull());
+  });
+
+  // ---- M09.5.F: honest key chip (maintainer-IRL truthful-labels) ----
+  // The topbar key chip was seeded at mount + set in handleSetKey, but no
+  // run handler ever updated it: a run failing SetupRequired (the run
+  // loop's own read_api_key resolved no key) left the chip reading "key
+  // active" beside the failure it contradicted — a DESIGN.md principle-8
+  // violation (labels tell the truth).
+
+  it('setup_required_run_failure_flips_key_chip_to_no_key', async () => {
+    listenMock.mockImplementation(async () => () => undefined);
+    invokeMock.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === 'has_api_key') return true;
+      if (args[0] === 'run_smoke_session') throw SETUP_REQUIRED_REJECTION;
+      return undefined;
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    const chip = screen.getByTestId('topbar-key-chip');
+    await waitFor(() => expect(chip).toHaveTextContent('key active'));
+    const runButton = screen.getByRole('button', { name: /run smoke test/i });
+    await waitFor(() => expect(runButton).toBeEnabled());
+
+    await user.click(runButton);
+
+    // The run loop's own read just proved no key resolves — the chip
+    // must flip honest, not stay green beside the failed run.
+    await waitFor(() => expect(chip).toHaveTextContent('no key'));
+  });
+
+  it('setup_required_flip_is_not_overridden_by_a_true_has_api_key_repoll', async () => {
+    // The rider-1 invariant (the vanish case): the keychain probe may
+    // STILL report a key present while the run loop's own read resolved
+    // none. The settled-run re-poll must be SKIPPED on a SetupRequired
+    // failure — otherwise the async poll wins and recreates the exact
+    // lie this stage kills (a failed-for-no-key run beside a green chip).
+    listenMock.mockImplementation(async () => () => undefined);
+    invokeMock.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === 'has_api_key') return true;
+      if (args[0] === 'run_smoke_session') throw SETUP_REQUIRED_REJECTION;
+      return undefined;
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    const chip = screen.getByTestId('topbar-key-chip');
+    await waitFor(() => expect(chip).toHaveTextContent('key active'));
+    const runButton = screen.getByRole('button', { name: /run smoke test/i });
+    await waitFor(() => expect(runButton).toBeEnabled());
+
+    await user.click(runButton);
+
+    await waitFor(() => expect(chip).toHaveTextContent('no key'));
+    // The authoritative flip was not chased by a re-poll: the mount seed
+    // is the only has_api_key call on the wire.
+    const hasKeyCalls = invokeMock.mock.calls.filter((c) => String(c[0]) === 'has_api_key');
+    expect(hasKeyCalls).toHaveLength(1);
+  });
+
+  it('settled_run_repolls_has_api_key_and_the_chip_reflects_the_result', async () => {
+    listenMock.mockImplementation(async () => () => undefined);
+    let hasKeyProbes = 0;
+    invokeMock.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === 'has_api_key') {
+        hasKeyProbes += 1;
+        // Present at mount; gone by the post-run re-poll (the
+        // out-of-band-change case the re-poll exists to surface).
+        return hasKeyProbes === 1;
+      }
+      return undefined;
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    const chip = screen.getByTestId('topbar-key-chip');
+    await waitFor(() => expect(chip).toHaveTextContent('key active'));
+    const runButton = screen.getByRole('button', { name: /run smoke test/i });
+    await waitFor(() => expect(runButton).toBeEnabled());
+
+    await user.click(runButton);
+
+    // Every settled run re-polls has_api_key, so an out-of-band keychain
+    // change surfaces on the chip instead of going stale-green until the
+    // next app restart.
+    await waitFor(() => expect(chip).toHaveTextContent('no key'));
+    expect(hasKeyProbes).toBeGreaterThanOrEqual(2);
   });
 });
