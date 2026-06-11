@@ -227,6 +227,13 @@ fn canonicalize_for_write(lexical: &Path) -> std::io::Result<PathBuf> {
                 }
                 return Ok(out);
             }
+            // The guard scopes the walk-up to genuinely-missing
+            // components; other kinds (unix `NotADirectory`, permission)
+            // propagate. Mutation note (M09.5.B): the guard-true mutant is
+            // killed by the unix `file_as_directory` unit; on Windows the
+            // OS reports that shape as `NotFound` too, so the mutant is
+            // locally unobservable there — the divergent kinds converge
+            // to the same `Op` error at the IO.
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 if std::fs::symlink_metadata(&existing).is_ok() {
                     return Err(std::io::Error::other(format!(
@@ -392,5 +399,180 @@ fn builtin_tool_def(name: &str) -> ToolDef {
                 "required": ["path"]
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use runtime_core::generated::capability::{DomainPattern, GlobPattern};
+    use tempfile::TempDir;
+
+    fn fwd(p: &std::path::Path) -> String {
+        p.to_string_lossy().replace('\\', "/")
+    }
+
+    // ── normalize_lexical ──────────────────────────────────────────────
+
+    #[test]
+    fn normalize_resolves_internal_dotdot() {
+        assert_eq!(normalize_lexical("a/b/../c.txt"), "a/c.txt");
+    }
+
+    #[test]
+    fn normalize_clamps_rooted_underflow_to_the_root() {
+        // `/..` is `/` — an absolute path cannot ascend past its root.
+        assert_eq!(normalize_lexical("/../x"), "/x");
+        assert_eq!(normalize_lexical("/../../x/y"), "/x/y");
+    }
+
+    #[test]
+    fn normalize_keeps_irreducible_relative_leading_dotdot() {
+        // A relative path ascending above its base keeps the `..` so the
+        // glob check denies it naturally (it matches no authored grant).
+        assert_eq!(normalize_lexical("../x"), "../x");
+        assert_eq!(normalize_lexical("../../x"), "../../x");
+        assert_eq!(normalize_lexical("a/../../x"), "../x");
+    }
+
+    #[test]
+    fn normalize_drops_curdir_components() {
+        assert_eq!(normalize_lexical("./a/./b.txt"), "a/b.txt");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn normalize_unifies_backslash_separators() {
+        assert_eq!(normalize_lexical(r"C:\a\..\b.txt"), "C:/b.txt");
+    }
+
+    // ── canonicalize_for_write ─────────────────────────────────────────
+
+    #[test]
+    fn write_canonicalize_rejoins_missing_file_on_existing_ancestor() {
+        let dir = TempDir::new().expect("tempdir");
+        let target = dir.path().join("ghost.txt");
+        let out = canonicalize_for_write(&target).expect("missing file rejoins");
+        let canon_dir = std::fs::canonicalize(dir.path()).expect("dir canonicalizes");
+        assert_eq!(out, canon_dir.join("ghost.txt"));
+    }
+
+    #[test]
+    fn write_canonicalize_walks_up_missing_intermediate_dirs() {
+        let dir = TempDir::new().expect("tempdir");
+        let target = dir.path().join("a").join("b").join("c.txt");
+        let out = canonicalize_for_write(&target).expect("deep missing path rejoins");
+        let canon_dir = std::fs::canonicalize(dir.path()).expect("dir canonicalizes");
+        assert_eq!(out, canon_dir.join("a").join("b").join("c.txt"));
+    }
+
+    // cfg(unix): unix reports a path THROUGH a file as `NotADirectory`,
+    // which the guard must propagate (the cargo-mutants guard-true mutant
+    // walks up instead and returns Ok). Windows reports the same shape as
+    // `NotFound`, so the guard is not observable there — see the inline
+    // justification at the guard.
+    #[cfg(unix)]
+    #[test]
+    fn write_canonicalize_propagates_a_file_as_directory_error() {
+        let dir = TempDir::new().expect("tempdir");
+        std::fs::write(dir.path().join("file.txt"), "x").expect("seed file");
+        let target = dir.path().join("file.txt").join("sub").join("x.txt");
+        assert!(
+            canonicalize_for_write(&target).is_err(),
+            "a path THROUGH a file cannot canonicalize for write"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_canonicalize_refuses_a_dangling_symlink_component() {
+        let dir = TempDir::new().expect("tempdir");
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(dir.path().join("nonexistent"), &link)
+            .expect("create dangling link");
+        let err = canonicalize_for_write(&link).expect_err("dangling link refused");
+        assert!(
+            err.to_string().contains("dangling"),
+            "the refusal names the dangling link; got: {err}"
+        );
+    }
+
+    // ── grant_literal_anchor ───────────────────────────────────────────
+
+    fn glob_scope(s: &str) -> CapabilityScope {
+        CapabilityScope::Glob(GlobPattern::from_str(s).expect("non-empty glob"))
+    }
+
+    #[test]
+    fn anchor_of_a_literal_prefix_glob_is_the_prefix() {
+        assert_eq!(
+            grant_literal_anchor(&glob_scope("C:/tmp/out/**")),
+            Some("C:/tmp/out".to_string())
+        );
+        assert_eq!(
+            grant_literal_anchor(&glob_scope("out/**")),
+            Some("out".to_string())
+        );
+    }
+
+    #[test]
+    fn anchor_of_a_bare_doublestar_is_none() {
+        // Vacuous by the grant's own semantics — see the residual note in
+        // the policy comment (rider 1).
+        assert_eq!(grant_literal_anchor(&glob_scope("**")), None);
+    }
+
+    #[test]
+    fn anchor_of_a_patterned_first_component_is_none() {
+        assert_eq!(grant_literal_anchor(&glob_scope("src*/x/**")), None);
+    }
+
+    #[test]
+    fn anchor_of_an_exact_glob_is_its_parent() {
+        assert_eq!(
+            grant_literal_anchor(&glob_scope("a/b/file.txt")),
+            Some("a/b".to_string())
+        );
+    }
+
+    #[test]
+    fn anchor_of_a_path_scope_is_the_whole_prefix() {
+        let scope = CapabilityScope::Path(PathPattern::from_str("src/dir").expect("path"));
+        assert_eq!(grant_literal_anchor(&scope), Some("src/dir".to_string()));
+    }
+
+    #[test]
+    fn anchor_of_a_domain_scope_is_none() {
+        let scope = CapabilityScope::Domain(DomainPattern::from_str(".example.com").expect("d"));
+        assert_eq!(grant_literal_anchor(&scope), None);
+    }
+
+    // ── ordering pin (plan rider 6) ────────────────────────────────────
+
+    #[test]
+    fn out_of_scope_nonexistent_read_is_denied_not_an_io_error() {
+        // Layer 1 (the enforcer check on the lexical path) runs BEFORE any
+        // resolution: an out-of-scope path that ALSO does not exist is a
+        // Capability denial, never an Op error — no existence information
+        // leaks for paths outside the grant.
+        let dir = TempDir::new().expect("tempdir");
+        let mut enforcer = CapabilityEnforcer::new();
+        enforcer.set_tier(crate::tier::Tier::Promoted);
+        enforcer.grant(
+            "worker",
+            CapabilityDeclaration {
+                kind: CapabilityKind::Read,
+                resource: ResourceName::from_str(FS_RESOURCE).expect("resource"),
+                scope: glob_scope("allowed/**"),
+                side_effect_class: SideEffectClass::Pure,
+            },
+        );
+        let path = format!("{}/ghost.txt", fwd(dir.path()));
+        let err = execute_builtin(&enforcer, "worker", READ_TOOL, &json!({ "path": path }))
+            .expect_err("out-of-scope read is denied");
+        assert!(
+            matches!(err, BuiltinExecError::Capability(_)),
+            "the denial precedes resolution — Capability, not Op; got {err:?}"
+        );
     }
 }
