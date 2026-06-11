@@ -1785,4 +1785,17 @@ describe('graphStore imports (M07.5)', () => {
     useGraphStore.getState().clear();
     expect(useGraphStore.getState().imports['fs-test@2.0.0']).toBeDefined();
   });
+
+  it('hasKey_survives_clear_like_other_install_state', () => {
+    // M09.5.F: key presence is install/user state (the currentTier
+    // pattern) — a new session must not blank the topbar key chip. The
+    // run handlers call clear() at run START, so without this
+    // preservation every run would transiently lie "no key" mid-run
+    // with a good key present — and the chip-flip tests would not catch
+    // it (they assert the post-settle state only).
+    useGraphStore.getState().setHasKey(true);
+    useGraphStore.getState().clear();
+    expect(useGraphStore.getState().hasKey).toBe(true);
+    useGraphStore.getState().setHasKey(false);
+  });
 });
