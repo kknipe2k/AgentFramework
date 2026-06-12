@@ -54,11 +54,11 @@ fn counting_op<T: Clone + Send + 'static>(
     }
 }
 
-fn overloaded(retry_after_secs: Option<u64>) -> ProviderError {
+const fn overloaded(retry_after_secs: Option<u64>) -> ProviderError {
     ProviderError::Overloaded { retry_after_secs }
 }
 
-fn api(status: u16) -> ProviderError {
+const fn api(status: u16) -> ProviderError {
     ProviderError::Api {
         status,
         body: String::new(),
@@ -66,7 +66,7 @@ fn api(status: u16) -> ProviderError {
 }
 
 /// D.4 scenario 3 + rider 4: `retry-after` paces the sleeps, and the
-/// exhausted 429 surfaces as the TYPED RateLimit. With retry-after 7s
+/// exhausted 429 surfaces as the TYPED `RateLimit`. With retry-after 7s
 /// (> any jittered backoff at base 500ms / cap 8s for attempts 0..2),
 /// both inter-attempt sleeps are exactly 7s → 14s total virtual time.
 #[tokio::test(start_paused = true)]

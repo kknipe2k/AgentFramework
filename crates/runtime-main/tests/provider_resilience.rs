@@ -273,9 +273,8 @@ async fn overload_exhaustion_surfaces_typed_after_three_attempts() {
         "expected exactly three bounded attempts, got {seen}"
     );
 
-    let err = match result {
-        Ok(_) => panic!("exhausted retries must surface an error, got Ok stream"),
-        Err(e) => e,
+    let Err(err) = result else {
+        panic!("exhausted retries must surface an error, got Ok stream");
     };
     let display = err.to_string().to_lowercase();
     assert!(
