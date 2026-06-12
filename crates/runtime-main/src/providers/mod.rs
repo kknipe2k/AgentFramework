@@ -12,6 +12,8 @@ use std::time::Duration;
 
 pub mod anthropic;
 mod anthropic_sse;
+pub mod retry;
+pub mod stream_guard;
 
 /// Provider-emitted streaming event. Internal to runtime-main; translated to
 /// `AgentEvent` at the SDK boundary (Stage D).
@@ -136,6 +138,13 @@ pub enum ProviderError {
     RateLimit {
         /// Seconds to wait before retrying.
         retry_after_secs: u64,
+    },
+    /// Provider overloaded (HTTP 529 / `overloaded_error`). Retried with
+    /// bounded backoff pre-stream (TD-054); surfaces typed on exhaustion.
+    #[error("Provider overloaded; retry after {retry_after_secs:?}s")]
+    Overloaded {
+        /// Seconds from the `retry-after` header, when present.
+        retry_after_secs: Option<u64>,
     },
     /// Request timeout.
     #[error("Request timed out after {0:?}")]

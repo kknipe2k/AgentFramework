@@ -13,8 +13,11 @@ use futures::stream::{BoxStream, StreamExt};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Serialize;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use super::anthropic_sse;
+use super::retry::{self, RetryPolicy};
+use super::stream_guard;
 use super::{
     AgentConfig, CostBreakdown, LLMProvider, Message, ModelCapabilities, ModelInfo, Pricing,
     ProviderError, ProviderEvent, ProviderSupport, ToolDef,
@@ -22,11 +25,17 @@ use super::{
 
 const ANTHROPIC_API_VERSION: &str = "2023-06-01";
 
+/// TCP connect deadline (TD-054). NO global request timeout — a total
+/// deadline would kill legitimately long streams; the per-event idle
+/// timeout ([`stream_guard::IDLE_TIMEOUT`]) is the liveness instrument.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Direct HTTP+SSE Anthropic Messages API client.
 pub struct AnthropicProvider {
     api_key: SecretString,
     base_url: String,
     http: OnceLock<reqwest::Client>,
+    idle_timeout: Duration,
 }
 
 impl AnthropicProvider {
@@ -37,6 +46,7 @@ impl AnthropicProvider {
             api_key,
             base_url: "https://api.anthropic.com".into(),
             http: OnceLock::new(),
+            idle_timeout: stream_guard::IDLE_TIMEOUT,
         }
     }
 
@@ -47,17 +57,37 @@ impl AnthropicProvider {
             api_key,
             base_url,
             http: OnceLock::new(),
+            idle_timeout: stream_guard::IDLE_TIMEOUT,
         }
+    }
+
+    /// Override the per-event idle timeout (the `with_base_url` test-seam
+    /// precedent — the assembled stall regression runs in real time with a
+    /// short window; production keeps [`stream_guard::IDLE_TIMEOUT`]).
+    #[must_use]
+    pub const fn with_idle_timeout(mut self, idle: Duration) -> Self {
+        self.idle_timeout = idle;
+        self
     }
 
     fn http_client(&self) -> &reqwest::Client {
         self.http.get_or_init(|| {
             reqwest::Client::builder()
                 .pool_max_idle_per_host(2)
+                .connect_timeout(CONNECT_TIMEOUT)
                 .build()
                 .expect("reqwest client builder cannot fail with default features")
         })
     }
+}
+
+/// Extract the `retry-after` header seconds, when present and numeric.
+/// The default-60 semantics live in [`retry::map_http_error`] (covered).
+fn retry_after_secs(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    headers
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
 }
 
 #[async_trait]
@@ -89,8 +119,11 @@ impl LLMProvider for AnthropicProvider {
     ///
     /// Returns [`ProviderError::Auth`] on 401/403; [`ProviderError::RateLimit`]
     /// on 429 (with `retry_after_secs` parsed from the `retry-after` header,
-    /// defaulting to 60); [`ProviderError::Api`] on other non-2xx;
-    /// [`ProviderError::Http`] on transport failure.
+    /// defaulting to 60); [`ProviderError::Overloaded`] on 529 /
+    /// `overloaded_error`; [`ProviderError::Api`] on other non-2xx;
+    /// [`ProviderError::Http`] on transport failure. 429/500/502/503/529
+    /// are retried PRE-STREAM under the bounded [`retry::execute`] policy
+    /// (TD-054) — the errors above are post-exhaustion surfaces.
     async fn stream(
         &self,
         config: AgentConfig,
@@ -98,36 +131,33 @@ impl LLMProvider for AnthropicProvider {
         let body = AnthropicRequest::from_config(&config);
         let url = format!("{}/v1/messages", self.base_url);
 
-        let response = self
-            .http_client()
-            .post(&url)
-            .header("x-api-key", self.api_key.expose_secret())
-            .header("anthropic-version", ANTHROPIC_API_VERSION)
-            .header("content-type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            if status == 429 {
-                let retry_after_secs = response
-                    .headers()
-                    .get("retry-after")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(60);
-                return Err(ProviderError::RateLimit { retry_after_secs });
+        // Pre-stream bounded retry (TD-054): the op covers send → status
+        // check only; a 2xx response exits the retry BEFORE the SSE layer
+        // wraps the body, so a stream that yielded events is structurally
+        // beyond replay. Mapping + backoff logic live in the covered
+        // `retry` module; this excluded wrapper only delegates.
+        let client = self.http_client();
+        let api_key = &self.api_key;
+        let url_ref = &url;
+        let body_ref = &body;
+        let response = retry::execute(&RetryPolicy::default(), move || async move {
+            let response = client
+                .post(url_ref)
+                .header("x-api-key", api_key.expose_secret())
+                .header("anthropic-version", ANTHROPIC_API_VERSION)
+                .header("content-type", "application/json")
+                .json(body_ref)
+                .send()
+                .await?;
+            if !response.status().is_success() {
+                let status = response.status().as_u16();
+                let retry_after = retry_after_secs(response.headers());
+                let body_text = response.text().await.unwrap_or_default();
+                return Err(retry::map_http_error(status, retry_after, &body_text));
             }
-            if status == 401 || status == 403 {
-                return Err(ProviderError::Auth);
-            }
-            let body_text = response.text().await.unwrap_or_default();
-            return Err(ProviderError::Api {
-                status,
-                body: body_text,
-            });
-        }
+            Ok(response)
+        })
+        .await?;
 
         // M07.D2 — the SSE layer emits ProviderEvent::Usage with empty
         // model / zero cost (it cannot price). This wrapper owns the
@@ -136,7 +166,7 @@ impl LLMProvider for AnthropicProvider {
         // wrapper (CLAUDE.md §5 OS-call holdout), so the closure is
         // covered by the wiremock integration path, not the ≥95% gate.
         let model = config.model.clone();
-        Ok(anthropic_sse::stream_events(response.bytes_stream())
+        let events = anthropic_sse::stream_events(response.bytes_stream())
             .map(move |event| match event {
                 ProviderEvent::Usage {
                     input_tokens,
@@ -160,7 +190,11 @@ impl LLMProvider for AnthropicProvider {
                 }
                 other => other,
             })
-            .boxed())
+            .boxed();
+        // TD-054: per-event idle timeout at the provider boundary — a
+        // stall surfaces the typed timeout through the loop's existing
+        // ProviderEvent::Error → AgentError → clean-suspend path.
+        Ok(stream_guard::with_idle_timeout(events, self.idle_timeout).boxed())
     }
 
     /// Real `POST /v1/messages/count_tokens` call per spec §2c.3 (added
@@ -176,9 +210,12 @@ impl LLMProvider for AnthropicProvider {
     ///
     /// Returns [`ProviderError::Auth`] on 401/403; [`ProviderError::RateLimit`]
     /// on 429 (with `retry_after_secs` parsed from the `retry-after` header,
-    /// defaulting to 60); [`ProviderError::Api`] on other non-2xx; and
+    /// defaulting to 60); [`ProviderError::Overloaded`] on 529 /
+    /// `overloaded_error`; [`ProviderError::Api`] on other non-2xx; and
     /// [`ProviderError::Api`] with a synthetic 0-status if the response
     /// body is missing the `input_tokens` field (provider regression).
+    /// Retryable statuses get the same bounded [`retry::execute`] policy
+    /// as `stream` (TD-054).
     async fn count_tokens(&self, messages: &[Message]) -> Result<u64, ProviderError> {
         let body = CountTokensRequest {
             // Use a default model when callers haven't set one — count_tokens
@@ -189,36 +226,28 @@ impl LLMProvider for AnthropicProvider {
         };
         let url = format!("{}/v1/messages/count_tokens", self.base_url);
 
-        let response = self
-            .http_client()
-            .post(&url)
-            .header("x-api-key", self.api_key.expose_secret())
-            .header("anthropic-version", ANTHROPIC_API_VERSION)
-            .header("content-type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            if status == 429 {
-                let retry_after_secs = response
-                    .headers()
-                    .get("retry-after")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(60);
-                return Err(ProviderError::RateLimit { retry_after_secs });
+        let client = self.http_client();
+        let api_key = &self.api_key;
+        let url_ref = &url;
+        let body_ref = &body;
+        let response = retry::execute(&RetryPolicy::default(), move || async move {
+            let response = client
+                .post(url_ref)
+                .header("x-api-key", api_key.expose_secret())
+                .header("anthropic-version", ANTHROPIC_API_VERSION)
+                .header("content-type", "application/json")
+                .json(body_ref)
+                .send()
+                .await?;
+            if !response.status().is_success() {
+                let status = response.status().as_u16();
+                let retry_after = retry_after_secs(response.headers());
+                let body_text = response.text().await.unwrap_or_default();
+                return Err(retry::map_http_error(status, retry_after, &body_text));
             }
-            if status == 401 || status == 403 {
-                return Err(ProviderError::Auth);
-            }
-            let body_text = response.text().await.unwrap_or_default();
-            return Err(ProviderError::Api {
-                status,
-                body: body_text,
-            });
-        }
+            Ok(response)
+        })
+        .await?;
 
         let parsed: CountTokensResponse = response.json().await.map_err(ProviderError::from)?;
         Ok(parsed.input_tokens)
