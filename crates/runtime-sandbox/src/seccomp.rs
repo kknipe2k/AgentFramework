@@ -222,12 +222,31 @@ mod tests {
 
     #[test]
     fn allowlist_includes_socket_syscalls_needed_by_ipc_serve() {
-        for required in &["socket", "bind", "listen", "accept4", "recvfrom", "sendto"] {
+        // `socket` itself is NOT in this unconditional set — it is a
+        // conditional allow (arg0 == AF_UNIX) constructed in build_filter
+        // (TD-055). The remaining socket syscalls stay unconditional:
+        // they operate on an already-created fd, which can only be an
+        // AF_UNIX fd once the creation choke point holds.
+        for required in &["bind", "listen", "accept4", "recvfrom", "sendto"] {
             assert!(
                 ALLOWED_SYSCALLS.contains(required),
                 "ipc::serve cannot bind/accept without {required}"
             );
         }
+    }
+
+    #[test]
+    fn socket_not_in_unconditional_allowlist() {
+        // `socket` must NOT be an unconditional allow: an unconditional
+        // socket() mints fds of any address family, including AF_INET —
+        // a reachable UDP exfil channel inside the fence that landlock
+        // does not cover (TD-055). build_filter restricts it to a
+        // conditional allow on arg0 == AF_UNIX, so the bare name must be
+        // absent from ALLOWED_SYSCALLS.
+        assert!(
+            !ALLOWED_SYSCALLS.contains(&"socket"),
+            "socket must be a conditional (AF_UNIX-only) allow, not unconditional"
+        );
     }
 
     #[test]
@@ -239,6 +258,7 @@ mod tests {
             "execveat",
             "fork",
             "vfork",
+            "clone",
             "clone3",
             "ptrace",
             "mount",

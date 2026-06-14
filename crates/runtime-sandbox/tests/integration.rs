@@ -473,3 +473,120 @@ async fn isolation_persists_across_validate_calls() {
     wr.flush().await.expect("flush shutdown");
     let _ = tokio::time::timeout(Duration::from_secs(3), child.wait()).await;
 }
+
+// ===========================================================================
+// M09.5.E (TD-055) — seccomp restricts socket creation to AF_UNIX.
+//
+// An unconditional `socket` allow mints fds of any address family,
+// including AF_INET — a reachable UDP exfil channel inside the fence that
+// landlock does not cover. The fix is a conditional allow on
+// socket(arg0 == AF_UNIX); arg0 (the domain) is the only BPF-filterable
+// part of socket(2). The behavioral proof must run inside a REAL fence,
+// so — exactly like the OS-isolation tests above — it spawns a
+// subprocess: in-process seccomp install poisons the cargo test runner
+// (seccomp.rs is an OS-signal-class holdout). Here the subprocess is a
+// re-exec of THIS test binary (the current_exe() convention) driven into
+// a guarded probe test that installs full isolation, then mints one
+// socket and reports via exit status.
+//
+// Linux-only: seccomp.rs is `#![cfg(target_os = "linux")]`. A non-Linux
+// `cargo check` does not even compile this branch — CI Linux is the proof
+// (gotcha #74).
+// ===========================================================================
+
+// seccomp KILL_PROCESS (build_filter's default action) terminates the
+// offending process as if by SIGSYS. SIGSYS is signal 31 on the
+// x86_64/aarch64 Linux ABI (the CI ubuntu target). It differs on
+// MIPS/Alpha — out of scope for v0.1 (Linux CI is x86_64).
+#[cfg(target_os = "linux")]
+const SIGSYS: i32 = 31;
+
+// Env contract between the parent assertion tests and the re-exec child.
+#[cfg(target_os = "linux")]
+const PROBE_MODE_ENV: &str = "RUNTIME_SANDBOX_SECCOMP_PROBE";
+#[cfg(target_os = "linux")]
+const PROBE_DIR_ENV: &str = "RUNTIME_SANDBOX_SECCOMP_PROBE_DIR";
+
+/// The re-exec child. A no-op under an ordinary `cargo test` run (the
+/// mode env var is unset); the parent tests below set it to "inet" /
+/// "unix" and spawn `current_exe() --exact seccomp_probe_child`. The
+/// child installs the real fence in production order (landlock then
+/// seccomp), then mints exactly one socket and reports via exit status:
+///   inet -> socket(AF_INET, SOCK_DGRAM) — expected SIGSYS-killed; it
+///           reaches exit(7) ONLY if it was NOT killed (the pre-impl red
+///           sentinel: AF_INET currently succeeds inside the fence).
+///   unix -> socket(AF_UNIX, SOCK_STREAM) — the IPC family stays alive;
+///           exit(0).
+/// `std::process::exit` bypasses libtest teardown so no post-fence
+/// harness syscalls run.
+#[cfg(target_os = "linux")]
+#[test]
+fn seccomp_probe_child() {
+    let Ok(mode) = std::env::var(PROBE_MODE_ENV) else {
+        return; // ordinary `cargo test` — do nothing destructive
+    };
+    let dir = std::env::var(PROBE_DIR_ENV).expect("probe dir env set by parent");
+    let dir = std::path::PathBuf::from(dir);
+
+    // Full isolation, production order: landlock fences the filesystem to
+    // `dir`, then seccomp installs the syscall allowlist.
+    runtime_sandbox::landlock::install(&[dir.as_path()]).expect("landlock install");
+    runtime_sandbox::seccomp::install().expect("seccomp install");
+
+    match mode.as_str() {
+        "inet" => {
+            // socket(AF_INET, SOCK_DGRAM, 0). Denied at the creation
+            // choke point -> SIGSYS kill, so the process dies here and
+            // never reaches exit(7).
+            let _ = std::net::UdpSocket::bind("127.0.0.1:0");
+            std::process::exit(7); // reached only if NOT killed (red today)
+        }
+        "unix" => {
+            // socket(AF_UNIX, SOCK_STREAM, 0) — minted within the
+            // landlock-permitted dir so the bind() write is allowed.
+            let path = dir.join("probe.sock");
+            let _listener =
+                std::os::unix::net::UnixListener::bind(&path).expect("AF_UNIX socket must succeed");
+            std::process::exit(0);
+        }
+        other => panic!("unknown probe mode: {other}"),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn run_seccomp_probe(mode: &str) -> std::process::ExitStatus {
+    let dir = TempDir::new().expect("probe tempdir");
+    std::process::Command::new(std::env::current_exe().expect("current_exe"))
+        .args(["--exact", "seccomp_probe_child", "--nocapture"])
+        .env(PROBE_MODE_ENV, mode)
+        .env(PROBE_DIR_ENV, dir.path())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .status()
+        .expect("spawn seccomp probe child")
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn inet_socket_denied_inside_fence() {
+    use std::os::unix::process::ExitStatusExt;
+    let status = run_seccomp_probe("inet");
+    assert_eq!(
+        status.signal(),
+        Some(SIGSYS),
+        "socket(AF_INET) must be killed by the seccomp filter (SIGSYS); \
+         got code={:?} signal={:?}",
+        status.code(),
+        status.signal(),
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn afunix_socket_alive_inside_fence() {
+    let status = run_seccomp_probe("unix");
+    assert!(
+        status.success(),
+        "socket(AF_UNIX) must still succeed inside the fence; got {status:?}"
+    );
+}
